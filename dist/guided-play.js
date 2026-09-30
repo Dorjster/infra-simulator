@@ -14,7 +14,7 @@ export function nextObjective(ops,nodes,links,network){
  const p=n.ports.find(p=>p.name==='MGMT UPLINK');if(p&&!p.link){const hub=byId['MGMT-SW'],hp=hub.ports.find(p=>p.name==='MGMT-1'&&!p.service&&!p.link&&p.speed===1)||hub.ports.find(p=>!p.service&&!p.link&&p.speed===1);if(hp)return cable(n,hub,p,hp,'cat6');}
  if(n.net.ip==='0.0.0.0'||!n.net.ssh||n.net.vlan!==70||!network.reachable(byId['MGMT-SW'],n,70)){return {kind:'configure',node:n.id,title:`Configure ${n.id} management`,detail:'Either title · local console/KVM · unique 10.10.70.x/24 · VLAN 70 · SSH on. Both management cable ports must use VLAN 70.',where:n.rack,x:n.pos.x,z:6};}return null;
  }
- if(g.mode==='free')return null;
+ if(g.mode==='free'||g.track==='levels')return null;
  if(g.mode==='challenge'){const c=g.challenge;if(!c?.started)return {kind:'begin',title:'Begin the selected challenge',detail:'J opens the objective. The facility stays healthy until Begin.'};if(c.finished)return {kind:'results',title:'Challenge complete',detail:'J shows your result.'};if(c.index!==0)return {kind:'diagnose',title:'Investigate and restore service',detail:'Check monitoring, interfaces and affected hardware with either title. J → Validate when healthy.'};}
  if(g.incident)return {kind:'diagnose',title:'Restore production service',detail:'Inspect monitoring. Repair the affected path, then J → Validate.'};
  const project=g.mode==='campaign'?ops.validation().project:{types:{server:1}},need=project.types|| (project.dr?{server:1,storage:1}:project.sku?{storage:active.filter(n=>n.type==='storage').length+(!active.some(n=>n.spec?.sku===project.sku)?1:0)}:{});

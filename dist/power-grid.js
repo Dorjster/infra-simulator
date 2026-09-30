@@ -13,10 +13,15 @@
 export const PDU_RATING_W = 11040;
 export const PDU_PHASES = 3;
 export const PDU_VOLTS = 230;
-export const grid = { tripped: {} };
+export const grid = { tripped: {}, fedOnly: false, fed: {} };
 export function syncGrid(pdus) { grid.tripped = {}; for (const [k, v] of Object.entries(pdus || {})) if (v?.tripped) grid.tripped[k] = true; }
+// Empty-site campaign: a placed rack's PDU A/B is energized only after its input cord is plugged into
+// the building power whip above the rack (game.rackFeeds = { 'R01:A': true }). Other modes keep the
+// fixed building racks permanently fed.
+export function syncFeeds(game) { grid.fedOnly = !!game?.emptySite; grid.fed = { ...(game?.rackFeeds || {}) }; }
 export const feedKey = (rack, feed) => rack + ':' + feed;
-export const feedLive = (n, feed) => !!feed && !grid.tripped[feedKey(n.rack, feed)];
+export const inputFed = (rack, feed) => !grid.fedOnly || !!grid.fed[feedKey(rack, feed)];
+export const feedLive = (n, feed) => !!feed && !grid.tripped[feedKey(n.rack, feed)] && inputFed(n.rack, feed);
 // PSU cords: a legacy (factory) device without a physical record is fed from A and B.
 export const psuFeeds = n => n.physical ? (n.physical.power || [null, null]) : ['A', 'B'];
 export const livePSUs = n => psuFeeds(n).map((f, i) => (feedLive(n, f) && !(n.physical?.fault === 'psu' && i === 1) ? i : -1)).filter(i => i >= 0);

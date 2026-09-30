@@ -1,9 +1,39 @@
-# INFRA // GAME — v31 device logic: every device behaves like the real product
+# Infra Simulator v32
 
-See [UPDATE-v31.md](UPDATE-v31.md) for the current update. Every device family has one logic module that drives its LEDs, GUI, CLI, monitoring, contracts and challenges. The update covers the physical layer (PSUs, PDUs, optics, airflow), per-device behaviour tables, the [V] service key, confirmations, 28 new challenges, save format 31, draw calls under 500 while walking, and cartoon co-op engineers with 6 faces, 6 head colours and a 6-emote wheel (mouse wheel). [UPDATE-v30.md](UPDATE-v30.md) describes the previous update (ISP circuits with a provider router, vendor-style GUIs, simple CLI commands, live contract next-step, rendering performance). [UPDATE-v29.md](UPDATE-v29.md) describes the three end-to-end exercises (office Internet, server VM service, storage A/B paths), behavior changes and simulation limits. [UPDATE-v28.md](UPDATE-v28.md) describes management ports, mode selection and LAN efficiency.
+Build a working enterprise from an empty room: receive equipment, rack it, power it, cable it, configure it on real-looking consoles and GUIs, and prove every service works. Play solo, or with up to 12 engineers on your LAN.
 
-**Current release: v19.1.** Open **Office / company** for the walkable office, employee desktops, company network configuration and ten business contracts. When opened through http://localhost:8080, the local server now signs that browser in as host automatically so Campaign is immediately available. See [OFFICE-UPDATE.md](OFFICE-UPDATE.md) for the current start guide, verified behavior and simulation limits. The older update notes below describe the retained rack simulator.
+**Start here: [UPDATE-v32.md](UPDATE-v32.md).** It covers Campaign levels 0–10, the new start flow and Campaign panel, one-verb prompts, the data-hall graphics, the desktop app, measurements, tests and limitations.
 
+## Play
+
+- **Desktop app:** install the DMG (macOS) or `InfraSimulator-Setup.exe` (Windows) from the project's releases. No Node.js is needed. The first screen offers **Solo Campaign** (recommended), **LAN Host Campaign**, **Join LAN**, **Free Build** and **Challenges**.
+- **Web package:** with Node.js 22+, run `node lan/server.mjs` in this folder and open the printed `http://localhost:…` address. Friends on the same network open the printed LAN address and join with the room code.
+- **Tests:** `npm test`. Browser and desktop playtests are in [tests/browser](tests/browser/README.md).
+
+## Controls
+
+| Key | Action |
+| --- | --- |
+| W A S D · Shift · C/Ctrl · Q | Walk · run · crouch (low ports) · raise view (top of rack) |
+| Mouse · Z / right mouse | Look · zoom to read ports and labels |
+| E | The action shown under the crosshair (`E · …`); `✗` lines say why it is not possible and what to do |
+| G · X | Put down what you carry · cancel a held cable or cord end (plug it back) |
+| R · F · V | Remove a device or optic · inspect · service action (clean fibre, provider ticket, re-mount) |
+| L · 1 / 2 | Service laptop · console cable / service Ethernet (equip them once in J → Laptop) |
+| J · I · M · H | Objective · Inventory & orders · Map · next hint |
+| Enter / T · middle mouse · Esc | Team chat · ping · menu |
+
+Field Engineer and Operations Engineer are cosmetic titles: both can do every task. Company credentials, physical reach and host-only controls are checked separately.
+
+## Counts in this release
+
+11 campaign levels (0–10) · 43 challenges (15 classic + 28 device-logic) · 24 purchasable rack models plus office items · 12 players per LAN room · save format 32 (v29–v31 saves migrate).
+
+---
+
+## Earlier release notes (v19–v31)
+
+The notes below describe earlier releases and are kept for reference. Where they differ from v32 (start flow, menus, the campaign), v32 applies. See [UPDATE-v31.md](UPDATE-v31.md), [UPDATE-v30.md](UPDATE-v30.md), [UPDATE-v29.md](UPDATE-v29.md), [UPDATE-v28.md](UPDATE-v28.md) and [OFFICE-UPDATE.md](OFFICE-UPDATE.md).
 
 This package extends the existing Infrastructure // Alive simulator. It includes the brighter room, Dell/Fortinet-inspired rack models, first-person controls, service laptop and 12-player LAN room.
 

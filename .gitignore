@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 .env*
+lan/campaign-save*.json
+lan/*.room
