@@ -233,7 +233,7 @@ console.log('  L10 commissioning: all levels live, every purchased device powere
 
 // ---- Regression, persistence and unlocks ---------------------------------------------------------------------------
 engineering({ type: 'boot', node: srv.id }); tick();
-const rep = C.status().repairs; assert(rep.some(r => r.id === 5), 'powered-off server → level 5 shows as a repair objective'); assert(op.game.levels.earned[5], 'earned level kept');
+let rep = []; for (let i = 0; i < 6 && !rep.some(r => r.id === 5); i++) rep = C.status().repairs; // earned levels are re-checked two per HUD refresh assert(rep.some(r => r.id === 5), 'powered-off server → level 5 shows as a repair objective'); assert(op.game.levels.earned[5], 'earned level kept');
 engineering({ type: 'boot', node: srv.id }); srv.physical.bootUntil = 1; op.tick(); tick();
 const saved = JSON.parse(JSON.stringify(w.snapshot())); assert.equal(saved.format, 32);
 engineering({ type: 'mode', mode: 'free' }); w.restore(saved); L.invalidate(); tick();

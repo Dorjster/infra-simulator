@@ -80,7 +80,6 @@ function firstFail(steps) { return steps.find(s => !s.ok); }
 export function createCampaign(world, network, ctx) {
   const { nodes, byId } = ctx;
   const ops = () => world.operations, g = () => world.operations.game, office = () => world.office;
-  let cache = { at: 0, sig: '', value: null };
   const active = () => g().mode === 'campaign' && g().track === 'levels';
   const installed = type => ops().available().filter(n => n.spec && (!type || n.type === type));
   const pcOf = dep => Object.values(office().state.pcs).find(p => p.department === dep && p.id !== 'ADMIN-PC');
@@ -206,36 +205,46 @@ export function createCampaign(world, network, ctx) {
     return out;
   }
   const builders = [level0, level1, level2, level3, level4, level5, level6, level7, level8, level9];
+  // Each level is evaluated on demand and cached briefly (700 ms): the HUD and the host tick need only the
+  // current level (plus one earned level per call for repair objectives), so a campaign never pays for all
+  // eleven levels' path tests in one frame.
+  const levelCache = new Map(); let repairCursor = 0;
+  function levelChecks(id, force = false) {
+    const G = g(), hit = levelCache.get(id);
+    if (!force && hit && hit.game === G && Date.now() - hit.at < 700) return hit.checks;
+    let checks; try { checks = id === 10 ? level10(Array.from({ length: 10 }, (_, k) => ({ id: k, checks: levelChecks(k, force) }))) : builders[id](); } catch (e) { checks = [step('error', 'Check unavailable', false, e.message)]; }
+    levelCache.set(id, { at: Date.now(), game: G, checks }); return checks;
+  }
+  const decorate = (id, checks) => { const G = g(); return { id, checks, ...LEVELS[id], ok: checks.length > 0 && checks.every(c => c.ok), earned: !!G.levels.earned[id], current: G.levels.current === id, locked: id > G.levels.current }; };
+  function levelStatus(id, force) { const G = g(); if (world.remoteCampaign) { const r = world.remoteCampaign[id]; return r ? { ...r, earned: !!G.levels.earned[id], current: G.levels.current === id, locked: id > G.levels.current } : null; } return decorate(id, levelChecks(id, force)); }
   function evaluate(force = false) {
     const G = g(); if (!G.levels) return [];
     if (world.remoteCampaign) return world.remoteCampaign.map(l => ({ ...l, earned: !!G.levels.earned[l.id], current: G.levels.current === l.id, locked: l.id > G.levels.current }));
-    if (!force && cache.value && Date.now() - cache.at < 700 && cache.game === G) return cache.value;
-    const all = builders.map((b, id) => { let checks; try { checks = b(); } catch (e) { checks = [step('error', 'Check unavailable', false, e.message)]; } return { id, checks }; });
-    all.push({ id: 10, checks: level10(all) });
-    const value = all.map(l => ({ ...l, ...LEVELS[l.id], ok: l.checks.length > 0 && l.checks.every(c => c.ok), earned: !!G.levels.earned[l.id], current: G.levels.current === l.id, locked: l.id > G.levels.current }));
-    cache = { at: Date.now(), value, game: G };
-    return value;
+    return LEVELS.map(l => decorate(l.id, levelChecks(l.id, force)));
   }
+  let repairs = new Map();
   function status() {
     const G = g(); if (!G.levels) return null;
-    const all = evaluate(), cur = all[Math.min(G.levels.current, 10)], next = cur.checks.find(c => !c.ok) || null, done = cur.checks.filter(c => c.ok).length;
-    const repairs = all.filter(l => l.earned && !l.ok && l.id !== 10).map(l => ({ id: l.id, title: l.title, check: l.checks.find(c => !c.ok) }));
-    return { level: cur, next, done, total: cur.checks.length, complete: G.levels.current > 10, repairs, all };
+    const curId = Math.min(G.levels.current, 10), cur = levelStatus(curId), next = cur.checks.find(c => !c.ok) || null, done = cur.checks.filter(c => c.ok).length;
+    // Earned levels are re-checked one per call; failures stay listed until that level passes again.
+    const earned = Object.keys(G.levels.earned).map(Number).filter(id => id !== 10 && id !== curId);
+    for (let k = 0; k < Math.min(2, earned.length); k++) { const id = earned[repairCursor++ % earned.length], l = levelStatus(id); if (l.ok) repairs.delete(id); else repairs.set(id, { id, title: l.title, check: l.checks.find(c => !c.ok) }); }
+    for (const id of repairs.keys()) if (!G.levels.earned[id]) repairs.delete(id);
+    return { level: cur, next, done, total: cur.checks.length, complete: G.levels.current > 10, repairs: [...repairs.values()], get all() { return evaluate(); } };
   }
   // Tick on the host (solo: the local world). Tracks exercise repairs and earns the current level.
   let lastTick = 0;
   function tick(now = Date.now()) {
     const G = g(); if (!active() || !G.levels || now - lastTick < 900) return false; lastTick = now;
-    const ex = G.levels.exercises, all = evaluate(true);let changed = false;
+    const ex = G.levels.exercises;let changed = false;
     for (const key of ['fault', 'final']) { const e = ex[key]; if (e && !e.repairedAt && salesTest().ok && now - e.at > 1500) { e.repairedAt = now; changed = true; ops().history?.('Campaign: ' + (key === 'fault' ? 'fault drill' : 'final incident') + ' repaired · service restored'); } }
-    if (changed) cache.at = 0;
     const cur = G.levels.current; if (cur > 10) return changed;
-    const lvl = (changed ? evaluate(true) : all)[cur];
+    const lvl = decorate(cur, levelChecks(cur, true));
     if (lvl?.ok) {
       const def = LEVELS[cur]; G.levels.earned[cur] = { at: now, reward: def.reward, summary: lvl.checks.map(c => c.label) };
       G.budget += def.reward; G.reputation = Math.min(100, (G.reputation || 50) + 3); G.levels.current = cur + 1;
       G.history.unshift({ at: now, actor: 'customer', message: 'Level ' + cur + ' · ' + def.title + ' accepted · $' + def.reward.toLocaleString() + ' · unlocked: ' + def.unlock }); G.history = G.history.slice(0, 300);
-      cache.at = 0; changed = true;
+      levelCache.clear(); changed = true;
     }
     return changed;
   }
@@ -249,7 +258,7 @@ export function createCampaign(world, network, ctx) {
     else if (kind === 'cable') pc.connected = false;
     else if (kind === 'port') s.ports[pc.id].admin = false;
     else if (kind === 'vlan') { s.ports[pc.id].vlan = 4093; sw.ports[pc.port].cfg.access = 4093; }
-    ctx.refreshFaults?.(); network.logic?.touch?.(); cache.at = 0;
+    ctx.refreshFaults?.(); network.logic?.touch?.(); levelCache.clear();
     const broke = !salesTest().ok; return { kind, target: kind === 'power' ? sw.id : pc.id, at: Date.now(), broke };
   }
   function apply(a, actor = 'ENGINEER-01') {
@@ -261,7 +270,7 @@ export function createCampaign(world, network, ctx) {
       if (!share || !Object.keys(s.files[share] || {}).length) throw Error('Write sample data to the Finance share first');
       if (!s.backups.length && !s.snapshots.length) throw Error('Create a recovery point before the incident');
       for (const files of Object.values(s.files)) for (const f of Object.values(files)) f.content = CORRUPT;
-      s.incidentClosed = false; ex.data = { at: Date.now() }; cache.at = 0; hist('Campaign: guided data incident · company files corrupted');
+      s.incidentClosed = false; ex.data = { at: Date.now() }; levelCache.clear(); hist('Campaign: guided data incident · company files corrupted');
       return 'Incident: company files were corrupted. Restore them from a recovery point.';
     }
     if (a.op === 'fault-drill' || a.op === 'final-incident') {
@@ -275,7 +284,7 @@ export function createCampaign(world, network, ctx) {
       const s = office().state; if (!s.wan.secondary) throw Error('Install the secondary ISP first');
       const before = s.wan.up; s.wan.up = false; let r; try { r = salesTest(); } finally { s.wan.up = before; }
       const via = r.steps?.find(x => x.name === 'SD-WAN');
-      ex.failover = { at: Date.now(), ok: r.ok, reason: r.ok ? (via ? via.detail : 'Service stayed up') : why(r) }; cache.at = 0; hist('Campaign: planned failover test ' + (r.ok ? 'passed' : 'failed'));
+      ex.failover = { at: Date.now(), ok: r.ok, reason: r.ok ? (via ? via.detail : 'Service stayed up') : why(r) }; levelCache.clear(); hist('Campaign: planned failover test ' + (r.ok ? 'passed' : 'failed'));
       return r.ok ? 'Failover test passed · primary WAN down, the Sales PC browsed through member 2' : 'Failover test failed · ' + ex.failover.reason;
     }
     throw Error('Unknown campaign action');
@@ -286,7 +295,7 @@ export function createCampaign(world, network, ctx) {
   }
   function categoryUnlocked(category) { const G = g(); if (!active() || !G.levels) return true; return (CATEGORY_LEVEL[category] ?? 0) <= G.levels.current; }
   function officeItemUnlocked(kind) { const G = g(); if (!active() || !G.levels) return true; return (OFFICE_ITEM_LEVEL[kind] ?? 0) <= G.levels.current; }
-  return { evaluate, status, tick, apply, summary, active, categoryUnlocked, officeItemUnlocked, invalidate() { cache.at = 0; } };
+  return { evaluate, status, tick, apply, summary, active, categoryUnlocked, officeItemUnlocked, invalidate() { levelCache.clear(); } };
 }
 
 // Migration: older campaign saves (v29–v31) get a levels record mapped from the enterprise chapters

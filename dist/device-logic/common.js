@@ -25,17 +25,17 @@ export function ordered(list) { return list.map((c, i) => [c, i]).sort((a, b) =>
 export const firstFailure = checks => checks.find(c => !c.ok && c.severity !== 'warning') || checks.find(c => !c.ok) || null;
 export const healthOf = checks => { const f = firstFailure(checks); return !f ? 'ok' : f.severity === 'warning' ? 'warning' : 'critical'; };
 
-// Per-epoch memo: the host / client logic tick (every 400 ms) and every world action advance the
-// epoch, so GUIs, LEDs and alarms read one cached result per device per tick, never per frame.
-let epoch = 0, stamp = 0;
-export const LOGIC_TICK_MS = 400;
-export const invalidate = () => { epoch++; stamp = Date.now(); };
+// Memo: every world action (or an explicit invalidate) advances the epoch, which clears everything at once.
+// Otherwise each device's results age out on their own after LOGIC_TICK_MS, so time-based state (boot,
+// rebuilds) stays current while devices refresh at staggered times instead of all on one frame.
+let epoch = 0;
+export const LOGIC_TICK_MS = 1200;
+export const invalidate = () => { epoch++; };
 export const currentEpoch = () => epoch;
 const memoStore = new WeakMap();
 export function memo(obj, key, fn) {
-  if (Date.now() - stamp > LOGIC_TICK_MS) invalidate();
-  let m = memoStore.get(obj);
-  if (!m || m.epoch !== epoch) { m = { epoch, v: new Map() }; memoStore.set(obj, m); }
+  let m = memoStore.get(obj); const now = Date.now();
+  if (!m || m.epoch !== epoch || now - m.at > LOGIC_TICK_MS) { m = { epoch, at: now, v: new Map() }; memoStore.set(obj, m); }
   if (!m.v.has(key)) m.v.set(key, fn());
   return m.v.get(key);
 }
@@ -69,7 +69,9 @@ export function portState(n, p, ctx) {
   if (l.disabled) { const vl = c => c.mode === 'trunk' ? 'trunk ' + (c.allowed || []).join(',') : 'access ' + c.access; return { state: 'down', led: 'amber', reason: p.medium === 'Fibre Channel' ? 'link down · zoning / fabric mismatch with ' + label(peer, far) : 'link down · VLAN mismatch ' + vl(x) + ' ↔ ' + vl(y) + ' with ' + label(peer, far), code: 'config' }; }
   return { state: 'up', led: 'green', blink: 'activity', reason: 'up ' + (Math.min(p.speed, far.speed) >= 1 ? Math.min(p.speed, far.speed) + 'G' : '') + ' → ' + label(peer, far), code: 'up', peer: peer.id, far };
 }
-export function portsState(n, ctx) { return n.ports.map((p, i) => ({ index: i, name: p.alias || p.name, ...portState(n, p, ctx), counters: errorCounters(p.link), rx: rxPower(p, p.link), optic: p.optic || null, connector: connector(p) })); }
+// Memoized per device per logic tick: several callers index it per port (was quadratic per refresh).
+export function portsState(n, ctx) { return memo(n, 'portsState', () => portsStateNow(n, ctx)); }
+function portsStateNow(n, ctx) { return n.ports.map((p, i) => ({ index: i, name: p.alias || p.name, ...portState(n, p, ctx), counters: errorCounters(p.link), rx: rxPower(p, p.link), optic: p.optic || null, connector: connector(p) })); }
 
 // PSU view: cord, live input and LED colour for each supply.
 export function psus(n) {
