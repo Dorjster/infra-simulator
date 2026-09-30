@@ -10,6 +10,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const gameRoot = await stat(path.join(here, 'game', 'lan', 'room.mjs')).then(() => path.join(here, 'game')).catch(() => path.resolve(here, '..'));
 const { startRoom } = await import(pathToFileURL(path.join(gameRoot, 'lan', 'room.mjs')).href);
 
+// Laptops with two GPUs: ask for the discrete one (Chromium/ANGLE picks the low-power GPU otherwise).
+app.commandLine.appendSwitch('force_high_performance_gpu');
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch
 let win = null, room = null, hosting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');

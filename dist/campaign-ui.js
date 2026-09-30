@@ -259,11 +259,13 @@ export function createCampaignUI(ctx) {
      <label>Walk speed<input data-set="speed" type="range" min="0.7" max="1.5" step="0.05" value="${p.speed}"></label>
      <label>Field of view · ${p.fov}°<input data-set="fov" type="range" min="60" max="100" value="${p.fov}"></label>
      <label>Text size<select data-set="uiScale">${[1, 1.15, 1.3].map(v => `<option ${p.uiScale === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-     <label>Graphics<select data-set="graphics">${['Low', 'Medium', 'High'].map(v => `<option ${p.graphics === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+     <label>Graphics<select data-set="graphics">${['Low', 'Medium', 'High'].map(v => `<option ${p.graphics === v ? 'selected' : ''}>${v}</option>`).join('')}</select><small>Low: fastest, sharp text kept · Medium: balanced · High: full display density</small></label>
+     <label>Resolution scale<select data-set="resolutionScale">${[[1, '100 %'], [.85, '85 %'], [.7, '70 % (fastest)']].map(([v, t]) => `<option value="${v}" ${+(p.resolutionScale ?? 1) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+     <label>Frame rate limit<select data-set="fpsCap">${[[0, 'Match display'], [60, '60 FPS'], [30, '30 FPS (battery)']].map(([v, t]) => `<option value="${v}" ${+(p.fpsCap || 0) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
      <label>Guidance<select data-set="assistance">${['Off', 'Minimal hints', 'Guided'].map(v => `<option ${p.assistance === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
      ${['toggleSprint', 'toggleCrouch', 'headBob', 'invertY', 'showFPS', 'showControls'].map(k => `<label class="chk"><input type="checkbox" data-set="${k}" ${p[k] ? 'checked' : ''}> ${({ toggleSprint: 'Toggle run', toggleCrouch: 'Toggle crouch', headBob: 'Head bob', invertY: 'Invert mouse Y', showFPS: 'Show FPS', showControls: 'Show control hints' })[k]}</label>`).join('')}</div>
      <h3>Controls</h3><table class="ctl"><tbody>${[['W A S D', 'Walk'], ['Shift', 'Run'], ['C / Ctrl', 'Crouch (low ports)'], ['Q', 'Raise view (top of rack)'], ['Mouse', 'Look'], ['E', 'The action shown under the crosshair'], ['G', 'Put down what you carry'], ['X', 'Cancel: return a loose cable end / unplug the laptop'], ['R', 'Remove a device or optic (hands empty)'], ['F', 'Inspect what you aim at'], ['V', 'Service action (clean fibre, provider ticket, re-mount)'], ['L', 'Service laptop'], ['1 / 2', 'Console cable / service Ethernet'], ['J', 'Objective'], ['I', 'Inventory & orders'], ['M', 'Map'], ['H', 'Next hint'], ['Enter / T', 'Team chat'], ['Esc', 'Menu']].map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</tbody></table>
-     <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button></div>`;
+     <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
   }
 
   function render() {
@@ -298,9 +300,10 @@ export function createCampaignUI(ctx) {
     else if (go === 'leave') { lan.playSolo(); render(); }
     else if (go === 'stop-hosting') { if (confirm('Stop hosting? Guests are disconnected; the campaign stays saved on this computer.')) { lan.playSolo(); desktop?.stopHosting().then(() => { notify('Hosting stopped · the room is local only'); render(); }); } }
     else if (go === 'unstuck') { close(); enter(); ctx.unstuck?.(); }
+    else if (go === 'diagnostics') { const text = JSON.stringify(globalThis.__infraDiagnostics?.() || {}, null, 2); navigator.clipboard?.writeText(text).then(() => notify('Diagnostics copied · paste them into your message'), () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = 'infra-diagnostics.json'; a.click(); notify('Diagnostics saved as infra-diagnostics.json'); }); }
     else if (go === 'inspect') { close(); document.body.classList.remove('in-game'); exit(); }
   });
-  $('campaign-panel').addEventListener('input', e => { const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
+  $('campaign-panel').addEventListener('input', e => { const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
   $('site-map') || 0;
   document.addEventListener('click', e => { const place = e.target.closest?.('#site-map [data-place]'); if (!place) return; const p = PLACES[place.dataset.place]; if (p?.x !== null && p) { focus = { x: p.x, z: p.z, label: p.label, until: Date.now() + 60000 }; notify('Marker · ' + p.label); render(); } });
 

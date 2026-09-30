@@ -1,3 +1,3 @@
-export const defaultPreferences={look:1,speed:1,fov:78,headBob:false,toggleSprint:false,toggleCrouch:false,uiScale:1,assistance:'Guided',graphics:'Medium',resolution:1.5,showFPS:false,clickToWalk:false};
+export const defaultPreferences={look:1,speed:1,fov:78,headBob:false,toggleSprint:false,toggleCrouch:false,uiScale:1,assistance:'Guided',graphics:'Medium',resolutionScale:1,fpsCap:0,showFPS:false,clickToWalk:false};
 export function loadPreferences(){try{return {...defaultPreferences,...JSON.parse(globalThis.localStorage?.getItem('infra-player-preferences')||'{}')};}catch{return {...defaultPreferences};}}
 export function savePreferences(p){try{localStorage.setItem('infra-player-preferences',JSON.stringify(p));}catch{}if(globalThis.document?.documentElement)document.documentElement.style.setProperty('--game-ui-scale',p.uiScale);globalThis.dispatchEvent?.(new CustomEvent('infra-preferences',{detail:p}));}

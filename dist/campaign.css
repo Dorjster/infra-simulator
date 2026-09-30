@@ -127,3 +127,6 @@ body.in-game header,body.in-game main,body.in-game footer,body.in-game .vignette
 .laptop-paste{margin:8px 0;padding:12px 14px;border:1px solid #ffbe6b;border-radius:8px;background:#221c10;color:#f3e6cc;font-size:13px}.laptop-paste[hidden]{display:none}
 .laptop-paste ol{margin:8px 0;padding-left:22px;max-height:180px;overflow:auto}.laptop-paste li.running{color:#ffbe6b}.laptop-paste li.done{color:#7ef0c4}
 .laptop-paste button{border:1px solid #6b5a3a;border-radius:6px;padding:6px 10px;background:#342a18;color:#f3e6cc;margin-right:6px}
+#gpu-warning{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:90;max-width:min(760px,calc(100vw - 32px));background:#3a2412;border:1px solid #ffbe6b;border-radius:8px;padding:10px 14px;color:#ffe9cc;font-size:13px;line-height:1.5}#gpu-warning button{margin-left:8px;border:1px solid #ffbe6b;border-radius:5px;padding:3px 8px;color:#ffe9cc;background:none}
+.set-grid small{color:var(--cp-muted);font-size:11.5px}
+#fps-display{font:12px ui-monospace,monospace!important;background:#08151ecc!important;padding:4px 8px!important;border-radius:5px}
