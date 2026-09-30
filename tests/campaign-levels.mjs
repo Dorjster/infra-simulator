@@ -241,6 +241,7 @@ assert.equal(op.game.levels.current, 11); assert.equal(Object.keys(op.game.level
 assert(C.evaluate(true).every(l => l.ok), 'every level passes after reload: ' + JSON.stringify(C.evaluate(true).filter(l => !l.ok).map(l => [l.id, l.checks.filter(c => !c.ok).map(c => c.label)])));
 console.log('  budget: start $' + startBudget.toLocaleString() + ' · lowest $' + lowest.toLocaleString() + ' · end $' + op.game.budget.toLocaleString());
 assert(lowest > 5000, 'no softlock: the campaign never runs out of money');
+console.log('  LAN world frame at level 10: ' + Math.round(JSON.stringify(w.snapshotFor()).length / 1024) + ' KB (sent once per change, not per pose)');
 console.log('  earned levels survive a regression (shown as repair) and save/restore; all 11 levels pass live after reload');
 console.log('PASS: campaign levels 0–10 · empty site → operational enterprise through physical, console, GUI and office actions; blocked paths (ordering only, unfed rack, powered-off server, permissive policy, one storage path, single feed, unrepaired drill) keep levels open.');
 process.exit(0);

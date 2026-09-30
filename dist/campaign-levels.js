@@ -117,7 +117,7 @@ export function createCampaign(world, network, ctx) {
     if (patched && sw) {
       const a = office().access(pc);
       if (!a.ok) path = { ok: false, reason: a.reason };
-      else path = network.accessStatus({ node: hub, port: hub.ports[pc.port], mode: 'DIRECT SERVICE LAN', laptopIP: pc.ip, laptopPrefix: pc.prefix }, sw);
+      else { path = network.accessStatus({ node: hub, port: hub.ports[pc.port], mode: 'DIRECT SERVICE LAN', laptopIP: pc.ip, laptopPrefix: pc.prefix }, sw); if (!path.ok && /VLAN differs/.test(path.reason)) path = { ok: false, reason: hub.id + ' ' + hub.ports[pc.port].name + ' (central PC) is not in VLAN 70 · make it an access port in VLAN 70 on the console' }; else if (!path.ok && /different subnet/.test(path.reason)) path = { ok: false, reason: 'The switch management address must be in 10.10.70.0/24 like the central PC (10.10.70.239)' }; }
     }
     const fam = sw ? productProfile(sw).family : 'fortiswitch', syntax = (CREDENTIAL_SYNTAX[fam] || CREDENTIAL_SYNTAX.fortiswitch).join(' · ');
     return [
