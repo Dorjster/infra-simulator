@@ -130,8 +130,11 @@ export function createCampaign(world, network, ctx) {
     ];
   }
   function level2() {
-    const r = salesTest(), dns = r.steps?.find(x => x.name === 'DNS resolver');
+    const r = salesTest(), dns = r.steps?.find(x => x.name === 'DNS resolver'), fw = byId[office().state.bindings.firewall] || installed('firewall')[0];
+    const fwPass = !!fw && !!configuredProduct(fw).identity?.passwordSet, fwMgmt = !!fw && mgmtAddress(fw);
     return [...fromContract(0, ['Sales PC opens https://example.test']),
+      step('fw-password', 'FortiGate admin password changed at first login', fwPass, !fw ? 'Install a FortiGate first' : fwPass ? 'Administrator password set' : 'Console login prompt, or FortiGate GUI → System → Settings', 'rack-row', 'Console: log in as admin with a blank password; FortiOS asks for a new one'),
+      step('fw-mgmt', 'FortiGate management address on VLAN 70', fwMgmt, !fw ? 'Install a FortiGate first' : fwMgmt ? fw.net.ip + '/' + fw.net.prefix : 'FortiGate GUI → management network: 10.10.70.x/24, VLAN 70', 'laptop'),
       step('dns', 'Public names resolve through the FortiGate DNS', !!dns?.ok, dns ? dns.detail : 'Sales PC has no DNS path yet', 'office'),
       step('browse', 'Sales PC browses https://example.test', r.ok, r.ok ? 'Verified from the Sales desktop' : why(r), 'office')];
   }
@@ -168,7 +171,7 @@ export function createCampaign(world, network, ctx) {
       step('recovery-point', 'A recovery point exists', points > 0, points ? points + ' recovery point(s)' : 'Run a backup (or snapshot)', 'laptop'),
       step('incident', 'Guided data incident started', !!ex.data, ex.data ? 'Files were corrupted at ' + new Date(ex.data.at).toLocaleTimeString() : 'Objective panel → Start guided data incident', 'laptop'),
       step('restored', 'Data restored from a recovery point after the incident', restored && !corrupt, !ex.data ? 'Start the incident first' : !restored ? 'Restore the recovery point (Office → Storage → recovery points)' : corrupt ? 'A file is still corrupted · restore a recovery point taken before the incident' : 'Restored', 'laptop'),
-      step('permissions', 'Permissions survived: Sales is still denied the Finance share', !!deny && !deny.ok && /permission/i.test(deny.reason || ''), !deny ? 'Needs the Finance share' : deny.ok ? 'Sales can open Finance data · fix the share permissions' : deny.reason, 'office')
+      step('permissions', 'Permissions survived: Sales is still denied the Finance share', !!deny && !deny.ok, !deny ? 'Needs the Finance share' : deny.ok ? 'Sales can open Finance data · fix the share permissions' : 'Denied · ' + (deny.steps?.find(x => !x.ok)?.name || deny.reason) + (deny.reason ? ' · ' + deny.reason : ''), 'office')
     ];
   }
   function level8() {
