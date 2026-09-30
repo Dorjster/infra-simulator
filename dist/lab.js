@@ -71,7 +71,7 @@ export function createLab(ctx){
  if(['0','1','2'].includes(k)){kit.selectSlot(+k);return;}
  if(k==='q'){elevated=!elevated;crouched=false;}
  if(['w','a','s','d'].includes(k))autoWalk=null;if(k==='shift'&&settings.toggleSprint)sprintToggle=!sprintToggle;if(k==='c'||k==='control'){crouched=settings.toggleCrouch?!crouched:true;elevated=false;}
- if(k==='x'){kit.disconnect();return;}if(k==='v'){if(engineering?.service)engineering.service(aim).then(done=>{if(done)keys.clear();});return;}
+ if(k==='x'){if(engineering?.cancelHeld())return;kit.disconnect();return;}if(k==='v'){if(engineering?.service)engineering.service(aim).then(done=>{if(done)keys.clear();});return;}
  if(k==='e'){if(!engineering.busy&&officeUI?.interact(aim)){keys.clear();return;}if(engineering?.interact(aim)){keys.clear();return;}if((aim?.port?.link&&!aim.port.service)||aim?.link){unplug(aim.port?.link||aim.link);return;}if(kit.interact(aim)){keys.clear();velocity.set(0,0,0);return;}if(kit.slot!==0){showEvent('AIM AT A SERVICE PORT','1 Console → orange CONSOLE · 2 LAN → blue SERVICE LAN');return;}if(aim?.port?.link)unplug(aim.port.link);else if(aim?.link)unplug(aim.link);else if(held&&aim?.port&&(aim.port===held.pa||aim.port===held.pb))replug(held);else showEvent('HANDS','Aim at a cable to unplug or at the original port to reconnect.');}
  if(k==='l'){keys.clear();kit.show();}if(k==='f')notify(aim?.node?aim.node.model+' · '+kit.network.localStatus(aim.node).reason+(aim.port?' · '+aim.port.name+' · '+aim.port.medium+' '+aim.port.speed+'G':''):engineering.prompt(aim)||'Aim at an item to inspect it');if(k==='g')engineering.drop();if(k==='r')engineering.remove(aim);
   });
