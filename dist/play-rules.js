@@ -13,5 +13,9 @@ export const EMOTE_IDS=['salute','wave','wait','shrug','panic','dead'];
 export const FACE_IDS=['cute','smile','bigeyes','grumpy','angry','sleepy'];
 // Head colours a player can choose for their avatar.
 export const SKIN_IDS=['yellow','red','blue','green','pink','mint'];
+// Character options (headwear, outfit style) and what a player is visibly carrying (host-validated).
+export const HAT_IDS=['cap','helmet','beanie','headset','hair'];
+export const OUTFIT_IDS=['bands','vest','plain'];
+export const CARRY_IDS=['box','rack','cable'];
 // Player display names: letters, digits, space, _ and -; at most 20 characters.
 export function cleanName(value){return String(value||'').replace(/[^\p{L}\p{N} _-]/gu,'').trim().slice(0,20)||'Engineer';}

@@ -1,11 +1,12 @@
-// Engineer avatar: a round-headed cartoon scout (big glossy eyes, freckles, toothy grin, scout cap,
-// khaki uniform with collar, navy sash and badges). Each engineer's colour is on the cap band, the
-// neckerchief and the laptop lid, and on the name tag.
+// Engineer avatar (v33): an original, compact data-center engineer with a big round head and expressive
+// face: work jacket in the player's colour (reflective bands, a hi-vis vest or plain), charcoal work
+// trousers, utility belt with pouches, chunky boots and an ID badge on a lanyard. Headwear (cap, bump
+// helmet, beanie, headset or hair) and the outfit style give each player a shape cue beyond colour.
 // The rig is a handful of pivots (body, head, arms, legs, laptop), each ONE vertex-coloured mesh, so a
 // player costs ~8 draw calls. Everything is procedural: walking, crouching, carrying the laptop and six
 // emotes are driven by update(dt, state) on every client from the shared pose.
 import * as THREE from './three.module.js';
-import { EMOTE_IDS as ALLOWED, FACE_IDS as ALLOWED_FACES, SKIN_IDS } from './play-rules.js';
+import { EMOTE_IDS as ALLOWED, FACE_IDS as ALLOWED_FACES, SKIN_IDS, HAT_IDS, OUTFIT_IDS } from './play-rules.js';
 
 export const EMOTES = [
   { id: 'salute', label: 'Salute', key: '1', bubble: 'o7', face: 'idle', duration: 2.4 },
@@ -19,7 +20,10 @@ export const EMOTE_IDS = EMOTES.map(e => e.id);
 if (EMOTE_IDS.join() !== ALLOWED.join()) throw Error('Emote list differs from play-rules EMOTE_IDS');
 const byEmote = Object.fromEntries(EMOTES.map(e => [e.id, e]));
 
-const C = { yellow: 0xf0b400, yellowDark: 0xd8950a, khaki: 0xa98a52, khakiDark: 0x8a6d3e, collar: 0x3d8fd8, cream: 0xdccb9c, navy: 0x1f2d57, shoe: 0x4a3a2f, belt: 0x6b4f32, grey: 0x2b3440, badge: [0xe84a4a, 0x4cc27a, 0x3fb3e6, 0xf2c14e] };
+const C = { pants: 0x2f353d, pantsDark: 0x252a31, boot: 0x3a2a1e, sole: 0x1a1512, belt: 0x2a2320, pouch: 0x4a4038, reflect: 0xe9eef2, hiviz: 0xf2b21b, collar: 0x23282e, badge: 0xf4f6f8, lanyard: 0x1f6fd0, grey: 0x2b3440, cap: 0x2a3440, helmet: 0xf0f2f4, beanie: 0x7a3b3b, headset: 0x1d2228, hair: 0x3b2618, carton: 0xa9824f, cable: 0xff8a38 };
+export const HATS = [{ id: 'cap', label: 'Cap' }, { id: 'helmet', label: 'Bump helmet' }, { id: 'beanie', label: 'Beanie' }, { id: 'headset', label: 'Headset' }, { id: 'hair', label: 'Hair' }];
+export const OUTFITS = [{ id: 'bands', label: 'Reflective bands' }, { id: 'vest', label: 'Hi-vis vest' }, { id: 'plain', label: 'Plain jacket' }];
+if (HATS.map(h => h.id).join() !== HAT_IDS.join() || OUTFITS.map(o => o.id).join() !== OUTFIT_IDS.join()) throw Error('Character options differ from play-rules');
 
 // ---- geometry helpers: bake many primitives into one vertex-coloured geometry --------------------
 function bake(parts) {
@@ -110,38 +114,43 @@ function screenTexture() {
 
 // ---- rig ----------------------------------------------------------------------------------------
 const HIP = 2.35, SHOULDER = 6.0, NECK = 6.35, HEAD_R = 2.05;
-export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = 'cute', skin = 'yellow' } = {}) {
+export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = 'cute', skin = 'yellow', hat = 'cap', outfit = 'bands' } = {}) {
+  hat = HAT_IDS.includes(hat) ? hat : 'cap'; outfit = OUTFIT_IDS.includes(outfit) ? outfit : 'bands';
   const SK = SKINS[skin] || SKINS.yellow;
   let style = FACES.some(f => f.id === face) ? face : 'cute';
   const g = new THREE.Group(), rig = new THREE.Group(); rig.rotation.y = Math.PI; g.add(rig); // built facing +z; camera looks −z
   const fall = new THREE.Group(); rig.add(fall);                    // pivot at the feet for the "dead" fall
   const body = new THREE.Group(); fall.add(body);
   const mesh = (geo, parent) => { const m = new THREE.Mesh(geo, bodyMaterial); m.castShadow = true; parent.add(m); return m; };
-  // Torso: shirt, shorts, belt, collar, neckerchief, sash + badges (front and back).
-  const sash = [];
-  for (const side of [1, -1]) { sash.push(P(new THREE.BoxGeometry(.58, 4.3, .14), C.navy, M(0, 4.35, side * 1.36, 0, 0, side * .62))); }
-  C.badge.forEach((b, i) => sash.push(P(new THREE.CylinderGeometry(.2, .2, .1, 12), b, M(-.62 + i * .42, 3.35 + i * .62 * .72 + .2, 1.47, Math.PI / 2, 0, 0))));
+  // Torso: work jacket in the player colour (+ reflective bands / hi-vis vest), collar, utility belt with
+  // pouches, ID badge on a lanyard. Hips in work-trouser charcoal.
+  const jacket = new THREE.Color(color).lerp(new THREE.Color(0x3a4048), .18).getHex(), jacketDark = new THREE.Color(jacket).multiplyScalar(.72).getHex();
   const torso = new THREE.Group(); torso.position.y = HIP; body.add(torso);
-  mesh(bake([
-    P(new THREE.CylinderGeometry(1.32, 1.5, 3.3, 18), C.khaki, M(0, 2.0 - .05, 0)),
-    P(new THREE.CylinderGeometry(1.52, 1.46, .95, 18), C.khakiDark, M(0, .1, 0)),
-    P(new THREE.CylinderGeometry(1.54, 1.54, .3, 18), C.belt, M(0, .62, 0)),
-    P(new THREE.CylinderGeometry(1.12, 1.36, .42, 18), C.collar, M(0, 3.5, 0)),
-    P(new THREE.ConeGeometry(.5, 1.0, 3), color, M(0, 3.05, 1.24, Math.PI, 0, 0, 1, 1, .5)),
-    P(new THREE.BoxGeometry(.28, .5, .12), C.cream, M(.72, 2.55, 1.3, 0, 0, 0)),
-    ...sash.map(p => ({ ...p, m: new THREE.Matrix4().makeTranslation(0, -HIP, 0).multiply(p.m) })),
-  ]), torso);
-  // Head: yellow ball + cap (crown, band in the player colour, rolled brim) + face decal.
+  const torsoParts = [
+    P(new THREE.CylinderGeometry(1.34, 1.52, 3.2, 20), jacket, M(0, 1.95, 0)),
+    P(new THREE.CylinderGeometry(1.53, 1.5, .9, 20), C.pants, M(0, .1, 0)),
+    P(new THREE.CylinderGeometry(1.56, 1.56, .34, 20), C.belt, M(0, .6, 0)),
+    P(new THREE.BoxGeometry(.22, .3, .08), 0xc7ccd1, M(0, .6, 1.56)),
+    P(new THREE.BoxGeometry(.5, .56, .4), C.pouch, M(1.3, .5, .55, 0, .5, 0)), P(new THREE.BoxGeometry(.42, .5, .36), C.pouch, M(-1.32, .5, .45, 0, -.5, 0)),
+    P(new THREE.CylinderGeometry(.06, .06, .7, 6), 0xd23b2a, M(-1.45, .95, .35)),
+    P(new THREE.CylinderGeometry(1.16, 1.38, .46, 20), C.collar, M(0, 3.48, 0)),
+    P(new THREE.BoxGeometry(.08, 3.0, .06), jacketDark, M(0, 1.95, 1.5, -.06, 0, 0)),
+    P(new THREE.TorusGeometry(.62, .04, 4, 18, Math.PI), C.lanyard, M(0, 3.05, 1.12, -.25, 0, Math.PI)),
+    P(new THREE.BoxGeometry(.5, .66, .05), C.badge, M(.02, 2.35, 1.46, -.08, 0, 0)), P(new THREE.BoxGeometry(.34, .16, .06), color, M(.02, 2.55, 1.49, -.08, 0, 0)),
+  ];
+  if (outfit === 'bands') for (const y of [1.25, 1.75]) torsoParts.push(P(new THREE.CylinderGeometry(1.43 - (y - 1.25) * .04, 1.45 - (y - 1.25) * .04, .16, 20), C.reflect, M(0, y, 0)));
+  if (outfit === 'vest') { torsoParts.push(P(new THREE.CylinderGeometry(1.4, 1.54, 2.35, 20, 1, true), C.hiviz, M(0, 1.95, 0))); for (const y of [1.3, 1.85]) torsoParts.push(P(new THREE.CylinderGeometry(1.45, 1.52, .14, 20), C.reflect, M(0, y, 0))); }
+  mesh(bake(torsoParts), torso);
+  // Head: big round head in the chosen colour + headwear. Headwear shape is readable at a distance.
   const head = new THREE.Group(); head.position.y = NECK - HIP; torso.add(head);
-  mesh(bake([
-    P(new THREE.SphereGeometry(HEAD_R, 28, 20), SK[0], M(0, HEAD_R * .96, 0, 0, 0, 0, 1.04, 1, .98)),
-    P(new THREE.CylinderGeometry(.55, .7, .5, 12), SK[1], M(0, 0, 0)),
-    // Small sailor-style scout cap perched on top, tipped back (crown, player-colour band, rolled brim).
-    P(new THREE.CylinderGeometry(.82, .98, .62, 20), C.cream, M(0, HEAD_R * 1.93, -.42, -.42, 0, 0)),
-    P(new THREE.SphereGeometry(.82, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), C.cream, M(0, HEAD_R * 1.93 + .3, -.54, -.42, 0, 0, 1, .38, 1)),
-    P(new THREE.CylinderGeometry(1.0, 1.02, .24, 20), color, M(0, HEAD_R * 1.93 - .27, -.3, -.42, 0, 0)),
-    P(new THREE.TorusGeometry(1.06, .16, 8, 22), C.cream, M(0, HEAD_R * 1.93 - .42, -.24, Math.PI / 2 - .42, 0, 0)),
-  ]), head);
+  const hatTop = HEAD_R * 1.9, headParts = [P(new THREE.SphereGeometry(HEAD_R, 28, 20), SK[0], M(0, HEAD_R * .96, 0, 0, 0, 0, 1.04, 1, .98)), P(new THREE.CylinderGeometry(.55, .7, .5, 12), SK[1], M(0, 0, 0))];
+  for (const x of [-1, 1]) headParts.push(P(new THREE.SphereGeometry(.34, 10, 8), SK[1], M(x * HEAD_R * 1.02, HEAD_R * .95, -.05, 0, 0, 0, .55, 1, .8)));
+  if (hat === 'cap') headParts.push(P(new THREE.SphereGeometry(HEAD_R * 1.03, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2.1), C.cap, M(0, HEAD_R * 1.08, -.05)), P(new THREE.CylinderGeometry(1.25, 1.25, .1, 20, 1, false, -Math.PI / 2 - .9, 1.8), C.cap, M(0, HEAD_R * 1.12, .55, .12, 0, 0, 1, 1, 1.3)), P(new THREE.CylinderGeometry(.5, .5, .06, 14), color, M(0, HEAD_R * 1.55, 1.25, -1.1, 0, 0)));
+  if (hat === 'helmet') headParts.push(P(new THREE.SphereGeometry(HEAD_R * 1.1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), C.helmet, M(0, HEAD_R * 1.02, -.05)), P(new THREE.TorusGeometry(HEAD_R * 1.08, .1, 6, 28), C.helmet, M(0, HEAD_R * 1.03, -.05, Math.PI / 2, 0, 0)), P(new THREE.BoxGeometry(.34, 1.0, .1), color, M(0, HEAD_R * 1.7, -.1, -.35, 0, 0)), P(new THREE.CylinderGeometry(1.0, 1.0, .1, 16, 1, false, -.9, 1.8), C.helmet, M(0, HEAD_R * 1.06, .7, .05, 0, 0, 1, 1, .9)));
+  if (hat === 'beanie') headParts.push(P(new THREE.SphereGeometry(HEAD_R * 1.06, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), color, M(0, HEAD_R * 1.12, -.08, 0, 0, 0, 1, 1.12, 1)), P(new THREE.TorusGeometry(HEAD_R * 1.02, .2, 8, 28), new THREE.Color(color).multiplyScalar(.75).getHex(), M(0, HEAD_R * 1.12, -.06, Math.PI / 2, 0, 0)), P(new THREE.SphereGeometry(.42, 12, 8), 0xf1f1ec, M(0, hatTop + .55, -.2)));
+  if (hat === 'headset') headParts.push(P(new THREE.TorusGeometry(HEAD_R * 1.04, .12, 6, 24, Math.PI), C.headset, M(0, HEAD_R * 1.0, 0, 0, 0, 0)), ...[-1, 1].map(x => P(new THREE.CylinderGeometry(.55, .55, .36, 16), C.headset, M(x * HEAD_R * 1.04, HEAD_R * .95, 0, 0, 0, Math.PI / 2))), P(new THREE.CylinderGeometry(.06, .06, 1.4, 6), C.headset, M(-HEAD_R * .88, HEAD_R * .55, .7, 1.2, .35, 0)), P(new THREE.SphereGeometry(.16, 8, 6), color, M(-HEAD_R * .55, HEAD_R * .35, 1.22)), P(new THREE.SphereGeometry(HEAD_R * .98, 20, 10, 0, Math.PI * 2, 0, Math.PI / 3), C.hair, M(0, HEAD_R * 1.06, -.12)));
+  if (hat === 'hair') headParts.push(P(new THREE.SphereGeometry(HEAD_R * 1.02, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2.6), C.hair, M(0, HEAD_R * 1.03, -.14)), ...[[-.55, .4], [.1, .6], [.6, .35]].map(([x, t]) => P(new THREE.ConeGeometry(.42, .9, 8), C.hair, M(x, hatTop + .2, .55, .6 + t * .3, 0, x * .5))));
+  mesh(bake(headParts), head);
   const faceMat = new THREE.MeshStandardMaterial({ map: faceTexture(style, 'idle'), transparent: true, roughness: .55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
   faceMat.userData.shared = true;
   const faceMesh = new THREE.Mesh(new THREE.SphereGeometry(HEAD_R * 1.012, 28, 18, Math.PI / 2 - 1.05, 2.1, .78, 1.45), faceMat);
@@ -150,22 +159,26 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   // Arms: upper arm (shoulder + sleeve) → elbow → forearm with a flat mitten hand and thumb.
   const elbows = {};
   const arm = side => { const p = new THREE.Group(); p.position.set(side * 1.62, SHOULDER - HIP, 0); torso.add(p); mesh(bake([
-    P(new THREE.SphereGeometry(.52, 12, 8), C.khaki, M(0, 0, 0)),
-    P(new THREE.CylinderGeometry(.5, .44, 1.3, 12), C.khaki, M(0, -.6, 0)),
+    P(new THREE.SphereGeometry(.54, 12, 8), jacket, M(0, 0, 0)),
+    P(new THREE.CylinderGeometry(.52, .46, 1.3, 12), jacket, M(0, -.6, 0)),
+    ...(outfit === 'bands' ? [P(new THREE.CylinderGeometry(.5, .49, .14, 12), C.reflect, M(0, -.85, 0))] : []),
   ]), p);
     const el = new THREE.Group(); el.position.y = -1.2; p.add(el); elbows[side > 0 ? 'L' : 'R'] = el; mesh(bake([
-    P(new THREE.SphereGeometry(.36, 10, 8), SK[0], M(0, 0, 0)),
-    P(new THREE.CylinderGeometry(.34, .31, 1.1, 12), SK[0], M(0, -.5, 0)),
+    P(new THREE.SphereGeometry(.42, 10, 8), jacket, M(0, 0, 0)),
+    P(new THREE.CylinderGeometry(.41, .38, .9, 12), jacket, M(0, -.4, 0)),
+    P(new THREE.CylinderGeometry(.4, .4, .16, 12), jacketDark, M(0, -.86, 0)),
     P(new THREE.SphereGeometry(.56, 14, 10), SK[0], M(0, -1.36, .04, 0, 0, 0, .92, 1.12, .6)),
     P(new THREE.SphereGeometry(.22, 10, 8), SK[0], M(-side * .44, -1.12, .2, 0, 0, 0, 1, 1.4, 1)),
   ]), el); return p; };
   const arms = { L: arm(1), R: arm(-1) };
   // Legs (shorts cuff, yellow shin, cream sock, brown shoe), pivot at the hip.
   const leg = side => { const p = new THREE.Group(); p.position.set(side * .7, HIP, 0); body.add(p); mesh(bake([
-    P(new THREE.CylinderGeometry(.5, .46, .6, 12), C.khakiDark, M(0, -.25, 0)),
-    P(new THREE.CylinderGeometry(.34, .32, 1.0, 12), SK[0], M(0, -.95, 0)),
-    P(new THREE.CylinderGeometry(.36, .36, .6, 12), C.cream, M(0, -1.65, 0)),
-    P(new THREE.SphereGeometry(.55, 14, 10), C.shoe, M(0, -2.08, .22, 0, 0, 0, .95, .55, 1.35)),
+    P(new THREE.CylinderGeometry(.52, .46, .7, 12), C.pants, M(0, -.3, 0)),
+    P(new THREE.CylinderGeometry(.44, .42, 1.1, 12), C.pants, M(0, -1.1, 0)),
+    P(new THREE.BoxGeometry(.3, .34, .06), C.pantsDark, M(side * .1, -1.0, .43)),
+    P(new THREE.CylinderGeometry(.46, .5, .42, 12), C.boot, M(0, -1.78, .04)),
+    P(new THREE.SphereGeometry(.6, 14, 10), C.boot, M(0, -2.02, .3, 0, 0, 0, .95, .52, 1.35)),
+    P(new THREE.BoxGeometry(1.1, .12, 1.5), C.sole, M(0, -2.26, .28)),
   ]), p); return p; };
   const legs = { L: leg(1), R: leg(-1) };
   // Laptop carried in both hands, screen facing the carrier (others see the lid and the screen glow).
@@ -173,6 +186,11 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   mesh(bake([P(new THREE.BoxGeometry(2.1, .12, 1.45), C.grey, M(0, 0, 0)), P(new THREE.BoxGeometry(2.1, 1.4, .1), C.grey, M(0, .66, .72, .28, 0, 0)), P(new THREE.BoxGeometry(.5, .5, .02), color, M(0, .7, .79, .28, 0, 0))]), laptop);
   const screenMat = new THREE.MeshBasicMaterial({ map: screenTexture() }); screenMat.userData.shared = true;
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 1.2), screenMat); screen.position.set(0, .66, .66); screen.rotation.set(.28, Math.PI, 0); laptop.add(screen);
+  // Carried props other players see: a carton / rack box between the hands, a cable coil in one hand.
+  const carton = new THREE.Group(); carton.position.set(0, 1.35, 2.05); carton.visible = false; torso.add(carton);
+  mesh(bake([P(new THREE.BoxGeometry(2.6, 1.5, 1.7), C.carton, M(0, 0, 0)), P(new THREE.BoxGeometry(2.62, .12, .4), 0xd9c9a4, M(0, .76, 0)), P(new THREE.BoxGeometry(.9, .5, .02), 0xf2f2f2, M(.6, .1, .86))]), carton);
+  const coil = new THREE.Group(); coil.visible = false; elbows.L.add(coil); coil.position.set(0, -1.55, .25);
+  const coilMesh = mesh(bake([P(new THREE.TorusGeometry(.55, .1, 6, 20), C.cable, M(0, 0, 0, 0, Math.PI / 2, 0)), P(new THREE.TorusGeometry(.48, .1, 6, 20), C.cable, M(.08, .02, 0, 0, Math.PI / 2 + .2, 0)), P(new THREE.BoxGeometry(.2, .3, .2), 0xd9dde0, M(0, -.6, .1))]), coil);
   // Name tag and emote bubble.
   let shownName = name; const label = name ? nameSprite(name, labelColor ?? color) : null; if (label) { label.position.y = 12.1; g.add(label); }
   // Name tag follows renames (LAN /api/name).
@@ -181,7 +199,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   const bubble = new THREE.Sprite(bubbleMat); bubble.scale.set(2.6, 1.3, 1); bubble.position.y = 13.4; bubble.visible = false; bubble.renderOrder = 5; g.add(bubble);
 
   // ---- animation state ----
-  const s = { phase: 0, speed: 0, t: 0, emote: null, emoteT: 0, blinkAt: 2 + Math.random() * 3, face: '', crouch: 0, laptop: 0, w: 0 };
+  const s = { phase: 0, speed: 0, t: 0, emote: null, emoteT: 0, blinkAt: 2 + Math.random() * 3, face: '', crouch: 0, laptop: 0, w: 0, carry: 0, cable: 0, point: 0, turn: 0 };
   const cur = { aL: new THREE.Euler(), aR: new THREE.Euler(), bL: new THREE.Euler(), bR: new THREE.Euler(), lL: 0, lR: 0, lLz: 0, lRz: 0, head: new THREE.Euler(), torso: new THREE.Euler(), lift: 0, fall: 0 };
   const aim = (dx, dy, dz) => { const l = Math.hypot(dx, dy, dz) || 1; dx /= l; dy /= l; dz /= l; const cf = Math.sqrt(Math.max(1e-6, 1 - dx * dx)); return [Math.atan2(-dz / cf, -dy / cf), 0, Math.asin(dx)]; };
   // Forearm direction (torso space) → elbow rotation, given the upper-arm rotation.
@@ -194,7 +212,11 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     s.t += dt; s.speed += ((st.speed || 0) - s.speed) * Math.min(1, dt * 8);
     s.crouch += ((st.crouch ? 1 : 0) - s.crouch) * Math.min(1, dt * 10);
     s.laptop += ((st.laptop ? 1 : 0) - s.laptop) * Math.min(1, dt * 8); laptop.visible = s.laptop > .5;
-    const moving = Math.min(1, s.speed / 6), stride = Math.min(1.3, s.speed / 9);
+    const carrying = st.carry === 'box' || st.carry === 'rack'; s.carry += ((carrying ? 1 : 0) - s.carry) * Math.min(1, dt * 9); s.cable += ((st.carry === 'cable' ? 1 : 0) - s.cable) * Math.min(1, dt * 9); s.point += ((st.point ? 1 : 0) - s.point) * Math.min(1, dt * 10);
+    carton.visible = s.carry > .4; if (carton.visible) carton.scale.setScalar(st.carry === 'rack' ? 1.35 : 1); coil.visible = s.cable > .4;
+    // Turning on the spot: short alternating steps instead of gliding.
+    s.turn += ((Math.min(1, Math.abs(st.turn || 0) / 2)) - s.turn) * Math.min(1, dt * 8);
+    const moving = Math.max(Math.min(1, s.speed / 6), s.turn * .45), stride = Math.max(Math.min(1.3, s.speed / 9), s.turn * .35) * (1 - s.carry * .35);
     s.phase += dt * (3.2 + s.speed * .55) * (moving > .05 ? 1 : 0);
     if (s.emote) { s.emoteT += dt; if (s.emoteT > s.emote.duration || (moving > .5 && s.emote.id !== 'dead')) s.emote = null; }
     const e = s.emote, et = s.emoteT, D = e?.duration || 1, w = e ? Math.min(1, et / .22, (D - et) / .3) : 0; s.w = w;
@@ -203,6 +225,12 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     let aL = [sw * .9 * (1 - s.laptop), 0, .08], aR = [-sw * .9 * (1 - s.laptop), 0, -.08];
     let bL = [-.25 - .15 * Math.max(0, sw), 0, 0], bR = [-.25 - .15 * Math.max(0, -sw), 0, 0];
     if (s.laptop > .01) { const l = s.laptop, up = [aim(.12, -.95, .3), aim(-.12, -.95, .3)]; aL = mix(aL, up[0], l); aR = mix(aR, up[1], l); bL = mix(bL, fore(up[0], -.28, -.12, 1), l); bR = mix(bR, fore(up[1], .28, -.12, 1), l); }
+    // Carrying a box: both hands under the carton, elbows out, a little lean back.
+    if (s.carry > .01) { const c = s.carry, up = [aim(.3, -.8, .5), aim(-.3, -.8, .5)]; aL = mix(aL, up[0], c); aR = mix(aR, up[1], c); bL = mix(bL, fore(up[0], -.35, .05, 1), c); bR = mix(bR, fore(up[1], .35, .05, 1), c); }
+    // Holding a cable: coil in the left hand at the hip, the right hand forward with the plug end.
+    if (s.cable > .01) { const c = s.cable, l = aim(.15, -.95, .25), r = aim(-.15, -.7, .7); aL = mix(aL, l, c); bL = mix(bL, fore(l, 0, -.2, 1), c); aR = mix(aR, r, c); bR = mix(bR, fore(r, 0, .1, 1), c); }
+    // Pointing (team ping): right arm straight forward and slightly up.
+    if (s.point > .01) { const p = s.point, r = aim(-.05, .15, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, .12, 1), p); }
     let lL = -sw, lR = sw, lLz = 0, lRz = 0, hT = [breathe - .05 * s.laptop * 3, 0, 0], tT = [moving * .08, 0, 0], lift = Math.abs(Math.cos(s.phase)) * .22 * moving, fT = 0;
     // Emote pose, blended in/out.
     if (e) {
@@ -226,12 +254,12 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     arms.L.rotation.copy(cur.aL); arms.R.rotation.copy(cur.aR); elbows.L.rotation.copy(cur.bL); elbows.R.rotation.copy(cur.bR); head.rotation.copy(cur.head); torso.rotation.copy(cur.torso);
     legs.L.rotation.set(cur.lL + s.crouch * -1.1, 0, cur.lLz); legs.R.rotation.set(cur.lR + s.crouch * -1.1, 0, cur.lRz);
     torso.position.y = HIP + breathe * 2 + cur.lift - s.crouch * .9; legs.L.position.y = legs.R.position.y = HIP - s.crouch * .9;
-    torso.position.z = s.crouch * .7; torso.rotation.x += s.crouch * .25;
+    torso.position.z = s.crouch * .7; torso.rotation.x += s.crouch * .25 - s.carry * .08;
     fall.rotation.x = -Math.PI / 2 * cur.fall; fall.position.y = 1.45 * cur.fall;
     if (label) label.position.y = (12.1 - s.crouch * 2.2) * (1 - cur.fall) + 5 * cur.fall;
   }
   function dispose() { g.removeFromParent(); g.traverse(o => { if (o.geometry) o.geometry.dispose(); const m = o.material; if (m && m !== bodyMaterial && !m.userData?.shared) { m.map?.dispose(); m.dispose(); } }); }
-  return { g, label, update, play, dispose, setName, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso } };
+  return { g, label, update, play, dispose, setName, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', hat, outfit, setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso, carton, coil } };
 }
 function mix(a, b, w) { return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w]; }
 function ease(e, t, k) { e.x += (t[0] - e.x) * k; e.y += (t[1] - e.y) * k; e.z += (t[2] - e.z) * k; }
