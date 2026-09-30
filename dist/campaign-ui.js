@@ -80,7 +80,7 @@ export function createCampaignUI(ctx) {
     if (globalThis.infraDesktop) return startLocalRoom();
     lan.playSolo();
     const d = localSave(), lv = d?.operations?.levels;
-    subPanel(`<h2>Solo Campaign</h2>${d ? `<div class="ss-save"><strong>${esc(d.operations.name)}</strong><span>${lv ? 'Level ' + Math.min(lv.current, 10) + ' · ' + esc(LEVELS[Math.min(lv.current, 10)].title) : (d.operations.enterprise ? 'Contract campaign' : 'Project campaign') + ' (older save · continues as levels)'} · $${(d.operations.budget || 0).toLocaleString()}</span><button id="ss-continue" class="primary">Continue</button></div>` : ''}
+    subPanel(`<h2>Solo Campaign</h2>${d ? `<div class="ss-save"><strong>${esc(d.operations.name)}</strong><span>${lv ? (lv.current > 10 ? 'Campaign complete' : 'Level ' + lv.current + ' · ' + esc(LEVELS[lv.current].title)) : (d.operations.enterprise ? 'Contract campaign' : 'Project campaign') + ' (older save · continues as levels)'} · $${(d.operations.budget || 0).toLocaleString()}</span><button id="ss-continue" class="primary">Continue</button></div>` : ''}
      <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="Northwind HQ"></label>${titlePicker()}<button id="ss-new" class="${d ? '' : 'primary'}">Start new campaign · Level 0</button></div>
      <p class="ss-note">The site starts empty: no racks, switches, firewall, servers or internal cabling. Building power feeds, the office structured cabling and the provider's street fibre are the only things already there.</p>`, el => {
       el.querySelector('#ss-continue')?.addEventListener('click', () => { if (lan.connected) lan.playSolo(); try { world.restore(d); kit.refreshTargets?.(); } catch (e) { notify('Save could not load: ' + e.message); return; } begin(); });
@@ -94,7 +94,7 @@ export function createCampaignUI(ctx) {
     const info = await roomInfo();
     if (!lan.connected && info?.localHost) await lan.join({ name: localStorage.getItem('infra-name') || 'Engineer', code: info.roomCode, hostKey: info.hostKey }, true);
     const w = g(), lv = w.levels;
-    subPanel(`<h2>Solo Campaign</h2>${w.mode === 'campaign' ? `<div class="ss-save"><strong>${esc(w.name)}</strong><span>${lv ? 'Level ' + Math.min(lv.current, 10) + ' · ' + esc(LEVELS[Math.min(lv.current, 10)].title) : 'Campaign'} · $${w.budget.toLocaleString()}</span><button id="ss-continue" class="primary">Continue</button></div>` : ''}
+    subPanel(`<h2>Solo Campaign</h2>${w.mode === 'campaign' ? `<div class="ss-save"><strong>${esc(w.name)}</strong><span>${lv ? (lv.current > 10 ? 'Campaign complete' : 'Level ' + lv.current + ' · ' + esc(LEVELS[lv.current].title)) : 'Campaign'} · $${w.budget.toLocaleString()}</span><button id="ss-continue" class="primary">Continue</button></div>` : ''}
      <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="Northwind HQ"></label>${titlePicker()}<button id="ss-new" class="${w.mode === 'campaign' ? '' : 'primary'}">Start new campaign · Level 0</button></div>
      <p class="ss-note">Saved automatically in your user folder (File → Show saves folder). The site starts empty: only building power, the office cabling and the provider's street fibre are already there.</p>`, el => {
       el.querySelector('#ss-continue')?.addEventListener('click', begin);
@@ -110,7 +110,7 @@ export function createCampaignUI(ctx) {
     if (!lan.connected) await lan.join({ name: 'Host', code: info.roomCode, hostKey: info.hostKey }, true);
     const w = g(), lv = w.levels, addrs = (hosted?.addresses || info.addresses || []).map(a => `<code>${esc(a)}</code>`).join(' ');
     subPanel(`<h2>LAN Host Campaign</h2><div class="ss-room"><div><span>Room code</span><strong>${esc(hosted?.roomCode || info.roomCode || lan.roomCode || '')}</strong></div><div><span>Friends open</span>${addrs || '<code>' + esc(location.host) + '</code>'}</div><div><span>Engineers</span><strong>${lan.players?.length || 1}/12</strong></div></div>
-     ${w.mode === 'campaign' ? `<div class="ss-save"><strong>${esc(w.name)}</strong><span>${lv ? 'Level ' + Math.min(lv.current, 10) + ' · ' + esc(LEVELS[Math.min(lv.current, 10)].title) : 'Campaign'} · $${w.budget.toLocaleString()}</span><button id="ss-host-continue" class="primary">Continue hosted campaign</button></div>` : ''}
+     ${w.mode === 'campaign' ? `<div class="ss-save"><strong>${esc(w.name)}</strong><span>${lv ? (lv.current > 10 ? 'Campaign complete' : 'Level ' + lv.current + ' · ' + esc(LEVELS[lv.current].title)) : 'Campaign'} · $${w.budget.toLocaleString()}</span><button id="ss-host-continue" class="primary">Continue hosted campaign</button></div>` : ''}
      <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="LAN HQ"></label>${titlePicker()}<button id="ss-host-new" class="${w.mode === 'campaign' ? '' : 'primary'}">Start new campaign · Level 0</button></div>
      <p class="ss-note">The campaign is saved on this computer (the host). Guests join with the room code and can do every task; only you choose the mode and saves. Keep this window open while hosting.${desktop ? ' If your firewall asks, allow Infra Simulator on private networks. Stop hosting from Team at any time.' : ''}</p>`, el => {
       el.querySelector('#ss-host-continue')?.addEventListener('click', begin);

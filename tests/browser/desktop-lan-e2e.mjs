@@ -1,0 +1,134 @@
+// Campaign 0→10 over LAN in real browsers: the host starts the campaign from the LAN Host screen, a guest
+// browser performs every level through its LAN client (lan.send → host), a second guest joins late and
+// the host's HUD/objective and every client's level are checked after each level.
+import { chromium } from 'playwright-core'; // npm i playwright-core; CHROME=/path/to/chrome
+import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+const [root, out] = process.argv.slice(2); await mkdir(out, { recursive: true });
+// Host = the packaged desktop app (driven over CDP); guests = Chrome on the host's LAN address.
+import os from 'node:os'; import { mkdtempSync } from 'node:fs'; import path from 'node:path';
+const exe = root, userDir = mkdtempSync(path.join(os.tmpdir(), 'infra-desk-lan-'));
+const launch = () => { const p = spawn(exe, ['--remote-debugging-port=9334', '--user-data-dir=' + userDir], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'ELECTRON_RUN_AS_NODE')), INFRA_DELIVERY_SCALE: '0' } }); return p; };
+let app = launch(); let mainLog = ''; app.stdout.on('data', d => mainLog += d); app.stderr.on('data', d => mainLog += d); const server = { kill: () => app.kill() }; process.on('exit', () => console.log('MAIN LOG:\n' + mainLog.slice(-3000)));
+const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true, args: ['--use-angle=metal', '--ignore-gpu-blocklist'] });
+const errors = [];
+async function client(name) { const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } }); const page = await ctx.newPage(); page.on('pageerror', e => errors.push(name + ': ' + e.message)); page.on('dialog', d => d.accept()); await page.addInitScript(n => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-skin', 'yellow'); localStorage.setItem('infra-name', n); }, name); await page.goto(base + '/', { waitUntil: 'load' }); await page.waitForFunction(() => globalThis.__infra?.lab); await page.waitForTimeout(1200); return page; }
+let desk; for (let i = 0; i < 40 && !desk; i++) { try { desk = await chromium.connectOverCDP('http://127.0.0.1:9334'); } catch { await new Promise(r => setTimeout(r, 500)); } }
+let host = desk.contexts()[0].pages()[0]; for (let i = 0; !host && i < 20; i++) { await new Promise(r => setTimeout(r, 500)); host = desk.contexts()[0].pages()[0]; }
+host.on('pageerror', e => errors.push('desktop: ' + e.message)); host.on('dialog', d => d.accept());
+await host.waitForFunction(() => globalThis.__infra?.lab); await host.waitForTimeout(1200);
+await host.evaluate(() => localStorage.setItem('infra-face', 'smile'));
+await host.click('[data-start=host]'); await host.waitForTimeout(2500);
+const hosted = await host.evaluate(() => window.infraDesktop.info()); const lanIP = Object.values(os.networkInterfaces()).flat().find(i => i?.family === 'IPv4' && !i.internal).address;
+const base = 'http://' + lanIP + ':' + hosted.port, roomCode = await host.evaluate(async () => (await window.infraDesktop.hostLan()).roomCode);
+await host.evaluate(() => { globalThis.INFRA_DELIVERY_SCALE = 0; }); await host.waitForTimeout(1500); await host.click('#ss-host-new'); await host.waitForTimeout(1500);
+await fetch(base + '/api/room').then(r => r.json());
+const guest = await client('Guest');
+await guest.click('[data-start=join]'); await guest.fill('#ss-code', roomCode); await guest.click('#ss-join'); await guest.waitForTimeout(2000);
+const report = { levels: [], errors };
+const level = p => p.evaluate(() => __infra.lab.world.operations.game.levels?.current);
+// Everything below runs inside the guest page: lookups on its replica world, changes via lan.send.
+const setup = () => guest.evaluate(() => {
+  const L = __infra.lab, w = L.world, op = w.operations, byId = __infra.byId, sleep = ms => new Promise(r => setTimeout(r, ms));
+  const send = async a => { const r = await L.lan.send(a); return typeof r === 'string' ? r : r?.message || r?.reason || JSON.stringify(r); };
+  const must = async (a, re = /./) => { const m = await send(a); if (!re.test(m) || /fail|unknown|required|choose|invalid|not |cannot|first|unavailable|denied|too /i.test(m) && !re.test(m)) throw Error(JSON.stringify(a).slice(0, 140) + ' → ' + m); return m; };
+  const eng = a => must({ type: 'engineering', action: a }, /^(Order processing|Flaps open|Picked up|Released|Rails installed|.*mounted\.|Rack .* placed|PDU .*(energized|unplugged)|Power |All PSU|Cable connected|End A|Optic inserted|Placed on the floor|System initializing|Powered off|ISP circuit|Checkpoint)/), cfg = a => must({ type: 'config', action: a }, /^Applied|Configured|Created|updated|Port|VLAN/i), office = a => must({ type: 'office', action: a }, /Signed|applied|patched|Installed|Order|saved|Files|COPY|removed|Configuration|updated|Network adapter|complete|restored|Incident|Fault drill|Final incident|Failover test passed/i);
+  const product = (n, o, value) => cfg({ type: 'product', node: n.id, op: o, value }), device = (n, o, value) => cfg({ type: 'device-op', node: n.id, op: o, value });
+  const go = async (x, z) => { L.look(x, z, x, 5, z - 4); await sleep(450); };
+  const last = sku => op.game.stock.filter(s => s.sku === sku && !s.holders.length && !s.powerAnchor && !s.floor).at(-1);
+  async function buy(sku, length = 10) { await go(-34, 2); await eng({ type: 'order', sku, quantity: 1, length }); const o = op.game.orders.at(-1); await sleep(150); await eng({ type: 'unbox', id: o.id }); return last(sku); }
+  const cord = async () => last('power') || buy('power');
+  async function mount(sku, rack, unit) { const it = await buy(sku); await eng({ type: 'grab', id: it.id }); await go(-9, 7); await eng({ type: 'mount', id: it.id, rack, unit }); return byId[op.game.installed.at(-1)]; }
+  async function power(n, feeds = ['A', 'B']) { for (const [psu, feed] of feeds.entries()) { const c = await cord(); await eng({ type: 'grab', id: c.id }); await go(n.pos.x, -7); await eng({ type: 'power', id: c.id, node: n.id, psu, feed }); } if (!['switch', 'san', 'firewall', 'isp'].includes(n.type)) await eng({ type: 'boot', node: n.id }); await sleep(5200); }
+  async function cable(x, px, y, py, sku, length = 10) { const i = typeof px === 'number' ? px : x.ports.findIndex(p => p.name === px), j = typeof py === 'number' ? py : y.ports.findIndex(p => p.name === py), c = await buy(sku, length);
+    if (['fiber', 'fc'].includes(sku)) for (const [n, k] of [[x, i], [y, j]]) { const p = n.ports[k], optic = op.catalog.find(q => q.type === 'optic' && q.speed === p.speed && q.medium === p.medium && q.reach === 'SR'); const o = await buy(optic.id); await eng({ type: 'grab', id: o.id }); await go(n.pos.x, 8); await eng({ type: 'optic', id: o.id, node: n.id, port: k }); }
+    await eng({ type: 'grab', id: c.id }); await go(x.pos.x, 8); await eng({ type: 'start-end', id: c.id, node: x.id, port: i }); await eng({ type: 'patch', id: c.id, a: x.id, pa: i, b: y.id, pb: j }); return x.ports[i].link; }
+  const s = () => w.office.state;
+  const freePort = (n, speed, used = []) => n.ports.findIndex((p, i) => !p.link && !p.service && !p.reserved && p.medium === 'Ethernet' && p.speed === speed && !/MGMT/.test(p.name) && !used.includes(i) && !Object.values(s().pcs).some(pc => (pc.switch || s().bindings.access[pc.floor]) === n.id && pc.port === i && pc.connected !== false) && !Object.values(s().aps).some(ap => s().bindings.access[ap.floor] === n.id && ap.port === i));
+  const waitLevel = async n => { for (let t = 0; t < 60; t++) { if (op.game.levels.current >= n) return true; await sleep(500); } throw Error('level ' + (n - 1) + ' not earned: ' + JSON.stringify(w.campaign.evaluate(true)[n - 1].checks.filter(c => !c.ok).map(c => c.label + ' · ' + c.detail))); };
+  globalThis.T = { go, L, w, op, byId, sleep, send, eng, cfg, office, product, device, buy, cord, mount, power, cable, s, freePort, waitLevel, v: {} };
+});
+await setup();
+async function step(n, fn, note) { const t0 = Date.now(); await guest.evaluate(fn); await guest.evaluate(n => T.waitLevel(n), n + 1); await host.waitForTimeout(1500); const h = await level(host), g = await level(guest); const hud = await host.evaluate(() => document.getElementById('level-hud').innerText.replace(/\n/g, ' | ')); report.levels.push({ level: n, seconds: Math.round((Date.now() - t0) / 1000), host: h, guest: g, note, hud: hud.slice(0, 120) }); await host.screenshot({ path: `${out}/host-after-L${n}.png` }); console.log('L' + n, 'ok', h, g); }
+await step(0, async () => { const { eng, buy, go } = T; const r = await buy('rack'); await eng({ type: 'grab', id: r.id }); await go(-9, 7); await eng({ type: 'rack', id: r.id, pad: 'PAD-R01' }); await go(-9, -7); await eng({ type: 'rack-feed', rack: 'R01', feed: 'A' }); await eng({ type: 'rack-feed', rack: 'R01', feed: 'B' }); const k = await buy('rail'); await eng({ type: 'grab', id: k.id }); await go(-9, 7); await eng({ type: 'rails', id: k.id, rack: 'R01', unit: 30, units: 1 }); }, 'rack, feeds, rails');
+await step(1, async () => { const { mount, power, product, cfg, office, buy, freePort, v, byId } = T; const sw = await mount('fs148f', 'R01', 30); await power(sw); v.sw = sw.id; await product(sw, 'management', { ip: '10.10.70.8', prefix: 24, vlan: 70, gateway: '10.10.70.1', dns: '10.10.70.1', ntp: '10.10.70.1', ssh: true }); await product(sw, 'identity', { name: 'SW-CORE', passwordChanged: true }); await office({ type: 'login', user: 'itadmin', password: 'OfficeLab19!' }); v.adminPort = freePort(sw, 1); await buy('cat6', 5); await office({ type: 'patch-pc', id: 'ADMIN-PC', switch: sw.id, port: v.adminPort }); await cfg({ type: 'port', node: sw.id, index: v.adminPort, value: { mode: 'access', access: 70 } }); }, 'switch via management GUI ops, central PC patched');
+await step(2, async () => { const { mount, power, office, cfg, product, buy, freePort, eng, op, byId, s, v, sleep, cable } = T; const sw = byId[v.sw], fw = await mount('fg200f', 'R01', 28); await power(fw); v.fw = fw.id;
+  await office({ type: 'configure', page: 'binding', value: { access: sw.id, firewall: fw.id, floor: 1, port: freePort(sw, 1, [v.adminPort]), fwPort: 0 } });
+  const order = op.game.orders.find(o => o.contract === fw.net.ispContract.id); await sleep(300); await eng({ type: 'unbox', id: order.id }); const it = op.game.stock.find(x => x.sku === 'ispcpe'); await eng({ type: 'grab', id: it.id }); await T.go(-9, 7); await eng({ type: 'mount', id: it.id, rack: 'R01', unit: 1 }); const cpe = byId[op.game.installed.at(-1)]; const c = op.game.stock.find(x => x.sku === 'power' && !x.holders.length && !x.powerAnchor && !x.floor) || await T.buy('power'); await eng({ type: 'grab', id: c.id }); await T.go(-9, -7); await eng({ type: 'power', id: c.id, node: cpe.id, psu: 0, feed: 'A' }); await sleep(4500); await cable(cpe, 'LAN1', fw, 'port3', 'cat6', 30);
+  v.uplink = sw.ports.findIndex(p => p.link && (p.link.a === fw.id || p.link.b === fw.id));
+  await office({ type: 'configure', page: 'interfaces', value: { id: 10, name: 'SALES', ip: '10.10.10.1', prefix: 24, enabled: true, zone: 'staff', mtu: 1500 } }); await cfg({ type: 'vlan', node: sw.id, id: 10 });
+  for (const [n, i] of [[sw, v.uplink], [fw, 0]]) await cfg({ type: 'port', node: n.id, index: i, value: { mode: 'trunk', allowed: [1, 10] } });
+  await office({ type: 'configure', page: 'dhcp', value: { id: 10, enabled: true, start: 100, end: 199, gateway: '10.10.10.1', dns: '10.10.10.1', lease: 3600 } });
+  await buy('cat6', 5); await office({ type: 'patch-pc', id: 'F1-sales-PC', port: freePort(sw, 1, [v.adminPort]) }); await office({ type: 'configure', page: 'switching', value: { ...s().ports['F1-sales-PC'], id: 'F1-sales-PC', vlan: 10, trunk: '10' } });
+  await office({ type: 'configure', page: 'wan', value: { port: 'port3', mode: 'static', connected: true, defaultRoute: true, dnsForward: true } });
+  await office({ type: 'configure', page: 'policies', value: { id: 'sales-out', src: '10', dst: 'wan', source: 'any', destination: 'any', service: 'any', action: 'accept', nat: true, enabled: true, start: 0, end: 24 } });
+  await product(fw, 'identity', { name: 'FGT-HQ', passwordChanged: true }); await product(fw, 'management', { ip: '10.10.70.2', prefix: 24, vlan: 70, gateway: '10.10.70.1', dns: '10.10.70.1', ntp: '10.10.70.1', ssh: true }); }, 'FortiGate, provider router, WAN, VLAN 10, NAT');
+const trunk = `async vlans => { const { cfg, byId, v } = T; await cfg({ type: 'port', node: v.sw, index: v.uplink, value: { mode: 'trunk', allowed: vlans } }); await cfg({ type: 'port', node: v.fw, index: 0, value: { mode: 'trunk', allowed: vlans } }); }`;
+await guest.evaluate(`T.trunk = ${trunk}`);
+await step(3, async () => { const { office, cfg, buy, s, freePort, v, byId } = T; const sw = byId[v.sw]; for (const [id, name] of [[20, 'FINANCE'], [30, 'ENGINEERING'], [40, 'EXECUTIVE'], [70, 'MANAGEMENT']]) { await office({ type: 'configure', page: 'interfaces', value: { id, name, ip: '10.10.' + id + '.1', prefix: 24, enabled: true, zone: id === 70 ? 'management' : 'staff', mtu: 1500 } }); if (id !== 70) await office({ type: 'configure', page: 'dhcp', value: { id, enabled: true, start: 100, end: 199, gateway: '10.10.' + id + '.1', dns: '10.10.' + id + '.1', lease: 3600 } }); await cfg({ type: 'vlan', node: sw.id, id }); }
+  await T.trunk([1, 10, 20, 30, 40, 70]); for (const [dep, vl] of [['finance', 20], ['engineering', 30]]) { const pc = 'F1-' + dep + '-PC'; await buy('cat6', 5); await office({ type: 'patch-pc', id: pc, port: freePort(sw, 1, [v.adminPort]) }); await office({ type: 'configure', page: 'switching', value: { ...s().ports[pc], id: pc, vlan: vl, trunk: String(vl) } }); }
+  for (const [id, src] of [['fin-out', '20'], ['eng-out', '30']]) await office({ type: 'configure', page: 'policies', value: { id, src, dst: 'wan', source: 'any', destination: 'any', service: 'any', action: 'accept', nat: true, enabled: true, start: 0, end: 24 } }); }, 'departments + isolation');
+await step(4, async () => { const { office, cfg, s, v, sleep, byId } = T; await office({ type: 'purchase', sku: 'fap231' }); await office({ type: 'purchase', sku: 'pc' }); await sleep(2600);
+  await office({ type: 'install', id: s().inventory.find(i => i.sku === 'fap231' && !i.installed).id, drop: 'F1-sales' }); await office({ type: 'install', id: s().inventory.find(i => i.sku === 'pc' && !i.installed).id, department: 'sales', floor: 1 });
+  const ap = Object.values(s().aps)[0], guestPC = Object.keys(s().pcs).find(id => /^F1-sales-PC-/.test(id));
+  await office({ type: 'configure', page: 'interfaces', value: { id: 90, name: 'GUEST', ip: '10.10.90.1', prefix: 24, enabled: true, zone: 'guest', mtu: 1500 } }); await office({ type: 'configure', page: 'dhcp', value: { id: 90, enabled: true, start: 100, end: 199, gateway: '10.10.90.1', dns: '10.10.90.1', lease: 3600 } }); await cfg({ type: 'vlan', node: v.sw, id: 90 });
+  await T.trunk([1, 10, 20, 30, 40, 70, 90]);
+  await office({ type: 'configure', page: 'wireless', value: { id: 'Northwind', vlan: 10, enabled: true, password: 'Northwind-Wifi1', security: 'WPA3', band: '5', isolation: false, portal: false, bandSteering: true } });
+  await office({ type: 'configure', page: 'wireless', value: { id: 'Guest', vlan: 90, enabled: true, password: '', security: 'open', band: '5', isolation: true, portal: false, bandSteering: true } });
+  await office({ type: 'configure', page: 'policies', value: { id: 'guest-out', src: '90', dst: 'wan', source: 'any', destination: 'any', service: 'any', action: 'accept', nat: true, enabled: true, start: 0, end: 24 } });
+  await office({ type: 'login', user: 'sales', pc: guestPC, password: 'OfficeLab19!' }); await office({ type: 'pc', id: guestPC, op: 'connect', mode: 'Wi-Fi', ssid: 'Guest', password: '' });
+  await office({ type: 'configure', page: 'aps', value: { ...ap, authorized: true, allowed: '70,10,90', profile: 'Northwind,Guest' } }); }, 'AP, SSIDs, guest client');
+await step(5, async () => { const { mount, power, cfg, product, device, office, cable, freePort, v, byId, sleep, w } = T; const sw = byId[v.sw];
+  const mg = async (n, ip) => { const hp = freePort(sw, 1, [v.adminPort]); await cable(n, 'MGMT UPLINK', sw, hp, 'cat6', 5); await cfg({ type: 'port', node: sw.id, index: hp, value: { mode: 'access', access: 70 } }); if (!ip) return; await product(n, 'management', { ip, prefix: 24, vlan: 70, gateway: '10.10.70.1', dns: '10.10.70.1', ntp: '10.10.70.1', ssh: true }); }; T.mg = mg;
+  const tor = await mount('nexus9348', 'R01', 26); await power(tor); await product(tor, 'identity', { name: 'TOR-A', passwordChanged: true }); await mg(tor, '10.10.70.9'); v.tor = tor.id;
+  const srv = await mount('r660', 'R01', 10); await power(srv); await mg(srv, '10.10.70.20'); v.srv = srv.id;
+  await cfg({ type: 'vlan', node: tor.id, id: 50 }); await cfg({ type: 'vlan', node: sw.id, id: 50 });
+  const dl = await cable(srv, 'DATA-1', tor, freePort(tor, 100), 'fiber'), up = await cable(tor, freePort(tor, 1), sw, freePort(sw, 1, [v.adminPort]), 'cat6');
+  for (const [n, l] of [[tor, dl], [tor, up], [sw, up]]) await cfg({ type: 'port', node: n.id, index: n.ports.indexOf(l.a === n.id ? l.pa : l.pb), value: { mode: 'trunk', allowed: [50] } });
+  await T.trunk([1, 10, 20, 30, 40, 50, 70, 90]);
+  await office({ type: 'configure', page: 'interfaces', value: { id: 50, name: 'SERVERS', ip: '10.10.50.1', prefix: 24, enabled: true, zone: 'servers', mtu: 1500 } });
+  await device(srv, 'os', { os: 'VMware ESXi', raid: 'RAID 1 boot' }); await sleep(9000);
+  await device(srv, 'portgroup', { id: 'Servers', vlan: 50, uplinks: String(srv.ports.findIndex(p => p.name === 'DATA-1')) });
+  await device(srv, 'vm', { id: 'WEB-01', os: 'Linux', cpu: 2, memory: 4, disk: 40, datastore: 'local', network: 'Servers', ip: '10.10.50.31', prefix: 24, gateway: '10.10.50.1', dns: '10.10.50.1' }); await device(srv, 'vm-power', { id: 'WEB-01', on: true });
+  await device(srv, 'service', { vm: 'WEB-01', id: 'intranet', kind: 'web', engine: 'Nginx', port: 443, content: 'Northwind intranet', groups: 'company', running: true, firewall: true });
+  await office({ type: 'configure', page: 'dns', value: { id: 'intranet.company.test', ip: '10.10.50.31', enabled: true } });
+  await office({ type: 'configure', page: 'policies', value: { id: 'fin-web', src: '20', dst: '50', source: 'any', destination: 'any', service: 'HTTPS', action: 'accept', nat: false, enabled: true, start: 0, end: 24 } }); }, 'server via iDRAC, ESXi, VM, web, DNS');
+await step(6, async () => { const { mount, power, cfg, product, device, office, cable, freePort, v, byId, s } = T; const srv = byId[v.srv], tor = byId[v.tor];
+  const torB = await mount('nexus9348', 'R01', 24); await power(torB); await product(torB, 'identity', { name: 'TOR-B', passwordChanged: true }); await T.mg(torB, '10.10.70.10');
+  const arr = await mount('me5024iscsi', 'R01', 4); await power(arr); await T.mg(arr); v.arr = arr.id;
+  await product(arr, 'identity', { name: 'ME5-HQ', passwordChanged: true }); await product(arr, 'management', { ip: '10.10.70.30', nodeA: '10.10.70.30', nodeB: '10.10.70.31', prefix: 24, vlan: 70, gateway: '10.10.70.1', ntp: '10.10.70.1', ssh: true });
+  const ids = srv.net.runtime ? null : null; const { hostIdentifiers } = await import('./storage-access.js'); const hid = hostIdentifiers(srv);
+  const hostCfg = { os: 'VMware ESXi', raid: 'RAID 1 boot', protocol: 'iSCSI', portA: 'NIC-1', portB: 'NIC-2', ipA: '172.16.10.10', ipB: '172.16.11.10', prefix: 24, vlanA: 3000, vlanB: 3001, mtu: 9000, iqn: hid.iqn, wwpnA: hid.wwpnA, wwpnB: hid.wwpnB, initiatorEnabled: true };
+  await product(srv, 'host', hostCfg); await product(arr, 'storage', { ...hostCfg, ipA: '172.16.10.20', ipB: '172.16.11.20', mode: 'Virtual', raid: 'RAID 6', pool: 'POOL-A', volume: 'DATA-01', sizeGiB: 2000, host: srv.id, initiator: hid.iqn });
+  for (const [x, vlan, pn] of [[tor, 3000, 'NIC-1'], [torB, 3001, 'NIC-2']]) { await cfg({ type: 'vlan', node: x.id, id: vlan, name: 'ISCSI' }); for (const n of [arr, srv]) { const l = await cable(n, pn, x, freePort(x, 25), 'fiber'); await cfg({ type: 'port', node: x.id, index: x.ports.indexOf(l.a === x.id ? l.pa : l.pb), value: { mode: 'access', access: vlan, mtu: 9000 } }); } }
+  await device(srv, 'datastore', { id: 'SAN-DS', array: arr.id, volume: 'DATA-01' });
+  await office({ type: 'configure', page: 'storage', value: { ...s().storage, device: arr.id, protocol: 'iSCSI', capacity: 2000000, used: 0, snapshots: true, backup: false } }); }, 'ME5 iSCSI A/B multipath');
+await step(7, async () => { const { device, office, v, byId, s, sleep, send } = T; const srv = byId[v.srv];
+  await device(srv, 'service', { vm: 'WEB-01', id: 'files', kind: 'SMB', engine: 'Samba', port: 445, groups: 'company', running: true, firewall: true });
+  await office({ type: 'configure', page: 'shares', value: { id: 'finance', service: srv.id + ':WEB-01:files', protocol: 'SMB', read: 'finance', write: 'finance', subnets: '10.10.0.0/16', quota: 1000 } });
+  await office({ type: 'configure', page: 'policies', value: { id: 'fin-smb', src: '20', dst: '50', source: 'any', destination: 'any', service: 'SMB', action: 'accept', nat: false, enabled: true, start: 0, end: 24 } });
+  await office({ type: 'login', user: 'finance', pc: 'F1-finance-PC', password: 'OfficeLab19!' }); await office({ type: 'file', pc: 'F1-finance-PC', share: 'finance', op: 'write', name: 'budget.txt', content: 'FY27 budget: 4.2M' });
+  await office({ type: 'purchase', sku: 'backup-license' }); await sleep(2600); await office({ type: 'install', id: s().inventory.find(i => i.sku === 'backup-license' && !i.installed).id });
+  await office({ type: 'configure', page: 'storage', value: { ...s().storage, backup: true } }); await office({ type: 'backup' });
+  await send({ type: 'campaign', action: { op: 'data-incident' } }); await sleep(1500); await office({ type: 'restore-files', id: T.w.office.state.backups.at(-1).id }); }, 'share, backup, incident, restore');
+await step(8, async () => { const { office, send, sleep, s, eng, buy, op, byId, cfg } = T;
+  await office({ type: 'configure', page: 'monitoring', value: { ...s().monitoring, enabled: true, snmp: true, syslog: true, email: 'noc@northwind.test', maintenance: false } });
+  await send({ type: 'campaign', action: { op: 'fault-drill' } }); await sleep(1500); const e = op.game.levels.exercises.fault, pc = s().pcs['F1-sales-PC'];
+  if (e.kind === 'cable') { await buy('cat6', 5); await office({ type: 'patch-pc', id: 'F1-sales-PC', port: pc.port }); } else if (e.kind === 'port' || e.kind === 'vlan') await office({ type: 'configure', page: 'switching', value: { ...s().ports['F1-sales-PC'], id: 'F1-sales-PC', admin: true, vlan: 10, trunk: '10' } }); else if (e.kind === 'power') { for (const [psu, feed] of [[0, 'A'], [1, 'B']]) { const c = op.game.stock.find(x => x.sku === 'power' && x.floor); await T.go(c.floor.x + 1, c.floor.z + 1); await eng({ type: 'grab', id: c.id }); await T.go(-9, -7); await eng({ type: 'power', id: c.id, node: e.target, psu, feed }); } await sleep(5000); }
+  T.v.drill = e.kind; }, 'monitoring + fault drill');
+await step(9, async () => { const { office, send, sleep, s } = T; await office({ type: 'purchase', sku: 'wan2' }); await sleep(2600); await office({ type: 'install', id: s().inventory.find(i => i.sku === 'wan2' && !i.installed).id }); await send({ type: 'campaign', action: { op: 'failover-test' } }); }, 'secondary ISP + failover test');
+// Late joiner before the last level.
+const late = await client('Late'); await late.click('[data-start=join]'); await late.fill('#ss-code', roomCode); await late.click('#ss-join'); await late.waitForTimeout(2500); report.lateJoinerLevel = await level(late);
+await step(10, async () => { const { send, sleep, s, office, buy, eng, op } = T; await send({ type: 'campaign', action: { op: 'final-incident' } }); await sleep(1500); const e = op.game.levels.exercises.final, pc = s().pcs['F1-sales-PC'];
+  if (e.kind === 'cable') { await buy('cat6', 5); await office({ type: 'patch-pc', id: 'F1-sales-PC', port: pc.port }); } else if (e.kind === 'port' || e.kind === 'vlan') await office({ type: 'configure', page: 'switching', value: { ...s().ports['F1-sales-PC'], id: 'F1-sales-PC', admin: true, vlan: 10, trunk: '10' } }); else if (e.kind === 'power') { for (const [psu, feed] of [[0, 'A'], [1, 'B']]) { const c = op.game.stock.find(x => x.sku === 'power' && x.floor); await T.go(c.floor.x + 1, c.floor.z + 1); await eng({ type: 'grab', id: c.id }); await T.go(-9, -7); await eng({ type: 'power', id: c.id, node: e.target, psu, feed }); } await sleep(5000); } }, 'final incident');
+report.final = { host: await level(host), guest: await level(guest), late: await level(late) };
+await host.keyboard.press('j'); await host.waitForTimeout(600); await host.screenshot({ path: out + '/host-complete-objective.png' });
+report.hostPanel = (await host.evaluate(() => document.getElementById('cp-body').innerText)).slice(0, 400);
+// Quit and relaunch the desktop app: the hosted campaign is still there.
+app.kill('SIGTERM'); await new Promise(r => app.on('exit', r)); app = launch(); desk = null;
+for (let i = 0; i < 40 && !desk; i++) { try { desk = await chromium.connectOverCDP('http://127.0.0.1:9334'); } catch { await new Promise(r => setTimeout(r, 500)); } }
+let again = desk.contexts()[0].pages()[0]; for (let i = 0; !again && i < 20; i++) { await new Promise(r => setTimeout(r, 500)); again = desk.contexts()[0].pages()[0]; }
+await again.waitForFunction(() => globalThis.__infra?.lab); await again.waitForTimeout(1200); await again.click('[data-start=solo]'); await again.waitForTimeout(2000);
+report.afterRelaunch = (await again.evaluate(() => document.getElementById('ss-sub').innerText)).slice(0, 160);
+console.log(JSON.stringify(report, null, 1));
+await browser.close(); app.kill(); process.exit(0);

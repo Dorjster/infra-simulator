@@ -11,3 +11,5 @@ These drive the real client in Chrome through Playwright. They need `playwright-
 | `capture.mjs <root> <out> [players]` | Same 7 views (entrance, receiving, rack front/rear, cabling, office, device GUI) with FPS, frame-time percentiles, draw calls, triangles and heap; `players` adds simulated LAN engineers |
 | `lan-load.mjs <root> [seconds]` | 12 players: pose posts/s, world and roster frames/s, bytes/s per client, server CPU |
 | `desktop-app.mjs <app-binary> <out>` | The packaged desktop app over CDP: no Node in the page, Solo saves to the user folder, LAN Host reachable on the LAN IP, Stop hosting, clean quit. Unset `ELECTRON_RUN_AS_NODE` if your shell sets it. |
+| `desktop-lan-e2e.mjs <app-binary> <out>` | The packaged desktop app hosts over LAN; Chrome guests on its LAN address play Campaign 0→10; then the app is quit and relaunched and the save is checked |
+| `campaign-solo-e2e.mjs <root> <out>` | Campaign 0→10 in Solo in one browser page (local world, browser autosave) |

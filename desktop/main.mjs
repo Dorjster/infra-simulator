@@ -18,7 +18,7 @@ const origin = () => 'http://127.0.0.1:' + room.port;
 const lanHost = h => /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|localhost$)/.test(h);
 
 async function openRoom() {
-  room = await startRoom({ port: 0, bind: '127.0.0.1', savePath: savePath(), log: m => console.log('[room]', m), error: m => console.error('[room]', m) });
+  room = await startRoom({ port: 0, bind: '127.0.0.1', savePath: savePath(), deliveryScale: process.env.INFRA_DELIVERY_SCALE, log: m => console.log('[room]', m), error: m => console.error('[room]', m) });
   hosting = false;
 }
 
