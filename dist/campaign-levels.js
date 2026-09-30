@@ -208,6 +208,7 @@ export function createCampaign(world, network, ctx) {
   const builders = [level0, level1, level2, level3, level4, level5, level6, level7, level8, level9];
   function evaluate(force = false) {
     const G = g(); if (!G.levels) return [];
+    if (world.remoteCampaign) return world.remoteCampaign.map(l => ({ ...l, earned: !!G.levels.earned[l.id], current: G.levels.current === l.id, locked: l.id > G.levels.current }));
     if (!force && cache.value && Date.now() - cache.at < 700 && cache.game === G) return cache.value;
     const all = builders.map((b, id) => { let checks; try { checks = b(); } catch (e) { checks = [step('error', 'Check unavailable', false, e.message)]; } return { id, checks }; });
     all.push({ id: 10, checks: level10(all) });

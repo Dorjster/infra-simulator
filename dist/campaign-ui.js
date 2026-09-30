@@ -296,11 +296,11 @@ export function createCampaignUI(ctx) {
   // ---- HUD -------------------------------------------------------------------------------------------------
   let focus = null;
   function hud() {
-    const el = $('level-hud'), show = levels() && !startOpen && settings.assistance !== 'Off';
+    const el = $('level-hud'), show = levels() && !startOpen && !open && settings.assistance !== 'Off';
     el.hidden = !show; { const eo = $('eng-objective'); if (eo) eo.dataset.hide = levels() ? '1' : ''; }
     if (!show) { marker.visible = !!focus && Date.now() < focus.until; if (marker.visible) marker.position.set(focus.x, 0, focus.z); return; }
     const st = C.status(); if (!st) return;
-    if (st.complete) { el.innerHTML = `<b>CAMPAIGN COMPLETE</b><span>${st.repairs.length ? '⚠ ' + st.repairs.length + ' repair objective(s) · J' : 'Facility operational · J for the summary'}</span>`; marker.visible = false; return; }
+    if (st.complete) { el.innerHTML = `<div class="lh-top"><b>CAMPAIGN COMPLETE</b><span>11/11</span></div><div class="${st.repairs.length ? 'lh-repair' : 'lh-next ok'}">${st.repairs.length ? '⚠ ' + st.repairs.length + ' repair objective(s) · J' : '✓ Facility operational · J for the summary'}</div>`; marker.visible = false; return; }
     const next = st.next, t = next ? targetOf(next) : null, d = t ? Math.round(Math.hypot(camera.position.x - t.x, camera.position.z - t.z) * .18) : null;
     el.innerHTML = `<div class="lh-top"><b>LEVEL ${st.level.id} · ${esc(st.level.title.toUpperCase())}</b><span>${st.done}/${st.total}</span></div>${next ? `<div class="lh-next">▶ ${esc(next.label)}</div>${settings.assistance === 'Minimal hints' ? '' : `<div class="lh-why">${esc(next.detail)}</div>`}` : '<div class="lh-next ok">✓ All checks pass · accepting…</div>'}${t ? `<div class="lh-where">${d} m · ${esc(t.label)}</div>` : ''}${st.repairs.length ? `<div class="lh-repair">⚠ Repair: level ${st.repairs[0].id} · ${esc(st.repairs[0].check.label)}</div>` : ''}<div class="lh-keys">J objective · H hint · M map</div>`;
     const target = focus && Date.now() < focus.until ? focus : t;

@@ -100,7 +100,7 @@ export function createOperations(ctx,world,network){
   else Object.assign(c,{ip:'203.0.113.'+(base+2),prefix:plan.mode==='PPPoE'?32:30,gateway:'203.0.113.'+(base+1)});
   if(plan.mode==='PPPoE')c.pppoe={user:'cust'+String(index).padStart(4,'0')+'@metrofiber.test',password:'Pppoe-'+(4711+index*37)};
   n.net.ispContract=c;
-  game.orders.push({id:'ORDER-'+(++game.counter),sku:'ispcpe',quantity:1,length:0,created:Date.now(),arrives:Date.now()+(5+Math.random()*5)*1000,opened:false,contract:id});
+  game.orders.push({id:'ORDER-'+(++game.counter),sku:'ispcpe',quantity:1,length:0,created:Date.now(),arrives:Date.now()+(5+Math.random()*5)*1000*(globalThis.INFRA_DELIVERY_SCALE??1),opened:false,contract:id});
   history('ISP circuit '+id+' ('+plan.name+') ordered for '+n.id+' · provider router shipping',actor);
   return 'ISP circuit '+id+' ordered · the provider router is being delivered to receiving. Rack it, power it and patch its LAN1 to a free FortiGate WAN port.';}
  if(a.type==='order'){if(item(a.sku)?.providerOnly)throw Error('The ISP router is supplied with an ISP circuit order');return order(a.sku,a.quantity,a.length,a.emergency);}

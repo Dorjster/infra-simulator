@@ -1,0 +1,22 @@
+import { chromium } from 'playwright-core'; // npm i playwright-core (not a game dependency); CHROME=/path/to/chrome or a Playwright-installed Chromium
+import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+const [root, out] = process.argv.slice(2); await mkdir(out, { recursive: true });
+const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'FLOW01', HOST_KEY: 'k', CAMPAIGN_SAVE: '/tmp/flow-'+Date.now()+'.json', DELIVERY_SCALE: '0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
+const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true, args: ['--use-angle=metal', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+const errors = []; page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/favicon|Failed to load resource/.test(m.text())) errors.push(m.text()); });
+await page.addInitScript(() => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-skin', 'yellow'); localStorage.setItem('infra-name', 'Tester'); });
+await page.goto(base + '/', { waitUntil: 'load' });
+await page.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 60000 }); await page.waitForTimeout(2500);
+await page.screenshot({ path: out + '/10-start.png' });
+await page.click('[data-start=solo]'); await page.waitForTimeout(400); await page.screenshot({ path: out + '/11-solo.png' });
+await page.click('#ss-new'); await page.waitForTimeout(1800);
+await page.evaluate(() => document.querySelector('#face-picker')?.setAttribute('hidden',''));
+await page.screenshot({ path: out + '/12-level0-hud.png' });
+await page.keyboard.press('j'); await page.waitForTimeout(500); await page.screenshot({ path: out + '/13-objective.png' });
+await page.keyboard.press('m'); await page.waitForTimeout(500); await page.screenshot({ path: out + '/14-map.png' });
+await page.keyboard.press('i'); await page.waitForTimeout(500); await page.screenshot({ path: out + '/15-inventory.png' });
+console.log(JSON.stringify({ errors, state: await page.evaluate(() => ({ mode: __infra.lab.world.operations.game.mode, track: __infra.lab.world.operations.game.track, level: __infra.lab.world.operations.game.levels?.current, lan: __infra.lab.lan.connected })) }));
+await browser.close(); server.kill(); process.exit(0);
