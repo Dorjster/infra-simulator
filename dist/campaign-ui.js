@@ -77,6 +77,8 @@ export function createCampaignUI(ctx) {
   function subPanel(html, bind) { sub = html; const el = $('ss-sub'); el.hidden = false; el.innerHTML = html; bind?.(el); el.scrollIntoView?.({ block: 'nearest' }); }
   const titlePicker = (id = 'ss-title') => `<label>Engineer title<select id="${id}"><option value="field">Field Engineer</option><option value="operations">Operations Engineer</option></select><small>Both titles can do every task.</small></label>`;
   async function startSolo() {
+    if (globalThis.infraDesktop) return startLocalRoom();
+    lan.playSolo();
     const d = localSave(), lv = d?.operations?.levels;
     subPanel(`<h2>Solo Campaign</h2>${d ? `<div class="ss-save"><strong>${esc(d.operations.name)}</strong><span>${lv ? 'Level ' + Math.min(lv.current, 10) + ' · ' + esc(LEVELS[Math.min(lv.current, 10)].title) : (d.operations.enterprise ? 'Contract campaign' : 'Project campaign') + ' (older save · continues as levels)'} · $${(d.operations.budget || 0).toLocaleString()}</span><button id="ss-continue" class="primary">Continue</button></div>` : ''}
      <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="Northwind HQ"></label>${titlePicker()}<button id="ss-new" class="${d ? '' : 'primary'}">Start new campaign · Level 0</button></div>
@@ -85,23 +87,39 @@ export function createCampaignUI(ctx) {
       el.querySelector('#ss-new').addEventListener('click', () => { if (d && !confirm('Start a new campaign? The current browser save is replaced once you make progress. Export it first from Team → Save if you want to keep it.')) return; if (lan.connected) lan.playSolo(); engineering.setRole(el.querySelector('#ss-title').value); run(send({ type: 'mode', mode: 'campaign', track: 'levels', name: el.querySelector('#ss-name').value || 'Northwind HQ' }), () => { hintTier = {}; begin(); }); });
     });
   }
+  const desktop = globalThis.infraDesktop;
+  // Desktop Solo: the app's own room, bound to this computer only. It autosaves to the user folder, and
+  // choosing LAN Host later opens the same room (and the same save) to the network.
+  async function startLocalRoom() {
+    const info = await roomInfo();
+    if (!lan.connected && info?.localHost) await lan.join({ name: localStorage.getItem('infra-name') || 'Engineer', code: info.roomCode, hostKey: info.hostKey }, true);
+    const w = g(), lv = w.levels;
+    subPanel(`<h2>Solo Campaign</h2>${w.mode === 'campaign' ? `<div class="ss-save"><strong>${esc(w.name)}</strong><span>${lv ? 'Level ' + Math.min(lv.current, 10) + ' · ' + esc(LEVELS[Math.min(lv.current, 10)].title) : 'Campaign'} · $${w.budget.toLocaleString()}</span><button id="ss-continue" class="primary">Continue</button></div>` : ''}
+     <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="Northwind HQ"></label>${titlePicker()}<button id="ss-new" class="${w.mode === 'campaign' ? '' : 'primary'}">Start new campaign · Level 0</button></div>
+     <p class="ss-note">Saved automatically in your user folder (File → Show saves folder). The site starts empty: only building power, the office cabling and the provider's street fibre are already there.</p>`, el => {
+      el.querySelector('#ss-continue')?.addEventListener('click', begin);
+      el.querySelector('#ss-new').addEventListener('click', () => { if (w.mode === 'campaign' && !confirm('Start a new campaign? The current save is replaced. Use File → Export first if you want to keep it.')) return; engineering.setRole(el.querySelector('#ss-title').value); run(send({ type: 'mode', mode: 'campaign', track: 'levels', name: el.querySelector('#ss-name').value || 'Northwind HQ' }), () => { hintTier = {}; begin(); }); });
+    });
+  }
   async function startHost() {
+    let hosted = null;
+    if (desktop) { try { hosted = await desktop.hostLan(); } catch (e) { subPanel(`<h2>LAN Host Campaign</h2><p>Could not open the room on your network: ${esc(e.message)}</p>`); return; } }
     const info = await roomInfo();
     if (!info) { subPanel(`<h2>LAN Host Campaign</h2><p>Hosting needs the local room server. In the desktop app choose <strong>LAN Host</strong> from the launcher. From the web package run <code>node lan/server.mjs</code> and open the address it prints on this computer.</p>`); return; }
     if (!info.localHost && !(lan.connected && lan.canManageWorld)) { subPanel(`<h2>LAN Host Campaign</h2><p>This room already has a host, or this is not the host computer. Choose <strong>Join LAN</strong> instead.</p>`); return; }
     if (!lan.connected) await lan.join({ name: 'Host', code: info.roomCode, hostKey: info.hostKey }, true);
-    const w = g(), lv = w.levels, addrs = (info.addresses || []).map(a => `<code>${esc(a)}</code>`).join(' ');
-    subPanel(`<h2>LAN Host Campaign</h2><div class="ss-room"><div><span>Room code</span><strong>${esc(info.roomCode || lan.roomCode || '')}</strong></div><div><span>Friends open</span>${addrs || '<code>' + esc(location.host) + '</code>'}</div><div><span>Engineers</span><strong>${lan.players?.length || 1}/12</strong></div></div>
+    const w = g(), lv = w.levels, addrs = (hosted?.addresses || info.addresses || []).map(a => `<code>${esc(a)}</code>`).join(' ');
+    subPanel(`<h2>LAN Host Campaign</h2><div class="ss-room"><div><span>Room code</span><strong>${esc(hosted?.roomCode || info.roomCode || lan.roomCode || '')}</strong></div><div><span>Friends open</span>${addrs || '<code>' + esc(location.host) + '</code>'}</div><div><span>Engineers</span><strong>${lan.players?.length || 1}/12</strong></div></div>
      ${w.mode === 'campaign' ? `<div class="ss-save"><strong>${esc(w.name)}</strong><span>${lv ? 'Level ' + Math.min(lv.current, 10) + ' · ' + esc(LEVELS[Math.min(lv.current, 10)].title) : 'Campaign'} · $${w.budget.toLocaleString()}</span><button id="ss-host-continue" class="primary">Continue hosted campaign</button></div>` : ''}
      <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="LAN HQ"></label>${titlePicker()}<button id="ss-host-new" class="${w.mode === 'campaign' ? '' : 'primary'}">Start new campaign · Level 0</button></div>
-     <p class="ss-note">The campaign is saved on this computer (the host). Guests join with the room code and can do every task; only you choose the mode and saves. Keep this window open while hosting.</p>`, el => {
+     <p class="ss-note">The campaign is saved on this computer (the host). Guests join with the room code and can do every task; only you choose the mode and saves. Keep this window open while hosting.${desktop ? ' If your firewall asks, allow Infra Simulator on private networks. Stop hosting from Team at any time.' : ''}</p>`, el => {
       el.querySelector('#ss-host-continue')?.addEventListener('click', begin);
       el.querySelector('#ss-host-new').addEventListener('click', () => { if (w.mode === 'campaign' && !confirm('Replace the hosted campaign with a new one? The previous save is overwritten.')) return; engineering.setRole(el.querySelector('#ss-title').value); run(send({ type: 'mode', mode: 'campaign', track: 'levels', name: el.querySelector('#ss-name').value || 'LAN HQ' }), () => { hintTier = {}; begin(); }); });
     });
   }
   async function startJoin() {
     const info = await roomInfo(), params = new URLSearchParams(globalThis.location?.search || '');
-    subPanel(`<h2>Join LAN</h2><div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Room code<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${info ? 'You are on ' + esc(location.host) + '. ' : ''}Guests share the host's world: you can do every task, but only the host chooses the mode and saves.</p><p id="ss-join-status" class="ss-note"></p>`, el => {
+    subPanel(`<h2>Join LAN</h2><div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Room code<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info && !desktop ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${info ? 'You are on ' + esc(location.host) + '. ' : ''}Guests share the host's world: you can do every task, but only the host chooses the mode and saves.</p><p id="ss-join-status" class="ss-note"></p>`, el => {
       el.querySelector('#ss-join').addEventListener('click', async () => {
         const name = el.querySelector('#ss-jname').value, code = el.querySelector('#ss-code').value, addr = el.querySelector('#ss-addr')?.value.trim();
         if (addr) { const url = new URL((/^https?:/.test(addr) ? '' : 'http://') + addr); url.search = '?join=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name); location.href = url.href; return; }
@@ -122,6 +140,7 @@ export function createCampaignUI(ctx) {
     const k = b.dataset.start; $('start-screen').querySelectorAll('.ss-card').forEach(x => x.classList.toggle('active', x === b));
     if (k === 'solo') startSolo(); else if (k === 'host') startHost(); else if (k === 'join') startJoin(); else if (k === 'challenges') startChallenges();
     else if (k === 'free') { if (lan.connected && !lan.canManageWorld) { notify('Host only'); return; } if (lan.connected && !confirm('Switch the shared room to Free Build?')) return; if (!lan.connected) lan.playSolo?.(); run(send({ type: 'mode', mode: 'free' }), begin); }
+    if (k === 'challenges' && !lan.connected) lan.playSolo?.();
     else if (k === 'settings') { showStart(false); panel('settings'); }
     else if (k === 'inspect') { showStart(false); document.body.classList.remove('in-game'); exit(); }
   });
@@ -216,7 +235,7 @@ export function createCampaignUI(ctx) {
   }
   function team() {
     const list = lan.players || [], host = lan.connected && lan.canManageWorld;
-    return `<h2>Team</h2>${lan.connected ? `<p>${host ? '<b>You are the host.</b> The campaign is saved on this computer.' : 'Connected to the host · shared world.'} ${lan.roomCode ? 'Room code <code>' + esc(lan.roomCode) + '</code>' : ''}</p><ul class="team-list">${list.map(p => `<li><i style="background:#${Number(p.color).toString(16).padStart(6, '0')}"></i>${esc(p.name)}${p.id === lan.selfID ? ' (you)' : ''}<small>${esc(p.role === 'operations' ? 'Operations Engineer' : 'Field Engineer')} · ${p.pose?.active ? 'in the facility' : 'in menus'}</small></li>`).join('')}</ul><p class="cp-muted">Enter or T opens team chat · middle mouse pings a spot for everyone.</p>${host ? '' : '<button data-go="leave">Leave the room · play solo</button>'}` : `<p>Solo. Choose <b>LAN Host Campaign</b> on the start screen to invite others.</p>`}
+    return `<h2>Team</h2>${lan.connected ? `<p>${host ? '<b>You are the host.</b> The campaign is saved on this computer.' : 'Connected to the host · shared world.'} ${lan.roomCode ? 'Room code <code>' + esc(lan.roomCode) + '</code>' : ''}</p><ul class="team-list">${list.map(p => `<li><i style="background:#${Number(p.color).toString(16).padStart(6, '0')}"></i>${esc(p.name)}${p.id === lan.selfID ? ' (you)' : ''}<small>${esc(p.role === 'operations' ? 'Operations Engineer' : 'Field Engineer')} · ${p.pose?.active ? 'in the facility' : 'in menus'}</small></li>`).join('')}</ul><p class="cp-muted">Enter or T opens team chat · middle mouse pings a spot for everyone.</p>${host ? (desktop ? '<button data-go="stop-hosting">Stop hosting</button>' : '') : '<button data-go="leave">Leave the room · play solo</button>'}` : `<p>Solo. Choose <b>LAN Host Campaign</b> on the start screen to invite others.</p>`}
      <h3>Your title</h3><div class="cp-row"><button data-title="field" aria-pressed="${engineering.role === 'field'}">Field Engineer</button><button data-title="operations" aria-pressed="${engineering.role === 'operations'}">Operations Engineer</button></div><p class="cp-muted">Titles are cosmetic: both can do every task. Company credentials, physical reach and host controls are checked separately.</p>
      ${(!lan.connected || host) ? `<h3>Save</h3><div class="cp-row"><button data-adv="saves">Export / import / checkpoints</button></div><p class="cp-muted">${lan.connected ? 'The host autosaves after every change.' : 'Solo campaigns autosave in this browser (desktop app: in your user folder).'}</p>` : ''}
      <h3>Session</h3><div class="cp-row"><button data-go="start">Start screen</button></div>`;
@@ -260,6 +279,7 @@ export function createCampaignUI(ctx) {
     else if (go === 'central') { close(); officeUI.show('central'); }
     else if (go === 'start') { close(); showStart(true); }
     else if (go === 'leave') { lan.playSolo(); render(); }
+    else if (go === 'stop-hosting') { if (confirm('Stop hosting? Guests are disconnected; the campaign stays saved on this computer.')) { lan.playSolo(); desktop?.stopHosting().then(() => { notify('Hosting stopped · the room is local only'); render(); }); } }
     else if (go === 'unstuck') { close(); enter(); ctx.unstuck?.(); }
     else if (go === 'inspect') { close(); document.body.classList.remove('in-game'); exit(); }
   });
