@@ -130,3 +130,4 @@ body.in-game header,body.in-game main,body.in-game footer,body.in-game .vignette
 #gpu-warning{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:90;max-width:min(760px,calc(100vw - 32px));background:#3a2412;border:1px solid #ffbe6b;border-radius:8px;padding:10px 14px;color:#ffe9cc;font-size:13px;line-height:1.5}#gpu-warning button{margin-left:8px;border:1px solid #ffbe6b;border-radius:5px;padding:3px 8px;color:#ffe9cc;background:none}
 .set-grid small{color:var(--cp-muted);font-size:11.5px}
 #fps-display{font:12px ui-monospace,monospace!important;background:#08151ecc!important;padding:4px 8px!important;border-radius:5px}
+body.cp-open #game-notifications,body.at-start #game-notifications{top:auto!important;bottom:70px;right:18px}

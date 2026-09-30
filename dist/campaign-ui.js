@@ -157,8 +157,8 @@ export function createCampaignUI(ctx) {
   });
 
   // ---- Panel ---------------------------------------------------------------------------------------------
-  function panel(which = 'objective') { if (engineering.busy && which !== 'objective' && which !== 'settings') { notify('Put the item down first · G'); } tab = which; open = true; engineering.close(); kit.hide(); officeUI?.close?.(); if (document.pointerLockElement) document.exitPointerLock(); $('campaign-panel').hidden = false; render(); }
-  function close() { open = false; $('campaign-panel').hidden = true; }
+  function panel(which = 'objective') { if (engineering.busy && which !== 'objective' && which !== 'settings') { notify('Put the item down first · G'); } tab = which; open = true; engineering.close(); kit.hide(); officeUI?.close?.(); if (document.pointerLockElement) document.exitPointerLock(); $('campaign-panel').hidden = false; document.body.classList.add('cp-open'); render(); }
+  function close() { open = false; $('campaign-panel').hidden = true; document.body.classList.remove('cp-open'); }
   $('cp-close').onclick = () => { close(); if (!startOpen) enter(); };
 
   function levelTrack(st) {

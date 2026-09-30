@@ -59,7 +59,9 @@ export function createServiceKit(ctx){
  function removeTether(){if(tether){scene.remove(tether);tether.geometry.dispose();tether.material.dispose();tether=null;}}
  function disconnect(){if(anchor?.port?.attached===anchor)delete anchor.port.attached;session=null;anchor=null;removeTether();$('kvm-selector').hidden=true;updateHeader();}
  function dock(){
- const n=byId['MGMT-SW'],p=n.ports.find(p=>p.service&&p.medium==='Ethernet');disconnect();
+ const n=byId['MGMT-SW'],p=n?.ports.find(p=>p.service&&p.medium==='Ethernet');disconnect();
+ // No building management switch (empty-site campaign): the laptop starts unplugged instead of claiming a link.
+ if(!n||n.active===false||!p){anchor=null;session=null;try{$('laptop-output').replaceChildren();print('Laptop not connected. Plug the console cable (slot 1) or the service Ethernet lead (slot 2) into a device port: aim at it and press E.');}catch{}return;}
  anchor={node:n,port:p,mode:'DIRECT SERVICE LAN',laptopIP:'10.10.70.'+(240+engineerSlot),laptopPrefix:24,docked:true};p.attached=anchor;session=anchor;
  const start=cart.position.clone().add(new THREE.Vector3(-1,5.75,0)),end=p.pos.clone().add(n.pos);
  const curve=new THREE.CatmullRomCurve3([start,start.clone().add(new THREE.Vector3(0,-.7,1.6)),new THREE.Vector3(15,13,-4),new THREE.Vector3(-11,13,-4),new THREE.Vector3(-11,end.y,4),end],false,'catmullrom',.12);
