@@ -30,7 +30,7 @@ eng.panel('equipment');await document.getElementById('equip-console-tool').oncli
 eng.panel('equipment');await document.getElementById('equip-lan-tool').onclick();assert.equal(kit.slot,2);
 kit.selectSlot(1);assert.equal(kit.slot,1);kit.selectSlot(2);assert.equal(kit.slot,2);
 document.getElementById('terminal').hidden=true;document.getElementById('terminal-button').onclick();assert.equal(document.getElementById('terminal').hidden,false,'Inspect terminal');
-eng.panel('menu');assert.match(document.getElementById('eng-content').innerHTML,/play-campaign/);
+eng.panel('menu');assert(a.lab.campaignUI.startOpen,'v32+: the old engineering menu routes to the start screen');assert(document.getElementById('engineering-panel').hidden);a.lab.campaignUI.showStart(false);
 for(const n of a.nodes.filter(n=>n.type!=='cloud'))assert(kit.target(n.id),'baseline '+n.id);
 act({type:'mode',mode:'campaign',name:'Product acceptance'});o.game.budget=2000000;
 function buy(sku){act({type:'order',sku,quantity:1,length:5});const order=o.game.orders.at(-1);order.arrives=Date.now()-1;act({type:'unbox',id:order.id});return o.game.stock.find(s=>s.sku===sku&&!s.holders.length);}

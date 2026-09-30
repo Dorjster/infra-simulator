@@ -10,5 +10,5 @@ globalThis.MockRenderer=class{setPixelRatio(){}setSize(){}setClearColor(){}getPi
 const THREE=await import(asset('three.module.js'));globalThis.MockControls=class{constructor(camera){this.camera=camera;this.target=new THREE.Vector3();this.mouseButtons={LEFT:0}}addEventListener(){}update(){this.camera.lookAt(this.target)}};
 let src=fs.readFileSync(path.join(assetRoot,'app.js'),'utf8').replace("import { OrbitControls } from './OrbitControls.js';","const OrbitControls=globalThis.MockControls;").replace('new THREE.WebGLRenderer(','new globalThis.MockRenderer(');
 src=src.replace(/from '\.\/([^']+)'/g,(_,name)=>"from '"+asset(name)+"'");
-src+='\nglobalThis.testApp={lab,state,nodes,links,byId,racks,selectLayer,simulate,restoreAll,command,animate,chooseDevice,chooseLink,zoomBy,camera,orbitControls,setCamera,goalTarget,goalCamera,scene};';
+src+='\nglobalThis.testApp={lab,pickables,state,nodes,links,byId,racks,selectLayer,simulate,restoreAll,command,animate,chooseDevice,chooseLink,zoomBy,camera,orbitControls,setCamera,goalTarget,goalCamera,scene};';
 await import('data:text/javascript;base64,'+Buffer.from(src).toString('base64'));export const a=globalThis.testApp;
