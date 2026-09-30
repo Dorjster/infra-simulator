@@ -1,0 +1,31 @@
+/* Small, high-contrast controls for the simulator's working surfaces. */
+:root{--game-ui-scale:1}
+/* The gameplay HUD hides the world <main>; the Office workspace contains
+   its own main and must remain visible while the workspace is open. */
+body.walking #office-panel>header{display:flex!important}
+body.walking #office-panel main#office-content{display:block!important}
+button,input,select,textarea{font:inherit}
+#engineering-panel{font-size:calc(15px * var(--game-ui-scale));}
+#engineering-panel .eng-menu-buttons{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:10px;max-width:760px}
+#engineering-panel .eng-menu-buttons button{text-align:left;min-height:58px}
+#engineering-panel .eng-menu-buttons small{display:block;opacity:.72;margin-top:4px;font-size:.82em}
+#engineering-panel .eng-muted{opacity:.72;line-height:1.7}
+#engineering-panel .runtime-table{overflow:auto;margin:14px 0 20px;border:1px solid #344d60;border-radius:8px}
+#engineering-panel .runtime-table table{width:100%;border-collapse:collapse;min-width:620px;background:#0b1721}
+#engineering-panel .runtime-table th,#engineering-panel .runtime-table td{padding:10px 12px;text-align:left;border-bottom:1px solid #263c4c;white-space:nowrap}
+#engineering-panel .runtime-table th{color:#8fd9ce;font-weight:600;background:#122838}
+#engineering-panel [data-runtime-form]{padding:14px;margin:12px 0 22px;border:1px solid #344d60;border-radius:8px;background:#10212e}
+#engineering-panel [data-runtime-form] .pg-grid{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:10px}
+#engineering-panel [data-runtime-form] label{display:flex;flex-direction:column;gap:5px;color:#bcd0dc}
+#engineering-panel [data-runtime-form] input,#engineering-panel [data-runtime-form] select,#engineering-panel [data-runtime-form] textarea{box-sizing:border-box;width:100%;background:#07131c;color:#e8f6f6;border:1px solid #426174;border-radius:5px;padding:9px}
+#engineering-panel [data-runtime-form] textarea{min-height:90px;grid-column:1/-1}
+#engineering-panel [data-runtime-form] .pg-check{flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;padding-top:27px}
+#engineering-panel [data-runtime-form] button{grid-column:1/-1;justify-self:start;margin-top:5px;background:#236c72;border-color:#71d7cb}
+#office-panel .office-nav-group{margin:16px 0 5px;color:#7ed8ce;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+#office-panel .office-central-card{padding:15px;border:1px solid #38566a;border-radius:8px;background:#132b3b;margin:10px 0}
+#lan-host-controls{margin:14px 0;padding:14px;border:1px solid #4b7485;border-radius:8px;background:#102b3b;display:grid;gap:8px}
+#lan-host-controls[hidden]{display:none}
+#lan-host-controls strong{color:#9ee6d1}
+#lan-host-controls button{justify-self:start}
+@media(max-width:860px){#engineering-panel .eng-menu-buttons{grid-template-columns:1fr}#engineering-panel [data-runtime-form] .pg-grid{grid-template-columns:repeat(2,minmax(140px,1fr))}}
+@media(max-width:560px){#engineering-panel [data-runtime-form] .pg-grid{grid-template-columns:1fr}}

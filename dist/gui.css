@@ -1,0 +1,103 @@
+/* Vendor-structured device GUIs (training look-alikes, no logos). Scoped to #product-gui. */
+#product-gui{--gv-accent:#0672cb;--gv-accent-2:#0a5aa0;--gv-top:#0672cb;--gv-top-text:#fff;--gv-nav:#fff;--gv-nav-text:#23384a;--gv-nav-active:#e3effa;--gv-bg:#f2f5f8;--gv-card:#fff;--gv-line:#d8e0e7;--gv-text:#1b2b38;--gv-muted:#5d7182;
+ background:var(--gv-bg);color:var(--gv-text);border:1px solid var(--gv-line);border-radius:10px;overflow:hidden;font:14px/1.5 "Segoe UI",system-ui,-apple-system,Arial,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.28);animation:gv-in .18s ease-out}
+#product-gui[data-vendor=fortinet]{--gv-accent:#da291c;--gv-accent-2:#b01f14;--gv-top:#2b3338;--gv-nav:#353f45;--gv-nav-text:#dfe5e8;--gv-nav-active:#46525a;--gv-bg:#eef1f3}
+#product-gui[data-vendor=hpe]{--gv-accent:#01a982;--gv-accent-2:#00836a;--gv-top:#1f2a36;--gv-nav:#fff;--gv-nav-active:#e2f5f0}
+#product-gui[data-vendor=isp]{--gv-accent:#6b7a88;--gv-top:#3b4650}
+@keyframes gv-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+#product-gui .gv-top{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--gv-top);color:var(--gv-top-text);padding:12px 18px;border-bottom:3px solid var(--gv-accent)}
+#product-gui .gv-brand b{display:block;font-size:17px;letter-spacing:.2px}
+#product-gui .gv-brand span{font-size:12px;opacity:.75}
+#product-gui .gv-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;justify-content:flex-end}
+#product-gui .gv-meta code{background:rgba(255,255,255,.12);padding:2px 7px;border-radius:4px;color:inherit}
+#product-gui .gv-body{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:420px}
+#product-gui .gv-nav{background:var(--gv-nav);color:var(--gv-nav-text);padding:10px 8px;border-right:1px solid var(--gv-line);display:flex;flex-direction:column;gap:2px}
+#product-gui .gv-nav h6{margin:12px 10px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;opacity:.6;font-weight:600}
+#product-gui .gv-nav button{all:unset;cursor:pointer;display:block;padding:7px 10px;border-radius:6px;color:var(--gv-nav-text);font-size:13.5px;transition:background .12s}
+#product-gui .gv-nav button:hover{background:var(--gv-nav-active)}
+#product-gui .gv-nav button[aria-pressed=true]{background:var(--gv-nav-active);box-shadow:inset 3px 0 var(--gv-accent);font-weight:600}
+#product-gui .gv-main{padding:16px 20px 20px;min-width:0}
+#product-gui .gv-access{font-size:12px;color:var(--gv-muted);margin-bottom:6px}
+#product-gui fieldset{border:0;padding:0;margin:0;min-width:0}
+#product-gui legend{font-size:20px;font-weight:600;margin-bottom:10px;padding:0}
+#product-gui fieldset:disabled{opacity:.55}
+#product-gui p{color:var(--gv-muted);font-size:13.5px;line-height:1.55;margin:8px 0}
+#product-gui label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--gv-muted);font-weight:500}
+#product-gui label small{font-weight:400;font-size:11.5px}
+#product-gui input,#product-gui select,#product-gui textarea{background:#fff;color:var(--gv-text);border:1px solid #c3ced8;border-radius:6px;padding:8px 10px;width:100%;box-sizing:border-box;font:inherit;font-size:14px;transition:border .12s,box-shadow .12s}
+#product-gui input:focus,#product-gui select:focus,#product-gui textarea:focus{outline:0;border-color:var(--gv-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--gv-accent) 22%,transparent)}
+#product-gui input[type=checkbox]{width:auto;accent-color:var(--gv-accent)}
+#product-gui .pg-check{flex-direction:row;align-items:center;gap:8px;padding-top:22px;color:var(--gv-text)}
+#product-gui .pg-grid{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:12px;margin:8px 0}
+#product-gui button{background:#fff;color:var(--gv-accent-2);border:1px solid #c3ced8;border-radius:6px;padding:8px 14px;font:inherit;font-size:13.5px;cursor:pointer;margin:8px 8px 0 0;transition:background .12s,transform .06s}
+#product-gui button:hover{background:#f4f7fa}
+#product-gui button:active{transform:translateY(1px)}
+#product-gui button.gv-primary,#product-gui form button[type=submit]{background:var(--gv-accent);border-color:var(--gv-accent);color:#fff;font-weight:600}
+#product-gui button.gv-primary:hover,#product-gui form button[type=submit]:hover{background:var(--gv-accent-2)}
+#product-gui button.gv-danger{color:#b3261e;border-color:#e5b4b0}
+#product-gui .gv-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:6px 0 12px}
+#product-gui .gv-card{background:var(--gv-card);border:1px solid var(--gv-line);border-radius:10px;padding:12px 14px;min-width:0}
+#product-gui .gv-card.gv-wide{grid-column:1/-1}
+#product-gui .gv-card h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--gv-muted)}
+#product-gui .gv-tone-crit{border-left:4px solid #d93025}
+#product-gui .gv-tone-ok{border-left:4px solid #1e8e3e}
+#product-gui .gv-tone-warn{border-left:4px solid #e37400}
+#product-gui .gv-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;font-size:13.5px}
+#product-gui .gv-kv dt{color:var(--gv-muted)}
+#product-gui .gv-kv dd{margin:0;overflow-wrap:anywhere}
+#product-gui .gv-pill{display:inline-block;padding:1px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:18px;white-space:nowrap}
+#product-gui .gv-ok{background:#e6f4ea;color:#137333}
+#product-gui .gv-warn{background:#fef3e0;color:#9a5b00}
+#product-gui .gv-crit{background:#fce8e6;color:#b3261e}
+#product-gui .gv-off{background:#eceff1;color:#56636d}
+#product-gui .gv-top .gv-ok{background:#1e8e3e;color:#fff}#product-gui .gv-top .gv-crit{background:#d93025;color:#fff}#product-gui .gv-top .gv-warn{background:#e37400;color:#fff}
+#product-gui .gv-table,#product-gui .runtime-table{overflow:auto;border:1px solid var(--gv-line);border-radius:8px;background:#fff;margin:8px 0 12px}
+#product-gui table{border-collapse:collapse;width:100%;font-size:13px}
+#product-gui th{background:#f6f8fa;text-align:left;font-weight:600;color:var(--gv-muted);padding:7px 10px;border-bottom:1px solid var(--gv-line);white-space:nowrap}
+#product-gui td{padding:7px 10px;border-bottom:1px solid #eef2f5;vertical-align:top}
+#product-gui tr:last-child td{border-bottom:0}
+#product-gui .gv-empty{color:var(--gv-muted);font-style:italic}
+#product-gui form[data-runtime-form]{background:#fff;border:1px solid var(--gv-line);border-radius:10px;padding:10px 14px;margin:10px 0}
+#product-gui .gv-steps{list-style:none;margin:6px 0;padding:0;display:flex;flex-direction:column;gap:4px}
+#product-gui .gv-steps li{display:flex;gap:10px;align-items:flex-start;padding:6px 8px;border-radius:6px}
+#product-gui .gv-steps li>span{width:18px;flex:none;font-weight:700;color:var(--gv-muted);text-align:center}
+#product-gui .gv-steps li.done>span{color:#1e8e3e}
+#product-gui .gv-steps li.next{background:color-mix(in srgb,var(--gv-accent) 9%,#fff)}
+#product-gui .gv-steps li.next>span{color:var(--gv-accent)}
+#product-gui .gv-steps small{display:block;color:var(--gv-muted);font-size:12px}
+#product-gui .gv-note{padding:8px 12px;border-radius:8px;background:#eef4fb;color:#23445f}
+#product-gui .gv-note-warn{background:#fff4e2;color:#6b4200}
+#product-gui .gv-note-crit{background:#fdecea;color:#8c1d18}
+#product-gui .gv-note-ok{background:#e9f6ec;color:#15502a}
+#product-gui .gv-meter{position:relative;height:18px;background:#e7edf2;border-radius:9px;overflow:hidden;margin:6px 0}
+#product-gui .gv-meter i{position:absolute;inset:0 auto 0 0;background:var(--gv-accent);border-radius:9px;transition:width .3s}
+#product-gui .gv-meter i.warn{background:#e37400}#product-gui .gv-meter i.crit{background:#d93025}
+#product-gui .gv-meter span{position:relative;font-size:11px;padding-left:8px;line-height:18px;color:#10202c}
+#product-gui output#pg-message{display:block;margin-top:12px;min-height:20px;padding:0;font-size:13px;font-weight:600;color:var(--gv-accent-2)}
+#product-gui output#pg-message:not(:empty){padding:8px 12px;background:#fff;border:1px solid var(--gv-line);border-left:4px solid var(--gv-accent);border-radius:6px;animation:gv-in .15s}
+#product-gui pre{white-space:pre-wrap;background:#0f1a22;color:#cfe3ee;padding:12px 14px;border-radius:8px;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+#product-gui a{color:var(--gv-accent-2)}
+#product-gui .gv-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+#product-gui .gv-row button{margin:0}
+@media (max-width:900px){#product-gui .gv-body{grid-template-columns:1fr}#product-gui .gv-nav{flex-direction:row;flex-wrap:wrap}#product-gui .gv-nav h6{display:none}#product-gui .pg-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:560px){#product-gui .pg-grid{grid-template-columns:1fr}}
+/* v30 panel motion: panels fade/scale in when un-hidden (respects reduced motion) */
+@keyframes panel-in{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+#office-panel:not([hidden]),#engineering-panel:not([hidden]),#terminal:not([hidden]){animation:panel-in .2s cubic-bezier(.2,.8,.2,1)}
+#office-panel button,#engineering-panel button,#product-gui button{transition:background-color .15s,border-color .15s,transform .08s}
+#office-panel button:active,#engineering-panel button:active,#product-gui button:active{transform:translateY(1px)}
+.walking #eng-objective{transition:opacity .25s;backdrop-filter:blur(6px)}
+@media (prefers-reduced-motion:reduce){#office-panel,#engineering-panel,#terminal,#product-gui *{animation:none!important;transition:none!important}}
+/* v31: status strip and "what's blocking" box on every device page */
+.gv-strip{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.gv-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid var(--gv-line,#3a4a57);border-radius:4px;font-size:12px}
+.gv-chip small{opacity:.7;text-transform:uppercase;letter-spacing:.04em}
+.gv-blocking{margin:10px 0 0;padding:8px 10px;border-left:4px solid #e0605a;background:rgba(224,96,90,.09);display:grid;gap:4px;font-size:13px}
+.gv-blocking-warn{border-left-color:#e7a54b;background:rgba(231,165,75,.09)}
+.gv-blocking-ok{border-left-color:#4fbf8c;background:rgba(79,191,140,.08);display:block}
+.gv-blocking button{justify-self:start}
+.gv-confirm{border:1px solid #e0605a;padding:8px;margin-top:6px}
+/* v31 inline validation and confirm-before-destroy */
+#product-gui input.gv-invalid{border-color:#d93025;background:#fff4f3;outline-color:#d93025}
+#product-gui .gv-field-err{display:block;color:#b3261e;font-size:11px;margin-top:2px}
+#product-gui button[id].gv-danger:is(:focus,:hover){background:#fbe9e7}

@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import {a} from './app-harness.mjs';
+import * as THREE from '../dist/three.module.js';
+import {createHardware} from '../dist/hardware.js';
+import {CATALOG} from '../dist/operations.js';
+const scene=new THREE.Scene(),h=createHardware(scene);
+const w=a.lab.world,o=w.operations,act=action=>w.apply({type:'engineering',action},'ENGINEER-01');
+function buy(sku){act({type:'order',sku,quantity:1,length:7});const order=o.game.orders.at(-1);order.arrives=0;act({type:'unbox',id:order.id});return o.game.stock.find(s=>s.sku===sku);}
+for(const c of CATALOG.filter(c=>['server','gpu','storage','switch','san','firewall'].includes(c.type))){
+ const n=h.spawn({id:'CHECK-'+c.id,sku:c.id,model:c.name,type:c.type,units:c.units,rack:'R02',unit:1});
+ a.lab.kit.addServicePorts(n);
+ const p=n.ports.find(p=>p.name==='MGMT UPLINK');
+ assert(p&&!p.service&&p.speed===1&&p.medium==='Ethernet',c.id);
+ assert.equal(p.side,c.type==='firewall'?'front':'rear',c.id);
+ assert(Math.abs(p.pos.y)<n.height/2,'port stays inside chassis '+c.id);
+ const dir=new THREE.Vector3(0,0,p.side==='rear'?1:-1);
+ scene.updateMatrixWorld(true);
+ const target=n.group.localToWorld(p.pos.clone());
+ const ray=new THREE.Raycaster(target.clone().addScaledVector(dir,-1),dir);
+ const candidates=h.pickables.filter(m=>m.userData.node===n);
+ const hits=ray.intersectObjects(candidates,false);
+ assert(hits.length,'socket visible '+c.id);
+ const hit=hits[0],port=hit.object.userData.port||n.ports[hit.object.userData.portIndices?.[hit.instanceId]];
+ assert.equal(port,p,'management socket must win over chassis/PSU '+c.id);
+ if(c.vendor==='HPE'&&c.type==='server')assert.match(p.displayName,/iLO/);
+ if(c.vendor==='Dell'&&['server','gpu'].includes(c.type))assert.match(p.displayName,/iDRAC/);
+ if(['switch','san','firewall'].includes(c.type))assert(n.ports.some(p=>p.name==='CONSOLE'&&p.service));
+ assert(n.ports.some(p=>p.name==='SERVICE LAN'&&p.service));
+ act({type:'mode',mode:'campaign'});
+ const stock=buy(c.id);act({type:'grab',id:stock.id});act({type:'mount',id:stock.id,rack:'R02',unit:1});
+ const live=a.byId[o.game.installed.at(-1)],hub=a.byId['MGMT-SW'];
+ const pa=live.ports.findIndex(p=>p.name==='MGMT UPLINK'),pb=hub.ports.findIndex(p=>!p.link&&!p.service&&p.speed===1);
+ const cable=buy('cat6');act({type:'grab',id:cable.id});act({type:'start-end',id:cable.id,node:live.id,port:pa});
+ assert.match(act({type:'patch',id:cable.id,a:live.id,pa,b:hub.id,pb}),/^Cable connected/);
+ w.restore(w.snapshot());assert(live.ports[pa].link,'saved management cable '+c.id);
+ act({type:'unplug-end',node:live.id,port:pa});const loose=o.game.stock.find(s=>s.holders.includes('ENGINEER-01'));
+ assert.match(act({type:'patch',id:loose.id,...loose.anchor,b:live.id,pb:pa}),/^Cable connected/);
+}
+console.log('PASS: every rack catalog model has a ray-pickable management socket, correct face, and service ports');
+process.exit(0);

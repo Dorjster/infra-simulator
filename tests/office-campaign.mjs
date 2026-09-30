@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';import {a} from './app-harness.mjs';import {helpers} from './build-helpers.mjs';
+const w=a.lab.world,op=w.operations,actor='ENGINEER-01',engineering=action=>w.apply({type:'engineering',action},actor),config=action=>w.apply({type:'config',action},actor),office=action=>w.apply({type:'office',action},actor);
+engineering({type:'mode',mode:'campaign',enterprise:true});
+function install(sku,rack){engineering({type:'order',sku,quantity:1,length:5});const order=op.game.orders.at(-1);order.arrives=0;engineering({type:'unbox',id:order.id});const item=op.game.stock.find(i=>i.sku===sku);engineering({type:'grab',id:item.id});engineering({type:'mount',id:item.id,rack,unit:1});const n=a.byId[op.game.installed.at(-1)],cord=op.game.stock.find(i=>i.sku==='power');engineering({type:'power',node:n.id,psu:0,feed:'A',id:cord.id});n.physical.bootUntil=0;op.tick();return n;}
+const sw=install('fs148f','R01'),fw=install('fg200f','R02');
+const consoleSession={node:sw,config:false};for(const cmd of ['config system interface','edit mgmt','set ip 10.10.70.8/24','set allowaccess ping https ssh','next','end'])await a.lab.kit.network.command(cmd,consoleSession);
+assert(sw.net.ssh);assert.equal(sw.net.ip,'10.10.70.8');
+await office({type:'login',user:'itadmin',password:'OfficeLab19!'});
+await office({type:'configure',page:'binding',value:{access:sw.id,firewall:fw.id,floor:1,port:0,fwPort:0}});
+assert(fw.net.ispContract,'provided ISP assigned to the purchased firewall');helpers(a).installISP(fw,'port3',{racks:['R03']});
+await office({type:'configure',page:'interfaces',value:{id:10,name:'SALES',ip:'10.10.10.1',prefix:24,enabled:true,zone:'staff',mtu:1500}});
+config({type:'vlan',node:sw.id,id:10});for(const n of [sw,fw])config({type:'port',node:n.id,index:0,value:{mode:'trunk',allowed:[1,10]}});
+await office({type:'configure',page:'dhcp',value:{id:10,enabled:true,start:100,end:199,gateway:'10.10.10.1',dns:'10.10.10.1',lease:3600}});
+await office({type:'patch-pc',id:'F1-sales-PC',port:1});
+await office({type:'configure',page:'switching',value:{...w.office.state.ports['F1-sales-PC'],id:'F1-sales-PC',vlan:10,trunk:'10'}});
+await office({type:'configure',page:'wan',value:{...w.office.state.wan,port:'port3',connected:true,up:true,defaultRoute:true,mode:'static'}});
+await office({type:'configure',page:'policies',value:{id:'sales-out',src:'10',dst:'wan',source:'any',destination:'any',service:'any',action:'accept',nat:true,enabled:true,start:0,end:24}});
+await office({type:'login',user:'sales',pc:'F1-sales-PC',password:'OfficeLab19!'});
+const r=await office({type:'browse',pc:'F1-sales-PC',url:'https://example.test'});assert(r.ok,r.reason);
+const budget=op.game.budget;await office({type:'validate'});assert.equal(w.office.state.chapter,1);assert.equal(op.game.budget,budget+15000);
+const saved=w.snapshot();w.restore(saved);assert((await office({type:'browse',pc:'F1-sales-PC',url:'https://example.test'})).ok);
+console.log('PASS: empty enterprise campaign → buy, rack, power, serial switch setup, ISP binding, VLAN/DHCP/NAT, employee browsing, paid contract and save restoration.');process.exit(0);

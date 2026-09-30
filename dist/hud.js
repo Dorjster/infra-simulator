@@ -1,0 +1,2 @@
+let host,last='',at=0;
+export function notify(message){if(!message)return;if(message===last&&Date.now()-at<1200)return;last=message;at=Date.now();if(!host){host=document.createElement('div');host.id='game-notifications';host.setAttribute('role','status');host.setAttribute('aria-live','polite');document.body.append(host);}const el=document.createElement('div');el.className='game-toast';el.textContent=String(message).slice(0,180);host.append(el);while(host.children?.length>2)host.firstElementChild.remove();setTimeout(()=>el.remove(),2400);}
