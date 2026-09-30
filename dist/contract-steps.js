@@ -10,8 +10,8 @@ const live = (nodes, type) => nodes.filter(n => n.active !== false && n.spec && 
 const step = (label, ok, detail) => ({ label, ok: !!ok, detail });
 const firstFail = r => r?.steps?.find(x => !x.ok);
 
-export function contractSteps(office, network, nodes) {
-  const s = office.state, chapter = s.chapter, obj = office.objectives()[chapter];
+export function contractSteps(office, network, nodes, only) {
+  const s = office.state, chapter = only ?? s.chapter, obj = office.objectives()[chapter];
   if (!obj) return { chapter, title: 'All contracts complete', steps: [], ok: true };
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
   const fw = byId[s.bindings.firewall], sw = byId[s.bindings.access?.[1]], steps = [];
@@ -82,7 +82,7 @@ export function contractSteps(office, network, nodes) {
     const crit = network.logic ? network.logic.alarms().filter(a => a.severity === 'critical') : [];
     steps.push(step('No critical device alarms', !crit.length, crit.length ? crit[0].device + ': ' + crit[0].message : 'All device checks pass'), step('Incident ticket resolved', !!s.incidentClosed, 'Office → tickets'), step('No active alerts', obj.ok, obj.detail));
   } else steps.push(step(obj.title, obj.ok, obj.detail));
-  steps.push(step('Contract accepted', false, obj.ok ? 'All checks pass · the customer pays automatically' : 'Pays automatically when the live checks pass'));
+  if (only === undefined) steps.push(step('Contract accepted', false, obj.ok ? 'All checks pass · the customer pays automatically' : 'Pays automatically when the live checks pass'));
   const guide = OFFICE_GUIDANCE[chapter]?.[0];
   return { chapter, title: obj.title, guide, steps, ok: obj.ok, detail: obj.detail, reward: obj.reward };
 }

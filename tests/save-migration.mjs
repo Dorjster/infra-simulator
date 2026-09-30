@@ -25,7 +25,12 @@ assert(!L.checks(fw).some(c => !c.ok && c.severity === 'critical' && !['mgmt-ip'
 assert.equal(L.leds(cpe).front.find(x => x.id === 'SERVICE').color, 'green');
 assert.equal(L.state(srv).controller.boss.state, 'optimal', 'controller model created lazily for old servers');
 assert.equal(deviceRuntime(srv).os, 'VMware ESXi');
-assert.equal(w.snapshot().format, 31, 'next save uses format 31');
+assert.equal(w.snapshot().format, 32, 'next save uses format 32');
+// v32: the old contract campaign continues as Campaign levels. Contract 1 (Internet) done ⇒ levels 0–2
+// earned as migrated prerequisites; level 3 is current. Equipment, money and office state are kept.
+assert.equal(op.game.track, 'levels'); assert.equal(op.game.legacyTrack, 'contracts'); assert.equal(op.game.emptySite, false, 'building racks stay installed');
+assert.deepEqual(Object.keys(op.game.levels.earned).map(Number), [0, 1, 2]); assert.equal(op.game.levels.current, 3);
+assert(op.game.budget > 0 && op.game.installed.length === 4, 'money and equipment kept');
 // v29-shaped save: logical ISP handoff, no provider router.
 const v29 = structuredClone(v30); delete v29.format;
 const cpeId = v29.devices.find(d => d.type === 'isp').id; v29.devices = v29.devices.filter(d => d.id !== cpeId); v29.cables = v29.cables.filter(c => c.a !== cpeId && c.b !== cpeId);
@@ -39,10 +44,10 @@ engineering({ type: 'mode', mode: 'free' });
 engineering({ type: 'fault', fault: 'pdu-overload', rack: 'R04' }); engineering({ type: 'fault', fault: 'raid-disk', node: 'SERVER-02' }); engineering({ type: 'fault', fault: 'stp-loop', node: 'CORE-A' });
 op.tick(); L.invalidate();
 const before = { pdu: !!grid.tripped['R04:A'], vd: L.checks(a.byId['SERVER-02']).find(c => c.id === 'vd-VD0').detail, storm: [...L.spanningTree().storm].sort().join(), sel: (a.byId['SERVER-02'].net.sel || []).length };
-const saved = JSON.parse(JSON.stringify(w.snapshot())); assert.equal(saved.format, 31);
+const saved = JSON.parse(JSON.stringify(w.snapshot())); assert.equal(saved.format, 32);
 engineering({ type: 'mode', mode: 'free' }); assert(!grid.tripped['R04:A'], 'fresh world');
 w.restore(saved); L.invalidate();
 assert.deepEqual({ pdu: !!grid.tripped['R04:A'], vd: L.checks(a.byId['SERVER-02']).find(c => c.id === 'vd-VD0').detail, storm: [...L.spanningTree().storm].sort().join(), sel: (a.byId['SERVER-02'].net.sel || []).length }, before, 'v31 device state persists');
 assert(before.pdu && before.sel > 0 && before.storm.length);
-console.log('PASS: save migration · real v30 campaign save and a v29-shaped logical-handoff save load as format 31 and keep their contract progress, Internet path and device logic; v31 breaker/RAID/STP/SEL state survives save and load.');
+console.log('PASS: save migration · real v30 campaign save and a v29-shaped logical-handoff save load as format 32 and keep their contract progress (mapped to Campaign levels), Internet path and device logic; v31 breaker/RAID/STP/SEL state survives save and load.');
 process.exit(0);
