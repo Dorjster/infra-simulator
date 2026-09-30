@@ -1,5 +1,5 @@
 {
-  "name": "infrastructure-coop-lab",
+  "name": "infra-simulator",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,5 +8,6 @@
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "version": "32.0.0"
 }
