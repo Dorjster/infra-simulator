@@ -99,8 +99,8 @@ Browser and desktop runs on this build:
 
 - **Level 0 and Level 1 through the real 3D UI:** pass.
 - **Solo Campaign 0→10 in the browser:** pass.
-- **LAN Campaign 0→10 (host + guest + late joiner):** see [LAN run on this build](#lan-run-on-this-build) below.
-- **Packaged macOS app:** `tests/browser/desktop-smoke.mjs`, 10/10 checks pass.
+- **LAN Campaign 0→10 (host + guest + late joiner):** pass. All three clients reached level 11 with zero page errors.
+- **Packaged macOS app:** `tests/browser/desktop-smoke.mjs`, 10/10 checks pass (60 FPS, p95 18.4 ms), and the clipboard matrix passes 10/10.
 - **CI:** runs the same smoke test on the packaged Windows and macOS builds (`.github/workflows/desktop.yml`) and uploads `desktop-smoke-<platform>.json`. The Intel Mac build moved from the retired `macos-13` runner to `macos-15-intel`, and a release now publishes whatever platforms built.
 
 ## Not done / limits
