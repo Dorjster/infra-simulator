@@ -4,10 +4,10 @@
   "type": "module",
   "scripts": {
     "start": "node lan/server.mjs",
-    "test": "node tests/engineer-ui.mjs field && node tests/engineer-ui.mjs operations && node tests/product-config.mjs && node tests/device-runtime.mjs && node tests/engineer-lan.mjs && node tests/office.mjs && node tests/office-campaign.mjs && node tests/management-ports.mjs && node tests/challenges.mjs && node tests/campaign-projects.mjs && node tests/firewall-path.mjs && node tests/server-service.mjs && node tests/storage-paths.mjs && node tests/isp-plans.mjs && node tests/gui-fortigate.mjs && node tests/contract-chain.mjs && node tests/logic-firewall.mjs && node tests/logic-switch.mjs && node tests/logic-provider-router.mjs && node tests/logic-server.mjs && node tests/logic-gpu-server.mjs && node tests/logic-storage-array.mjs && node tests/logic-nas.mjs && node tests/logic-san-switch.mjs && node tests/logic-pdu.mjs && node tests/logic-access-point.mjs && node tests/logic-pc.mjs && node tests/challenges-logic.mjs && node tests/e2e-cross-device.mjs && node tests/save-migration.mjs && node tests/campaign-levels.mjs && node tests/interaction.mjs && node tests/mode-transitions.mjs && node tests/campaign-lan.mjs && node tests/room-rebind.mjs && node tests/lan-logic.mjs"
+    "test": "node tests/syntax.mjs && node tests/engineer-ui.mjs field && node tests/engineer-ui.mjs operations && node tests/product-config.mjs && node tests/device-runtime.mjs && node tests/engineer-lan.mjs && node tests/office.mjs && node tests/office-campaign.mjs && node tests/management-ports.mjs && node tests/challenges.mjs && node tests/campaign-projects.mjs && node tests/firewall-path.mjs && node tests/server-service.mjs && node tests/storage-paths.mjs && node tests/isp-plans.mjs && node tests/gui-fortigate.mjs && node tests/contract-chain.mjs && node tests/logic-firewall.mjs && node tests/logic-switch.mjs && node tests/logic-provider-router.mjs && node tests/logic-server.mjs && node tests/logic-gpu-server.mjs && node tests/logic-storage-array.mjs && node tests/logic-nas.mjs && node tests/logic-san-switch.mjs && node tests/logic-pdu.mjs && node tests/logic-access-point.mjs && node tests/logic-pc.mjs && node tests/challenges-logic.mjs && node tests/e2e-cross-device.mjs && node tests/save-migration.mjs && node tests/campaign-levels.mjs && node tests/interaction.mjs && node tests/mode-transitions.mjs && node tests/campaign-lan.mjs && node tests/room-rebind.mjs && node tests/lan-logic.mjs"
   },
   "engines": {
     "node": ">=22"
   },
-  "version": "32.0.0"
+  "version": "33.0.0"
 }

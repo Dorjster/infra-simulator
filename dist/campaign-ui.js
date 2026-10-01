@@ -24,7 +24,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v32</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v33</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
@@ -329,7 +329,7 @@ export function createCampaignUI(ctx) {
     lastLevel = cur;
     $('resume-hint').hidden = !(document.body.classList.contains?.('walking') && !document.pointerLockElement && !open && !startOpen && !engineering.isOpen && !kit.isOpen && !officeUI?.isOpen && !lan.isOpen);
   }
-  function celebrate(def) { if (!def) return; notify('LEVEL ' + def.id + ' COMPLETE · ' + def.title + ' · +$' + def.reward.toLocaleString() + ' · unlocked: ' + def.unlock); const el = document.createElement('div'); el.className = 'level-toast'; el.innerHTML = `<span>LEVEL ${def.id} COMPLETE</span><strong>${esc(def.title)}</strong><small>+$${def.reward.toLocaleString()} · Unlocked: ${esc(def.unlock)}</small>`; document.body.append(el); setTimeout(() => el.remove(), 5200); }
+  function celebrate(def) { if (!def) return; engineering.saveNow?.(); notify('LEVEL ' + def.id + ' COMPLETE · ' + def.title + ' · +$' + def.reward.toLocaleString() + ' · unlocked: ' + def.unlock); const el = document.createElement('div'); el.className = 'level-toast'; el.innerHTML = `<span>LEVEL ${def.id} COMPLETE</span><strong>${esc(def.title)}</strong><small>+$${def.reward.toLocaleString()} · Unlocked: ${esc(def.unlock)}</small>`; document.body.append(el); setTimeout(() => el.remove(), 5200); }
   function key(k) {
     if (startOpen) return false;
     if (k === 'j') { open && tab === 'objective' ? (close(), enter()) : panel('objective'); return true; }

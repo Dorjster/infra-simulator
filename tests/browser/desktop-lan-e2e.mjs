@@ -1,7 +1,7 @@
 // Campaign 0→10 over LAN in real browsers: the host starts the campaign from the LAN Host screen, a guest
 // browser performs every level through its LAN client (lan.send → host), a second guest joins late and
 // the host's HUD/objective and every client's level are checked after each level.
-import { chromium } from 'playwright-core'; // npm i playwright-core; CHROME=/path/to/chrome
+import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 const [root, out] = process.argv.slice(2); await mkdir(out, { recursive: true });

@@ -13,3 +13,7 @@ These drive the real client in Chrome through Playwright. They need `playwright-
 | `desktop-app.mjs <app-binary> <out>` | The packaged desktop app over CDP: no Node in the page, Solo saves to the user folder, LAN Host reachable on the LAN IP, Stop hosting, clean quit. Unset `ELECTRON_RUN_AS_NODE` if your shell sets it. |
 | `desktop-lan-e2e.mjs <app-binary> <out>` | The packaged desktop app hosts over LAN; Chrome guests on its LAN address play Campaign 0→10; then the app is quit and relaunched and the save is checked |
 | `campaign-solo-e2e.mjs <root> <out>` | Campaign 0→10 in Solo in one browser page (local world, browser autosave) |
+| `frame-pacing.mjs <root> <out> [solo|guest] [cpuThrottle] [seconds]` | 20 s walk: frame-time percentiles, long tasks and which subsystem dominated each slow frame |
+| `clipboard-mac.mjs <app-binary>` | Packaged macOS app: text from `pbcopy`, Cmd+V/C/X/A, laptop CLI single-line and multi-line paste preview/cancel/confirm, masking |
+| `lan-characters-video.mjs <root> <out>` | Records the 1 → 4 → 12 player LAN clip with varied characters, carrying, crouching, pointing and emotes |
+| `desktop-smoke.mjs <app-binary> <report.json>` | CI smoke test for the packaged Windows/macOS app (start screen, Level 0, Free Build racks, Continue, OS clipboard paste, frame times, clean quit) |

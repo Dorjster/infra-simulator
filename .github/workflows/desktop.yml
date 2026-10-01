@@ -26,9 +26,10 @@ jobs:
       matrix:
         include:
           - { os: macos-14, arch: arm64, label: macos-apple-silicon }
-          - { os: macos-13, arch: x64, label: macos-intel }
+          - { os: macos-15-intel, arch: x64, label: macos-intel }
           - { os: windows-latest, arch: x64, label: windows-x64 }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,6 +46,22 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           WINDOWS_CERTIFICATE_FILE: ${{ secrets.WINDOWS_CERTIFICATE_FILE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      # Launch the packaged app on this OS and drive it (start screen, Level 0, Free Build racks, Continue,
+      # OS clipboard paste, frame times with this runner's GPU, clean quit). The report is uploaded either way.
+      - name: Packaged app smoke test
+        shell: bash
+        continue-on-error: true
+        run: |
+          mkdir -p smoke && cd smoke && npm init -y > /dev/null && npm i playwright-core@1 --silent
+          cp ../tests/browser/desktop-smoke.mjs .
+          EXE=$(ls ../desktop/out/*/infra-simulator.exe 2>/dev/null || ls ../desktop/out/*/*.app/Contents/MacOS/infra-simulator)
+          node desktop-smoke.mjs "$EXE" ../desktop-smoke-${{ matrix.label }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-smoke-${{ matrix.label }}
+          path: desktop-smoke-${{ matrix.label }}.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: infra-simulator-${{ matrix.label }}
@@ -55,9 +72,10 @@ jobs:
             desktop/out/make/**/*.nupkg
             desktop/out/make/**/RELEASES
           if-no-files-found: error
+  # Publishes whatever built: one slow or failed platform never blocks the others' downloads.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.test.result == 'success'
+    needs: [test, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
