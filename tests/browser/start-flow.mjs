@@ -1,4 +1,4 @@
-import { chromium } from 'playwright-core'; // npm i playwright-core (not a game dependency); CHROME=/path/to/chrome or a Playwright-installed Chromium
+import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 const [root, out] = process.argv.slice(2); await mkdir(out, { recursive: true });
@@ -11,7 +11,7 @@ await page.addInitScript(() => { localStorage.setItem('infra-face', 'smile'); lo
 await page.goto(base + '/', { waitUntil: 'load' });
 await page.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 60000 }); await page.waitForTimeout(2500);
 await page.screenshot({ path: out + '/10-start.png' });
-await page.click('[data-start=solo]'); await page.waitForTimeout(400); await page.screenshot({ path: out + '/11-solo.png' });
+await page.click('[data-start=new]'); await page.waitForTimeout(400); await page.screenshot({ path: out + '/11-solo.png' });
 await page.click('#ss-new'); await page.waitForTimeout(1800);
 await page.evaluate(() => document.querySelector('#face-picker')?.setAttribute('hidden',''));
 await page.screenshot({ path: out + '/12-level0-hud.png' });

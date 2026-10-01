@@ -10,6 +10,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const gameRoot = await stat(path.join(here, 'game', 'lan', 'room.mjs')).then(() => path.join(here, 'game')).catch(() => path.resolve(here, '..'));
 const { startRoom } = await import(pathToFileURL(path.join(gameRoot, 'lan', 'room.mjs')).href);
 
+// Laptops with two GPUs: ask for the discrete one (Chromium/ANGLE picks the low-power GPU otherwise).
+app.commandLine.appendSwitch('force_high_performance_gpu');
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch
 let win = null, room = null, hosting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');
@@ -34,6 +36,11 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => cb(['pointerLock', 'fullscreen', 'clipboard-sanitized-write'].includes(permission)));
   // Browser downloads (Export campaign save) go through a save dialog.
+  // Right-click in text fields and selected text: the standard editing menu.
+  win.webContents.on('context-menu', (_e, p) => {
+    const items = p.isEditable ? [{ role: 'undo', enabled: p.editFlags.canUndo }, { role: 'redo', enabled: p.editFlags.canRedo }, { type: 'separator' }, { role: 'cut', enabled: p.editFlags.canCut }, { role: 'copy', enabled: p.editFlags.canCopy }, { role: 'paste', enabled: p.editFlags.canPaste }, { type: 'separator' }, { role: 'selectAll' }] : p.selectionText?.trim() ? [{ role: 'copy' }, { role: 'selectAll' }] : [];
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
   win.webContents.session.on('will-download', (_e, item) => { item.setSaveDialogOptions({ title: 'Save file', defaultPath: path.join(app.getPath('documents'), item.getFilename()) }); });
   win.loadURL(origin() + '/');
 }
@@ -72,6 +79,8 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     { label: 'File', submenu: [{ label: 'Import campaign save…', click: importSave }, { label: 'Export hosted campaign save…', click: exportSave }, { label: 'Show saves folder', click: () => shell.openPath(app.getPath('userData')) }, { type: 'separator' }, process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }] },
+    // Edit roles give text fields the platform clipboard shortcuts (Cmd+C/V/X/A on macOS need them).
+    { role: 'editMenu' },
     { label: 'View', submenu: [{ role: 'togglefullscreen' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' }] },
     { role: 'windowMenu' }
   ]));

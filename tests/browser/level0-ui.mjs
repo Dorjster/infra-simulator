@@ -1,5 +1,5 @@
 // Plays Level 0 through the real 3D interaction path: look at a target, read the prompt, press E.
-import { chromium } from 'playwright-core'; // npm i playwright-core (not a game dependency); CHROME=/path/to/chrome or a Playwright-installed Chromium
+import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 const [root, out] = process.argv.slice(2); await mkdir(out, { recursive: true });
@@ -10,7 +10,7 @@ const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 const errors = []; page.on('pageerror', e => errors.push(e.message));
 await page.addInitScript(() => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-skin', 'yellow'); localStorage.setItem('infra-name', 'Bot'); });
 await page.goto(base + '/', { waitUntil: 'load' }); await page.waitForFunction(() => globalThis.__infra?.lab); await page.waitForTimeout(2000);
-await page.click('[data-start=solo]'); await page.click('#ss-new'); await page.waitForTimeout(1500);
+await page.click('[data-start=new]'); await page.click('#ss-new'); await page.waitForTimeout(1500);
 await page.evaluate(() => { globalThis.INFRA_DELIVERY_SCALE = 0.05; document.querySelector('#face-picker')?.setAttribute('hidden',''); });
 const log = [];
 const prompt = () => page.evaluate(() => document.getElementById('walk-prompt').textContent);

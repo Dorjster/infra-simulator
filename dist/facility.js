@@ -36,6 +36,8 @@ export function improveFacility(scene,camera,pickables=[]){
  label('RECEIVING / STORES',-36,-.25,9,12,true);label('DELIVERIES',-35.2,-.25,-8.2,6,true);label('SERVER HALL',-20,-.25,10,8,true);label('ROW 01',0,-.25,12,7,true);label('EXPANSION BAYS',43,-.25,12,12,true);label('ROW 02',6,-.25,35,12,true);
  const plate=box(.08,.95,.62,-25.78,6.2,15,new THREE.MeshStandardMaterial({color:0xd9dde0,roughness:.5})),toggle=box(.12,.32,.16,-25.7,6.2,15,new THREE.MeshBasicMaterial({color:0x8ce8bd}));toggle.userData={lightSwitch:true};pickables.push(toggle);plate.userData={lightSwitch:true};pickables.push(plate);const sign=label('LIGHTS',-25.62,7.05,15,1.1);sign.rotation.y=Math.PI/2;
  const flashlight=new THREE.SpotLight(0xe1efff,90,22,.45,.75,1);flashlight.position.set(.3,-.2,0);flashlight.target.position.set(0,-.2,-10);camera.add(flashlight,flashlight.target);flashlight.intensity=0;let current=true;mergeStatic(group,pickables);mergePlates(group);
+ // The hall never moves: freeze its matrices so the per-frame scene update skips it.
+ group.updateMatrixWorld(true);group.traverse(o=>{o.matrixAutoUpdate=false;});
   const lampLevels=roomLights.map(l=>l.intensity);
  // Lights off = emergency lighting: the hall is clearly darker and blue-tinted, but aisles, ports and
  // labels stay readable and the device LEDs stand out.

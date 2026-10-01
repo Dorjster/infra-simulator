@@ -1,5 +1,5 @@
 // Before/after capture: same views, same viewport, real Chrome. Usage: node capture.mjs <repo-root> <out-dir> [players]
-import { chromium } from 'playwright-core'; // npm i playwright-core (not a game dependency); CHROME=/path/to/chrome or a Playwright-installed Chromium
+import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile, mkdtemp } from 'node:fs/promises';
 import path from 'node:path';

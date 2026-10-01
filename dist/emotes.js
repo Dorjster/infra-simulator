@@ -7,7 +7,7 @@
 import * as THREE from './three.module.js';
 import { EMOTES, createAvatar } from './avatar.js';
 
-export function createEmotes({ canEmote = () => true, color = () => 0x6bd9ff, face = () => 'cute', skin = () => 'yellow', laptop = () => false, notify = () => {} } = {}) {
+export function createEmotes({ canEmote = () => true, color = () => 0x6bd9ff, face = () => 'cute', skin = () => 'yellow', laptop = () => false, notify = () => {}, hat, outfit } = {}) {
   let index = 0, open = false, idleAt = 0, seq = 0, current = null, startedAt = 0, showSelf = false;
   // ---- wheel DOM ----
   const wheel = document.createElement('div'); wheel.id = 'emote-wheel'; wheel.hidden = true; wheel.setAttribute('role', 'menu'); wheel.setAttribute('aria-label', 'Emotes');
@@ -55,7 +55,7 @@ export function createEmotes({ canEmote = () => true, color = () => 0x6bd9ff, fa
   // ---- self preview (separate tiny scene, drawn in a corner only while needed) ----
   const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(32, 200 / 240, .1, 100);
   scene.add(new THREE.HemisphereLight(0xdff3ff, 0x2a3440, 2.2)); const key = new THREE.DirectionalLight(0xffffff, 2.4); key.position.set(4, 10, 8); scene.add(key);
-  let selfColor = color(); let self = createAvatar({ color: selfColor, face: face(), skin: skin() }); scene.add(self.g);
+  let selfColor = color(); const look = () => ({ color: selfColor, face: face(), skin: skin(), hat: hat?.() || 'cap', outfit: outfit?.() || 'bands' }); let self = createAvatar(look()); scene.add(self.g);
   cam.position.set(0, 6.4, -21); cam.lookAt(0, 5.6, 0);
   const size = new THREE.Vector2(), clear = new THREE.Color();
   return {
@@ -64,13 +64,13 @@ export function createEmotes({ canEmote = () => true, color = () => 0x6bd9ff, fa
     update(dt, { moving = false } = {}) {
       if (open && (performance.now() - idleAt > 6000 || !canEmote())) hide();
       if (current && moving && current !== 'dead' && performance.now() - startedAt > 250) cancel();
-      if (color() !== selfColor || skin() !== self.skin) { selfColor = color(); const p = self.emote; self.dispose(); self = createAvatar({ color: selfColor, face: face(), skin: skin() }); scene.add(self.g); if (p) self.play(p); }
+      if (color() !== selfColor || skin() !== self.skin || (hat?.() || 'cap') !== self.hat || (outfit?.() || 'bands') !== self.outfit) { selfColor = color(); const p = self.emote; self.dispose(); self = createAvatar(look()); scene.add(self.g); if (p) self.play(p); }
       if (self.style !== face()) self.setStyle(face());
       self.update(dt, { laptop: laptop() });
       if (current && !self.emote) current = null;
     },
     // What goes into the LAN pose.
-    pose() { return { emote: { id: current, n: seq }, face: face(), skin: skin() }; },
+    pose() { return { emote: { id: current, n: seq }, face: face(), skin: skin(), hat: hat?.() || 'cap', outfit: outfit?.() || 'bands' }; },
     // Show your avatar in the corner (while choosing/playing an emote, or while picking a face).
     showSelf(v) { showSelf = !!v; },
     get previewVisible() { return open || !!current || showSelf; },

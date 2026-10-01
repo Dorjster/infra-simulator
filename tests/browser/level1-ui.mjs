@@ -1,7 +1,7 @@
 // Continues from a Level 0 world (driven through game actions) and plays Level 1 through the real UI:
 // procurement panel, carry/mount by aim + E, rear PSU cords by aim + E, laptop console via the Laptop tab
 // and the terminal input, the patch-panel form in the Objective tab.
-import { chromium } from 'playwright-core'; // npm i playwright-core (not a game dependency); CHROME=/path/to/chrome or a Playwright-installed Chromium
+import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 const [root, out] = process.argv.slice(2); await mkdir(out, { recursive: true });
@@ -12,7 +12,7 @@ const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 const errors = []; page.on('pageerror', e => errors.push(e.message)); page.on('dialog', d => d.accept());
 await page.addInitScript(() => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-skin', 'yellow'); localStorage.setItem('infra-name', 'Bot'); });
 await page.goto(base + '/', { waitUntil: 'load' }); await page.waitForFunction(() => globalThis.__infra?.lab); await page.waitForTimeout(1500);
-await page.click('[data-start=solo]'); await page.click('#ss-new'); await page.waitForTimeout(1200);
+await page.click('[data-start=new]'); await page.click('#ss-new'); await page.waitForTimeout(1200);
 // Level 0 quickly through game actions (already covered by level0.mjs through the UI).
 await page.evaluate(() => { globalThis.INFRA_DELIVERY_SCALE = 0; const w = __infra.lab.world, act = a => w.apply({ type: 'engineering', action: a }, 'ENGINEER-01'), op = w.operations; const buy = sku => { act({ type: 'order', sku, quantity: 1, length: 5 }); const o = op.game.orders.at(-1); o.arrives = 0; act({ type: 'unbox', id: o.id }); return op.game.stock.filter(s => s.sku === sku).at(-1); }; const r = buy('rack'); act({ type: 'grab', id: r.id }); act({ type: 'rack', id: r.id, pad: 'PAD-R01' }); act({ type: 'rack-feed', rack: 'R01', feed: 'A' }); act({ type: 'rack-feed', rack: 'R01', feed: 'B' }); const k = buy('rail'); act({ type: 'grab', id: k.id }); act({ type: 'rails', id: k.id, rack: 'R01', unit: 30, units: 1 }); });
 await page.waitForTimeout(2500);

@@ -27,7 +27,7 @@ function cabinet(id,x,caption,site='primary',z=0){
  plate(g,id+' // '+caption,3.15,.28,0,11.98,3.28,'#e0edf3');plate(g,id+' // REAR',3.1,.26,0,11.98,-3.28,'#e0edf3',true);
  for(const [dx,color]of [[-1.55,0x171b20],[1.3,0xff8a38],[1.55,0x429dff]])box(g,.08,11,.09,dx,5.8,-3.34,new THREE.MeshStandardMaterial({color,roughness:.55}));
  g.traverse(m=>{if(m.isMesh&&!m.isInstancedMesh&&m.geometry?.type==='BoxGeometry'){m.userData={occluder:true};pickables.push(m);}});
- const captionLabel=label(caption,x,12.8,z,.46);racks.push({id,x,z,g,site,label:captionLabel});mergeStatic(g,pickables);mergePlates(g);return {id,x,z,g,site,label:captionLabel};
+ const captionLabel=label(caption,x,12.8,z,.46);racks.push({id,x,z,g,site,label:captionLabel});mergeStatic(g,pickables);mergePlates(g);g.updateMatrixWorld(true);g.traverse(o=>{o.matrixAutoUpdate=false;});return {id,x,z,g,site,label:captionLabel};
 }
 const security=cabinet('R01',-9,'SECURITY / CORE'),compute=cabinet('R02',-3,'COMPUTE'),storage=cabinet('R03',3,'STORAGE / SAN'),gpu=cabinet('R04',9,'AI / GPU');
 const drCompute=cabinet('R05',22,'DR COMPUTE','dr'),drStorage=cabinet('R06',28,'DR STORAGE','dr');

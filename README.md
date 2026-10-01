@@ -1,8 +1,8 @@
-# Infra Simulator v32
+# Infra Simulator v33
 
 Build a working enterprise from an empty room: receive equipment, rack it, power it, cable it, configure it on real-looking consoles and GUIs, and prove every service works. Play solo, or with up to 12 engineers on your LAN.
 
-**Start here: [UPDATE-v32.md](UPDATE-v32.md).** It covers Campaign levels 0–10, the new start flow and Campaign panel, one-verb prompts, the data-hall graphics, the desktop app, measurements, tests and limitations.
+**What's new: [UPDATE-v33.md](UPDATE-v33.md)** (bug fixes, smoother frame pacing, new characters, graphics settings, copy/paste). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
 
 ## Play
 
@@ -18,6 +18,7 @@ Build a working enterprise from an empty room: receive equipment, rack it, power
 | Mouse · Z / right mouse | Look · zoom to read ports and labels |
 | E | The action shown under the crosshair (`E · …`); `✗` lines say why it is not possible and what to do |
 | G · X | Put down what you carry · cancel a held cable or cord end (plug it back) |
+| Ctrl/Cmd + C, V, X, A · right-click | Copy, paste, cut and select all in any text field; a multi-line paste into a console asks before running |
 | R · F · V | Remove a device or optic · inspect · service action (clean fibre, provider ticket, re-mount) |
 | L · 1 / 2 | Service laptop · console cable / service Ethernet (equip them once in J → Laptop) |
 | J · I · M · H | Objective · Inventory & orders · Map · next hint |
@@ -28,6 +29,8 @@ Field Engineer and Operations Engineer are cosmetic titles: both can do every ta
 ## Counts in this release
 
 11 campaign levels (0–10) · 43 challenges (15 classic + 28 device-logic) · 24 purchasable rack models plus office items · 12 players per LAN room · save format 32 (v29–v31 saves migrate).
+
+**Graphics settings:** Settings → Graphics (Low / Medium / High), resolution scale, frame-rate limit and Show FPS. If the game stutters, try Low, then send us Settings → Copy performance diagnostics.
 
 ---
 
