@@ -7,7 +7,7 @@
 import * as THREE from './three.module.js';
 import { CASINO, ROOM } from './facility-layout.js';
 import { WHEEL, rouletteColor, TABLES, SLOT_SYMBOLS, LOTTO } from './casino-logic.js';
-import { startedAt, SYNC } from './casino-sync.js';
+import { startedAt, SYNC, bjReveal, lottoPlan, boardLandsAt, hitLandsAt } from './casino-sync.js';
 import { createStage } from './casino-stage.js';
 import { drawSymbol } from './slot-symbols.js';
 
@@ -21,7 +21,7 @@ export function seatPose(id, seat = 0) {
   if (def?.game === 'roulette') { const xs = [-4, -.5, 3, 6.5]; return { px: L.x + xs[seat % 4], pz: L.z + 9, tx: L.x + xs[seat % 4] * .6, ty: TABLE_H, tz: L.z }; }
   if (def?.game === 'poker') { const a = PK_ANGLES[Math.max(0, Math.min(4, seat))]; return { px: L.x + Math.cos(a) * PK_A * 1.75, pz: L.z + Math.sin(a) * PK_B * 2.1, tx: L.x, ty: TABLE_H, tz: L.z }; }
   if (def?.game === 'slots') return { px: L.x - 5.2, pz: L.z, tx: L.x, ty: 6.8, tz: L.z };
-  if (id === 'lotto') return { px: L.x - 1, pz: L.z - 11, tx: L.x + 1.5, ty: 7, tz: L.z };
+  if (id === 'lotto') { const dx = (seat % 5 - 2) * 1.6; return { px: L.x - 1 + dx, pz: L.z - 11, tx: L.x + 1.5 + dx * .3, ty: 7, tz: L.z }; }   // watchers stand side by side
   if (id === 'stage') { const a = -Math.PI / 2 + (seat % 5 - 2) * .35; return { px: L.x + Math.cos(a) * 12, pz: L.z + Math.sin(a) * 12, tx: L.x, ty: 7, tz: L.z }; }
   return { px: L.x, pz: L.z - 6, tx: L.x, ty: 4, tz: L.z };
 }
@@ -97,7 +97,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   // Card pool (per table): cards keyed by identity, dealt from the shoe with a short arc; flips when revealed.
   function cardLayer(shoe) {
     const live = new Map();
-    return { place(id, card, x, z, rot = 0, delay = 0, y = TABLE_H + .03) { let c = live.get(id); if (!c) { c = { mesh: add(cardGeo, cardMaterial(card), shoe.x, y, shoe.z), born: performance.now() + delay, card }; live.set(id, c); } if (c.card !== card) { c.card = card; c.flipAt = performance.now(); c.mesh.material = cardMaterial(card); } c.target = [x, y, z, rot]; c.seen = true; },
+    return { live, landed() { const now = performance.now(); return [...live.entries()].filter(([, c]) => now >= c.born + 320).map(([id, c]) => [id, c.card]); }, place(id, card, x, z, rot = 0, delay = 0, y = TABLE_H + .03) { let c = live.get(id); if (!c) { c = { mesh: add(cardGeo, cardMaterial(card), shoe.x, y, shoe.z), born: performance.now() + delay, card }; live.set(id, c); } if (c.card !== card) { c.card = card; c.flipAt = performance.now(); c.mesh.material = cardMaterial(card); } c.target = [x, y, z, rot]; c.seen = true; },
       begin() { for (const c of live.values()) c.seen = false; },
       end() { const now = performance.now(); for (const [id, c] of live) { if (!c.seen) { group.remove(c.mesh); live.delete(id); continue; } const t = Math.min(1, Math.max(0, (now - c.born) / 320)), e = t * (2 - t); c.mesh.visible = now >= c.born; c.mesh.position.set(shoe.x + (c.target[0] - shoe.x) * e, c.target[1] + Math.sin(t * Math.PI) * .6, shoe.z + (c.target[2] - shoe.z) * e); c.mesh.rotation.y = c.target[3]; const f = c.flipAt ? Math.min(1, (now - c.flipAt) / 300) : 1; c.mesh.scale.x = Math.abs(Math.cos(f * Math.PI)) * .9 + .1; } } };
   }
@@ -119,13 +119,14 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   }
   function updateBlackjack(id, t) {
     const T = tables[id], L = T.L, t0 = startedAt('bj:' + id + ':' + t.round), now = performance.now(), n = t.seats.length;
-    T.cards.begin(); T.chips.begin();
-    t.dealer.forEach((c, i) => { const order = i === 0 ? n : i === 1 ? 2 * n + 1 : 0; T.cards.place('d' + t.round + ':' + i, c, L.x - (t.dealer.length - 1) * .22 + i * .44, L.z + 1.2, 0, i < 2 ? Math.max(0, order * SYNC.dealCard - (now - t0)) : 0, TABLE_H + .08); });
-    t.seats.forEach((s, si) => { const a = BJ_SEAT_ANGLES[si], bx = L.x - Math.cos(a) * 5, bz = L.z + Math.sin(a) * 5, px = L.x - Math.cos(a) * 3.9, pz = L.z + Math.sin(a) * 3.9;
-      if (!(s.result && s.result !== 'push' && !s.payout)) T.chips.stack(bx, bz, s.bet, TABLE_H + .07); if (s.payout > s.bet) T.chips.stack(bx + .45, bz - .2, s.payout - s.bet, TABLE_H + .07);
-      (s.cards || []).forEach((c, i) => { const order = i === 0 ? si : n + 1 + si; T.cards.place('p' + t.round + ':' + si + ':' + i, c, px + i * .16 - .1, pz - i * .12, -a + Math.PI / 2, i < 2 ? Math.max(0, order * SYNC.dealCard - (now - t0)) : 0, TABLE_H + .08 + i * .004); }); });
+    T.cards.begin(); T.chips.begin(); const rv = bjReveal(id, t, now), shownDealer = t.dealer.filter((c, i) => now >= rv.cardAt(i));
+    // Hole card stays face down until the dealer's turn is shown; extra dealer cards land one by one.
+    shownDealer.forEach((c, i) => { const order = i === 0 ? n : i === 1 ? 2 * n + 1 : 0; T.cards.place('d' + t.round + ':' + i, i === 1 && rv.cardAt(1) > now ? '??' : c, L.x - (shownDealer.length - 1) * .22 + i * .44, L.z + 1.2, 0, i < 2 ? Math.max(0, order * SYNC.dealCard - (now - t0)) : 0, TABLE_H + .08); });
+    t.seats.forEach((s, si) => { const a = BJ_SEAT_ANGLES[si], bx = L.x - Math.cos(a) * 5, bz = L.z + Math.sin(a) * 5, px = L.x - Math.cos(a) * 3.9, pz = L.z + Math.sin(a) * 3.9, paid = rv.settled;
+      if (!(paid && s.result && s.result !== 'push' && !s.payout)) T.chips.stack(bx, bz, s.bet, TABLE_H + .07); if (paid && s.payout > s.bet) T.chips.stack(bx + .45, bz - .2, s.payout - s.bet, TABLE_H + .07);
+      (s.cards || []).forEach((c, i) => { const order = i === 0 ? si : n + 1 + si; T.cards.place('p' + t.round + ':' + si + ':' + i, c, px + i * .16 - .1, pz - i * .12, -a + Math.PI / 2, i < 2 ? Math.max(0, order * SYNC.dealCard - (now - t0)) : Math.max(0, hitLandsAt(id + ':' + t.round + ':' + si + ':' + i, now) - SYNC.cardFlight - now), TABLE_H + .08 + i * .004); }); });
     T.cards.end(); T.chips.end();
-    const k = JSON.stringify([t.phase, t.seats.map(s => [s.name, s.bet, s.cards?.length, s.result]), t.dealer.length]); if (k !== T.key) { T.key = k; const def = TABLES.find(d => d.id === id); sign(T.sg, def.name.toUpperCase(), [money(def.min) + '–' + money(def.max) + ' · 3:2', t.phase === 'betting' ? (t.seats.length ? 'Bets in · dealing soon' : 'Place your bets') : t.phase === 'playing' ? (t.seats[t.turn]?.name || '') + ' to act' : t.phase === 'done' ? (t.log[0] || '') : 'Dealer plays', t.seats.map(s => s.name + ' ' + money(s.bet)).join(' · ')]); }
+    const k = JSON.stringify([t.phase, t.seats.map(s => [s.name, s.bet, s.cards?.length, s.result]), t.dealer.length, rv.settled]); if (k !== T.key) { T.key = k; const def = TABLES.find(d => d.id === id); sign(T.sg, def.name.toUpperCase(), [money(def.min) + '–' + money(def.max) + ' · 3:2', t.phase === 'betting' ? (t.seats.length ? 'Bets in · dealing soon' : 'Place your bets') : t.phase === 'playing' ? (t.seats[t.turn]?.name || '') + ' to act' : t.phase === 'done' && rv.settled ? (t.log[0] || '') : 'Dealer plays', t.seats.map(s => s.name + ' ' + money(s.bet)).join(' · ')]); }
   }
 
   // ---- Roulette: 2.7 × 1.2 m table, wheel at the west end, the layout to the east. ----
@@ -188,8 +189,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     t.seats.forEach((s, i) => { if (!s) return; const [sx, sz] = at(i, .78), [hx, hz] = at(i, .58), [bx, bz] = at(i, .45);
       T.chips.stack(sx, sz, s.stack, TABLE_H + .08, 30); if (s.bet) T.chips.stack(bx, bz, s.bet, TABLE_H + .08, 16);
       (s.cards || []).forEach((c, k) => T.cards.place('h' + t.hand + ':' + i + ':' + k, s.folded ? '??' : s.shown || key(s.name) === me ? c : '??', hx + (k - .5) * .42, hz, -PK_ANGLES[i] + Math.PI / 2, Math.max(0, (k * seated + i) * SYNC.dealCard - (now - t0)), TABLE_H + .08)); });
-    const s0 = startedAt('pkst:' + id + ':' + t.hand + ':' + t.board.length), fresh = t.board.length === 3 ? 0 : t.board.length - 1;
-    t.board.forEach((c, i) => T.cards.place('b' + t.hand + ':' + i, c, L.x - 1.1 + i * .55, L.z, 0, i >= fresh ? Math.max(0, (i - fresh) * 200 - (now - s0)) : 0, TABLE_H + .08));
+    t.board.forEach((c, i) => T.cards.place('b' + t.hand + ':' + i, c, L.x - 1.1 + i * .55, L.z, 0, Math.max(0, boardLandsAt(id, t.hand, i, now) - SYNC.cardFlight - now), TABLE_H + .08));
     const pot = t.seats.reduce((a, s) => a + (s ? s.total - s.bet : 0), 0); if (pot > 0 && t.phase !== 'showdown') T.chips.stack(L.x + .2, L.z + .9, pot, TABLE_H + .08, 30);
     T.cards.end(); T.chips.end();
     if (t.button >= 0) { const [bx, bz] = at(t.button, .62); T.button.position.set(bx - L.x + .5, TABLE_H + .1, bz - L.z); }
@@ -236,7 +236,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   const lotto = []; for (let n = 1; n <= LOTTO.numbers; n++) { const m = add(new THREE.SphereGeometry(.34, 16, 12), ballMaterial(n), DRUM.x, DRUM.y - 2, DRUM.z); m.rotation.set(Math.random() * 6, Math.random() * 6, 0); lotto.push({ n, m, p: new THREE.Vector3((Math.random() - .5) * 3, -2 + Math.random(), (Math.random() - .5) * 3), v: new THREE.Vector3() }); }
   const ltSign = screen(8, 3, LT.x, 14.5, LT.z - 3.2); hit(10, 13, 8, LT.x + .5, LT.z - .5, { casino: 'table', table: 'lotto' }); let ltKey = '';
   function updateLotto(lt, dt) {
-    const last = lt.last?.[0], now = performance.now(), e = last ? now - startedAt('lt:' + last.ticket) : 1e9, drawing = e < SYNC.lottoBall * (LOTTO.picks + .5);
+    const now = performance.now(), plan = lottoPlan(lt, now), last = plan.shown?.x, e = plan.shown ? plan.shown.e : 1e9, drawing = e < SYNC.lottoBall * (LOTTO.picks + .5), queued = plan.items.filter(i => i.e < 0).length;
     const order = last ? last.balls : [], energy = drawing ? 26 : .6;
     for (const b of lotto) {
       const idx = order.indexOf(b.n), at = (idx + 1) * SYNC.lottoBall, travel = 700;
@@ -247,7 +247,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
       b.p.addScaledVector(b.v, dt); if (b.p.length() > DR - .4) { b.p.setLength(DR - .4); b.v.reflect(b.p.clone().normalize()).multiplyScalar(drawing ? .9 : .35); }
       b.m.position.copy(DRUM).add(b.p); b.m.rotation.y += b.v.length() * dt;
     }
-    const done = !drawing, lk = lt.jackpot + ':' + lt.tickets + ':' + done; if (lk !== ltKey) { ltKey = lk; sign(ltSign, 'LOTTO · JACKPOT ' + money(lt.jackpot), ['$20 a ticket · pick 5 of 36 · draws on demand', last ? last.name + ': ' + (done ? last.balls.join(' · ') : 'drawing…') : 'Match all 5 for the jackpot', last && done ? (last.prize ? 'WON ' + money(last.prize) : last.hits + ' matched') : '2 → $20 · 3 → $150 · 4 → $2,500']); }
+    const done = !drawing, lk = lt.jackpot + ':' + lt.tickets + ':' + done + ':' + last?.ticket + ':' + queued; if (lk !== ltKey) { ltKey = lk; sign(ltSign, 'LOTTO · JACKPOT ' + money(lt.jackpot), [queued ? queued + ' ticket' + (queued > 1 ? 's' : '') + ' waiting · drawn in order' : '$20 a ticket · pick 5 of 36 · draws on demand', last ? last.name + ': ' + (done ? last.balls.join(' · ') : 'drawing…') : 'Match all 5 for the jackpot', last && done ? (last.prize ? 'WON ' + money(last.prize) : last.hits + ' matched') : '2 → $20 · 3 → $150 · 4 → $2,500']); }
   }
 
   // ---- Cashier, rich list, bar, plants ----
@@ -290,5 +290,13 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     for (const [px, pz] of columnSpots) if (Math.hypot(x - px, z - pz) < 1.5) return false;
     return true;
   }
-  return { group, update, clear, seatPose, get open() { return open; } };
+  // What the 3D tables show right now (for tests): landed card faces, the symbol on each reel's pay line
+  // (-1 while turning), the lotto balls sitting in the rack.
+  function probe() {
+    const out = {}, TAU = Math.PI * 2, sym = r => { for (let i = 0; i < 6; i++) { const d = ((r.rotation.y - symbolAngle(i)) % TAU + TAU) % TAU; if (d < .02 || d > TAU - .02) return i; } return -1; };
+    for (const [id, T] of Object.entries(tables)) out[id] = T.cards ? { cards: T.cards.landed() } : T.reels ? { reels: T.reels.map(sym) } : {};
+    out.lotto = { rack: lotto.filter(b => [0, 1, 2, 3, 4].some(i => b.m.position.distanceTo(RACK(i)) < .01)).sort((a, b) => a.m.position.z - b.m.position.z).map(b => b.n) };
+    return out;
+  }
+  return { group, update, clear, seatPose, probe, get open() { return open; } };
 }

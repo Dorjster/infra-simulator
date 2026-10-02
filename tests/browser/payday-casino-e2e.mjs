@@ -24,6 +24,17 @@ const G = p => p.evaluate(() => { const g = __infra.lab.world.operations.game; r
 const cash = async (p, who) => (await G(p)).wallets[who];
 const until = async (p, fn, arg, ms = 15000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await p.evaluate(fn, arg)) return true; await p.waitForTimeout(250); } return false; };
 const casino = (p, action) => p.evaluate(a => __infra.lab.lan.send({ type: 'casino', action: a }).then(r => typeof r === 'string' ? r : r?.message || JSON.stringify(r)).catch(e => 'ERR ' + e.message), action);
+// Watch a client for `ms`: every 100 ms compare what its panel reveals with what its 3D table shows
+// (__infra.lab.casinoScene.probe()). A reveal counts as wrong only if it is still ahead of the 3D on the
+// next sample (one frame of slack). Returns { ok, samples, bad }.
+const watch = (p, body, ms) => p.evaluate(async ({ body, ms }) => {
+  const fn = new Function('probe', 'game', 'panel', body), sleep = t => new Promise(r => setTimeout(r, t)); let prev = null, bad = null, samples = 0;
+  for (const t0 = performance.now(); performance.now() - t0 < ms; await sleep(100)) {
+    const r = fn(() => __infra.lab.casinoScene.probe(), __infra.lab.world.operations.game, document.getElementById('cz-body')?.innerText || ''); samples++;
+    if (!r.ok && prev && !prev.ok && !bad) bad = r.detail; prev = r;
+  }
+  return { ok: !bad, samples, bad };
+}, { body, ms });
 const seat = async (p, table, file, wait = 900) => { await p.evaluate(t => { __infra.lab.enter(); __infra.lab.casinoUI.show(t); }, table); await p.waitForTimeout(wait); if (file) await p.screenshot({ path: path.join(out, file) }); };
 try {
   const host = await client('Darja');
@@ -51,8 +62,15 @@ try {
   check('Darja bets at blackjack', /Seat taken/.test(await casino(host, { type: 'bj-bet', table: 'bj-1', amount: 500 })));
   check('Sam bets at blackjack', /Seat taken/.test(await casino(guest, { type: 'bj-bet', table: 'bj-1', amount: 50 })));
   await casino(guest, { type: 'bj-deal', table: 'bj-1' }); await seat(host, 'bj-1', 'blackjack-dealing.png', 2600);
+  await seat(guest, 'bj-1', null, 300);
+  const bjWatch = watch(guest, `const t = game.casino.tables['bj-1'], d3 = probe()['bj-1'].cards.filter(([id, c]) => id.startsWith('d') && c !== '??').length, said = /\\b(WIN|LOSE|PUSH|BLACKJACK)\\b/.test(panel);
+    return { ok: !said || (t.phase === 'done' && d3 === t.dealer.length), detail: JSON.stringify({ said, d3, dealer: t.dealer, phase: t.phase }) };`, 9000);
   for (let i = 0; i < 12; i++) { g = await G(host); const t = g.t['bj-1']; if (t.phase !== 'playing') break; await casino(t.seats[t.turn].name === 'Darja' ? host : guest, { type: 'bj-stand', table: 'bj-1' }); await host.waitForTimeout(200); }
   await until(host, () => __infra.lab.world.operations.game.casino.tables['bj-1'].phase === 'done', null, 8000); await host.waitForTimeout(1500);
+  const bjw = await bjWatch; check('Blackjack: results appear only after the 3D dealer has turned and drawn every card', bjw.ok, JSON.stringify(bjw));
+  const bj3d = await guest.evaluate(() => { const t = __infra.lab.world.operations.game.casino.tables['bj-1'], c = __infra.lab.casinoScene.probe()['bj-1'].cards; return { dealer: c.filter(([id]) => id.startsWith('d')).map(x => x[1]), want: t.dealer, seats: t.seats.map((s, i) => [c.filter(([id]) => id.startsWith('p' + t.round + ':' + i + ':')).map(x => x[1]), s.cards]) }; });
+  check('Blackjack: guest\'s 3D table shows exactly the host\'s cards', JSON.stringify(bj3d.dealer) === JSON.stringify(bj3d.want) && bj3d.seats.every(([a, b]) => JSON.stringify(a) === JSON.stringify(b)), JSON.stringify(bj3d));
+  await guest.evaluate(() => __infra.lab.casinoUI.hide());
   g = await G(host); check('Blackjack settled for both', g.t['bj-1'].seats.every(s => s.result), JSON.stringify(g.t['bj-1'].seats.map(s => [s.name, s.cards, s.result])));
   await host.screenshot({ path: path.join(out, 'blackjack-settled.png') }); await host.evaluate(() => __infra.lab.casinoUI.hide());
 
@@ -78,7 +96,10 @@ try {
   const views = { host: await host.evaluate(() => __infra.lab.world.operations.game.casino.tables['pk-1'].seats.map(s => s && s.cards)), guest: await guest.evaluate(() => __infra.lab.world.operations.game.casino.tables['pk-1'].seats.map(s => s && s.cards)) };
   check('Each player sees only their own hole cards', !views.host[1].includes('??') && views.host[3].every(c => c === '??') && !views.guest[3].includes('??') && views.guest[1].every(c => c === '??'), JSON.stringify(views));
   await seat(host, 'pk-1', 'poker-preflop.png', 2400);
+  const pkWatch = watch(host, `const t = game.casino.tables['pk-1'], c = probe()['pk-1'].cards, board3 = c.filter(([id]) => id.startsWith('b')).length, boardPanel = ((panel.split('Board')[1] || '').split('pot')[0].match(/[♠♥♦♣]/g) || []).length;
+    return { ok: boardPanel <= board3, detail: JSON.stringify({ boardPanel, board3, board: t.board }) };`, 6000);
   for (let i = 0; i < 20; i++) { g = await G(host); const t = g.t['pk-1']; if (t.phase === 'showdown' || t.phase === 'waiting') break; const who = t.seats[t.toAct]; if (!who) break; const page = who.name === 'Darja' ? host : guest; const mineBet = who.bet; await casino(page, { type: t.currentBet > mineBet ? 'pk-call' : 'pk-check', table: 'pk-1' }); await host.waitForTimeout(250); }
+  const pkw = await pkWatch; check('Hold\'em: board cards appear in the panel only as they land on the 3D felt', pkw.ok, JSON.stringify(pkw));
   await host.waitForTimeout(800); g = await G(host); const pk = g.t['pk-1'];
   check('Hold\'em hand reaches showdown with a winner', pk.phase === 'showdown' && pk.results?.winners?.length && pk.board.length === 5, JSON.stringify(pk.results));
   check('At showdown both hands are revealed to both players', (await guest.evaluate(() => __infra.lab.world.operations.game.casino.tables['pk-1'].seats[1].cards)).every(c => c !== '??'));
@@ -86,10 +107,33 @@ try {
   await host.screenshot({ path: path.join(out, 'poker-showdown.png') }); await host.evaluate(() => __infra.lab.casinoUI.hide());
 
   // Slots, lotto, stage.
-  const sl = await casino(guest, { type: 'sl-spin', table: 'sl-1', amount: 5 }); check('Slot spin', /win|No win/i.test(sl), sl);
-  await seat(guest, 'sl-1', 'slots-spinning.png', 700); await guest.waitForTimeout(2200); await guest.screenshot({ path: path.join(out, 'slots-stopped.png') }); await guest.evaluate(() => __infra.lab.casinoUI.hide());
+  await seat(guest, 'sl-1', null, 300); const badge0 = await guest.evaluate(() => document.getElementById('cz-cash').textContent);
+  const slWatch = watch(guest, `const t = game.casino.tables['sl-1'], r3 = probe()['sl-1'].reels, done3 = t.last && r3.every((r, k) => r === t.last.reels[k]), said = /won|no win/i.test(panel);
+    return { ok: !said || done3, detail: JSON.stringify({ said, r3, want: t.last?.reels, badge: document.getElementById('cz-cash').textContent }) };`, 3200);
+  const sl = await guest.evaluate(() => __infra.lab.casinoUI.send({ type: 'sl-spin', table: 'sl-1', amount: 5 })); check('Slot spin', /win|No win/i.test(sl), sl);
+  const mid = await guest.evaluate(() => ({ msg: document.getElementById('cz-msg').textContent, badge: document.getElementById('cz-cash').textContent }));
+  check('Slots: while the reels turn the panel says "Reels spinning…" and the badge shows only the bet taken', mid.msg === 'Reels spinning…' && mid.badge === '$' + (Number(badge0.replace(/[^0-9]/g, '')) - 5).toLocaleString('en-US'), JSON.stringify({ badge0, ...mid }));
+  const busy = await casino(host, { type: 'sl-spin', table: 'sl-1', amount: 5 }); check('Slots: a second player can\'t pull the lever while the reels turn', /still spinning/.test(busy), busy);
+  await guest.waitForTimeout(600); await guest.screenshot({ path: path.join(out, 'slots-spinning.png') });
+  const slw = await slWatch; check('Slots: the result shows only when all three 3D reels have stopped on the host\'s symbols', slw.ok, JSON.stringify(slw));
+  const sl3 = await guest.evaluate(() => ({ r3: __infra.lab.casinoScene.probe()['sl-1'].reels, want: __infra.lab.world.operations.game.casino.tables['sl-1'].last.reels, panel: [...document.querySelectorAll('#cz-body .cz-reels img')].map(i => i.alt) }));
+  check('Slots: 3D reels, panel reels and host result agree', JSON.stringify(sl3.r3) === JSON.stringify(sl3.want) && sl3.panel.length === 3, JSON.stringify(sl3));
+  await guest.screenshot({ path: path.join(out, 'slots-stopped.png') }); await guest.evaluate(() => __infra.lab.casinoUI.hide());
+  await seat(guest, 'lotto', null, 300); await seat(host, 'lotto', null, 300);
+  const ltWatch = watch(guest, `const panelBalls = [...document.querySelectorAll('#cz-body .cz-drawn span:not(.wait)')].map(s => +s.textContent), rack = probe().lotto.rack;
+    return { ok: panelBalls.every(b => rack.includes(b)), detail: JSON.stringify({ panelBalls, rack }) };`, 7500);
   const lt = await casino(guest, { type: 'lotto', picks: [3, 9, 14, 22, 31] }); check('Lotto ticket', /Lotto ·/.test(lt), lt);
-  await seat(guest, 'lotto', null, 300); await guest.waitForTimeout(2900); await guest.screenshot({ path: path.join(out, 'lotto-drawing.png') }); await guest.waitForTimeout(4200); await guest.screenshot({ path: path.join(out, 'lotto-drawn.png') }); await guest.evaluate(() => __infra.lab.casinoUI.hide());
+  const lt2 = await casino(host, { type: 'lotto', picks: [1, 2, 3, 4, 5] }); check('Lotto: a second ticket bought during a draw waits its turn', /Lotto ·/.test(lt2), lt2);
+  await host.waitForTimeout(1500); const q = await host.evaluate(() => document.getElementById('cz-body').innerText);
+  check('Lotto: the host\'s panel says its ticket is queued while Sam\'s is drawn', /in the queue/.test(q) && /drawing for Sam/.test(q), q.split('\n').filter(l => /queue|drawing/i.test(l)).join(' | '));
+  await guest.waitForTimeout(1400); await guest.screenshot({ path: path.join(out, 'lotto-drawing.png') });
+  const ltw = await ltWatch; check('Lotto: each ball appears in the panel only once the 3D ball is in the rack', ltw.ok, JSON.stringify(ltw));
+  const rackSam = await guest.evaluate(() => ({ rack: __infra.lab.casinoScene.probe().lotto.rack, want: __infra.lab.world.operations.game.casino.tables.lotto.last.find(x => x.name === 'Sam').balls }));
+  check('Lotto: the rack holds Sam\'s five balls in draw order', JSON.stringify(rackSam.rack) === JSON.stringify(rackSam.want), JSON.stringify(rackSam));
+  await guest.screenshot({ path: path.join(out, 'lotto-drawn.png') });
+  await host.waitForTimeout(8000); const rackDarja = await host.evaluate(() => ({ rack: __infra.lab.casinoScene.probe().lotto.rack, want: __infra.lab.world.operations.game.casino.tables.lotto.last.find(x => x.name === 'Darja').balls }));
+  check('Lotto: then the machine draws Darja\'s ticket', JSON.stringify(rackDarja.rack) === JSON.stringify(rackDarja.want), JSON.stringify(rackDarja));
+  await guest.evaluate(() => __infra.lab.casinoUI.hide()); await host.evaluate(() => __infra.lab.casinoUI.hide());
   const tip = await casino(host, { type: 'st-tip', table: 'stage', dance: 1, amount: 100 }); check('Tip requests Climb & sit', /Climb & sit/.test(tip), tip);
   await until(guest, () => __infra.lab.world.operations.game.casino.tables.stage.dance === 1, null, 4000);
   check('Guest sees the requested dance', (await G(guest)).t.stage.dance === 1);
