@@ -57,6 +57,18 @@ The panel and the wallet now reveal a result only when the 3D table shows it, fo
   - each ball appears in the panel only once it's in the 3D rack;
   - players watching the machine stand side by side.
 
+## v35.3: joining over LAN
+
+Joining another computer's desktop app could leave a black window, and nobody knew which port to use.
+
+- **The host used a random port.** The desktop app opened its room on a different port every launch and never showed it. It now always uses **port 8080**, falling back to a free port only if 8080 is taken. On the Join screen you can type just the host's IP; `:8080` is assumed.
+- **Payday hosting never showed the address.** While you host, an **invite bar** at the top of the screen now shows the address, port and room code, e.g. `192.168.1.20:8080 · code 93814F`. The Team panel shows them too. This applies to both Payday and LAN Campaign.
+- **A wrong address left a black window.**
+  - The Join screen now checks that the host answers before leaving. If it doesn't, it says so and lists what to check: same network, the address in the host's invite bar, and the host's firewall.
+  - If a host page still fails to load, the app returns to its own start screen with an explanation.
+- **Blackjack:** results now wait for the opening deal to land as well. A player who stood while the cards were still flying in could see WIN/LOSE early.
+- **Test:** `tests/browser/desktop-join.mjs` runs two desktop apps on one computer. Joining by IP alone works (Payday, 2 players), and an unreachable address gives the message instead of a black window.
+
 ## v35.2: smoother casino
 
 **Buttons:**

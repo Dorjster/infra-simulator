@@ -12,7 +12,9 @@ SYNC.dealerCard = 750; SYNC.cardFlight = 320; SYNC.boardCard = 200; SYNC.lottoDr
 // are wins / losses (and the chips that pay them) shown.
 export function bjReveal(id, t, now = performance.now()) {
   if (t.phase !== 'done') return { cardAt: () => -Infinity, settled: false, revealAt: Infinity };
-  const d0 = startedAt('bjd:' + id + ':' + t.round, now), revealAt = d0 + Math.max(0, t.dealer.length - 2) * SYNC.dealerCard + 500;
+  // Never before the opening deal has landed (players can stand while the cards are still flying in).
+  const dealt = startedAt('bj:' + id + ':' + t.round, now) + (2 * t.seats.length + 1) * SYNC.dealCard + SYNC.cardFlight;
+  const d0 = Math.max(startedAt('bjd:' + id + ':' + t.round, now), dealt), revealAt = d0 + Math.max(0, t.dealer.length - 2) * SYNC.dealerCard + 500;
   return { cardAt: i => i < 2 ? d0 : d0 + (i - 1) * SYNC.dealerCard, settled: now >= revealAt, revealAt };
 }
 // Lotto: the host queues tickets on the one machine (each ticket carries `wait`, ms after purchase before
