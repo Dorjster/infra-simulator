@@ -22,6 +22,7 @@ try {
   await page.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 90000 }); await page.waitForTimeout(1500);
   report.gpu = await page.evaluate(() => globalThis.__infraDiagnostics?.().gpu); report.software = await page.evaluate(() => globalThis.__infraDiagnostics?.().softwareRendering);
   check('Desktop bridge present, no Node in the page', await page.evaluate(() => !!window.infraDesktop?.isDesktop && typeof require === 'undefined'));
+  await page.waitForFunction(() => document.querySelectorAll('#ss-grid .ss-card').length > 3, null, { timeout: 60000 }).catch(() => {});
   check('Start screen shows New Campaign', await page.evaluate(() => [...document.querySelectorAll('#ss-grid .ss-card strong')].some(x => x.textContent === 'New Campaign')));
   await page.click('[data-start=new]'); await page.click('#ss-new');
   // Wait on game state, not a fixed delay: software-rendered CI runners draw a few frames per second.
