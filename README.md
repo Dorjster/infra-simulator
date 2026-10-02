@@ -1,10 +1,10 @@
-# Infra Simulator v33
+# Infra Simulator v34
 
 Build a working enterprise from an empty room: receive equipment, rack it, power it, cable it, configure it on real-looking consoles and GUIs, and prove every service works. Play solo, or with up to 12 engineers on your LAN.
 
 Created by **Darja**.
 
-**What's new: [UPDATE-v33.md](UPDATE-v33.md)** (bug fixes, smoother frame pacing, new characters, graphics settings, copy/paste). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
+**What's new: [UPDATE-v34.md](UPDATE-v34.md)** (Payday mode with the casino, wallets, salaries and loans; tidy colour-coded cabling; no more flashing racks; a clearer field laptop; Darja's pistol). Earlier: [UPDATE-v33.md](UPDATE-v33.md). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
 
 ## Play
 
@@ -29,6 +29,9 @@ Created by **Darja**.
 | L · 1 / 2 | Service laptop · console cable / service Ethernet (equip them once in J → Laptop) |
 | J · I · M · H | Objective · Inventory & orders · Map · next hint |
 | Enter / T · middle mouse · Esc | Team chat · ping · menu |
+| Mouse wheel | Over the 3D view while walking: emote wheel · over any panel: scrolls the panel |
+| E at a casino table (Payday) | Blackjack · roulette · lotto · cashier (wallet & loans) |
+| 4 · left click | Darja only: draw / holster the pistol · fire (for fun, nothing is damaged) |
 
 Field Engineer and Operations Engineer are cosmetic titles: both can do every task. Company credentials, physical reach and host-only controls are checked separately.
 

@@ -6,6 +6,7 @@
 // player costs ~8 draw calls. Everything is procedural: walking, crouching, carrying the laptop and six
 // emotes are driven by update(dt, state) on every client from the shared pose.
 import * as THREE from './three.module.js';
+import { pistolModel } from './fun-pistol.js';
 import { EMOTE_IDS as ALLOWED, FACE_IDS as ALLOWED_FACES, SKIN_IDS, HAT_IDS, OUTFIT_IDS } from './play-rules.js';
 
 export const EMOTES = [
@@ -191,6 +192,8 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   mesh(bake([P(new THREE.BoxGeometry(2.6, 1.5, 1.7), C.carton, M(0, 0, 0)), P(new THREE.BoxGeometry(2.62, .12, .4), 0xd9c9a4, M(0, .76, 0)), P(new THREE.BoxGeometry(.9, .5, .02), 0xf2f2f2, M(.6, .1, .86))]), carton);
   const coil = new THREE.Group(); coil.visible = false; elbows.L.add(coil); coil.position.set(0, -1.55, .25);
   const coilMesh = mesh(bake([P(new THREE.TorusGeometry(.55, .1, 6, 20), C.cable, M(0, 0, 0, 0, Math.PI / 2, 0)), P(new THREE.TorusGeometry(.48, .1, 6, 20), C.cable, M(.08, .02, 0, 0, Math.PI / 2 + .2, 0)), P(new THREE.BoxGeometry(.2, .3, .2), 0xd9dde0, M(0, -.6, .1))]), coil);
+  // Darja's pistol in the right hand (LAN pose `gun`): muzzle along the forearm, grip down.
+  const pistol = pistolModel(1.15); pistol.rotation.set(Math.PI / 2, Math.PI, 0); pistol.position.set(0, -1.5, .12); pistol.visible = false; elbows.R.add(pistol);
   // Name tag and emote bubble.
   let shownName = name; const label = name ? nameSprite(name, labelColor ?? color) : null; if (label) { label.position.y = 12.1; g.add(label); }
   // Name tag follows renames (LAN /api/name).
@@ -199,7 +202,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   const bubble = new THREE.Sprite(bubbleMat); bubble.scale.set(2.6, 1.3, 1); bubble.position.y = 13.4; bubble.visible = false; bubble.renderOrder = 5; g.add(bubble);
 
   // ---- animation state ----
-  const s = { phase: 0, speed: 0, t: 0, emote: null, emoteT: 0, blinkAt: 2 + Math.random() * 3, face: '', crouch: 0, laptop: 0, w: 0, carry: 0, cable: 0, point: 0, turn: 0 };
+  const s = { phase: 0, speed: 0, t: 0, emote: null, emoteT: 0, blinkAt: 2 + Math.random() * 3, face: '', crouch: 0, laptop: 0, w: 0, carry: 0, cable: 0, point: 0, gun: 0, turn: 0 };
   const cur = { aL: new THREE.Euler(), aR: new THREE.Euler(), bL: new THREE.Euler(), bR: new THREE.Euler(), lL: 0, lR: 0, lLz: 0, lRz: 0, head: new THREE.Euler(), torso: new THREE.Euler(), lift: 0, fall: 0 };
   const aim = (dx, dy, dz) => { const l = Math.hypot(dx, dy, dz) || 1; dx /= l; dy /= l; dz /= l; const cf = Math.sqrt(Math.max(1e-6, 1 - dx * dx)); return [Math.atan2(-dz / cf, -dy / cf), 0, Math.asin(dx)]; };
   // Forearm direction (torso space) → elbow rotation, given the upper-arm rotation.
@@ -212,8 +215,8 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     s.t += dt; s.speed += ((st.speed || 0) - s.speed) * Math.min(1, dt * 8);
     s.crouch += ((st.crouch ? 1 : 0) - s.crouch) * Math.min(1, dt * 10);
     s.laptop += ((st.laptop ? 1 : 0) - s.laptop) * Math.min(1, dt * 8); laptop.visible = s.laptop > .5;
-    const carrying = st.carry === 'box' || st.carry === 'rack'; s.carry += ((carrying ? 1 : 0) - s.carry) * Math.min(1, dt * 9); s.cable += ((st.carry === 'cable' ? 1 : 0) - s.cable) * Math.min(1, dt * 9); s.point += ((st.point ? 1 : 0) - s.point) * Math.min(1, dt * 10);
-    carton.visible = s.carry > .4; if (carton.visible) carton.scale.setScalar(st.carry === 'rack' ? 1.35 : 1); coil.visible = s.cable > .4;
+    const carrying = st.carry === 'box' || st.carry === 'rack'; s.carry += ((carrying ? 1 : 0) - s.carry) * Math.min(1, dt * 9); s.cable += ((st.carry === 'cable' ? 1 : 0) - s.cable) * Math.min(1, dt * 9); s.point += ((st.point ? 1 : 0) - s.point) * Math.min(1, dt * 10); s.gun += ((st.gun ? 1 : 0) - s.gun) * Math.min(1, dt * 10);
+    carton.visible = s.carry > .4; if (carton.visible) carton.scale.setScalar(st.carry === 'rack' ? 1.35 : 1); coil.visible = s.cable > .4; pistol.visible = s.gun > .3;
     // Turning on the spot: short alternating steps instead of gliding.
     s.turn += ((Math.min(1, Math.abs(st.turn || 0) / 2)) - s.turn) * Math.min(1, dt * 8);
     const moving = Math.max(Math.min(1, s.speed / 6), s.turn * .45), stride = Math.max(Math.min(1.3, s.speed / 9), s.turn * .35) * (1 - s.carry * .35);
@@ -231,6 +234,8 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     if (s.cable > .01) { const c = s.cable, l = aim(.15, -.95, .25), r = aim(-.15, -.7, .7); aL = mix(aL, l, c); bL = mix(bL, fore(l, 0, -.2, 1), c); aR = mix(aR, r, c); bR = mix(bR, fore(r, 0, .1, 1), c); }
     // Pointing (team ping): right arm straight forward and slightly up.
     if (s.point > .01) { const p = s.point, r = aim(-.05, .15, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, .12, 1), p); }
+    // Holding the pistol: right arm straight out at shoulder height.
+    if (s.gun > .01) { const p = s.gun, r = aim(-.08, .02, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, 0, 1), p); }
     let lL = -sw, lR = sw, lLz = 0, lRz = 0, hT = [breathe - .05 * s.laptop * 3, 0, 0], tT = [moving * .08, 0, 0], lift = Math.abs(Math.cos(s.phase)) * .22 * moving, fT = 0;
     // Emote pose, blended in/out.
     if (e) {
@@ -259,7 +264,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     if (label) label.position.y = (12.1 - s.crouch * 2.2) * (1 - cur.fall) + 5 * cur.fall;
   }
   function dispose() { g.removeFromParent(); g.traverse(o => { if (o.geometry) o.geometry.dispose(); const m = o.material; if (m && m !== bodyMaterial && !m.userData?.shared) { m.map?.dispose(); m.dispose(); } }); }
-  return { g, label, update, play, dispose, setName, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', hat, outfit, setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso, carton, coil } };
+  return { g, label, update, play, dispose, setName, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', hat, outfit, setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso, carton, coil, pistol } };
 }
 function mix(a, b, w) { return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w]; }
 function ease(e, t, k) { e.x += (t[0] - e.x) * k; e.y += (t[1] - e.y) * k; e.z += (t[2] - e.z) * k; }

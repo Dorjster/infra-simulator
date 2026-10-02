@@ -24,7 +24,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v33</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v34</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
@@ -80,11 +80,20 @@ export function createCampaignUI(ctx) {
   }
   const levelText = c => c.level === null || c.level === undefined ? 'Older save · continues as levels' : c.level > 10 ? 'Campaign complete' : 'Level ' + c.level + ' · ' + LEVELS[c.level].title;
   let saved = null;
+  // Payday mode: its own save (room payday-save.json / browser infra-local-payday-v1), never the Campaign's.
+  let paydaySaved = null;
+  async function paydayInfo() {
+    const info = await roomInfo().catch(() => null);
+    if (desktop || info?.payday) { const p = info?.payday; if (p) return { ...p, where: 'room' }; if (desktop) return null; }
+    try { const d = JSON.parse(localStorage.getItem('infra-local-payday-v1') || 'null'); if (d?.operations?.payday) return { name: d.operations.name, level: d.operations.levels?.current ?? null, where: 'browser', data: d }; } catch {}
+    return null;
+  }
   async function renderStart() {
-    saved = await saveInfo().catch(() => null);
+    saved = await saveInfo().catch(() => null); paydaySaved = await paydayInfo().catch(() => null);
     const card = (k, title, text, cls = '', tag = '') => `<button data-start="${k}" class="ss-card ${cls}">${tag ? `<em>${tag}</em>` : ''}<strong>${title}</strong><span>${text}</span></button>`;
     $('ss-grid').innerHTML = (saved ? card('continue', 'Continue Campaign', esc(saved.name) + ' · ' + esc(levelText(saved)) + ' · $' + (saved.budget || 0).toLocaleString(), 'ss-primary', 'Continue') + card('new', 'New Campaign', 'Start again at Level 0 on an empty site') : card('new', 'New Campaign', 'Levels 0–10 · from an empty site to a commissioned enterprise', 'ss-primary', 'Recommended'))
       + card('host', 'LAN Host Campaign', 'Host the campaign for up to 12 engineers on your network') + card('join', 'Join LAN', 'Join a room hosted on your network')
+      + card('payday', 'Payday · Work & Casino', paydaySaved ? 'Continue ' + esc(paydaySaved.name) + ' · ' + esc(levelText(paydaySaved)) + ' · do jobs, earn salary, gamble' : 'Do the jobs, get paid, then hit the casino · solo or LAN', '', 'New mode')
       + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
   }
   // True only when other engineers share this room; otherwise sandbox modes run locally and leave the save alone.
@@ -92,7 +101,7 @@ export function createCampaignUI(ctx) {
   async function joinLocalRoom() { if (lan.connected) return true; const info = await roomInfo(); return info?.localHost ? lan.join({ name: localStorage.getItem('infra-name') || 'Engineer', code: info.roomCode, hostKey: info.hostKey }, true) : false; }
   async function continueCampaign() {
     if (!saved) return newCampaign();
-    if (saved.where === 'room') { await joinLocalRoom(); if (g().mode !== 'campaign') { const m = await send({ type: 'mode', mode: 'campaign', resume: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } return begin(); }
+    if (saved.where === 'room') { await joinLocalRoom(); if (g().mode !== 'campaign' || g().payday) { const m = await send({ type: 'mode', mode: 'campaign', resume: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } return begin(); }
     lan.playSolo(); try { world.restore(saved.data); kit.refreshTargets?.(); } catch (e) { notify('Save could not load: ' + e.message); return; } begin();
   }
   function newCampaign() {
@@ -125,8 +134,29 @@ export function createCampaignUI(ctx) {
      ${summary ? `<div class="ss-save"><strong>${esc(summary.name)}</strong><span>${esc(levelText(summary))} · $${(summary.budget || 0).toLocaleString()}</span><button id="ss-host-continue" class="primary">Continue hosted campaign</button></div>` : ''}
      <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="LAN HQ"></label>${titlePicker()}<button id="ss-host-new" class="${w.mode === 'campaign' ? '' : 'primary'}">Start new campaign · Level 0</button></div>
      <p class="ss-note">The campaign is saved on this computer (the host). Guests join with the room code and can do every task; only you choose the mode and saves. Keep this window open while hosting.${desktop ? ' If your firewall asks, allow Infra Simulator on private networks. Stop hosting from Team at any time.' : ''}</p>`, el => {
-      el.querySelector('#ss-host-continue')?.addEventListener('click', async () => { if (g().mode !== 'campaign') { const m = await send({ type: 'mode', mode: 'campaign', resume: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } begin(); });
+      el.querySelector('#ss-host-continue')?.addEventListener('click', async () => { if (g().mode !== 'campaign' || g().payday) { const m = await send({ type: 'mode', mode: 'campaign', resume: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } begin(); });
       el.querySelector('#ss-host-new').addEventListener('click', () => { if (summary && !confirm('Replace the hosted campaign with a new one? The previous save is overwritten.')) return; engineering.setRole(el.querySelector('#ss-title').value); run(send({ type: 'mode', mode: 'campaign', track: 'levels', name: el.querySelector('#ss-name').value || 'LAN HQ' }), () => { hintTier = {}; begin(); }); });
+    });
+  }
+  async function startPayday() {
+    const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
+    subPanel(`<h2>Payday · Work &amp; Casino</h2>
+     ${paydaySaved ? `<div class="ss-save"><strong>${esc(paydaySaved.name)}</strong><span>${esc(levelText(paydaySaved))}${paydaySaved.wallets ? ' · ' + paydaySaved.wallets + ' wallets' : ''}</span><button id="ss-pay-continue" class="primary">Continue Payday</button></div>` : ''}
+     <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="Payday Inc."></label>${titlePicker()}<button id="ss-pay-solo" class="${paydaySaved ? '' : 'primary'}">New Payday · solo</button>${canHost ? '<button id="ss-pay-host">New Payday · host on LAN</button>' : ''}</div>
+     <p class="ss-note">The same Levels 0–10 as the Campaign, but every engineer has a wallet. Each job you finish pays you a salary (racking, mounting, patching, power…), and every level pays everyone a bonus. Spend it in the <strong>casino</strong> through the door in the north wall of the server hall: blackjack, roulette and the lotto machine. Lend money to teammates from the casino's Wallet tab. Everyone starts with $500 — engineers named <strong>Darja</strong> start with $10,000. Play money only. Your Campaign is not affected.</p>`, el => {
+      el.querySelector('#ss-pay-continue')?.addEventListener('click', async () => {
+        if (paydaySaved.where === 'room') { await joinLocalRoom(); if (g().mode !== 'campaign' || !g().payday) { const m = await send({ type: 'mode', mode: 'campaign', resume: true, payday: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } return begin(); }
+        lan.playSolo(); try { world.restore(paydaySaved.data); kit.refreshTargets?.(); } catch (e) { notify('Save could not load: ' + e.message); return; } begin();
+      });
+      const start = async host => {
+        if (paydaySaved && !confirm('Start a new Payday game? The current Payday save (' + paydaySaved.name + ') will be replaced. Your Campaign is not affected.')) return;
+        if (host) { if (desktop) { try { await desktop.hostLan(); } catch (e) { notify(e.message); return; } } const i = await roomInfo(); if (!lan.connected && i?.localHost) await lan.join({ name: localStorage.getItem('infra-name') || 'Host', code: i.roomCode, hostKey: i.hostKey }, true); }
+        else if (desktop) await joinLocalRoom(); else lan.playSolo();
+        engineering.setRole(el.querySelector('#ss-title').value);
+        run(send({ type: 'mode', mode: 'campaign', track: 'levels', payday: true, name: el.querySelector('#ss-name').value || 'Payday Inc.' }), () => { hintTier = {}; begin(); if (host) notify('Hosting Payday · friends join with room code ' + (lan.roomCode || '')); });
+      };
+      el.querySelector('#ss-pay-solo').addEventListener('click', () => start(false));
+      el.querySelector('#ss-pay-host')?.addEventListener('click', () => start(true));
     });
   }
   async function startJoin() {
@@ -156,7 +186,7 @@ export function createCampaignUI(ctx) {
     const b = e.target.closest('[data-start]'); if (!b) return;
     const k = b.dataset.start; $('start-screen').querySelectorAll('.ss-card').forEach(x => x.classList.toggle('active', x === b));
     if (k === 'continue') continueCampaign(); else if (k === 'new') newCampaign(); else if (k === 'solo') startSolo();
-    else if (k === 'host') startHost(); else if (k === 'join') startJoin(); else if (k === 'challenges') startChallenges();
+    else if (k === 'host') startHost(); else if (k === 'join') startJoin(); else if (k === 'challenges') startChallenges(); else if (k === 'payday') startPayday();
     else if (k === 'free') { if (await sandbox({ type: 'mode', mode: 'free' })) begin(); }
     else if (k === 'settings') { showStart(false); panel('settings'); }
     else if (k === 'inspect') { showStart(false); document.body.classList.remove('in-game'); exit(); }

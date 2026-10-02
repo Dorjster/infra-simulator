@@ -136,13 +136,17 @@ export function mergePlates(root, { min = 2 } = {}) {
 }
 
 // Hide small text plates when they are too far away to be legible (cheap distance test, throttled).
+// Distance culling moves a plate to an unrendered layer and never touches `visible`: game logic owns
+// visibility (slot labels, delivery tags…), and a culler that forced `visible = true` on near plates
+// fought it every 8th frame, which showed as flashing labels.
+const CULLED_MASK = 1 << 30;
 export function createDetailCuller(camera) {
   const items = [], seen = new WeakSet();
   const v = new THREE.Vector3();
   return {
     // Legibility-based distance: a plate stays visible up to ~22x its world width (min `maxDistance`).
-    register(root, maxDistance = 16) { root?.traverse(o => { if (!o.isMesh || seen.has(o)) return; if (o.userData?.plateBatch) { seen.add(o); const max = Math.max(maxDistance, o.userData.cullDistance || 0); items.push({ o, max, max2: max * max, center: o.geometry.boundingSphere?.center.clone() }); return; } if (o.geometry?.type !== 'PlaneGeometry' || !o.material?.map || Object.keys(o.userData || {}).length) return; seen.add(o); o.getWorldScale(v); const w = (o.geometry.parameters?.width || 1) * Math.max(v.x, v.y), max = Math.max(maxDistance, w * 22); items.push({ o, max, max2: max * max }); }); },
-    update() { for (let k = items.length - 1; k >= 0; k--) { const it = items[k]; if (!it.o.parent) { items.splice(k, 1); continue; } if (it.center) v.copy(it.center).applyMatrix4(it.o.matrixWorld); else it.o.getWorldPosition(v); const near = v.distanceToSquared(camera.position) < it.max2; if (it.o.visible !== near) it.o.visible = near; } },
+    register(root, maxDistance = 16) { root?.traverse(o => { if (!o.isMesh || seen.has(o)) return; if (o.userData?.plateBatch) { seen.add(o); const max = Math.max(maxDistance, o.userData.cullDistance || 0); items.push({ o, max, max2: max * max, mask: o.layers.mask, center: o.geometry.boundingSphere?.center.clone() }); return; } if (o.geometry?.type !== 'PlaneGeometry' || !o.material?.map || Object.keys(o.userData || {}).length) return; seen.add(o); o.getWorldScale(v); const w = (o.geometry.parameters?.width || 1) * Math.max(v.x, v.y), max = Math.max(maxDistance, w * 22); items.push({ o, max, max2: max * max, mask: o.layers.mask }); }); },
+    update() { for (let k = items.length - 1; k >= 0; k--) { const it = items[k]; if (!it.o.parent) { items.splice(k, 1); continue; } if (it.center) v.copy(it.center).applyMatrix4(it.o.matrixWorld); else it.o.getWorldPosition(v); const mask = v.distanceToSquared(camera.position) < it.max2 ? it.mask : CULLED_MASK; if (it.o.layers.mask !== mask) it.o.layers.mask = mask; } },
     get size() { return items.length; },
   };
 }
