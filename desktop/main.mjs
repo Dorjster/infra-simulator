@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile, writeFile, rename, copyFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 
 // Windows Squirrel installer events: Setup.exe runs the app with --squirrel-install (and --squirrel-updated /
 // --squirrel-uninstall) and waits for it to exit. Create or remove the Start menu and desktop shortcuts and
@@ -33,8 +34,12 @@ const origin = () => 'http://127.0.0.1:' + room.port;
 // Private LAN hosts a player may join (http only, RFC 1918 + link-local + loopback).
 const lanHost = h => /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|localhost$)/.test(h);
 
+// The room always tries port 8080, so the address friends type is predictable (192.168.x.x:8080) and the
+// page keeps one origin between launches. If 8080 is taken (on this computer or for the LAN), a free port.
+const LAN_PORT = 8080;
+const portFree = port => new Promise(res => { const s = net.createServer().once('error', () => res(false)).once('listening', () => s.close(() => res(true))); s.listen(port, '0.0.0.0'); });
 async function openRoom() {
-  room = await startRoom({ port: 0, bind: '127.0.0.1', savePath: savePath(), deliveryScale: process.env.INFRA_DELIVERY_SCALE, log: m => console.log('[room]', m), error: m => console.error('[room]', m) });
+  room = await startRoom({ port: await portFree(LAN_PORT) ? LAN_PORT : 0, bind: '127.0.0.1', savePath: savePath(), deliveryScale: process.env.INFRA_DELIVERY_SCALE, log: m => console.log('[room]', m), error: m => console.error('[room]', m) });
   hosting = false;
 }
 
@@ -45,6 +50,13 @@ function createWindow() {
     webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, backgroundThrottling: false }
   });
   win.once('ready-to-show', () => win.show());
+  // A host that can't be reached (wrong address or port, firewall, different network) must not leave a
+  // black window: come back to this computer's start screen and say what happened.
+  win.webContents.on('did-fail-load', (_e, code, desc, url, isMain) => {
+    if (!isMain || code === -3 || !room || url.startsWith(origin())) return;
+    win.loadURL(origin() + '/');
+    dialog.showMessageBox(win, { type: 'warning', message: 'Could not reach the host', detail: `${new URL(url).host} did not answer (${desc}).\n\nCheck that:\n• both computers are on the same network (Wi-Fi / office LAN)\n• you typed the address and port shown in the host's invite bar\n• the host has started hosting and is still in the game\n• the host's firewall allows Infra Simulator on private networks` });
+  });
   // Navigation stays on the local room or a LAN host; anything else opens in the system browser.
   win.webContents.on('will-navigate', (e, url) => { const u = new URL(url); if (u.protocol === 'http:' && lanHost(u.hostname)) return; e.preventDefault(); if (u.protocol === 'https:') shell.openExternal(url); });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });

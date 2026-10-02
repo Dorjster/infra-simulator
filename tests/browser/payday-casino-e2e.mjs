@@ -64,14 +64,14 @@ try {
   await casino(guest, { type: 'bj-deal', table: 'bj-1' }); await seat(host, 'bj-1', 'blackjack-dealing.png', 2600);
   await seat(guest, 'bj-1', null, 300);
   const bjWatch = watch(guest, `const t = game.casino.tables['bj-1'], d3 = probe()['bj-1'].cards.filter(([id, c]) => id.startsWith('d') && c !== '??').length, said = /\\b(WIN|LOSE|PUSH|BLACKJACK)\\b/.test(panel);
-    return { ok: !said || (t.phase === 'done' && d3 === t.dealer.length), detail: JSON.stringify({ said, d3, dealer: t.dealer, phase: t.phase }) };`, 9000);
+    return { ok: !said || (t.phase === 'done' && d3 === t.dealer.length), detail: JSON.stringify({ said, d3, dealer: t.dealer, phase: t.phase }) };`, 5500);
   for (let i = 0; i < 12; i++) { g = await G(host); const t = g.t['bj-1']; if (t.phase !== 'playing') break; await casino(t.seats[t.turn].name === 'Darja' ? host : guest, { type: 'bj-stand', table: 'bj-1' }); await host.waitForTimeout(200); }
   await until(host, () => __infra.lab.world.operations.game.casino.tables['bj-1'].phase === 'done', null, 8000); await host.waitForTimeout(1500);
   const bjw = await bjWatch; check('Blackjack: results appear only after the 3D dealer has turned and drawn every card', bjw.ok, JSON.stringify(bjw));
   const bj3d = await guest.evaluate(() => { const t = __infra.lab.world.operations.game.casino.tables['bj-1'], c = __infra.lab.casinoScene.probe()['bj-1'].cards; return { dealer: c.filter(([id]) => id.startsWith('d')).map(x => x[1]), want: t.dealer, seats: t.seats.map((s, i) => [c.filter(([id]) => id.startsWith('p' + t.round + ':' + i + ':')).map(x => x[1]), s.cards]) }; });
   check('Blackjack: guest\'s 3D table shows exactly the host\'s cards', JSON.stringify(bj3d.dealer) === JSON.stringify(bj3d.want) && bj3d.seats.every(([a, b]) => JSON.stringify(a) === JSON.stringify(b)), JSON.stringify(bj3d));
   await guest.evaluate(() => __infra.lab.casinoUI.hide());
-  g = await G(host); check('Blackjack settled for both', g.t['bj-1'].seats.every(s => s.result), JSON.stringify(g.t['bj-1'].seats.map(s => [s.name, s.cards, s.result])));
+  g = await G(host); check('Blackjack settled for both', g.t['bj-1'].seats.length === 2 && g.t['bj-1'].seats.every(s => s.result), JSON.stringify(g.t['bj-1'].seats.map(s => [s.name, s.cards, s.result])));
   await host.screenshot({ path: path.join(out, 'blackjack-settled.png') }); await host.evaluate(() => __infra.lab.casinoUI.hide());
 
   // Roulette: the 3D ball lands on the host's number when the panel reveals it.
