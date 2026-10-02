@@ -89,6 +89,7 @@ ipcMain.handle('desktop:info', () => ({ version: app.getVersion(), platform: pro
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(async () => {
+  app.setAboutPanelOptions({ applicationName: 'Infra Simulator', applicationVersion: app.getVersion(), credits: 'Created by Darja', copyright: '© Darja' });
   await openRoom();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),

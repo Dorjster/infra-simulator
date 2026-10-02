@@ -2,6 +2,8 @@
 
 Build a working enterprise from an empty room: receive equipment, rack it, power it, cable it, configure it on real-looking consoles and GUIs, and prove every service works. Play solo, or with up to 12 engineers on your LAN.
 
+Created by **Darja**.
+
 **What's new: [UPDATE-v33.md](UPDATE-v33.md)** (bug fixes, smoother frame pacing, new characters, graphics settings, copy/paste). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
 
 ## Play
