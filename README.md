@@ -1,10 +1,10 @@
-# Infra Simulator v34
+# Infra Simulator v35
 
 Build a working enterprise from an empty room: receive equipment, rack it, power it, cable it, configure it on real-looking consoles and GUIs, and prove every service works. Play solo, or with up to 12 engineers on your LAN.
 
 Created by **Darja**.
 
-**What's new: [UPDATE-v34.md](UPDATE-v34.md)** (Payday mode with the casino, wallets, salaries and loans; tidy colour-coded cabling; no more flashing racks; a clearer field laptop; Darja's pistol). Earlier: [UPDATE-v33.md](UPDATE-v33.md). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
+**What's new: [UPDATE-v35.md](UPDATE-v35.md)** (a real casino: tables that show the live game in 3D, poker, slots, lotto, centre stage). Before that: [UPDATE-v34.md](UPDATE-v34.md) (Payday mode with the casino, wallets, salaries and loans; tidy colour-coded cabling; no more flashing racks; a clearer field laptop; Darja's pistol). Earlier: [UPDATE-v33.md](UPDATE-v33.md). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
 
 ## Play
 

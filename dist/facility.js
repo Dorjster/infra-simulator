@@ -11,12 +11,12 @@ export function improveFacility(scene,camera,pickables=[]){
  const ceilingMat=new THREE.MeshStandardMaterial({color:0xffffff,map:tex(128,(g,n)=>{g.fillStyle='#8e969d';g.fillRect(0,0,n,n);for(let i=0;i<500;i++){g.fillStyle='rgba(0,0,0,.06)';g.fillRect(Math.random()*n,Math.random()*n,1.5,1.5);}g.strokeStyle='#6b737a';g.lineWidth=4;g.strokeRect(0,0,n,n);},[118/6,85/6]),roughness:.95,side:THREE.DoubleSide,emissive:0x6a737c,emissiveIntensity:.55}),baseMat=new THREE.MeshStandardMaterial({color:0x3b444c,roughness:.8});
  function box(w,h,d,x,y,z,mat){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);group.add(m);if(mat===wall&&h>3){m.userData={occluder:true};pickables.push(m);}return m;}
  box(118,.18,85,14,-.38,13.5,concrete);for(const x of [ROOM.minX-.5,ROOM.maxX+.5])box(.3,16,85,x,7.6,13.5,wall);box(118,16,.3,14,7.6,ROOM.minZ-.5,wall);// North wall with the casino doorway (x 1–9, Payday mode opens it).
- box(46,16,.3,-22,7.6,ROOM.maxZ+.5,wall);box(64,16,.3,41,7.6,ROOM.maxZ+.5,wall);box(8,5.6,.3,5,12.8,ROOM.maxZ+.5,wall);
+ box(44,16,.3,-23,7.6,ROOM.maxZ+.5,wall);box(60,16,.3,43,7.6,ROOM.maxZ+.5,wall);box(14,1.6,.3,6,14.8,ROOM.maxZ+.5,wall);
  // Separate receiving room, with a broad doorway into the server hall.
  box(.35,16,33,-26,7.6,-11.5,wall);box(.35,16,41,-26,7.6,34.5,wall);box(.35,.5,9,-26,15.75,9.5,wall);
  const tiles=[];for(let x=-42;x<=70;x+=4)tiles.push(x,-.277,-28,x,-.277,55);for(let z=-28;z<=55;z+=4)tiles.push(-44,-.277,z,72,-.277,z);
  box(118,.2,85,14,16.3,13.5,ceilingMat);
- for(const x of [ROOM.minX+.1,ROOM.maxX-.1])box(.12,1.1,85,x,.25,13.5,baseMat);box(118,1.1,.12,14,.25,ROOM.minZ+.1,baseMat);box(46,1.1,.12,-22,.25,ROOM.maxZ-.1,baseMat);box(64,1.1,.12,41,.25,ROOM.maxZ-.1,baseMat);
+ for(const x of [ROOM.minX+.1,ROOM.maxX-.1])box(.12,1.1,85,x,.25,13.5,baseMat);box(118,1.1,.12,14,.25,ROOM.minZ+.1,baseMat);box(44,1.1,.12,-23,.25,ROOM.maxZ-.1,baseMat);box(60,1.1,.12,43,.25,ROOM.maxZ-.1,baseMat);
  // Cold-aisle perforated tiles in front of the rack rows; yellow safety lines at the aisle edges.
  for(const [z0,z1] of [[3.6,7.6],[27.6,31.6]])for(let x=-12;x<=56;x+=4){const t=new THREE.Mesh(new THREE.PlaneGeometry(3.96,3.96),perforated);t.rotation.x=-Math.PI/2;t.position.set(x+2,-.268,(z0+z1)/2);group.add(t);}
  for(const z of [-8,9,16,33])box(76,.012,.12,18,-.263,z,stripe);
