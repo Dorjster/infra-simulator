@@ -353,7 +353,7 @@ export function casinoTick(game, rng = Math.random, now = Date.now()) {
 export function redactCasino(casino, viewer) {
   if (!casino?.tables) return casino; const v = key(viewer), out = { ...casino, tables: { ...casino.tables } };
   for (const def of TABLES) if (def.game === 'poker' && out.tables[def.id]) { const t = out.tables[def.id]; out.tables[def.id] = { ...t, deck: [], seats: t.seats.map(s => s && !s.shown && key(s.name) !== v && s.cards?.length ? { ...s, cards: s.cards.map(() => '??') } : s) }; }
-  for (const def of TABLES) if (def.game === 'blackjack' && out.tables[def.id]) { const t = out.tables[def.id]; out.tables[def.id] = { ...t, shoe: [], dealer: t.phase === 'playing' ? t.dealer.map((c, i) => i === 1 ? '??' : c) : t.dealer }; }
+  for (const def of TABLES) if (def.game === 'blackjack' && out.tables[def.id]) { const t = out.tables[def.id]; out.tables[def.id] = { ...t, shoe: [], dealer: t.phase === 'done' ? t.dealer : t.dealer.map((c, i) => i === 1 ? '??' : c) }; }
   return out;
 }
 export function walletSummary(game) { return Object.values(game.wallets || {}).sort((a, b) => b.cash - a.cash).map(w => ({ name: w.name, cash: w.cash, salary: w.salary, won: w.won, lost: w.lost })); }

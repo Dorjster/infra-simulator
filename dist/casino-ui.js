@@ -12,6 +12,26 @@ const cardHTML = c => c === '??' ? '<span class="cz-card down"></span>' : `<span
 const CHIPS = [5, 25, 100, 500, 1000, 5000];
 const DANCE_NOTES = ['Hands on the pole, spinning around it', 'Climbs hand over hand, sits with legs wrapped, slides down', 'High cabaret kicks downstage', 'Both hands high, a slow wave through the body', 'Point-up disco moves', 'Hangs out from the pole in a deep arch']
 
+// Update a panel in place: only nodes whose content changed are touched, so a button under the pointer is the
+// same element when the click completes, and cards / balls already shown don't replay their pop-in animation.
+function morph(el, html) {
+  const tpl = document.createElement?.('template'); if (!tpl?.content) { el.innerHTML = html; return; }
+  tpl.innerHTML = html; patchChildren(el, tpl.content);
+}
+function patchChildren(a, b) {
+  const an = [...a.childNodes], bn = [...b.childNodes];
+  bn.forEach((n, i) => { if (an[i]) patchNode(an[i], n); else a.appendChild(n); });
+  for (let i = bn.length; i < an.length; i++) an[i].remove();
+}
+function patchNode(o, n) {
+  if (o.nodeType !== n.nodeType || o.nodeName !== n.nodeName) { o.replaceWith(n); return; }
+  if (o.nodeType !== 1) { if (o.nodeValue !== n.nodeValue) o.nodeValue = n.nodeValue; return; }
+  for (const { name } of [...o.attributes]) if (!n.hasAttribute(name)) o.removeAttribute(name);
+  for (const { name, value } of [...n.attributes]) if (o.getAttribute(name) !== value) o.setAttribute(name, value);
+  // Typed amounts and chosen options are left as the player set them.
+  if (o.disabled !== n.disabled) o.disabled = n.disabled;
+  patchChildren(o, n);
+}
 export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = () => {}, onClose = () => {}, onSeat = () => {}, actor = () => 'ENGINEER-01' }) {
   const g = () => world.operations.game, me = () => String(name() || 'Engineer').trim(), key = s => String(s || '').trim().toLowerCase();
   const myWallet = () => g().wallets?.[key(me())], T = id => g().casino?.tables?.[id];
@@ -41,7 +61,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
 @media(max-width:900px){#casino-panel{width:auto;left:8px;right:8px;top:auto;height:52vh}}`;
   (document.head || document.body).append?.(style);
   const $ = id => document.getElementById(id);
-  let open = false, table = 'bj-1', tab = 'table', chip = 25, picks = new Set(), lastKey = '', lastCash = null, deltaTimer = 0, helloAt = 0, buyIn = 1000, raiseTo = 0, tipAmt = 50, slotBet = 5;
+  let renderedAt = 0, open = false, table = 'bj-1', tab = 'table', chip = 25, picks = new Set(), lastKey = '', lastCash = null, deltaTimer = 0, helloAt = 0, buyIn = 1000, raiseTo = 0, tipAmt = 50, slotBet = 5;
   const v = { set chip(x) { chip = x; } };
   function send(action) {
     return (lan.connected ? lan.send({ type: 'casino', action }) : Promise.resolve().then(() => world.apply({ type: 'casino', action }, actor())))
@@ -81,8 +101,8 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
     const now = performance.now(), t0 = startedAt('bj:' + id + ':' + t.round), n = t.seats.length, landed = order => now - t0 >= order * SYNC.dealCard + 320;
     const mine = t.seats.find(s => key(s.name) === key(me())), myTurn = t.phase === 'playing' && t.seats[t.turn] === mine;
     const rv = bjReveal(id, t, now), settled = t.phase !== 'done' || rv.settled;
-    const dealer = t.dealer.map((c, i) => i < 2 && !landed(i === 0 ? n : 2 * n + 1) || now < rv.cardAt(i) + (i >= 2 ? SYNC.cardFlight : 0) ? '' : cardHTML(i === 1 && now < rv.cardAt(1) ? '??' : c)).join('');
-    const seats = t.seats.map((s, i) => { const cs = (s.cards || []).map((c, k) => (k < 2 ? !landed(k === 0 ? i : n + 1 + i) : now < hitLandsAt(id + ':' + t.round + ':' + i + ':' + k, now)) ? '' : cardHTML(c)).join(''); return `<div class="cz-box${t.turn === i && t.phase === 'playing' ? ' turn' : ''}${s === mine ? ' me' : ''}"><b>${esc(s.name)}</b> · ${money(s.bet)}${s.doubled ? ' · doubled' : ''}<div>${cs}</div><small>${s.cards?.length ? handValue(s.cards) : ''}${s.result && settled ? ' · <b>' + s.result.toUpperCase() + '</b>' + (s.payout > s.bet ? ' +' + money(s.payout - s.bet) : '') : ''}</small></div>`; }).join('');
+    const dealer = t.dealer.map((c, i) => i < 2 && !landed(i === 0 ? n : 2 * n + 1) || now < rv.cardAt(i) + (i >= 2 ? SYNC.cardFlight : 0) ? '' : cardHTML(i === 1 && !(t.phase === 'done' && now >= rv.cardAt(1)) ? '??' : c)).join('');
+    const seats = t.seats.map((s, i) => { const onFelt = (s.cards || []).filter((c, k) => !(k < 2 ? !landed(k === 0 ? i : n + 1 + i) : now < hitLandsAt(id + ':' + t.round + ':' + i + ':' + k, now))), cs = onFelt.map(cardHTML).join(''); return `<div class="cz-box${t.turn === i && t.phase === 'playing' ? ' turn' : ''}${s === mine ? ' me' : ''}"><b>${esc(s.name)}</b> · ${money(s.bet)}${s.doubled ? ' · doubled' : ''}<div>${cs}</div><small>${onFelt.length ? handValue(onFelt) : ''}${s.result && settled ? ' · <b>' + s.result.toUpperCase() + '</b>' + (s.payout > s.bet ? ' +' + money(s.payout - s.bet) : '') : ''}</small></div>`; }).join('');
     const status = t.phase === 'betting' ? (n ? 'Dealing in ' + secs(t.closesAt) + ' · or press Deal' : 'Place a bet to take a seat') : t.phase === 'playing' ? (myTurn ? 'Your turn · ' + secs(t.turnEndsAt) : (t.seats[t.turn]?.name || '') + ' is playing') : t.phase === 'done' && settled ? esc(t.log[0] || '') : 'Dealer plays…';
     return `<div class="cz-box"><b>Dealer</b> ${dealer || '<em>—</em>'} ${t.phase === 'done' && settled && t.dealer.length ? '<b>' + handValue(t.dealer) + '</b>' : ''}</div>${seats || '<p><em>Empty table · up to 5 players</em></p>'}<p>${status}</p>
      ${t.phase === 'betting' ? chipsHTML(def) + `<div class="cz-row" style="margin-top:8px"><button class="cz-btn" data-act="bj-bet">${mine ? 'Add' : 'Bet & sit'} ${money(chip)}</button><button class="cz-btn alt" data-act="bj-deal" ${n ? '' : 'disabled'}>Deal now</button>${mine ? '<button class="cz-btn alt" data-act="bj-leave">Leave seat</button>' : ''}</div>` : ''}
@@ -132,7 +152,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   }
   function stageHTML(def, t) {
     const active = t.dance >= 0 && Date.now() < t.until;
-    return `<div class="cz-box"><b>${active ? 'Now: ' + esc(DANCES[t.dance]) + ' · for ' + esc(t.by) + ' · ' + secs(t.until) : 'Warming up at the pole'}</b><br><small>${t.queue.length ? 'Next: ' + t.queue.map(q => esc(DANCES[q.dance]) + ' (' + esc(q.name) + ')').join(' · ') : 'No requests waiting'}</small></div>
+    return `<div class="cz-box"><b>${active ? 'Now: ' + esc(DANCES[t.dance]) + ' · for ' + esc(t.by) + ' · ' + secs(t.until) : 'Dancing her routine · tip for a special move'}</b><br><small>${t.queue.length ? 'Next: ' + t.queue.map(q => esc(DANCES[q.dance]) + ' (' + esc(q.name) + ')').join(' · ') : 'No requests waiting'}</small></div>
      <div class="cz-form"><label>Tip <input id="cz-tip" type="number" min="${def.min}" max="${def.max}" value="${tipAmt}"></label><small>${money(def.min)} minimum · tips go to the performer</small></div>
      <div class="cz-dances">${DANCES.map((d, i) => `<button data-dance="${i}"><b>${esc(d)}</b><small>${DANCE_NOTES[i]}</small></button>`).join('')}</div>
      <p><small>Total tips tonight ${money(t.tips)} · ${esc(t.log[0] || '')}</small></p>`;
@@ -147,6 +167,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   }
   function render(force) {
     const game = g(); if (!open || !game.payday || !game.casino?.tables) return;
+    if (!force && performance.now() - renderedAt < 100) return; renderedAt = performance.now();                // change check 10× a second, not every frame
     const def = tableDef(table), t = T(table), anim = Math.floor(performance.now() / 250);
     const k = JSON.stringify([tab, table, t, tab === 'wallet' ? [game.wallets, game.loans, shownCash()] : shownCash(), chip, [...picks], anim]);
     if (!force && k === lastKey) return; const typing = document.activeElement?.closest?.('#casino-panel') && document.activeElement.tagName === 'INPUT'; if (!force && typing && k.slice(0, -4) === lastKey.slice(0, -4)) return; lastKey = k;
@@ -154,7 +175,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
     $('cz-kicker').textContent = tab === 'wallet' ? 'PAYDAY CASINO · CASHIER' : 'PAYDAY CASINO · ' + (def.min ? money(def.min) + '–' + money(def.max) : def.game === 'poker' ? 'BLINDS $' + def.sb + '/$' + def.bb : 'LOTTO');
     $('cz-title').textContent = tab === 'wallet' ? 'Wallet & loans' : def.name; $('cz-panel-cash').textContent = money(shownCash());
     const body = $('cz-body'), scroll = body.scrollTop;
-    body.innerHTML = tab === 'wallet' ? walletHTML() : def.game === 'blackjack' ? blackjackHTML(table, def, t) : def.game === 'roulette' ? rouletteHTML(table, def, t) : def.game === 'poker' ? pokerHTML(table, def, t) : def.game === 'slots' ? slotsHTML(table, def, t) : def.game === 'stage' ? stageHTML(def, t) : lottoHTML(t);
+    morph(body, tab === 'wallet' ? walletHTML() : def.game === 'blackjack' ? blackjackHTML(table, def, t) : def.game === 'roulette' ? rouletteHTML(table, def, t) : def.game === 'poker' ? pokerHTML(table, def, t) : def.game === 'slots' ? slotsHTML(table, def, t) : def.game === 'stage' ? stageHTML(def, t) : lottoHTML(t));
     body.scrollTop = scroll;
     const q = s => [...(body.querySelectorAll?.(s) || [])], num = (sel, fallback) => +(body.querySelector?.(sel)?.value ?? fallback);
     q('[data-chip]').forEach(b => b.onclick = () => { chip = +b.dataset.chip; render(true); });

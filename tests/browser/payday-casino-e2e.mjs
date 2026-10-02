@@ -111,6 +111,7 @@ try {
   const slWatch = watch(guest, `const t = game.casino.tables['sl-1'], r3 = probe()['sl-1'].reels, done3 = t.last && r3.every((r, k) => r === t.last.reels[k]), said = /won|no win/i.test(panel);
     return { ok: !said || done3, detail: JSON.stringify({ said, r3, want: t.last?.reels, badge: document.getElementById('cz-cash').textContent }) };`, 3200);
   const sl = await guest.evaluate(() => __infra.lab.casinoUI.send({ type: 'sl-spin', table: 'sl-1', amount: 5 })); check('Slot spin', /win|No win/i.test(sl), sl);
+  await until(guest, b => document.getElementById('cz-cash').textContent !== b, badge0, 1500);    // the host's new world arrives
   const mid = await guest.evaluate(() => ({ msg: document.getElementById('cz-msg').textContent, badge: document.getElementById('cz-cash').textContent }));
   check('Slots: while the reels turn the panel says "Reels spinning…" and the badge shows only the bet taken', mid.msg === 'Reels spinning…' && mid.badge === '$' + (Number(badge0.replace(/[^0-9]/g, '')) - 5).toLocaleString('en-US'), JSON.stringify({ badge0, ...mid }));
   const busy = await casino(host, { type: 'sl-spin', table: 'sl-1', amount: 5 }); check('Slots: a second player can\'t pull the lever while the reels turn', /still spinning/.test(busy), busy);
