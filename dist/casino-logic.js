@@ -12,7 +12,7 @@
 //  · Timing fields (spinMs, dealtAt, drawnAt…) let every client animate the 3D tables in step with the result.
 export const START_CASH = 500, DARJA_CASH = 10000, LEVEL_BONUS = 1500;
 export const SALARY = { rack: 150, mount: 120, 'rack-feed': 60, rails: 40, power: 35, patch: 30, optic: 25, boot: 40, unbox: 15, repair: 90, 'isp-order': 50 };
-export const LOTTO = { price: 20, numbers: 36, picks: 5, pays: { 2: 20, 3: 150, 4: 2500 }, seed: 5000, add: 10 };
+export const LOTTO = { price: 20, numbers: 36, picks: 5, pays: { 2: 20, 3: 150, 4: 2500 }, seed: 5000, add: 10, drawMs: 8000 };   // drawMs = SYNC.lottoDraw: one draw on the machine
 export const TABLES = [
   { id: 'bj-1', game: 'blackjack', name: 'Blackjack', min: 10, max: 5000 },
   { id: 'bj-2', game: 'blackjack', name: 'High-limit blackjack', min: 100, max: 25000 },
@@ -262,6 +262,7 @@ function pokerTick(game, def, t, rng, now) {
 function reel(rng) { let r = rng() * SLOT_WEIGHTS.reduce((a, b) => a + b), i = 0; while (r >= SLOT_WEIGHTS[i]) r -= SLOT_WEIGHTS[i++]; return i; }
 export function slotPay(reels) { if (reels[0] === reels[1] && reels[1] === reels[2]) return SLOT_PAYS[reels[0]]; return reels.filter(r => r === 0).length === 2 ? 2.5 : 0; }
 function slots(game, def, t, a, name, rng, now) {
+  if (t.last && key(t.last.name) !== key(name) && now - t.last.at < 2600) throw Error(t.last.name + "'s reels are still spinning");
   const bet = int(a.amount, range(def), def.min, def.max), w = wallet(game, name); take(w, bet);
   const reels = [reel(rng), reel(rng), reel(rng)], pay = Math.round(slotPay(reels) * bet); w.cash += pay; result(w, def.name + ' · ' + reels.map(r => SLOT_SYMBOLS[r]).join(' '), pay - bet);
   t.spins++; t.last = { name: w.name, reels, bet, pay, at: now, spin: t.spins }; return pay ? 'Win ' + money(pay) + '!' : 'No win';
@@ -269,13 +270,15 @@ function slots(game, def, t, a, name, rng, now) {
 function lotto(game, t, a, name, rng, now) {
   const picks = [...new Set((a.picks || []).map(Number))].filter(n => Number.isInteger(n) && n >= 1 && n <= LOTTO.numbers);
   if (picks.length !== LOTTO.picks) throw Error('Pick ' + LOTTO.picks + ' different numbers from 1 to ' + LOTTO.numbers);
-  const w = wallet(game, name); take(w, LOTTO.price, 'ticket'); t.jackpot += LOTTO.add; t.tickets++;
+  // One machine: tickets queue and are drawn in order, at most two waiting.
+  const wait = Math.max(0, (t.busyUntil || 0) - now); if (wait > 2 * LOTTO.drawMs) throw Error('The machine is busy · try again in ' + Math.ceil((wait - 2 * LOTTO.drawMs) / 1000 + 1) + ' s');
+  const w = wallet(game, name); take(w, LOTTO.price, 'ticket'); t.jackpot += LOTTO.add; t.tickets++; t.busyUntil = now + wait + LOTTO.drawMs;
   const pool = Array.from({ length: LOTTO.numbers }, (_, i) => i + 1), balls = [];
   for (let i = 0; i < LOTTO.picks; i++) balls.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   const hits = picks.filter(n => balls.includes(n)).length; let prize = LOTTO.pays[hits] || 0;
   if (hits === LOTTO.picks) { prize = t.jackpot; t.jackpot = LOTTO.seed; }
   w.cash += prize; result(w, 'Lotto · ' + hits + ' of 5', prize - LOTTO.price);
-  t.last.unshift({ name: w.name, picks, balls, hits, prize, at: now, ticket: t.tickets }); t.last.length = Math.min(t.last.length, 8);
+  t.last.unshift({ name: w.name, picks, balls, hits, prize, at: now, wait, ticket: t.tickets }); t.last.length = Math.min(t.last.length, 8);
   return { message: prize ? 'Lotto · ' + hits + ' numbers · won ' + money(prize) : 'Lotto · ' + hits + ' numbers · no prize', balls, hits, prize };
 }
 

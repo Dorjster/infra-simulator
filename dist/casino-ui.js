@@ -3,7 +3,7 @@
 // is revealed on the same clock as the 3D table (casino-sync.js): cards appear as they land, the roulette
 // number when the ball stops, slot wins when the reels stop, lotto balls as they reach the rack.
 import { handValue, rouletteColor, LOTTO, TABLES, DANCES, SLOT_SYMBOLS, tableDef } from './casino-logic.js';
-import { startedAt, SYNC } from './casino-sync.js';
+import { startedAt, SYNC, bjReveal, lottoPlan, boardLandsAt, hitLandsAt } from './casino-sync.js';
 import { symbolImg } from './slot-symbols.js';
 
 const money = n => '$' + Math.round(n || 0).toLocaleString('en-US');
@@ -45,9 +45,25 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   const v = { set chip(x) { chip = x; } };
   function send(action) {
     return (lan.connected ? lan.send({ type: 'casino', action }) : Promise.resolve().then(() => world.apply({ type: 'casino', action }, actor())))
-      .then(r => { const m = typeof r === 'string' ? r : r?.message || ''; $('cz-msg').textContent = m; render(true); return m; })
+      .then(r => { const m = typeof r === 'string' ? r : r?.message || '', wait = SUSPENSE[action.type]; $('cz-msg').textContent = wait ? wait[0] : m; if (wait) setTimeout(() => { if ($('cz-msg').textContent === wait[0]) $('cz-msg').textContent = ''; }, wait[1]); render(true); return m; })
       .catch(e => { $('cz-msg').textContent = e.message; render(true); return 'ERR ' + e.message; });
   }
+  // Results arrive with the reply, but are revealed only when the 3D table shows them.
+  const SUSPENSE = { 'sl-spin': ['Reels spinning…', SYNC.slots], lotto: ['Ticket bought · watch the machine', 3000], 'rl-spin': ['No more bets · watch the wheel', SYNC.roulette] };   // [text, ms shown]
+  // Winnings this player can't see yet (reels, ball, lotto draw or dealer still going): held back from the
+  // wallet display so the balance never gives the result away.
+  function held() {
+    const now = performance.now(), mine = n => key(n) === key(me()); let sum = 0;
+    for (const [id, t] of Object.entries(g().casino?.tables || {})) {
+      const def = tableDef(id); if (!def || !t) continue;
+      if (def.game === 'slots' && t.last && mine(t.last.name) && now - startedAt('sl:' + id + ':' + t.last.spin) <= SYNC.slots) sum += t.last.pay;
+      if (def.game === 'roulette' && t.round && (t.phase === 'spinning' || now - startedAt('rl:' + id + ':' + t.round) < SYNC.roulette)) for (const [n, a] of Object.entries(t.lastWinners || {})) if (mine(n)) sum += a + (t.lastBets || []).filter(b => mine(b.name) && b.won).reduce((x, b) => x + b.amount, 0);
+      if (def.game === 'blackjack' && t.phase === 'done' && !bjReveal(id, t, now).settled) for (const st of t.seats) if (mine(st.name)) sum += st.payout || 0;
+      if (def.game === 'lotto') { const plan = lottoPlan(t, now); for (const i of plan.items) if (mine(i.x.name) && i.e < (LOTTO.picks + .3) * SYNC.lottoBall) sum += i.x.prize; }
+    }
+    return sum;
+  }
+  const shownCash = () => (myWallet()?.cash || 0) - held();
   const hash = s => [...String(s)].reduce((a, c) => a * 31 + c.charCodeAt(0) >>> 0, 7);
   function mySeat(id) { const t = T(id), def = tableDef(id); if (!t || !def) return 0; if (def.game === 'blackjack') { const i = t.seats.findIndex(s => key(s.name) === key(me())); return i >= 0 ? i : Math.min(4, t.seats.length); } if (def.game === 'poker') { const i = t.seats.findIndex(s => s && key(s.name) === key(me())); return i >= 0 ? i : Math.max(0, t.seats.findIndex(s => !s)); } return hash(me()) % 5; }
   function show(which) {
@@ -64,10 +80,11 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   function blackjackHTML(id, def, t) {
     const now = performance.now(), t0 = startedAt('bj:' + id + ':' + t.round), n = t.seats.length, landed = order => now - t0 >= order * SYNC.dealCard + 320;
     const mine = t.seats.find(s => key(s.name) === key(me())), myTurn = t.phase === 'playing' && t.seats[t.turn] === mine;
-    const dealer = t.dealer.map((c, i) => i < 2 && !landed(i === 0 ? n : 2 * n + 1) ? '' : cardHTML(c)).join('');
-    const seats = t.seats.map((s, i) => { const cs = (s.cards || []).map((c, k) => k < 2 && !landed(k === 0 ? i : n + 1 + i) ? '' : cardHTML(c)).join(''); return `<div class="cz-box${t.turn === i && t.phase === 'playing' ? ' turn' : ''}${s === mine ? ' me' : ''}"><b>${esc(s.name)}</b> · ${money(s.bet)}${s.doubled ? ' · doubled' : ''}<div>${cs}</div><small>${s.cards?.length ? handValue(s.cards) : ''}${s.result ? ' · <b>' + s.result.toUpperCase() + '</b>' + (s.payout > s.bet ? ' +' + money(s.payout - s.bet) : '') : ''}</small></div>`; }).join('');
-    const status = t.phase === 'betting' ? (n ? 'Dealing in ' + secs(t.closesAt) + ' · or press Deal' : 'Place a bet to take a seat') : t.phase === 'playing' ? (myTurn ? 'Your turn · ' + secs(t.turnEndsAt) : (t.seats[t.turn]?.name || '') + ' is playing') : t.phase === 'done' ? esc(t.log[0] || '') : 'Dealer plays';
-    return `<div class="cz-box"><b>Dealer</b> ${dealer || '<em>—</em>'} ${t.phase !== 'playing' && t.dealer.length ? '<b>' + handValue(t.dealer) + '</b>' : ''}</div>${seats || '<p><em>Empty table · up to 5 players</em></p>'}<p>${status}</p>
+    const rv = bjReveal(id, t, now), settled = t.phase !== 'done' || rv.settled;
+    const dealer = t.dealer.map((c, i) => i < 2 && !landed(i === 0 ? n : 2 * n + 1) || now < rv.cardAt(i) + (i >= 2 ? SYNC.cardFlight : 0) ? '' : cardHTML(i === 1 && now < rv.cardAt(1) ? '??' : c)).join('');
+    const seats = t.seats.map((s, i) => { const cs = (s.cards || []).map((c, k) => (k < 2 ? !landed(k === 0 ? i : n + 1 + i) : now < hitLandsAt(id + ':' + t.round + ':' + i + ':' + k, now)) ? '' : cardHTML(c)).join(''); return `<div class="cz-box${t.turn === i && t.phase === 'playing' ? ' turn' : ''}${s === mine ? ' me' : ''}"><b>${esc(s.name)}</b> · ${money(s.bet)}${s.doubled ? ' · doubled' : ''}<div>${cs}</div><small>${s.cards?.length ? handValue(s.cards) : ''}${s.result && settled ? ' · <b>' + s.result.toUpperCase() + '</b>' + (s.payout > s.bet ? ' +' + money(s.payout - s.bet) : '') : ''}</small></div>`; }).join('');
+    const status = t.phase === 'betting' ? (n ? 'Dealing in ' + secs(t.closesAt) + ' · or press Deal' : 'Place a bet to take a seat') : t.phase === 'playing' ? (myTurn ? 'Your turn · ' + secs(t.turnEndsAt) : (t.seats[t.turn]?.name || '') + ' is playing') : t.phase === 'done' && settled ? esc(t.log[0] || '') : 'Dealer plays…';
+    return `<div class="cz-box"><b>Dealer</b> ${dealer || '<em>—</em>'} ${t.phase === 'done' && settled && t.dealer.length ? '<b>' + handValue(t.dealer) + '</b>' : ''}</div>${seats || '<p><em>Empty table · up to 5 players</em></p>'}<p>${status}</p>
      ${t.phase === 'betting' ? chipsHTML(def) + `<div class="cz-row" style="margin-top:8px"><button class="cz-btn" data-act="bj-bet">${mine ? 'Add' : 'Bet & sit'} ${money(chip)}</button><button class="cz-btn alt" data-act="bj-deal" ${n ? '' : 'disabled'}>Deal now</button>${mine ? '<button class="cz-btn alt" data-act="bj-leave">Leave seat</button>' : ''}</div>` : ''}
      ${myTurn ? `<div class="cz-row"><button class="cz-btn" data-act="bj-hit">Hit</button><button class="cz-btn" data-act="bj-stand">Stand</button><button class="cz-btn alt" data-act="bj-double" ${mine.cards.length === 2 ? '' : 'disabled'}>Double (${money(mine.bet)})</button></div>` : ''}`;
   }
@@ -84,10 +101,12 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
      <div class="cz-row"><button class="cz-btn" data-act="rl-spin" ${t.phase === 'spinning' || !t.bets.length ? 'disabled' : ''}>Spin</button><button class="cz-btn alt" data-act="rl-clear" ${t.phase === 'spinning' || !mine.length ? 'disabled' : ''}>Take back my bets</button></div>`;
   }
   function pokerHTML(id, def, t) {
+    const now = performance.now(), t0 = startedAt('pk:' + id + ':' + t.hand), seated = t.seats.filter(Boolean).length;
+    const holeIn = (i, k) => now - t0 >= (k * seated + i) * SYNC.dealCard + SYNC.cardFlight, boardIn = i => now >= boardLandsAt(id, t.hand, i, now);
     const seat = t.seats.findIndex(s => s && key(s.name) === key(me())), mine = t.seats[seat], myTurn = mine && t.toAct === seat && !['waiting', 'showdown'].includes(t.phase), owe = mine ? t.currentBet - mine.bet : 0;
     const pot = t.seats.reduce((a, s) => a + (s?.total || 0), 0), minTo = t.currentBet + t.minRaise; if (!raiseTo || raiseTo < minTo) raiseTo = minTo;
-    const seats = t.seats.map((s, i) => !s ? `<div class="cz-box"><small>Seat ${i + 1} · empty</small>${!mine ? ` <button class="cz-btn alt" data-sit="${i}">Sit here</button>` : ''}</div>` : `<div class="cz-box${t.toAct === i && !['waiting', 'showdown'].includes(t.phase) ? ' turn' : ''}${i === seat ? ' me' : ''}"><b>${esc(s.name)}</b>${t.button === i ? ' · D' : ''}${t.sbSeat === i && t.phase !== 'waiting' ? ' · SB' : ''}${t.bbSeat === i && t.phase !== 'waiting' ? ' · BB' : ''} · ${money(s.stack)}${s.bet ? ' · bet ' + money(s.bet) : ''}${s.folded ? ' · folded' : s.allIn ? ' · ALL-IN' : ''}<div>${(s.cards || []).map(cardHTML).join('')}${s.best && s.shown ? ' <small>' + esc(s.best.name) + '</small>' : ''}</div><small>${esc(s.lastAction || '')}</small></div>`).join('');
-    return `<div class="cz-box"><b>Board</b> ${t.board.map(cardHTML).join('') || '<em>—</em>'} · pot ${money(pot)}<br><small>${t.phase === 'waiting' ? (t.seats.filter(Boolean).length < 2 ? 'Waiting for a second player' : 'Next hand starting') : t.phase === 'showdown' ? esc(t.log[0] || '') : t.phase.toUpperCase() + ' · ' + (t.seats[t.toAct]?.name || '') + ' to act · ' + secs(t.actionEndsAt)}</small></div>${seats}
+    const seats = t.seats.map((s, i) => !s ? `<div class="cz-box"><small>Seat ${i + 1} · empty</small>${!mine ? ` <button class="cz-btn alt" data-sit="${i}">Sit here</button>` : ''}</div>` : `<div class="cz-box${t.toAct === i && !['waiting', 'showdown'].includes(t.phase) ? ' turn' : ''}${i === seat ? ' me' : ''}"><b>${esc(s.name)}</b>${t.button === i ? ' · D' : ''}${t.sbSeat === i && t.phase !== 'waiting' ? ' · SB' : ''}${t.bbSeat === i && t.phase !== 'waiting' ? ' · BB' : ''} · ${money(s.stack)}${s.bet ? ' · bet ' + money(s.bet) : ''}${s.folded ? ' · folded' : s.allIn ? ' · ALL-IN' : ''}<div>${(s.cards || []).map((c, k) => holeIn(i, k) ? cardHTML(c) : '').join('')}${s.best && s.shown ? ' <small>' + esc(s.best.name) + '</small>' : ''}</div><small>${esc(s.lastAction || '')}</small></div>`).join('');
+    return `<div class="cz-box"><b>Board</b> ${t.board.map((c, i) => boardIn(i) ? cardHTML(c) : '').join('') || '<em>—</em>'} · pot ${money(pot)}<br><small>${t.phase === 'waiting' ? (t.seats.filter(Boolean).length < 2 ? 'Waiting for a second player' : 'Next hand starting') : t.phase === 'showdown' ? esc(t.log[0] || '') : t.phase.toUpperCase() + ' · ' + (t.seats[t.toAct]?.name || '') + ' to act · ' + secs(t.actionEndsAt)}</small></div>${seats}
      ${!mine ? `<div class="cz-form"><label>Buy-in <input id="cz-buyin" type="number" min="${def.minBuy}" max="${def.maxBuy}" value="${buyIn}"></label><span><small>${money(def.minBuy)}–${money(def.maxBuy)} · blinds $${def.sb}/$${def.bb}</small></span></div>` : ''}
      ${myTurn ? `<div class="cz-row"><button class="cz-btn alt" data-act="pk-fold">Fold</button>${owe > 0 ? `<button class="cz-btn" data-act="pk-call">Call ${money(Math.min(owe, mine.stack))}</button>` : '<button class="cz-btn" data-act="pk-check">Check</button>'}</div><div class="cz-form"><label>${t.currentBet ? 'Raise to' : 'Bet'} <input id="cz-raise" type="number" min="${minTo}" max="${mine.bet + mine.stack}" value="${Math.min(raiseTo, mine.bet + mine.stack)}"></label><button class="cz-btn" data-act="pk-raise">${t.currentBet ? 'Raise' : 'Bet'}</button><button class="cz-btn alt" data-act="pk-allin">All-in ${money(mine.stack + mine.bet)}</button></div>` : ''}
      ${mine ? `<div class="cz-row"><button class="cz-btn alt" data-act="pk-leave">Leave table (cash out)</button>${['waiting', 'showdown'].includes(t.phase) && mine.stack < def.maxBuy ? `<button class="cz-btn alt" data-act="pk-rebuy">Top up ${money(Math.min(500, def.maxBuy - mine.stack))}</button>` : ''}</div>` : ''}
@@ -102,13 +121,14 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
      <table class="cz-table">${[[5, '250×'], [4, '75×'], [3, '30×'], [2, '15×'], [1, '8×'], [0, '6×']].map(([i, p]) => `<tr><td>${symbolImg(i, 22).repeat(3)}</td><td>${p}</td></tr>`).join('')}<tr><td>any two ${symbolImg(0, 22)}</td><td>2.5×</td></tr><tr><td colspan=2><small>${money(def.min)}–${money(def.max)} a spin</small></td></tr></table>`;
   }
   function lottoHTML(t) {
-    const mine = t.last?.find(x => key(x.name) === key(me())), e = mine ? performance.now() - startedAt('lt:' + mine.ticket) : 1e9;
+    const plan = lottoPlan(t), mine = t.last?.find(x => key(x.name) === key(me())), e = mine ? plan.of(mine).e : 1e9, now = plan.shown && plan.shown.e < (LOTTO.picks + .3) * SYNC.lottoBall ? plan.shown.x : null;
     const balls = Array.from({ length: LOTTO.numbers }, (_, i) => i + 1).map(x => `<button data-pick="${x}" class="${picks.has(x) ? 'on' : ''}">${x}</button>`).join('');
     const shown = mine ? mine.balls.map((b, i) => e >= (i + 1) * SYNC.lottoBall ? `<span class="${mine.picks.includes(b) ? 'hit' : ''}">${b}</span>` : '<span class="wait">?</span>').join('') : '', done = mine && e >= (LOTTO.picks + .3) * SYNC.lottoBall;
     return `<h3 style="margin:0;font:700 24px Georgia;color:#ffe28a">JACKPOT ${money(t.jackpot)}</h3><p>Pick ${LOTTO.picks} of ${LOTTO.numbers} (${picks.size}/${LOTTO.picks}) · ${money(LOTTO.price)} · 2 → $20 · 3 → $150 · 4 → $2,500 · 5 → jackpot</p><div class="cz-balls">${balls}</div>
      <div class="cz-row" style="margin-top:8px"><button class="cz-btn alt" data-act="quick">Quick pick</button><button class="cz-btn alt" data-act="clearpicks">Clear</button><button class="cz-btn" data-act="lotto" ${picks.size === LOTTO.picks && (!mine || done) ? '' : 'disabled'}>Buy ticket · ${money(LOTTO.price)}</button></div>
-     ${mine ? `<div class="cz-drawn">${shown}</div><p>${done ? `<b>${mine.hits} matched</b> · ${mine.prize ? 'you won ' + money(mine.prize) + '!' : 'no prize this time'}` : 'Drawing… watch the machine'}</p>` : ''}
-     <table class="cz-table">${(t.last || []).slice(0, 5).map(x => `<tr><td>${esc(x.name)}</td><td>${x.balls.join(' · ')}</td><td>${x.hits}/5</td><td>${x.prize ? money(x.prize) : '—'}</td></tr>`).join('')}</table>`;
+     <p><b>${now ? 'Machine: drawing for ' + esc(now.name) : 'Machine ready'}</b></p>
+     ${mine ? `<div class="cz-drawn">${shown}</div><p>${done ? `<b>${mine.hits} matched</b> · ${mine.prize ? 'you won ' + money(mine.prize) + '!' : 'no prize this time'}` : e < 0 ? 'Your ticket is in the queue · drawn in ' + Math.ceil(-e / 1000) + ' s' : 'Drawing your ticket… watch the machine'}</p>` : ''}
+     <table class="cz-table">${plan.items.slice(0, 5).map(({ x, e: xe }) => xe >= (LOTTO.picks + .3) * SYNC.lottoBall ? `<tr><td>${esc(x.name)}</td><td>${x.balls.join(' · ')}</td><td>${x.hits}/5</td><td>${x.prize ? money(x.prize) : '—'}</td></tr>` : `<tr><td>${esc(x.name)}</td><td colspan=3><em>${xe < 0 ? 'waiting' : 'drawing…'}</em></td></tr>`).join('')}</table>`;
   }
   function stageHTML(def, t) {
     const active = t.dance >= 0 && Date.now() < t.until;
@@ -119,7 +139,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   }
   function walletHTML() {
     const w = myWallet() || { cash: 0, salary: 0, won: 0, lost: 0, log: [] }, all = Object.values(g().wallets || {}).sort((a, b) => b.cash - a.cash), loans = (g().loans || []).filter(l => l.owed > 0), others = all.filter(x => key(x.name) !== key(me()));
-    return `<table class="cz-table"><tr><td>Cash</td><th>${money(w.cash)}</th></tr><tr><td>Salary earned</td><td>${money(w.salary)}</td></tr><tr><td>Casino winnings / losses</td><td>${money(w.won)} / ${money(w.lost)}</td></tr></table>
+    return `<table class="cz-table"><tr><td>Cash</td><th>${money(shownCash())}</th></tr><tr><td>Salary earned</td><td>${money(w.salary)}</td></tr><tr><td>Casino winnings / losses</td><td>${money(w.won)} / ${money(w.lost)}</td></tr></table>
      <h3>Lend money</h3>${others.length ? `<div class="cz-form"><label>To <select id="cz-lend-to">${others.map(o => `<option>${esc(o.name)}</option>`).join('')}</select></label><label>Amount <input id="cz-lend-amt" type="number" min="1" value="500"></label><button class="cz-btn" data-act="lend">Lend</button></div>` : '<p>Nobody else has a wallet yet.</p>'}
      <h3>Loans</h3><table class="cz-table">${loans.map(l => `<tr><td>${esc(l.lender)} → ${esc(l.borrower)}</td><td>${money(l.owed)} / ${money(l.amount)}</td><td>${key(l.borrower) === key(me()) ? `<button class="cz-btn" data-repay="${l.id}">Repay</button> <button class="cz-btn alt" data-repay-part="${l.id}">$100</button>` : key(l.lender) === key(me()) ? `<button class="cz-btn alt" data-forgive="${l.id}">Forgive</button>` : ''}</td></tr>`).join('') || '<tr><td>No open loans</td></tr>'}</table>
      <h3>Rich list</h3><table class="cz-table">${all.map((x, i) => `<tr><td>${i + 1}. ${esc(x.name)}</td><th>${money(x.cash)}</th><td><small>salary ${money(x.salary)}</small></td></tr>`).join('')}</table>
@@ -128,11 +148,11 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   function render(force) {
     const game = g(); if (!open || !game.payday || !game.casino?.tables) return;
     const def = tableDef(table), t = T(table), anim = Math.floor(performance.now() / 250);
-    const k = JSON.stringify([tab, table, t, tab === 'wallet' ? [game.wallets, game.loans] : myWallet()?.cash, chip, [...picks], anim]);
+    const k = JSON.stringify([tab, table, t, tab === 'wallet' ? [game.wallets, game.loans, shownCash()] : shownCash(), chip, [...picks], anim]);
     if (!force && k === lastKey) return; const typing = document.activeElement?.closest?.('#casino-panel') && document.activeElement.tagName === 'INPUT'; if (!force && typing && k.slice(0, -4) === lastKey.slice(0, -4)) return; lastKey = k;
     [...(document.querySelectorAll?.('[data-cz]') || [])].forEach(b => b.classList?.toggle('on', b.dataset.cz === tab));
     $('cz-kicker').textContent = tab === 'wallet' ? 'PAYDAY CASINO · CASHIER' : 'PAYDAY CASINO · ' + (def.min ? money(def.min) + '–' + money(def.max) : def.game === 'poker' ? 'BLINDS $' + def.sb + '/$' + def.bb : 'LOTTO');
-    $('cz-title').textContent = tab === 'wallet' ? 'Wallet & loans' : def.name; $('cz-panel-cash').textContent = money(myWallet()?.cash);
+    $('cz-title').textContent = tab === 'wallet' ? 'Wallet & loans' : def.name; $('cz-panel-cash').textContent = money(shownCash());
     const body = $('cz-body'), scroll = body.scrollTop;
     body.innerHTML = tab === 'wallet' ? walletHTML() : def.game === 'blackjack' ? blackjackHTML(table, def, t) : def.game === 'roulette' ? rouletteHTML(table, def, t) : def.game === 'poker' ? pokerHTML(table, def, t) : def.game === 'slots' ? slotsHTML(table, def, t) : def.game === 'stage' ? stageHTML(def, t) : lottoHTML(t);
     body.scrollTop = scroll;
@@ -163,7 +183,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
     if (!on) { lastCash = null; if (open) hide(); return; }
     const w = myWallet();
     if (!w && Date.now() - helloAt > 4000) { helloAt = Date.now(); send({ type: 'hello' }).catch(() => {}); }
-    if (w) { $('cz-cash').textContent = money(w.cash); if (lastCash !== null && w.cash !== lastCash) { const d = w.cash - lastCash, el = $('cz-delta'); el.textContent = (d > 0 ? '+' : '') + money(d) + (w.log?.[0]?.text?.startsWith('Salary') && d > 0 ? ' salary' : w.log?.[0]?.text === 'Level bonus' ? ' level bonus' : ''); el.className = 'on' + (d < 0 ? ' neg' : ''); clearTimeout(deltaTimer); deltaTimer = setTimeout(() => el.className = '', 2600); } lastCash = w.cash; }
+    if (w) { const cash = shownCash(); $('cz-cash').textContent = money(cash); if (lastCash !== null && cash !== lastCash) { const d = cash - lastCash, el = $('cz-delta'); el.textContent = (d > 0 ? '+' : '') + money(d) + (w.log?.[0]?.text?.startsWith('Salary') && d > 0 ? ' salary' : w.log?.[0]?.text === 'Level bonus' ? ' level bonus' : ''); el.className = 'on' + (d < 0 ? ' neg' : ''); clearTimeout(deltaTimer); deltaTimer = setTimeout(() => el.className = '', 2600); } lastCash = cash; }
     render(false);
   }
   const VERB = { blackjack: 'Play blackjack', roulette: 'Play roulette', poker: "Sit at the Hold'em table", slots: 'Play the slot machine', lotto: 'Buy a lotto ticket', stage: 'Tip the dancer' };

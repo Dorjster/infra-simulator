@@ -21,9 +21,41 @@ Walk up to a table and press **E**. Your view moves to a seat at that table, and
 | **Texas Hold'em** (one 5-seat table) | Hole cards dealt to each seat: you see yours face up, everyone else's face down until showdown. Board cards land as the flop, turn and river. Stacks, bets and the pot appear as chips, plus a dealer button and a ring around the player to act. | No limit, blinds $10/$20, buy-in $200–$5,000, side pots, 30 s to act (a player who runs out of time checks or folds) |
 | **Slot machines ×3** (Lucky 7, Diamond, High Roller) | Pull the lever: the three reels spin and stop one by one on the host's symbols. The beacon flashes when you win. | Classic symbols: cherry, lemon, plum, bell, BAR, red 7. 7-7-7 pays 250×, any two cherries 2.5×, about 92% return |
 | **Lotto machine** | 36 numbered balls tumble in a glass drum. When a ticket is bought, air churns them, and each drawn ball is blown up the tube and rolls into the display rack, one about every 1.2 s. | $20, pick 5 of 36. 2 matches → $20, 3 → $150, 4 → $2,500, 5 → the shared jackpot |
-| **Centre stage** | A pole dancer in an athletic pole-fitness outfit. Her hands grip the pole through a reach solver. | Tip $20+ to request one of six dances; requests queue in order and each lasts 18 s |
+| **Centre stage** | A rigged, textured pole dancer in a red sequinned two-piece. Her hands grip the pole through a reach solver. | Tip $20+ to request one of six dances; requests queue in order and each lasts 18 s |
 
 The six dances are **Pole spin**, **Climb & sit**, **Showgirl kicks**, **Body wave**, **Disco fever** and **Lay-back**. The dancer is an original character, not modelled on any real person.
+
+### The dancer model
+
+- **Source:** `dist/models/dancer.glb` (2.1 MB), generated in Tripo and rigged there with a Mixamo skeleton.
+- **Repack:** `tools/pack-dancer.mjs` rebuilds that file from a fresh Tripo export. It fixes two problems in Tripo's export:
+  - the skeleton was turned 90° from the body, with every bone left at the origin;
+  - it had no skin weights, so the whole body followed the hips.
+
+  The script also computes skin weights from the bones and shrinks the textures to 1K.
+- **Dances:** an invisible jointed figure still runs every dance and the pole grip, resized to the model's proportions, and the model's bones copy it each frame. Dances therefore stay in step for every player over LAN.
+- **Outfit:** the plain black sports set is repainted at load time as red sequins. The cloth's folds are kept.
+- **Fallback:** if the model can't load, the old jointed figure is shown instead.
+
+## Every game: the 3D table decides when you know
+
+The panel and the wallet now reveal a result only when the 3D table shows it, for every player.
+
+- **Slots:**
+  - the panel says *Reels spinning…* instead of "Win $X!";
+  - the wallet badge holds the win back until the third reel stops;
+  - another player can't pull the same lever while the reels turn.
+- **Roulette:** the wallet holds winnings until the ball lands, as well as the number.
+- **Blackjack:**
+  - after the players, the dealer's hole card turns over, then each dealer card lands one by one (0.75 s apart);
+  - only then are WIN / LOSE, the dealer's total and the payout chips shown;
+  - hit cards appear in the panel when they land on the felt.
+- **Hold'em:** hole and board cards appear in the panel as they land on the felt, even when streets come quickly.
+- **Lotto:**
+  - one machine, one draw at a time: tickets queue (up to two waiting) and are drawn in order;
+  - the panel says whose ticket the machine is drawing, and *Your ticket is in the queue · drawn in N s*;
+  - each ball appears in the panel only once it's in the 3D rack;
+  - players watching the machine stand side by side.
 
 ## Fair and hidden information
 
@@ -43,11 +75,17 @@ v34 Payday saves are migrated. Any chips that were still on the old single black
   - a three-player Hold'em hand with an all-in side pot (every chip awarded), hidden hole cards, the action timer and cash-out;
   - slots return to player (about 92%);
   - stage tips and the dance queue;
+  - the lotto queue and the busy-slot guard;
   - v34 migration.
-- **`tests/browser/payday-casino-e2e.mjs`** (LAN, host Darja and guest Sam), 25/25:
+- **`tests/browser/payday-casino-e2e.mjs`** (LAN, host Darja and guest Sam), 37/37:
   - every station played;
   - roulette: the panel hides the number while the ball rolls and shows the landed number afterwards;
   - Hold'em: each player sees only their own hole cards until showdown, and chips are conserved.
+  - 3D sync, sampled every 100 ms against what each client's 3D table actually shows:
+    - blackjack results only after every dealer card has landed, and the guest's 3D cards equal the host's;
+    - Hold'em board cards in the panel never ahead of the felt;
+    - slot results only once all three 3D reels rest on the host's symbols, and a busy machine is refused;
+    - lotto balls in the panel only once they're in the rack, and two tickets drawn in order (Sam's, then Darja's).
 - **LAN Campaign 0→10:** rerun with host, guest and late joiner, all 11/11.
 
 Screenshots: [docs/v35](docs/v35/).

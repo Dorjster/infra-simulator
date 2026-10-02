@@ -84,6 +84,16 @@ const rtp = paid / spins; assert(rtp > .85 && rtp < .98, 'slot return-to-player 
 // Lotto.
 const j0 = T('lotto').jackpot, c0 = cash('Sam'), res = casinoApply(game, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'Sam', rng);
 assert.equal(new Set(res.balls).size, 5); assert.equal(T('lotto').jackpot, res.hits === 5 ? LOTTO.seed : j0 + LOTTO.add); assert.equal(cash('Sam'), c0 - LOTTO.price + res.prize);
+// One machine: tickets queue in order (each waits for the draw before it); a third waiting ticket is refused.
+{ const lt = T('lotto'), now0 = 5e12; lt.busyUntil = 0;
+  for (let i = 0; i < 3; i++) casinoApply(game, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'Darja', rng, now0);
+  assert.deepEqual(lt.last.slice(0, 3).map(x => x.wait).reverse(), [0, LOTTO.drawMs, 2 * LOTTO.drawMs]);
+  assert.throws(() => casinoApply(game, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'Darja', rng, now0), /machine is busy/);
+  casinoApply(game, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'Darja', rng, now0 + LOTTO.drawMs); }
+// Slots: another player can't pull the lever while someone's reels are still turning.
+{ const now0 = 6e12; casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5 }, 'Darja', rng, now0);
+  assert.throws(() => casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5 }, 'Sam', rng, now0 + 1000), /still spinning/);
+  casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5 }, 'Sam', rng, now0 + 3000); }
 
 // Stage: tips request dances, queued in order, each 18 s.
 const st = T('stage'), tip0 = cash('Darja');
@@ -94,4 +104,4 @@ casinoTick(game, rng, 118001); assert.equal(st.dance, 5); assert.equal(st.by, 'S
 // v34 saves migrate: chips still on the old tables go back to their owners.
 const old = { payday: true, wallets: {}, casino: { blackjack: { phase: 'betting', seats: [{ name: 'Sam', bet: 40 }] }, roulette: { bets: [{ name: 'Sam', amount: 25 }] }, lotto: { jackpot: 7777, last: [], tickets: 3 } } };
 wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.cash, 165); assert.equal(old.casino.version, 2); assert.equal(old.casino.tables.lotto.jackpot, 7777);
-console.log('PASS: casino logic · wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');
+console.log('PASS: casino logic · lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');

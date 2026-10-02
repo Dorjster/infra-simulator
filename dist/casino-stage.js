@@ -1,12 +1,13 @@
 // Centre stage of the Payday casino: a round lit stage with a chrome pole and a performer in a sequinned
 // show outfit (costumed, non-explicit). Idle she sways at the pole; a tip requests one of six dances that
-// every engineer sees in step (the host's dance round + casino-sync clock). Procedural animation on a
-// simple jointed figure — no external assets.
+// every engineer sees in step (the host's dance round + casino-sync clock). The dances run on a jointed
+// figure; once dist/models/dancer.glb (an original rigged character) loads, it drives that model instead.
 import * as THREE from './three.module.js';
 import { startedAt } from './casino-sync.js';
 import { DANCES, DANCE_MS } from './casino-logic.js';
+import { loadGlb } from './glb-lite.js';
 
-export function createStage(parent, at, { hit } = {}) {
+export function createStage(parent, at, { hit, model = new URL('./models/dancer.glb', import.meta.url).href } = {}) {
   const g = new THREE.Group(); g.position.set(at.x, 0, at.z); parent.add(g);
   const mat = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: .5, ...o });
   const add = (geo, m, x, y, z, p = g) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); p.add(o); return o; };
@@ -125,7 +126,9 @@ export function createStage(parent, at, { hit } = {}) {
       root.quaternion.copy(parentQ.invert().multiply(worldQ));
     }
   }
-  const pole = h => g.localToWorld(new THREE.Vector3(0, h, 0)), grip = (s, h) => reach(arms[s].sh, arms[s].el, wrists[s], pole(h), 1.5, 1.38, -1, .2), hook = (s, h, off = .25) => reach(legs[s].hp, legs[s].kn, ankles[s], pole(h).add(new THREE.Vector3(0, 0, 0)), 2.55, 2.42, 1, off);
+  // Limb lengths for the solver; replaced by the loaded model's own proportions.
+  const L = { arm: [1.5, 1.38], leg: [2.55, 2.42], hand: .2 };
+  const pole = h => g.localToWorld(new THREE.Vector3(0, h, 0)), grip = (s, h) => reach(arms[s].sh, arms[s].el, wrists[s], pole(h), ...L.arm, -1, L.hand), hook = (s, h, off = .25) => reach(legs[s].hp, legs[s].kn, ankles[s], pole(h), ...L.leg, 1, off);
   // Poses (after the reference: pole hold, climb-and-sit, lay-back, body wave against the pole).
   // orbit = angle of the dancer around the pole (−π/2 faces the casino entrance); face = her turn on the spot.
   function pose(dance, t) {
@@ -158,10 +161,96 @@ export function createStage(parent, at, { hit } = {}) {
     body.position.set(Math.cos(orbit) * r, 1.4 + y, Math.sin(orbit) * r); body.rotation.y = -orbit + face;
     for (const [s, h] of grips) grip(s, h); for (const [s, h, off] of hooks) hook(s, h, off);
   }
+  // Rigged model (dist/models/dancer.glb, Mixamo skeleton). The jointed figure above keeps running every
+  // dance and the pole-grip solver as an invisible driver, resized to the model's proportions; each frame the
+  // model's bones take the driver's world rotations (relative to both rest poses), so hands still land on the
+  // pole and every engineer sees the same dance. If the file can't load, the jointed figure stays visible.
+  let rig = null;
+  if (model && typeof fetch === 'function' && typeof createImageBitmap === 'function') loadGlb(model).then(attachModel).catch(e => console.warn('dancer model:', e.message));
+  function attachModel({ root, mesh, bones: B }) {
+    const need = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand', 'LeftHandMiddle1', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightShoulder', 'RightArm', 'RightForeArm', 'RightHand', 'RightHandMiddle1', 'RightUpLeg', 'RightLeg', 'RightFoot'];
+    if (need.some(n => !B[n])) throw new Error('missing bones ' + need.filter(n => !B[n]).join(', '));
+    mesh.frustumCulled = false; mesh.castShadow = true; restyleOutfit(mesh);
+    // Scale to ~1.70 m (10.3 units), feet on the stage top, facing +z like the driver.
+    g.add(root); root.updateMatrixWorld(true);
+    // Turn her so her left shoulder points to +x (facing +z, like the driver); exports can face any way.
+    { const l = B.LeftArm.getWorldPosition(new THREE.Vector3()), r = B.RightArm.getWorldPosition(new THREE.Vector3()); root.rotation.y = Math.atan2(l.z - r.z, l.x - r.x); root.updateMatrixWorld(true); }
+    const box = new THREE.Box3().setFromObject(mesh, true), S = 10.3 / Math.max(.01, box.max.y - box.min.y);
+    root.scale.setScalar(S); root.position.set(0, 1.4 - box.min.y * S, 0); root.updateMatrixWorld(true);
+    const at = n => g.worldToLocal(B[n].getWorldPosition(new THREE.Vector3())), len = (a, b) => at(a).distanceTo(at(b));
+    // Which model side matches driver side s = +1 (x > 0)?
+    const side = s => (at('LeftArm').x > 0) === (s > 0) ? 'Left' : 'Right';
+    // Resize the driver (rest pose, arms and legs hanging straight) to the model.
+    for (const b of boneList) b.rotation.set(0, 0, 0); for (const s of [-1, 1]) ankles[s].rotation.set(0, 0, 0);
+    body.position.set(0, 1.4, 0); body.rotation.set(0, 0, 0);
+    const hp = at('Hips'), sp = at('Spine'), nk = at('Neck');
+    hips.position.set(0, hp.y - 1.4, 0); spine.position.set(0, sp.y - hp.y, 0); neck.position.set(0, nk.y - sp.y, 0); headB.position.set(0, at('Head').y - nk.y, 0);
+    for (const s of [-1, 1]) {
+      const k = side(s), a = at(k + 'Arm'), u = at(k + 'UpLeg');
+      arms[s].sh.position.set(a.x, a.y - sp.y, 0); arms[s].el.position.set(0, -len(k + 'Arm', k + 'ForeArm'), 0); wrists[s].position.set(0, -len(k + 'ForeArm', k + 'Hand'), 0);
+      legs[s].hp.position.set(u.x, u.y - hp.y, 0); legs[s].kn.position.set(0, -len(k + 'UpLeg', k + 'Leg'), 0); ankles[s].position.set(0, -len(k + 'Leg', k + 'Foot'), 0);
+    }
+    const k1 = side(1); L.arm = [len(k1 + 'Arm', k1 + 'ForeArm'), len(k1 + 'ForeArm', k1 + 'Hand')]; L.leg = [len(k1 + 'UpLeg', k1 + 'Leg'), len(k1 + 'Leg', k1 + 'Foot')]; L.hand = len(k1 + 'Hand', k1 + 'HandMiddle1') * 1.3;
+    body.updateMatrixWorld(true);
+    // Pairs: [driver bone, model bone, model child used for direction (null = keep the model's rest direction)].
+    const pairs = [[hips, 'Hips'], [spine, 'Spine2'], [neck, 'Neck'], [neck, 'Head']];
+    for (const s of [-1, 1]) { const k = side(s); pairs.push([spine, k + 'Shoulder'], [arms[s].sh, k + 'Arm', k + 'ForeArm', arms[s].el], [arms[s].el, k + 'ForeArm', k + 'Hand', wrists[s]], [wrists[s], k + 'Hand', k + 'HandMiddle1'], [legs[s].hp, k + 'UpLeg', k + 'Leg', legs[s].kn], [legs[s].kn, k + 'Leg', k + 'Foot', ankles[s]], [ankles[s], k + 'Foot']); }
+    const wq = o => o.getWorldQuaternion(new THREE.Quaternion()), wp = o => o.getWorldPosition(new THREE.Vector3());
+    const map = pairs.map(([d, name, child, dChild]) => {
+      // Model rest world rotation, turned so its limb points the way the driver's rest limb points (T-pose → arms down).
+      const qM = wq(B[name]); let align = new THREE.Quaternion();
+      if (child) { const dm = wp(B[child]).sub(wp(B[name])).normalize(), dd = dChild ? wp(dChild).sub(wp(d)).normalize() : new THREE.Vector3(0, -1, 0).applyQuaternion(wq(d)); align.setFromUnitVectors(dm, dd); }
+      return { d, bone: B[name], offset: wq(d).invert().multiply(align).multiply(qM) };   // model world = driver world · offset
+    });
+    // Lower spine bones blend between hips and chest.
+    const blend = ['Spine', 'Spine1'].map((n, i) => ({ bone: B[n], f: (i + 1) / 3, rest: wq(B[n]) })), hipsRest = wq(hips), spineRest = wq(spine);
+    for (const s of [-1, 1]) ankles[s].rotation.x = .55;                                                    // softly pointed toes
+    skinMesh.visible = false;
+    const order = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'RightShoulder', 'LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm', 'LeftHand', 'RightHand', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg', 'LeftFoot', 'RightFoot'].map(n => B[n]);
+    const tq = new THREE.Quaternion(), pq = new THREE.Quaternion(), dh = new THREE.Quaternion(), ds = new THREE.Quaternion(), tp = new THREE.Vector3();
+    rig = {
+      root, apply() {
+        body.updateMatrixWorld(true);
+        const target = new Map(); for (const m of map) target.set(m.bone, wq(m.d).multiply(m.offset));
+        dh.copy(wq(hips)).multiply(hipsRest.clone().invert()); ds.copy(wq(spine)).multiply(spineRest.clone().invert());
+        for (const b of blend) target.set(b.bone, new THREE.Quaternion().slerpQuaternions(dh, ds, b.f).multiply(b.rest));
+        const world = new Map(); B.Hips.parent.getWorldQuaternion(pq); world.set(B.Hips.parent, pq.clone());
+        for (const bone of order) {
+          const parentQ = world.get(bone.parent) || bone.parent.getWorldQuaternion(new THREE.Quaternion()), want = target.get(bone);
+          if (want) { bone.quaternion.copy(parentQ.clone().invert().multiply(want)); world.set(bone, want); } else world.set(bone, parentQ.clone().multiply(bone.quaternion));
+        }
+        B.Hips.position.copy(B.Hips.parent.worldToLocal(hips.getWorldPosition(tp)));
+      },
+    };
+  }
+  // Stage outfit: the model ships in a plain black sports set; repaint just that cloth (dark texels on the
+  // torso and hips, found per triangle in UV space) as a red sequinned two-piece, keeping the cloth's folds.
+  function restyleOutfit(mesh) {
+    const tex = mesh.material.map, img = tex?.image; if (!img?.width || typeof document === 'undefined') return;
+    const W = img.width, H = img.height, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); if (!x?.getImageData) return;
+    x.drawImage(img, 0, 0); const base = x.getImageData(0, 0, W, H), px = base.data;
+    const m = document.createElement('canvas'); m.width = W; m.height = H; const mx = m.getContext('2d'); mx.fillStyle = '#fff'; mx.strokeStyle = '#fff'; mx.lineWidth = 2;
+    const pos = mesh.geometry.getAttribute('position'), uv = mesh.geometry.getAttribute('uv'), idx = mesh.geometry.index; mesh.geometry.computeBoundingBox(); const top = mesh.geometry.boundingBox.max.y;
+    const lum = (u, v) => { const i = (Math.min(H - 1, Math.max(0, v * H | 0)) * W + Math.min(W - 1, Math.max(0, u * W | 0))) * 4; return (px[i] * .3 + px[i + 1] * .59 + px[i + 2] * .11) / 255; };
+    for (let t = 0; t < idx.count; t += 3) {
+      const a = idx.getX(t), b = idx.getX(t + 1), d = idx.getX(t + 2), h = (pos.getY(a) + pos.getY(b) + pos.getY(d)) / 3 / top, w = Math.abs(pos.getX(a) + pos.getX(b) + pos.getX(d)) / 3;
+      if (h < .44 || h > .815 || w > .2) continue;
+      const u = (uv.getX(a) + uv.getX(b) + uv.getX(d)) / 3, v = (uv.getY(a) + uv.getY(b) + uv.getY(d)) / 3; if (lum(u, v) > .2) continue;
+      mx.beginPath(); mx.moveTo(uv.getX(a) * W, uv.getY(a) * H); mx.lineTo(uv.getX(b) * W, uv.getY(b) * H); mx.lineTo(uv.getX(d) * W, uv.getY(d) * H); mx.closePath(); mx.fill(); mx.stroke();
+    }
+    const mask = mx.getImageData(0, 0, W, H).data; let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < px.length; i += 4) {
+      if (mask[i] < 128) continue; const l = (px[i] * .3 + px[i + 1] * .59 + px[i + 2] * .11) / 255; if (l > .3) continue;
+      const shade = .35 + l * 3.2, glint = rnd() < .035 ? 1 : 0;                                      // fold shading + sequin glints
+      px[i] = Math.min(255, 196 * shade + glint * 60); px[i + 1] = Math.min(255, 18 * shade + glint * 170); px[i + 2] = Math.min(255, 40 * shade + glint * 90);
+    }
+    x.putImageData(base, 0, 0); const t2 = new THREE.CanvasTexture(c); t2.flipY = false; t2.colorSpace = THREE.SRGBColorSpace; t2.anisotropy = 4;
+    mesh.material.map = t2; mesh.material.needsUpdate = true;
+  }
   const signLines = []; let shownKey = '';
   function update(t, now, sign) {
     const active = t && t.dance >= 0 && Date.now() < t.until + 1000, dance = active ? t.dance : -1, t0 = active ? startedAt('st:' + t.round) : startedAt('st:idle'), e = (now - t0) / 1000;
-    pose(dance, e);
+    pose(dance, e); rig?.apply();
     const hue = active ? (now / 3000) % 1 : .92; ledMat.color.setHSL(hue, .9, active ? .55 + Math.sin(now / 120) * .15 : .5); spot.color.setHSL(hue, .8, .65); beams.forEach((b, i) => { b.material.color.setHSL((hue + i * .2) % 1, .9, .6); b.material.opacity = active ? .1 : .05; b.rotation.z = Math.sin(now / 900 + i) * .25; });
     notes.scale.y = 1 + Math.min(8, (t?.tips || 0) / 200); notes.position.y = 4.4 + notes.scale.y * .05;
     const k = JSON.stringify([dance, t?.round, t?.queue?.length]); if (sign && k !== shownKey) { shownKey = k; sign(['Tip $20+ to request a dance', active ? DANCES[dance] + ' · for ' + t.by : 'Six dances · tips queue in order', t?.queue?.length ? 'Next: ' + t.queue.map(q => DANCES[q.dance]).join(', ') : 'Total tips tonight $' + (t?.tips || 0).toLocaleString('en-US')]); }
