@@ -1,6 +1,8 @@
 export const DELIVERY={x:-38,z:0};
 export const PROCUREMENT={x:-38,z:15};
 export const ROOM={minX:-44,maxX:164,minZ:-28,maxZ:55};
+// Payday casino: north of the server hall through a doorway at x 1–9.
+export const CASINO={minX:-20,maxX:30,minZ:56,maxZ:96,doorX:[1.2,8.8]};
 // Core rack bays R01–R06 hold the building racks in Free Play and older campaigns. In the empty-site
 // campaign (levels 0–10) they start bare and the team places purchased racks on them.
 export const CORE_PADS=[-9,-3,3,9,22,28].map((x,i)=>({id:'PAD-R0'+(i+1),rack:'R0'+(i+1),x,z:0,core:true}));

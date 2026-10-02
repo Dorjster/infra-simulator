@@ -1,11 +1,12 @@
 import * as THREE from './three.module.js';
 import {PICK_LAYER} from './render-optimizer.js';
-export const CABLE_COLORS={data:0xff8a38,management:0x429dff,power:0x171b20};
+import {CABLE_TYPES,cableColor,skuCableType} from './cable-colors.js';
+export const CABLE_COLORS={data:CABLE_TYPES.cat6.color,management:CABLE_TYPES.mgmt.color,power:CABLE_TYPES.power.color};
 export function makeCarriedModel(c,nodes){
  const g=new THREE.Group();g.userData.itemType=c.type;
  const box=(w,h,d,x,y,z,color)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color,roughness:.6}));m.position.set(x,y,z);g.add(m);return m;};
  if(['power','cable'].includes(c.type)){
-  const color=c.type==='power'?CABLE_COLORS.power:c.speed===1?CABLE_COLORS.management:CABLE_COLORS.data;
+  const color=cableColor(skuCableType(c));
   const points=[];for(let i=0;i<=80;i++){const t=i/80*Math.PI*4;points.push(new THREE.Vector3(Math.cos(t)*.64,Math.sin(t)*.4,i/80*.16));}
   points.unshift(new THREE.Vector3(-.95,.38,0));points.push(new THREE.Vector3(.95,.38,.16));
   const curve=new THREE.CatmullRomCurve3(points);g.add(new THREE.Mesh(new THREE.TubeGeometry(curve,96,.045,6,false),new THREE.MeshStandardMaterial({color,roughness:.7})));

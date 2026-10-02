@@ -35,8 +35,12 @@ export function createEmotes({ canEmote = () => true, color = () => 0x6bd9ff, fa
   function cancel() { if (!current) return; current = null; seq++; self.play(null); }
   items.forEach((b, i) => { b.onpointerenter = () => { index = i; draw(); }; b.onclick = e => { e.stopPropagation(); play(EMOTES[i].id); }; });
   // Mouse wheel: open / move the highlight (walk mode only, never while a panel is open).
+  // A scroll over a menu, the laptop or any other panel scrolls that panel: only a scroll over the 3D
+  // view itself (or with the mouse captured by the game) opens the wheel.
+  const overWorld = e => !!document.pointerLockElement || e.target?.tagName === 'CANVAS' || e.target === document.body || e.target === document.documentElement;
   addEventListener('wheel', e => {
-    if (!open) { if (show()) e.preventDefault(); return; }
+    if (!open) { if (overWorld(e) && show()) e.preventDefault(); return; }
+    if (!canEmote()) { hide(); return; }
     e.preventDefault(); idleAt = performance.now();
     if (Math.abs(e.deltaY) < 2) return;
     index = (index + (e.deltaY > 0 ? 1 : -1) + EMOTES.length) % EMOTES.length; draw();

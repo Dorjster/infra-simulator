@@ -5,7 +5,7 @@ export const LED_HEX = { green: 0x75ffd0, amber: 0xffac55, red: 0xff5147, blue: 
 export function ledLit(blink, t, phase = 0) {
   if (blink === 'slow') return Math.floor(t / 500) % 2 === 0;
   if (blink === 'fast') return Math.floor(t / 125) % 2 === 0;
-  if (blink === 'activity') return Math.sin(t / 140 + phase) > 0;
+  if (blink === 'activity') return true; // link up: steady (a whole hall of flickering ports read as flashing racks)
   return true;
 }
 export function ledColor(l, t, phase = 0) {
