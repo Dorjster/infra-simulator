@@ -46,16 +46,49 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           WINDOWS_CERTIFICATE_FILE: ${{ secrets.WINDOWS_CERTIFICATE_FILE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      # Launch the packaged app on this OS and drive it (start screen, Level 0, Free Build racks, Continue,
-      # OS clipboard paste, frame times with this runner's GPU, clean quit). The report is uploaded either way.
+      # The app inside the DMG must carry a valid (ad-hoc or Developer ID) signature: a broken one makes
+      # macOS report a downloaded app as "damaged" with no way to open it.
+      - name: Verify the DMG's app signature (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          DMG=$(ls desktop/out/make/*.dmg | head -1)
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/infra-dmg "$DMG"
+          codesign --verify --deep --strict --verbose=2 "/tmp/infra-dmg/Infra Simulator.app"
+          codesign -dv "/tmp/infra-dmg/Infra Simulator.app"
+          hdiutil detach /tmp/infra-dmg
+      # Install exactly as a player does: Setup.exe must finish, install under %LOCALAPPDATA% and create a
+      # shortcut (the app handles the Squirrel --squirrel-install event and quits). The smoke test then runs
+      # the installed copy.
+      - name: Install with Setup.exe (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem desktop/out/make -Recurse -Filter '*Setup.exe' | Select-Object -First 1
+          $p = Start-Process $setup.FullName -ArgumentList '--silent' -PassThru
+          if (-not $p.WaitForExit(180000)) { throw 'Setup.exe did not finish within 3 minutes' }
+          "Setup.exe exit code: $($p.ExitCode)"
+          Start-Sleep -Seconds 15
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\infra_simulator" -Recurse -Filter 'infra-simulator.exe' -ErrorAction SilentlyContinue | Where-Object { $_.DirectoryName -like '*app-*' } | Select-Object -First 1
+          if (-not $exe) { throw 'The game was not installed under %LOCALAPPDATA%\infra_simulator' }
+          $links = @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs", [Environment]::GetFolderPath('Desktop')) | ForEach-Object { Get-ChildItem $_ -Recurse -Filter '*.lnk' -ErrorAction SilentlyContinue } | Where-Object { $_.Name -like '*Infra*' }
+          if (-not $links) { throw 'Setup.exe created no Start menu or desktop shortcut' }
+          $links | ForEach-Object { "Shortcut: $($_.FullName)" }
+          Get-Process infra-simulator -ErrorAction SilentlyContinue | Stop-Process -Force
+          "INSTALLED_EXE=$($exe.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      # Launch the app on this OS and drive it (start screen, Level 0, Free Build racks, Continue, OS clipboard
+      # paste, frame times with this runner's GPU — software on CI — clean quit). Report uploaded either way.
       - name: Packaged app smoke test
         shell: bash
         continue-on-error: true
         run: |
           mkdir -p smoke && cd smoke && npm init -y > /dev/null && npm i playwright-core@1 --silent
           cp ../tests/browser/desktop-smoke.mjs .
-          EXE=$(ls ../desktop/out/*/infra-simulator.exe 2>/dev/null || ls ../desktop/out/*/*.app/Contents/MacOS/infra-simulator)
-          node desktop-smoke.mjs "$EXE" ../desktop-smoke-${{ matrix.label }}.json
+          EXE="${INSTALLED_EXE:-$(ls ../desktop/out/*/infra-simulator.exe 2>/dev/null || ls ../desktop/out/*/*.app/Contents/MacOS/infra-simulator)}"
+          node desktop-smoke.mjs "$EXE" ../desktop-smoke-${{ matrix.label }}.json | tee smoke.log
+          code=${PIPESTATUS[0]}
+          { echo "### Smoke test · ${{ matrix.label }}"; echo '```'; cat smoke.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          grep '^FAIL' smoke.log | sed 's/^/::warning title=Smoke ${{ matrix.label }}::/' || true
+          exit $code
       - uses: actions/upload-artifact@v4
         if: always()
         with:

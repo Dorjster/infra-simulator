@@ -7,6 +7,10 @@ Build a working enterprise from an empty room: receive equipment, rack it, power
 ## Play
 
 - **Desktop app:** install the DMG (macOS) or `InfraSimulator-Setup.exe` (Windows) from the project's releases. No Node.js is needed. The first screen offers **Solo Campaign** (recommended), **LAN Host Campaign**, **Join LAN**, **Free Build** and **Challenges**.
+- **Installing the desktop app.** The installers are not signed with a paid Apple or Microsoft certificate, so the first launch needs one extra step:
+  - **macOS:** open the DMG and drag **Infra Simulator** to Applications, then open it. When macOS says it can't verify the app, click **Done**, open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Infra Simulator. On macOS 14 and earlier you can right-click the app and choose **Open** instead. If you still see "is damaged and can't be opened", that download is an older build: get the latest release, or run `xattr -cr "/Applications/Infra Simulator.app"` in Terminal.
+  - **Windows:** run `InfraSimulator-Setup.exe`. If SmartScreen says "Windows protected your PC", click **More info → Run anyway**. Setup installs without asking any questions and starts the game. Later, start it from the **Infra Simulator** shortcut in the Start menu or on the desktop.
+  - **Slow or frozen-looking game:** if a yellow "Graphics hardware acceleration is off" banner appears, your graphics driver isn't being used. Update the driver (or, on a laptop, give Infra Simulator the high-performance GPU in Windows Settings → System → Display → Graphics). Without a driver the game still runs, at reduced resolution.
 - **Web package:** with Node.js 22+, run `node lan/server.mjs` in this folder and open the printed `http://localhost:…` address. Friends on the same network open the printed LAN address and join with the room code.
 - **Tests:** `npm test`. Browser and desktop playtests are in [tests/browser](tests/browser/README.md).
 
