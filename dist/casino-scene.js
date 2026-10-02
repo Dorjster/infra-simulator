@@ -41,6 +41,7 @@ const money = n => '$' + Math.round(n || 0).toLocaleString('en-US');
 const key = s => String(s || '').trim().toLowerCase();
 
 // Card faces (cached) — '??' is the back.
+const FRET_GEO = new THREE.BoxGeometry(.52, .1, .035);
 const cardMats = new Map(), cardGeo = new THREE.PlaneGeometry(CARD_W, CARD_H).rotateX(-Math.PI / 2);
 function cardMaterial(card) {
   if (cardMats.has(card)) return cardMats.get(card);
@@ -74,6 +75,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     glass: new THREE.MeshStandardMaterial({ color: 0xcfeeff, transparent: true, opacity: .16, roughness: .05, depthWrite: false, side: THREE.DoubleSide }), lamp: new THREE.MeshBasicMaterial({ color: 0xffe2a0 }), black: new THREE.MeshStandardMaterial({ color: 0x111111, roughness: .6 }),
     velvet: new THREE.MeshStandardMaterial({ color: 0x8c1020, roughness: .9 })
   };
+  M.bowl = new THREE.MeshStandardMaterial({ color: 0x4a2412, roughness: .35, side: THREE.DoubleSide });
   for (const m of Object.values(M)) m.userData.shared = true;
   // Shell: floor, ceiling, walls with gold trim, columns, the doorway with frame, neon sign and glass doors.
   box(W, .2, D, cx, -.08, cz, M.carpet); box(W, .3, D, cx, H, cz, M.ceiling);
@@ -121,7 +123,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     const T = tables[id], L = T.L, t0 = startedAt('bj:' + id + ':' + t.round), now = performance.now(), n = t.seats.length;
     T.cards.begin(); T.chips.begin(); const rv = bjReveal(id, t, now), shownDealer = t.dealer.filter((c, i) => now >= rv.cardAt(i));
     // Hole card stays face down until the dealer's turn is shown; extra dealer cards land one by one.
-    shownDealer.forEach((c, i) => { const order = i === 0 ? n : i === 1 ? 2 * n + 1 : 0; T.cards.place('d' + t.round + ':' + i, i === 1 && rv.cardAt(1) > now ? '??' : c, L.x - (shownDealer.length - 1) * .22 + i * .44, L.z + 1.2, 0, i < 2 ? Math.max(0, order * SYNC.dealCard - (now - t0)) : 0, TABLE_H + .08); });
+    shownDealer.forEach((c, i) => { const order = i === 0 ? n : i === 1 ? 2 * n + 1 : 0; T.cards.place('d' + t.round + ':' + i, i === 1 && !(t.phase === 'done' && now >= rv.cardAt(1)) ? '??' : c, L.x - (shownDealer.length - 1) * .22 + i * .44, L.z + 1.2, 0, i < 2 ? Math.max(0, order * SYNC.dealCard - (now - t0)) : 0, TABLE_H + .08); });
     t.seats.forEach((s, si) => { const a = BJ_SEAT_ANGLES[si], bx = L.x - Math.cos(a) * 5, bz = L.z + Math.sin(a) * 5, px = L.x - Math.cos(a) * 3.9, pz = L.z + Math.sin(a) * 3.9, paid = rv.settled;
       if (!(paid && s.result && s.result !== 'push' && !s.payout)) T.chips.stack(bx, bz, s.bet, TABLE_H + .07); if (paid && s.payout > s.bet) T.chips.stack(bx + .45, bz - .2, s.payout - s.bet, TABLE_H + .07);
       (s.cards || []).forEach((c, i) => { const order = i === 0 ? si : n + 1 + si; T.cards.place('p' + t.round + ':' + si + ':' + i, c, px + i * .16 - .1, pz - i * .12, -a + Math.PI / 2, i < 2 ? Math.max(0, order * SYNC.dealCard - (now - t0)) : Math.max(0, hitLandsAt(id + ':' + t.round + ':' + si + ':' + i, now) - SYNC.cardFlight - now), TABLE_H + .08 + i * .004); }); });
@@ -142,23 +144,43 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
       for (let v = 1; v <= 3; v++) { const [u, vv] = rlSpot('dozen', v); c.strokeRect(u * w - cw * 2, vv * h - rh * .45, cw * 4, rh * .9); c.fillStyle = '#fff'; c.font = 'bold 30px Georgia'; c.fillText(['1st 12', '2nd 12', '3rd 12'][v - 1], u * w, vv * h + 10); }
       [['low', '1–18'], ['even', 'EVEN'], ['red', ''], ['black', ''], ['odd', 'ODD'], ['high', '19–36']].forEach(([k2, label]) => { const [u, vv] = rlSpot(k2), x = u * w; c.strokeRect(x - cw, vv * h - rh * .45, cw * 2, rh * .9); if (k2 === 'red' || k2 === 'black') { c.fillStyle = k2 === 'red' ? '#b51624' : '#151515'; c.beginPath(); c.moveTo(x, vv * h - rh * .35); c.lineTo(x + cw * .7, vv * h); c.lineTo(x, vv * h + rh * .35); c.lineTo(x - cw * .7, vv * h); c.fill(); } else { c.fillStyle = '#fff'; c.font = 'bold 28px Georgia'; c.fillText(label, x, vv * h + 10); } });
       layoutTex.t.needsUpdate = true; }
-    add(new THREE.CylinderGeometry(2.7, 2.9, .8, 48), M.wood, -4.4, TABLE_H + .2, 0, g);
-    const wheel = add(new THREE.CircleGeometry(2.35, 74), new THREE.MeshStandardMaterial({ map: wheelTex.t, roughness: .45 }), -4.4, TABLE_H + .62, 0, g); wheel.rotation.x = -Math.PI / 2;
-    add(new THREE.ConeGeometry(.22, .8, 12), M.gold, -4.4, TABLE_H + 1, 0, g); add(new THREE.TorusGeometry(2.55, .12, 8, 60), M.gold, -4.4, TABLE_H + .62, 0, g).rotation.x = Math.PI / 2;
-    const ball = add(new THREE.SphereGeometry(.09, 12, 10), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .2, emissive: 0x333333 }), 0, 0, 0, g);
+    // Bowl: a wooden base whose inner wall slopes up to the ball track; eight diamond deflectors on the slope.
+    add(new THREE.CylinderGeometry(3.05, 3.2, .8, 56), M.wood, -4.4, TABLE_H + .2, 0, g);
+    const bowl = add(new THREE.LatheGeometry([[2.3, -.02], [2.42, .06], [2.6, .2], [2.74, .3], [2.86, .5], [3.05, .55], [3.05, .45]].map(([r, y]) => new THREE.Vector2(r, y)), 64), M.wood, -4.4, TABLE_H + .62, 0, g); bowl.material = M.bowl;
+    add(new THREE.TorusGeometry(3.02, .07, 8, 64), M.gold, -4.4, TABLE_H + 1.15, 0, g).rotation.x = Math.PI / 2;
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2, d = add(new THREE.OctahedronGeometry(.11), M.gold, -4.4 + Math.cos(a) * 2.52, TABLE_H + .62 + .16, -Math.sin(a) * 2.52, g); d.scale.set(1, .5, 1.8); d.rotation.y = a; }
+    // Rotor (spins): numbered pocket disc, 37 frets between the pockets, a cone and the cross-handled turret.
+    const wheel = new THREE.Group(); wheel.position.set(-4.4, TABLE_H + .62, 0); g.add(wheel);
+    add(new THREE.CircleGeometry(2.32, 74), new THREE.MeshStandardMaterial({ map: wheelTex.t, roughness: .4 }), 0, 0, 0, wheel).rotation.x = -Math.PI / 2;
+    for (let i = 0; i < 37; i++) { const a = i / 37 * Math.PI * 2, f = add(FRET_GEO, M.chrome, Math.cos(a) * 1.82, .05, -Math.sin(a) * 1.82, wheel); f.rotation.y = a; }
+    add(new THREE.TorusGeometry(1.56, .05, 6, 74), M.chrome, 0, .05, 0, wheel).rotation.x = Math.PI / 2;
+    add(new THREE.CylinderGeometry(.35, 1.45, .32, 40), M.wood, 0, .16, 0, wheel);
+    add(new THREE.CylinderGeometry(.08, .16, .7, 12), M.chrome, 0, .55, 0, wheel);
+    for (const ry of [0, Math.PI / 2]) { const bar = add(new THREE.CylinderGeometry(.04, .04, 1.1, 8), M.chrome, 0, .78, 0, wheel); bar.rotation.set(0, ry, Math.PI / 2); for (const sx of [-1, 1]) add(new THREE.SphereGeometry(.08, 10, 8), M.chrome, Math.cos(ry) * .55 * sx, .78, -Math.sin(ry) * .55 * sx, wheel); }
+    const ball = add(new THREE.SphereGeometry(.09, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .15, emissive: 0x2a2a2a }), 0, 0, 0, g);
     const dolly = add(new THREE.CylinderGeometry(.14, .2, .5, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: .3, roughness: .3, emissive: 0x444444 }), 0, 0, 0, g); dolly.visible = false;
     box(2.2, 7.8, 1.4, -4.4, 3.9, -5.2, M.panel, g);
     const sg = screen(8, 3, L.x + 2, 11.5, L.z - 4.6); chandelier(L.x + 1, L.z); hit(18, 9, 10, L.x + 1, L.z + 1, { casino: 'table', table: id });
     tables[id] = { L, wheel, ball, dolly, sg, chips: chipLayer(), key: '' };
   }
-  const wheelAngleAt = ms => ms / 1000 * .55;
+  // Rotor turns steadily; the ball is spun the other way round the track, slows, drops down the slope,
+  // rattles across the frets and settles into the host's pocket, then rides with the rotor.
+  const wheelAngleAt = ms => ms / 1000 * 1.1;
+  function ballAt(off, now, t0) {
+    const s = Math.max(0, (t0 + SYNC.roulette - now) / 1000);                              // seconds until it rests
+    let rel = off + .6 * s + .957 * s * s, r, y;                                            // angle on the rotor: −12.9 rad/s at launch → at rest
+    if (s > 2.6) { r = 2.66; y = .3; }
+    else if (s > 1.6) { const u = (2.6 - s) / 1, k = u * u * (3 - 2 * u); r = 2.66 - k * .61; y = .3 - k * .17; }
+    else { const u = s / 1.6; rel += .14 * Math.sin(s * 9) * u; r = 1.8 + .25 * u; y = .13 + Math.abs(Math.sin(s * Math.PI * 2.2)) * .18 * u * u; }
+    return [wheelAngleAt(now) + rel, r, y];
+  }
   function updateRoulette(id, t) {
-    const T = tables[id], L = T.L, now = performance.now(), wa = wheelAngleAt(now); T.wheel.rotation.z = wa;
+    const T = tables[id], L = T.L, now = performance.now(), wa = wheelAngleAt(now); T.wheel.rotation.y = wa;
     const t0 = t.round ? startedAt('rl:' + id + ':' + t.round) : 0, rolling = t.round && (t.phase === 'spinning' || now - t0 < SYNC.roulette), result = t.result ?? t.history?.[0] ?? null;
-    const off = ((result === null ? 0 : WHEEL.indexOf(result)) + .5) / 37 * Math.PI * 2;
-    if (rolling) { const left = Math.max(0, (t0 + SYNC.roulette - now) / 1000), a = wheelAngleAt(t0 + SYNC.roulette) + off + 1.15 * left * left + 2.1 * left, rad = left > 1.6 ? 2.15 : 1.78 + (left / 1.6) * .37 + Math.abs(Math.sin(left * 9)) * .05 * (left / 1.6); T.ball.position.set(-4.4 + Math.cos(a) * rad, TABLE_H + .72, -Math.sin(a) * rad); }
-    else if (result !== null && t.round) { const a = wa + off; T.ball.position.set(-4.4 + Math.cos(a) * 1.78, TABLE_H + .72, -Math.sin(a) * 1.78); }
-    else T.ball.position.set(-4.4 + 2.15, TABLE_H + .72, 0);
+    const off = -((result === null ? 0 : WHEEL.indexOf(result)) + .5) / 37 * Math.PI * 2;   // texture sectors run clockwise seen from above
+    if (rolling) { const [a, r, y] = ballAt(off, now, t0); T.ball.position.set(-4.4 + Math.cos(a) * r, TABLE_H + .62 + y, -Math.sin(a) * r); }
+    else if (result !== null && t.round) { const a = wa + off; T.ball.position.set(-4.4 + Math.cos(a) * 1.8, TABLE_H + .62 + .13, -Math.sin(a) * 1.8); }
+    else T.ball.position.set(-4.4 + 2.66, TABLE_H + .62 + .3, 0);
     const landed = !rolling && result !== null && t.round > 0;
     // Chips: the live bets; once the ball has landed, the winning bets with their payouts beside them.
     T.chips.begin(); const place = (b, amount, dx = 0) => { const [u, v] = rlSpot(b.kind, b.value); T.chips.stack(L.x - 1.2 + u * RL_W + dx, L.z - RL_D / 2 + v * RL_D, amount); };
@@ -218,8 +240,15 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     const T = tables[id], last = t.last, now = performance.now(), def = TABLES.find(d => d.id === id);
     let done = !last;
     if (last) { const e = now - startedAt('sl:' + id + ':' + last.spin); done = e > SYNC.slots;
-      T.reels.forEach((r, k) => { const stop = SYNC.slots * (.55 + k * .2), target = symbolAngle(last.reels[k]); r.rotation.y = e < stop ? target - (stop - e) / 1000 * 16 : target; });
-      T.lever.rotation.z = e < 400 ? -Math.sin(e / 400 * Math.PI) * .9 : 0; T.beacon.material.color.setHex(done && last.pay ? (Math.floor(now / 200) % 2 ? 0xffe28a : 0xff3d3d) : 0xff3d3d); }
+      if (T.spin !== last.spin) { T.spin = last.spin; T.from = T.reels.map(r => r.rotation.y); }               // spin starts from where each reel rests
+      T.reels.forEach((r, k) => {
+        const stop = SYNC.slots * (.55 + k * .2), target = symbolAngle(last.reels[k]), TAU = Math.PI * 2;
+        if (e >= stop) { const q = (e - stop) / 260; r.rotation.y = target + (q < 1 ? Math.sin(q * Math.PI) * .07 * (1 - q) : 0); return; }   // settle bump
+        const from = T.from[k], turns = Math.max(2, Math.round(stop / 1000 * 15 / TAU)), dist = (((from - target) % TAU) + TAU) % TAU + turns * TAU, u = e / stop;
+        r.rotation.y = from - dist * (u < .12 ? u * u / .24 : .06 + (1 - Math.pow(1 - (u - .12) / .88, 3)) * .94);   // spin up, run, ease out
+      });
+      T.lever.rotation.z = e < 500 ? -Math.sin(Math.min(1, e / 500) * Math.PI) * .9 : 0;
+      const glow = done && last.pay ? .5 + .5 * Math.sin(now / 260) : 0; T.beacon.material.color.setRGB(1, .24 + .65 * glow, .24 + .3 * glow); }
     const k = JSON.stringify([last?.spin, done]); if (k !== T.key) { T.key = k; sign(T.sg, def.name.replace('Slot · ', '').toUpperCase(), [money(def.min) + '–' + money(def.max) + ' a spin', !last ? '7 · 7 · 7 pays 250×' : done ? (last.pay ? last.name + ' WON ' + money(last.pay) : last.name + ' · no win') : 'Spinning…']); }
   }
 
@@ -243,7 +272,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
       if (idx >= 0 && e >= at - travel) {                              // this ball is being drawn / sits in the rack
         const u = Math.min(1, (e - (at - travel)) / travel); b.m.position.copy(u < 1 ? tubeCurve.getPointAt(u) : RACK(idx)); b.m.rotation.x += dt * (u < 1 ? 12 : 0); continue;
       }
-      b.v.x += (Math.random() - .5) * energy * dt * 6; b.v.z += (Math.random() - .5) * energy * dt * 6; b.v.y += (drawing ? (Math.random() * 1.2 - .25) * energy : 0) * dt * 6 - 18 * dt;
+      const ph = b.n * 1.7, tt = now / 1000; b.v.x += Math.sin(tt * 2.3 + ph) * energy * dt * 3; b.v.z += Math.cos(tt * 1.9 + ph * 1.3) * energy * dt * 3; b.v.y += (drawing ? (.55 + .45 * Math.sin(tt * 3.1 + ph)) * energy * 1.6 : 0) * dt * 3 - 18 * dt;
       b.p.addScaledVector(b.v, dt); if (b.p.length() > DR - .4) { b.p.setLength(DR - .4); b.v.reflect(b.p.clone().normalize()).multiplyScalar(drawing ? .9 : .35); }
       b.m.position.copy(DRUM).add(b.p); b.m.rotation.y += b.v.length() * dt;
     }
@@ -270,8 +299,9 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     open = isOpen; doors.forEach((d, i) => { const target = (d0 + d1) / 2 + (i ? 1 : -1) * ((d1 - d0) / 4 + (open ? (d1 - d0) / 2 - .3 : 0)); d.position.x += (target - d.position.x) * Math.min(1, dt * 4); });
     const nk = open ? 'open' : 'closed'; if (neon.key !== nk) { neon.key = nk; const g = neon.g; g.clearRect(0, 0, 640, 170); g.shadowColor = open ? '#ff3d8b' : '#555'; g.shadowBlur = 26; g.fillStyle = open ? '#ff7ab0' : '#7a7a7a'; g.font = 'bold 104px Georgia'; g.textAlign = 'center'; g.fillText('CASINO', 320, 108); g.shadowBlur = 0; g.font = '28px system-ui'; g.fillStyle = open ? '#ffe28a' : '#aaa'; g.fillText(open ? 'OPEN · PAYDAY' : 'PAYDAY MODE ONLY', 320, 154); neon.t.needsUpdate = true; }
     // The room is skipped (not drawn, not animated) while nobody can see into it.
-    for (const c of group.children) if (c !== neonMesh && !doors.includes(c)) c.visible = near; if (!near) return;
-    const c = game?.casino?.tables; if (!game?.payday || !c) { stage.update(null, performance.now()); for (const T of Object.values(tables)) if (T.wheel) T.wheel.rotation.z = wheelAngleAt(performance.now()); return; }
+    for (const c of group.children) if (c !== neonMesh && !doors.includes(c)) c.visible = near;
+    for (const l of lightRig.children) if (l.isLight) l.intensity = near ? l.userData.on : 0; if (!near) return;
+    const c = game?.casino?.tables; if (!game?.payday || !c) { stage.update(null, performance.now()); for (const T of Object.values(tables)) if (T.wheel) T.wheel.rotation.y = wheelAngleAt(performance.now()); return; }
     for (const def of TABLES) { const t = c[def.id]; if (!t) continue; if (def.game === 'blackjack') updateBlackjack(def.id, t); else if (def.game === 'roulette') updateRoulette(def.id, t); else if (def.game === 'poker') updatePoker(def.id, t); else if (def.game === 'slots') updateSlot(def.id, t); else if (def.game === 'lotto') updateLotto(t, dt); else if (def.game === 'stage') stage.update(t, performance.now(), lines => sign(stageSign, 'CENTER STAGE', lines, '#ff7ab0')); }
     const list = Object.values(game.wallets || {}).sort((x, y) => y.cash - x.cash), rk = JSON.stringify([list.map(w => [w.name, w.cash]), (game.loans || []).filter(l => l.owed > 0).length]); if (rk !== richKey) { richKey = rk; sign(rich, 'PAYDAY RICH LIST', list.slice(0, 4).map((w, i) => (i + 1) + '. ' + w.name + '   ' + money(w.cash)), '#ff7ab0'); sign(cashSign, 'CASHIER', ['Wallets · loans · salaries', list.length + ' engineers · ' + (game.loans || []).filter(l => l.owed > 0).length + ' open loans']); }
   }
@@ -290,6 +320,43 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     for (const [px, pz] of columnSpots) if (Math.hypot(x - px, z - pz) < 1.5) return false;
     return true;
   }
+  // Static furniture: merged into one mesh per material (hundreds of draw calls → a few dozen) and frozen
+  // (no per-frame matrix work). Anything that moves, changes or is picked stays a separate object.
+  function optimizeStatic() {
+    const live = new Set([neonMesh, ...doors, stage.group, ...lotto.map(b => b.m)]);
+    for (const T of Object.values(tables)) for (const k of ['wheel', 'ball', 'dolly', 'lever', 'beacon', 'button', 'turn']) if (T[k]) live.add(T[k]);
+    for (const T of Object.values(tables)) for (const r of T.reels || []) live.add(r);
+    const keep = new Set(); for (const o of live) { o.traverse(c => keep.add(c)); for (let a = o.parent; a; a = a.parent) keep.add(a); }
+    group.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(group.matrixWorld).invert(), buckets = new Map();
+    group.traverse(o => {
+      if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || keep.has(o) || o.children.length || Array.isArray(o.material) || o.material.visible === false || o.material.transparent || o.userData.casino) return;
+      const list = buckets.get(o.material) || []; list.push(o); buckets.set(o.material, list);
+    });
+    for (const [mat, list] of buckets) if (list.length > 1) mergeInto(list, mat, group, inv);
+    // Inside things that move (wheel rotors, the stage), merge their fixed parts the same way.
+    for (const T of Object.values(tables)) if (T.wheel) mergeChildren(T.wheel);
+    mergeChildren(stage.group);
+    group.traverse(o => { if (o !== group && !keep.has(o)) { o.updateMatrix(); o.matrixAutoUpdate = false; } });
+    stage.group.traverse(o => { if (o.isMesh && o.parent === stage.group && !o.userData.live) { o.updateMatrix(); o.matrixAutoUpdate = false; } });
+  }
+  function mergeChildren(parent) {
+    parent.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(parent.matrixWorld).invert(), buckets = new Map();
+    for (const o of parent.children) { if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || o.children.length || o.userData.live || Array.isArray(o.material) || o.material.transparent || o.material.visible === false) continue; const l = buckets.get(o.material) || []; l.push(o); buckets.set(o.material, l); }
+    for (const [mat, list] of buckets) if (list.length > 1) mergeInto(list, mat, parent, inv);
+  }
+  function mergeInto(list, mat, parent, inv) {
+      const P = [], N = [], U = [], I = []; let base = 0;
+      for (const o of list) {
+        const geo = o.geometry.index ? o.geometry : o.geometry.clone().setIndex([...Array(o.geometry.attributes.position.count).keys()]);
+        const m = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld), nm = new THREE.Matrix3().getNormalMatrix(m), v = new THREE.Vector3();
+        const pos = geo.attributes.position, nor = geo.attributes.normal, uv = geo.attributes.uv;
+        for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(m); P.push(v.x, v.y, v.z); if (nor) { v.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize(); N.push(v.x, v.y, v.z); } else N.push(0, 1, 0); U.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0); }
+        for (let i = 0; i < geo.index.count; i++) I.push(geo.index.getX(i) + base);
+        base += pos.count; o.parent.remove(o);
+      }
+      const merged = new THREE.BufferGeometry(); merged.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); merged.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); merged.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); merged.setIndex(I);
+      const mesh = new THREE.Mesh(merged, mat); mesh.name = 'casino-static'; parent.add(mesh); return mesh;
+  }
   // What the 3D tables show right now (for tests): landed card faces, the symbol on each reel's pay line
   // (-1 while turning), the lotto balls sitting in the rack.
   function probe() {
@@ -298,5 +365,9 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     out.lotto = { rack: lotto.filter(b => [0, 1, 2, 3, 4].some(i => b.m.position.distanceTo(RACK(i)) < .01)).sort((a, b) => a.m.position.z - b.m.position.z).map(b => b.n) };
     return out;
   }
+  // Lights live outside the hideable group so the light count never changes.
+  const lightRig = new THREE.Group(); lightRig.name = 'casino-lights'; scene.add(lightRig);
+  { const ls = []; group.traverse(o => { if (o.isLight) ls.push(o); }); group.updateMatrixWorld(true); for (const l of ls) { l.userData.on = l.intensity; lightRig.attach(l); if (l.target) lightRig.attach(l.target); } }
+  optimizeStatic();
   return { group, update, clear, seatPose, probe, get open() { return open; } };
 }

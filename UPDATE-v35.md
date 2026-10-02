@@ -57,6 +57,44 @@ The panel and the wallet now reveal a result only when the 3D table shows it, fo
   - each ball appears in the panel only once it's in the 3D rack;
   - players watching the machine stand side by side.
 
+## v35.2: smoother casino
+
+**Buttons:**
+- The panel used to rebuild itself every 250 ms. A normal mouse press often began on one button and ended on its replacement, so the click was lost.
+- Now only the parts that change are updated, and buttons stay put. A test of real 300 ms clicks: 9 of 9 fail on v35.1, 10 of 10 pass now (`tests/browser/casino-clicks.mjs`).
+- Typed amounts and the lend-to choice are no longer reset by the timer.
+
+**No flashing:**
+- Cards and lotto balls no longer replay their pop-in animation on every refresh.
+- The stage LEDs pulse slowly instead of strobing.
+- The slot beacon glows on a win instead of blinking.
+- The casino's lights are no longer removed and re-added when you walk through the door. That swap recompiled every shader, causing a stall and a lighting pop.
+
+**Less lag:**
+- Static furniture is merged by material and frozen. The main room went from 363 to 143 draw calls and from 33 to 24 shader programs.
+- The panel checks for changes 10 times a second instead of every frame.
+- With the CPU slowed 4× the room holds 60 fps (it was 56, with 33 ms hitches).
+
+**Roulette:**
+- A real wheel: a rotor with 37 frets, a cone and turret in a sloped bowl, with a ball track and eight diamond deflectors.
+- The ball is launched against the rotor, slows on the track, drops down the slope, rattles across the frets and settles, then rides with the rotor.
+- Fixed: the 3D pocket was a mirror of the host's number. The ball now rests in the pocket the panel shows.
+
+**Slots:**
+- Each reel spins up from where it rested (it used to jump), runs, eases out on the host's symbol and settles with a small bump.
+
+**Lotto:** the balls tumble smoothly in the air flow instead of jittering every frame.
+
+**Dancer:**
+- Between tips she keeps dancing her base routines: pole walk, hip sway and pole hold, 10 s each, the same for every player.
+- A tip interrupts with the requested special move.
+- Every change of move blends over 0.8 s instead of snapping.
+
+**Blackjack:**
+- The dealer's hole card is now face down for the host as well. Before, the host's own screen showed it.
+- Hand totals count only the cards that have landed on the felt.
+- The deal itself is fair: 3,000 simulated rounds give a starting 20 10.7% of the time, as real 6-deck blackjack does. 20 is simply the most common two-card total.
+
 ## Fair and hidden information
 
 - **Hidden cards:** each player receives their own copy of the world. Other players' poker hole cards, and the blackjack dealer's hole card during play, are replaced with `??` before they leave the host. They can't be read from the browser.

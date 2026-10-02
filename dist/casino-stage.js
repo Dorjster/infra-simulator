@@ -19,7 +19,7 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
   add(new THREE.CylinderGeometry(.6, .6, .2, 20), mat(0xd8a945, { metalness: .6 }), 0, 1.5, 0);
   const railMat = mat(0xd8a945, { metalness: .6, roughness: .3, emissive: 0x2a1c06 }); add(new THREE.TorusGeometry(8.6, .12, 8, 96), railMat, 0, 4.2, 0).rotation.x = Math.PI / 2;
   for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2; if (Math.abs(a - Math.PI / 2) < .25) continue; add(new THREE.CylinderGeometry(.08, .08, 4.2, 8), railMat, Math.cos(a) * 8.6, 2.1, Math.sin(a) * 8.6); }
-  const jar = add(new THREE.CylinderGeometry(.5, .45, 1.1, 16), new THREE.MeshStandardMaterial({ color: 0xcfeeff, transparent: true, opacity: .35 }), 0, 4.9, 8.6); const notes = add(new THREE.CylinderGeometry(.42, .42, .1, 16), mat(0x3a8f4a), 0, 4.4, 8.6);
+  const jar = add(new THREE.CylinderGeometry(.5, .45, 1.1, 16), new THREE.MeshStandardMaterial({ color: 0xcfeeff, transparent: true, opacity: .35 }), 0, 4.9, 8.6); const notes = add(new THREE.CylinderGeometry(.42, .42, .1, 16), mat(0x3a8f4a), 0, 4.4, 8.6); notes.userData.live = true;
   const spot = new THREE.SpotLight(0xff7ab0, 30, 40, .45, .6, 1.2); spot.position.set(0, 24, 6); spot.target.position.set(0, 2, 0); g.add(spot, spot.target);
   const beams = [0, 1, 2].map(i => { const b = add(new THREE.ConeGeometry(2.6, 20, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xff7ab0, transparent: true, opacity: .07, depthWrite: false, side: THREE.DoubleSide }), Math.cos(i * 2.1) * 3, 13, Math.sin(i * 2.1) * 3); return b; });
   if (hit) hit(19, 10, 19, at.x, at.z, { casino: 'table', table: 'stage' });
@@ -153,6 +153,15 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
       const p = t % 8, arch = Math.min(1, p / 1.5) * (p < 6 ? 1 : 1 - (p - 6) / 2); orbit = -Math.PI / 2 + (p > 6 ? (p - 6) * 1.5 : 0); r = 1.3 + arch * .6; face = Math.PI / 2 - .9 * arch;
       set(spine, -.55 * arch, 0, -.25 * arch); set(neck, -.6 * arch, .2, 0); set(legs[1].hp, -1.4 * arch, 0, .3); set(legs[1].kn, 1.9 * arch); set(legs[-1].hp, .35 * arch); set(legs[-1].kn, .3 * arch);
       grips = [[-1, 13 - arch * .4], [1, 6.6 + arch * .3]];
+    } else if (dance === -2) {               // Base: pole walk — inner hand on the pole, stepping round it, free arm out
+      const st = t * 3.2; orbit = -Math.PI / 2 + t * .7; r = 1.2; face = -Math.PI / 2 + .25;
+      for (const s of [-1, 1]) { const ph = st + (s > 0 ? Math.PI : 0); set(legs[s].hp, -Math.max(0, Math.sin(ph)) * .55 + .1, 0, s * .05); set(legs[s].kn, Math.max(0, Math.sin(ph)) * .9 + .1); }
+      set(hips, 0, 0, Math.sin(st) * .08); set(spine, .05, 0, -Math.sin(st) * .06 - .12); set(neck, -.1, .25, 0); set(arms[1].sh, -.2, 0, 1.25 + Math.sin(t * 1.4) * .15); set(arms[1].el, -.35);
+      y = Math.abs(Math.sin(st)) * .08; grips = [[-1, 12.1 + y]];
+    } else if (dance === -3) {               // Base: hip sway beside the pole, free hand tracing slowly, soft knees
+      const sw = Math.sin(t * 2.2); r = .95; face = Math.PI / 2 - .25; set(hips, 0, 0, sw * .17); set(spine, .04, 0, -sw * .12); set(neck, -.2 - sw * .05, -.25, sw * .08);
+      set(legs[-1].kn, .15 + Math.max(0, sw) * .35); set(legs[1].kn, .15 + Math.max(0, -sw) * .35); set(legs[-1].hp, -.08, 0, -.06); set(legs[1].hp, -.08, 0, .06);
+      set(arms[1].sh, -.3 + Math.sin(t * .9) * .4, 0, 1.7 + Math.sin(t * 1.1) * .6); set(arms[1].el, -.6 - Math.sin(t * 1.1) * .4); grips = [[-1, 12.6 + sw * .1]];
     } else {                                 // Idle pole hold: inner hand high, leaning away, outer knee against the pole, head back
       orbit = -Math.PI / 2 + w(t * .35) * .3; r = 1.0; const b = w(t * 1.3) * .5 + .5;
       set(arms[1].sh, -1.1, 0, -.4); set(arms[1].el, -1.9 - b * .2); set(spine, -.05, 0, -.24 - b * .05); set(neck, -.5 - b * .1, .25, -.15); set(hips, 0, 0, .1);
@@ -208,8 +217,14 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
     skinMesh.visible = false;
     const order = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'RightShoulder', 'LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm', 'LeftHand', 'RightHand', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg', 'LeftFoot', 'RightFoot'].map(n => B[n]);
     const tq = new THREE.Quaternion(), pq = new THREE.Quaternion(), dh = new THREE.Quaternion(), ds = new THREE.Quaternion(), tp = new THREE.Vector3();
+    // The jointed figure is now only a driver: drop its head, hands, feet and bust meshes (less to update).
+    for (const b of boneList) for (const c of [...b.children]) if (!c.isBone) b.remove(c);
+    // Blend: when the move changes, ease from the pose she was in over 0.8 s instead of snapping.
+    let lastMove = null, blendAt = -1e9; const snap = new Map(), snapHips = new THREE.Vector3(), BLEND_MS = 800;
     rig = {
-      root, apply() {
+      root, apply(move) {
+        const nowMs = performance.now();
+        if (move !== lastMove) { if (lastMove !== null) { for (const b of order) snap.set(b, b.quaternion.clone()); snapHips.copy(B.Hips.position); blendAt = nowMs; } lastMove = move; }
         body.updateMatrixWorld(true);
         const target = new Map(); for (const m of map) target.set(m.bone, wq(m.d).multiply(m.offset));
         dh.copy(wq(hips)).multiply(hipsRest.clone().invert()); ds.copy(wq(spine)).multiply(spineRest.clone().invert());
@@ -220,6 +235,8 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
           if (want) { bone.quaternion.copy(parentQ.clone().invert().multiply(want)); world.set(bone, want); } else world.set(bone, parentQ.clone().multiply(bone.quaternion));
         }
         B.Hips.position.copy(B.Hips.parent.worldToLocal(hips.getWorldPosition(tp)));
+        const u = Math.min(1, (nowMs - blendAt) / BLEND_MS);
+        if (u < 1) { const k = u * u * (3 - 2 * u); for (const b of order) { const q0 = snap.get(b); if (q0) b.quaternion.slerpQuaternions(q0, b.quaternion.clone(), k); } B.Hips.position.lerpVectors(snapHips, B.Hips.position.clone(), k); }
       },
     };
   }
@@ -247,13 +264,17 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
     x.putImageData(base, 0, 0); const t2 = new THREE.CanvasTexture(c); t2.flipY = false; t2.colorSpace = THREE.SRGBColorSpace; t2.anisotropy = 4;
     mesh.material.map = t2; mesh.material.needsUpdate = true;
   }
+  const BASE = [-2, -3, -1], BASE_MS = 10000;
   const signLines = []; let shownKey = '';
   function update(t, now, sign) {
-    const active = t && t.dance >= 0 && Date.now() < t.until + 1000, dance = active ? t.dance : -1, t0 = active ? startedAt('st:' + t.round) : startedAt('st:idle'), e = (now - t0) / 1000;
-    pose(dance, e); rig?.apply();
-    const hue = active ? (now / 3000) % 1 : .92; ledMat.color.setHSL(hue, .9, active ? .55 + Math.sin(now / 120) * .15 : .5); spot.color.setHSL(hue, .8, .65); beams.forEach((b, i) => { b.material.color.setHSL((hue + i * .2) % 1, .9, .6); b.material.opacity = active ? .1 : .05; b.rotation.z = Math.sin(now / 900 + i) * .25; });
+    // Between tips she keeps dancing her base routines (pole walk → hip sway → pole hold, 10 s each, on the wall
+    // clock so everyone sees the same one); a tip interrupts with the requested special move.
+    const active = t && t.dance >= 0 && Date.now() < t.until + 1000, base = BASE[Math.floor(Date.now() / BASE_MS) % BASE.length];
+    const dance = active ? t.dance : base, e = active ? (now - startedAt('st:' + t.round)) / 1000 : (Date.now() % BASE_MS) / 1000;
+    pose(dance, e); rig?.apply(dance);
+    const hue = active ? (now / 9000) % 1 : .92; ledMat.color.setHSL(hue, .9, active ? .55 + Math.sin(now / 700) * .06 : .5); spot.color.setHSL(hue, .8, .65); beams.forEach((b, i) => { b.material.color.setHSL((hue + i * .2) % 1, .9, .6); b.material.opacity = active ? .1 : .05; b.rotation.z = Math.sin(now / 900 + i) * .25; });
     notes.scale.y = 1 + Math.min(8, (t?.tips || 0) / 200); notes.position.y = 4.4 + notes.scale.y * .05;
-    const k = JSON.stringify([dance, t?.round, t?.queue?.length]); if (sign && k !== shownKey) { shownKey = k; sign(['Tip $20+ to request a dance', active ? DANCES[dance] + ' · for ' + t.by : 'Six dances · tips queue in order', t?.queue?.length ? 'Next: ' + t.queue.map(q => DANCES[q.dance]).join(', ') : 'Total tips tonight $' + (t?.tips || 0).toLocaleString('en-US')]); }
+    const k = JSON.stringify([active && dance, t?.round, t?.queue?.length]); if (sign && k !== shownKey) { shownKey = k; sign(['Tip $20+ for a special move', active ? DANCES[dance] + ' · for ' + t.by : 'Dancing her routine · six special moves', t?.queue?.length ? 'Next: ' + t.queue.map(q => DANCES[q.dance]).join(', ') : 'Total tips tonight $' + (t?.tips || 0).toLocaleString('en-US')]); }
   }
   return { group: g, update, clearRadius: 9 };
 }
