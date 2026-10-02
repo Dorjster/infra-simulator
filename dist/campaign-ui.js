@@ -29,7 +29,8 @@ export function createCampaignUI(ctx) {
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
   <div id="ss-sub" class="ss-sub" hidden></div>
-  <div class="ss-foot"><button data-start="settings">Settings & controls</button><button data-start="inspect">Inspect the facility</button></div>
+  <div class="ss-foot"><button data-start="settings">Settings & controls</button><button data-start="inspect">Inspect the facility</button><button data-start="credits">Credits</button></div>
+  <p class="ss-credit">Created by <strong>Darja</strong></p>
  </div>
 </section>
 <div id="level-hud" hidden></div>
@@ -141,6 +142,11 @@ export function createCampaignUI(ctx) {
     });
     if (params.get('join') && info) $('ss-join')?.click();
   }
+  function creditsHTML() {
+    return `<div class="ss-credits"><h2>Credits</h2><p class="ss-credits-by">Infra Simulator<br>created by</p><p class="ss-credits-name">Darja</p>
+<dl><dt>Game design</dt><dd>Darja</dd><dt>Development</dt><dd>Darja</dd><dt>Campaign levels 0–10</dt><dd>Darja</dd><dt>Characters and world</dt><dd>Darja</dd></dl>
+<p class="ss-note">Built with Three.js and Electron.<br>Thank you for playing, and to everyone who tested it on their LAN.</p></div>`;
+  }
   function startChallenges() {
     subPanel(`<h2>Challenges</h2><p class="ss-note">Each challenge builds a healthy facility, then injects a fault when you press Begin. Diagnose it from alarms, GUIs and CLIs, repair it, and the check completes on its own.</p><div class="ss-challenges">${CHALLENGES.map((n, i) => `<button data-ch="${i}"><small>${String(i + 1).padStart(2, '0')}</small>${esc(n)}</button>`).join('')}</div>`, el => {
       el.querySelectorAll('[data-ch]').forEach(b => b.addEventListener('click', async () => { if (await sandbox({ type: 'mode', mode: 'challenge', index: +b.dataset.ch })) { begin(); engineering.panel('projects'); } }));
@@ -154,6 +160,7 @@ export function createCampaignUI(ctx) {
     else if (k === 'free') { if (await sandbox({ type: 'mode', mode: 'free' })) begin(); }
     else if (k === 'settings') { showStart(false); panel('settings'); }
     else if (k === 'inspect') { showStart(false); document.body.classList.remove('in-game'); exit(); }
+    else if (k === 'credits') subPanel(creditsHTML());
   });
 
   // ---- Panel ---------------------------------------------------------------------------------------------
@@ -172,7 +179,7 @@ export function createCampaignUI(ctx) {
       return `<h2>Campaign</h2><p>This save uses an older campaign track.</p><button data-adv="projects">Open projects</button>`;
     }
     const st = C.status(); if (!st) return '';
-    if (st.complete) { const s = C.summary(); return `<h2>Campaign complete · ${esc(G.name)}</h2>${levelTrack(st)}<p>All eleven levels earned. The facility keeps running; later failures still appear as repair objectives.</p><div class="lv-summary"><div><b>${s.devices}</b><span>devices</span></div><div><b>${s.racks}</b><span>racks</span></div><div><b>${s.vlans}</b><span>VLANs</span></div><div><b>${s.services}</b><span>services</span></div><div><b>${s.backups}</b><span>backups</span></div><div><b>$${s.budget.toLocaleString()}</b><span>budget</span></div></div>${repairs(st)}<h3>Operations log</h3><ul class="lv-log">${s.history.map(h => `<li>${esc(new Date(h.at).toLocaleTimeString())} · ${esc(h.message)}</li>`).join('')}</ul>`; }
+    if (st.complete) { const s = C.summary(); return `<h2>Campaign complete · ${esc(G.name)}</h2>${levelTrack(st)}<p>All eleven levels earned. The facility keeps running; later failures still appear as repair objectives.</p><p class="lv-credit">Infra Simulator · created by <strong>Darja</strong>. Thank you for playing.</p><div class="lv-summary"><div><b>${s.devices}</b><span>devices</span></div><div><b>${s.racks}</b><span>racks</span></div><div><b>${s.vlans}</b><span>VLANs</span></div><div><b>${s.services}</b><span>services</span></div><div><b>${s.backups}</b><span>backups</span></div><div><b>$${s.budget.toLocaleString()}</b><span>budget</span></div></div>${repairs(st)}<h3>Operations log</h3><ul class="lv-log">${s.history.map(h => `<li>${esc(new Date(h.at).toLocaleTimeString())} · ${esc(h.message)}</li>`).join('')}</ul>`; }
     const L = st.level, tier = hintTier[L.id] || 0, next = st.next;
     const exercise = { 7: ['data-incident', 'Start guided data incident', 'incident'], 8: ['fault-drill', 'Start the fault drill', 'drill'], 9: ['failover-test', 'Run the planned failover test', 'failover-test'], 10: ['final-incident', 'Start the final incident', 'final'] }[L.id];
     const exReady = exercise && (!next || next.id === exercise[2] || (L.id === 9 && next.id === 'failover-test') || (L.id === 10 && next.id === 'final'));

@@ -5,13 +5,27 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile, writeFile, rename, copyFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
+// Windows Squirrel installer events: Setup.exe runs the app with --squirrel-install (and --squirrel-updated /
+// --squirrel-uninstall) and waits for it to exit. Create or remove the Start menu and desktop shortcuts and
+// quit straight away; the game itself must not start during install or uninstall.
+const squirrel = process.platform === 'win32' && /^--squirrel-(install|updated|uninstall|obsolete)$/.exec(process.argv[1] || '');
+if (squirrel) {
+  const update = path.resolve(path.dirname(process.execPath), '..', 'Update.exe'), exe = path.basename(process.execPath);
+  const done = () => app.exit(0);
+  if (squirrel[1] === 'obsolete') done();
+  else { const p = spawn(update, [squirrel[1] === 'uninstall' ? '--removeShortcut' : '--createShortcut', exe], { detached: true }); p.on('close', done); p.on('error', done); setTimeout(done, 5000); }
+  await new Promise(() => {}); // nothing below runs: no window, no room
+}
 const here = path.dirname(fileURLToPath(import.meta.url));
 const gameRoot = await stat(path.join(here, 'game', 'lan', 'room.mjs')).then(() => path.join(here, 'game')).catch(() => path.resolve(here, '..'));
 const { startRoom } = await import(pathToFileURL(path.join(gameRoot, 'lan', 'room.mjs')).href);
 
 // Laptops with two GPUs: ask for the discrete one (Chromium/ANGLE picks the low-power GPU otherwise).
 app.commandLine.appendSwitch('force_high_performance_gpu');
+// No usable GPU driver: keep WebGL on Chromium's software renderer instead of failing (newer Chromium drops the automatic fallback).
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch
 let win = null, room = null, hosting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');
@@ -75,6 +89,7 @@ ipcMain.handle('desktop:info', () => ({ version: app.getVersion(), platform: pro
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(async () => {
+  app.setAboutPanelOptions({ applicationName: 'Infra Simulator', applicationVersion: app.getVersion(), credits: 'Created by Darja', copyright: '© Darja' });
   await openRoom();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),

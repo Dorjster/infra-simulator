@@ -103,6 +103,18 @@ Browser and desktop runs on this build:
 - **Packaged macOS app:** `tests/browser/desktop-smoke.mjs`, 10/10 checks pass (60 FPS, p95 18.4 ms), and the clipboard matrix passes 10/10.
 - **CI:** runs the same smoke test on the packaged Windows and macOS builds (`.github/workflows/desktop.yml`) and uploads `desktop-smoke-<platform>.json`. The Intel Mac build moved from the retired `macos-13` runner to `macos-15-intel`, and a release now publishes whatever platforms built.
 
+## Installer fixes (v33.0.1)
+
+Players reported that the DMG and Setup.exe did not work.
+
+| Problem | Root cause | Fix | How it is verified |
+| --- | --- | --- | --- |
+| macOS: a downloaded app was reported as "damaged and can't be opened", with no way to open it | Renaming Electron.app during packaging invalidated Electron's own ad-hoc signature. Apple's `syspolicy_check` reported a **fatal** error: "Code has no resources but signature indicates they must be present". | The `postPackage` hook in `desktop/forge.config.cjs` re-seals the whole bundle ad hoc (`codesign --force --deep --sign -`) and verifies it, unless Developer ID signing is configured. | `syspolicy_check` now reports only the expected "ad-hoc signed" warning. The rebuilt DMG passes all 10 smoke checks. CI now runs `codesign --verify --deep --strict` on the app inside the DMG and fails the build if it is broken. |
+| Windows: Setup.exe created no shortcut, and the game started in the middle of installing and uninstalling | The app ignored Squirrel's `--squirrel-install / -updated / -uninstall` events, so Squirrel's launch opened a full game instead of creating shortcuts and quitting. | `desktop/main.mjs` handles these events: it runs `Update.exe --createShortcut` (or `--removeShortcut`) and exits before any window or room starts. | CI runs `Setup.exe --silent` on Windows. The build fails unless the app is installed under `%LOCALAPPDATA%\infra_simulator` and a shortcut exists. The smoke test then drives the **installed** copy. |
+| No usable GPU driver (remote desktop, VM, old or blocked driver): the game ran at 4–5 FPS, with some frames taking up to 7 s, so it looked frozen. This is why the earlier Windows and Intel CI smoke runs failed. | Software WebGL drew a 1600×900 frame with MSAA on the CPU. | When software WebGL is detected: render at 0.5× resolution (scaler floor 0.35×) with no MSAA, and keep `enable-unsafe-swiftshader` so newer Chromium still falls back instead of failing. | Locally under SwiftShader: Level 0 runs at 16–20 FPS (was 5), and the full hall at about 7 FPS. The smoke test passes 10/10 under SwiftShader (was 2 passes and 3 failures). The smoke test now waits on game state, not on fixed delays. |
+
+Still unverified: a Windows PC with a real GPU, run by a person. CI checks only the installer and software rendering.
+
 ## Not done / limits
 
 - **No human playtest.** All play here was scripted through the real client. A person still needs to play Levels 0–10 with keyboard and mouse.

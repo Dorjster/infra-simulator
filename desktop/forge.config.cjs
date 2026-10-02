@@ -26,7 +26,21 @@ module.exports = {
     // Signing / notarization only when credentials are provided (CI secrets); otherwise unsigned.
     ...(process.env.APPLE_ID ? { osxSign: {}, osxNotarize: { appleId: process.env.APPLE_ID, appleIdPassword: process.env.APPLE_APP_PASSWORD, teamId: process.env.APPLE_TEAM_ID } } : {})
   },
-  hooks: { generateAssets: async () => copyGame() },
+  hooks: {
+    generateAssets: async () => copyGame(),
+    // Unsigned macOS builds: renaming Electron.app breaks its ad-hoc signature, and a downloaded app with a
+    // broken signature is reported as "damaged" with no way to open it. Re-seal the whole bundle ad hoc so
+    // Gatekeeper shows the normal "unidentified developer" prompt (right-click → Open) instead.
+    postPackage: async (_config, { platform, outputPaths }) => {
+      if (platform !== 'darwin' || process.env.APPLE_ID) return;
+      const { execFileSync } = require('node:child_process');
+      for (const dir of outputPaths) for (const app of fs.readdirSync(dir).filter(f => f.endsWith('.app'))) {
+        const target = path.join(dir, app);
+        execFileSync('codesign', ['--force', '--deep', '--sign', '-', target], { stdio: 'inherit' });
+        execFileSync('codesign', ['--verify', '--deep', '--strict', target], { stdio: 'inherit' });
+      }
+    }
+  },
   makers: [
     { name: '@electron-forge/maker-dmg', platforms: ['darwin'], config: { name: 'Infra Simulator', icon: path.join(__dirname, 'assets', 'icon.icns'), format: 'ULFO' } },
     { name: '@electron-forge/maker-squirrel', platforms: ['win32'], config: { name: 'infra_simulator', setupExe: 'InfraSimulator-Setup.exe', setupIcon: path.join(__dirname, 'assets', 'icon.ico'), ...(process.env.WINDOWS_CERTIFICATE_FILE ? { certificateFile: process.env.WINDOWS_CERTIFICATE_FILE, certificatePassword: process.env.WINDOWS_CERTIFICATE_PASSWORD } : {}) } },

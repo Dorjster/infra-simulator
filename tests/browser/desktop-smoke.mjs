@@ -11,19 +11,21 @@ import os from 'node:os'; import path from 'node:path';
 const [exe, out = 'desktop-smoke.json'] = process.argv.slice(2);
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'ELECTRON_RUN_AS_NODE'));
 const port = 9400 + Math.floor(Math.random() * 400);
-const app = spawn(exe, ['--remote-debugging-port=' + port, '--user-data-dir=' + mkdtempSync(path.join(os.tmpdir(), 'infra-smoke-'))], { stdio: 'ignore', env });
+const app = spawn(exe, [...(process.env.SMOKE_ARGS ? process.env.SMOKE_ARGS.split(' ') : []), '--remote-debugging-port=' + port, '--user-data-dir=' + mkdtempSync(path.join(os.tmpdir(), 'infra-smoke-'))], { stdio: 'ignore', env });
 const report = { platform: process.platform + ' ' + os.release(), cpu: os.cpus()[0]?.model, checks: [], errors: [] };
 const check = (name, ok, detail = '') => { report.checks.push({ name, ok: !!ok, detail: String(detail).slice(0, 300) }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' · ' + String(detail).slice(0, 160) : '')); };
 let browser; for (let i = 0; i < 80 && !browser; i++) { try { browser = await chromium.connectOverCDP('http://127.0.0.1:' + port); } catch { await new Promise(r => setTimeout(r, 500)); } }
 try {
   if (!browser) throw Error('The app did not open its debugging port');
   let page = browser.contexts()[0].pages()[0]; for (let i = 0; !page && i < 40; i++) { await new Promise(r => setTimeout(r, 500)); page = browser.contexts()[0].pages()[0]; }
-  page.on('pageerror', e => report.errors.push(e.message)); page.on('dialog', d => d.accept());
+  page.setDefaultTimeout(60000); page.on('pageerror', e => report.errors.push(e.message)); page.on('dialog', d => d.accept());
   await page.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 90000 }); await page.waitForTimeout(1500);
   report.gpu = await page.evaluate(() => globalThis.__infraDiagnostics?.().gpu); report.software = await page.evaluate(() => globalThis.__infraDiagnostics?.().softwareRendering);
   check('Desktop bridge present, no Node in the page', await page.evaluate(() => !!window.infraDesktop?.isDesktop && typeof require === 'undefined'));
   check('Start screen shows New Campaign', await page.evaluate(() => [...document.querySelectorAll('#ss-grid .ss-card strong')].some(x => x.textContent === 'New Campaign')));
-  await page.click('[data-start=new]'); await page.click('#ss-new'); await page.waitForTimeout(2500);
+  await page.click('[data-start=new]'); await page.click('#ss-new');
+  // Wait on game state, not a fixed delay: software-rendered CI runners draw a few frames per second.
+  await page.waitForFunction(() => __infra.lab.world.operations.game.track === 'levels' && /LEVEL 0/.test(document.getElementById('level-hud')?.innerText || ''), null, { timeout: 60000 }).catch(() => {});
   const st = await page.evaluate(() => ({ track: __infra.lab.world.operations.game.track, level: __infra.lab.world.operations.game.levels?.current, hud: document.getElementById('level-hud').innerText }));
   check('New campaign starts at Level 0 with the HUD', st.track === 'levels' && st.level === 0 && /LEVEL 0/.test(st.hud), st.hud.split('\n')[0]);
   // Clipboard: write through the OS clipboard, paste into a field and into the laptop CLI (single line = text only).
@@ -35,7 +37,7 @@ try {
     await page.keyboard.press('Escape');
   } else check('OS clipboard write', false, clip);
   // Free Build from the start screen: every rack visible; Continue returns to the untouched campaign.
-  await page.evaluate(() => __infra.lab.campaignUI.showStart(true)); await page.click('[data-start=free]'); await page.waitForTimeout(2500);
+  await page.evaluate(() => __infra.lab.campaignUI.showStart(true)); await page.click('[data-start=free]'); await page.waitForFunction(() => __infra.lab.world.operations.game.mode === 'free', null, { timeout: 60000 }).catch(() => {}); await page.waitForTimeout(1000);
   const fb = await page.evaluate(() => { __infra.lab.update?.(.1); return { mode: __infra.lab.world.operations.game.mode, hidden: __infra.lab.rackList.filter(r => +r.id.slice(1) <= 6 && !r.g.visible).map(r => r.id), devices: __infra.nodes.filter(n => n.active !== false && n.rack).length }; });
   check('Free Build shows racks R01–R06 with their devices', fb.mode === 'free' && !fb.hidden.length && fb.devices > 10, JSON.stringify(fb));
   // Frame times while walking the hall (whatever GPU this machine has).
@@ -44,7 +46,7 @@ try {
   await page.evaluate(() => __infra.lab.campaignUI.showStart(true)); await page.waitForTimeout(800);
   const cont = await page.evaluate(() => document.querySelector('[data-start=continue]')?.innerText.replace(/\n/g, ' · ') || '');
   check('Continue Campaign offered after Free Build (campaign untouched)', /Level 0/.test(cont), cont);
-  await page.click('[data-start=continue]'); await page.waitForTimeout(2000);
+  await page.click('[data-start=continue]'); await page.waitForFunction(() => __infra.lab.world.operations.game.track === 'levels', null, { timeout: 60000 }).catch(() => {});
   check('Continue returns to the campaign at Level 0', await page.evaluate(() => __infra.lab.world.operations.game.track === 'levels' && __infra.lab.world.operations.game.levels.current === 0));
   report.info = await page.evaluate(() => window.infraDesktop.info());
   check('No page errors', !report.errors.length, report.errors.join(' | '));
