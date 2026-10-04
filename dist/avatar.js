@@ -115,11 +115,16 @@ function screenTexture() {
 
 // ---- rig ----------------------------------------------------------------------------------------
 const HIP = 2.35, SHOULDER = 6.0, NECK = 6.35, HEAD_R = 2.05;
+// Soft contact shadow under every engineer (one shared texture/material). Hidden when real shadows are on.
+export const AVATAR_SHADOW = (() => { let map = null; try { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), gr = x.createRadialGradient?.(32, 32, 2, 32, 32, 32); if (gr?.addColorStop) { gr.addColorStop(0, 'rgba(0,0,0,.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); map = new THREE.CanvasTexture(c); } } catch {}
+  const m = new THREE.MeshBasicMaterial({ map, color: map ? 0xffffff : 0x000000, transparent: true, opacity: map ? 1 : .25, depthWrite: false }); m.userData.shared = true; return m; })();
+const SHADOW_GEO = new THREE.PlaneGeometry(4.2, 4.2).rotateX(-Math.PI / 2);
 export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = 'cute', skin = 'yellow', hat = 'cap', outfit = 'bands' } = {}) {
   hat = HAT_IDS.includes(hat) ? hat : 'cap'; outfit = OUTFIT_IDS.includes(outfit) ? outfit : 'bands';
   const SK = SKINS[skin] || SKINS.yellow;
   let style = FACES.some(f => f.id === face) ? face : 'cute';
-  const g = new THREE.Group(), rig = new THREE.Group(); rig.rotation.y = Math.PI; g.add(rig); // built facing +z; camera looks −z
+  const g = new THREE.Group(), rig = new THREE.Group(); rig.rotation.y = Math.PI; g.add(rig);
+  { const sh = new THREE.Mesh(SHADOW_GEO, AVATAR_SHADOW); sh.position.y = .03; sh.renderOrder = -1; sh.userData.noShadow = true; g.add(sh); } // built facing +z; camera looks −z
   const fall = new THREE.Group(); rig.add(fall);                    // pivot at the feet for the "dead" fall
   const body = new THREE.Group(); fall.add(body);
   const mesh = (geo, parent) => { const m = new THREE.Mesh(geo, bodyMaterial); m.castShadow = true; parent.add(m); return m; };

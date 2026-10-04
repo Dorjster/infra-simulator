@@ -101,3 +101,23 @@ The camera steps back over your right shoulder, kept inside the room you're in, 
 - **Hold'em:** one full 52-card deck per hand.
 - **Lotto:** ball spread χ² 41 over 35.
 - **Luck:** only bar luck changes your own slot and lotto odds.
+
+## v36.2: graphics
+
+Better image quality on every preset, tiered so slower computers stay smooth (Settings → Graphics).
+
+| | Low / Medium | High / Ultra |
+| --- | --- | --- |
+| Reflections (metal, chrome, gold, glass, lacquer) | ✓ | ✓ |
+| Soft contact shadow under every engineer | ✓ | (real shadows instead) |
+| Real shadows from the key light | | ✓ 2048 px (4096 on Ultra) |
+| Glow (bloom) on lamps, chandeliers, neon, LEDs, muzzle flashes | | ✓ |
+| Anti-aliasing | browser MSAA | 4× MSAA in the HDR buffer |
+
+- **Reflections:** a reflection environment (three.js RoomEnvironment, prefiltered once at start) lights every metallic and glossy surface. The cost per frame is negligible. If a graphics card can't build it, the game simply runs without it.
+- **Shadows (High and Ultra):** the key light sits just under the ceilings and follows the player, so furniture, machines, dealers, the dancer and engineers cast sharp, soft-edged shadows. The ceilings don't darken the rooms. On High the light balance moves from flat fill towards the key light, so the shadows read.
+- **Glow (High and Ultra):** only light sources and bright highlights pass the threshold, while painted walls and carpets stay clean.
+- **Software rendering:** with no GPU driver the game keeps the light basic preset automatically.
+- **Performance:** measured on this Mac on High, it holds 60 fps in the hall, the casino room and at the stage, even with the CPU slowed 4×. The adaptive resolution scaler still lowers pixels if a slower GPU struggles.
+- **New files:** `dist/graphics.js`; the three.js r180 post-processing add-ons are vendored in `dist/post/` (MIT).
+
