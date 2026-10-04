@@ -1,6 +1,7 @@
 // Darja's pistol: a just-for-fun toy. Only a player named Darja has it (key 4 to draw / holster, left
-// click to fire). Each shot throws a spread of glowing pellets with a muzzle flash, recoil and a bang;
-// pellets leave sparks and small scorch marks that fade. Nothing in the facility is damaged.
+// click to fire). Each shot fires one glowing tracer (the shotgun a spread of pellets) with a muzzle flash,
+// recoil and a bang; tracers leave sparks and small scorch marks that fade. Nothing in the facility is damaged.
+// In Payday, engineers can also buy guns (weapons.js) and shots at other engineers take HP (combat-logic.js).
 // The model is an original chrome "hand cannon" (long slide, black grip), not a copy of any real product.
 import * as THREE from './three.module.js';
 
@@ -33,15 +34,15 @@ export function pistolModel(scale = 1) {
 }
 
 let audio = null;
-function bang(volume = .5) {
+function bang(volume = .5, pitch = 1) {
   try {
     audio ??= new AudioContext(); if (audio.state === 'suspended') audio.resume();
     const t = audio.currentTime, len = .35, buf = audio.createBuffer(1, audio.sampleRate * len, audio.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3.2);
     const noise = audio.createBufferSource(); noise.buffer = buf;
-    const lp = audio.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(5200, t); lp.frequency.exponentialRampToValueAtTime(380, t + .25);
+    const lp = audio.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(5200 * pitch, t); lp.frequency.exponentialRampToValueAtTime(380 * pitch, t + .25);
     const gain = audio.createGain(); gain.gain.setValueAtTime(volume, t); gain.gain.exponentialRampToValueAtTime(.001, t + len);
-    const thump = audio.createOscillator(); thump.frequency.setValueAtTime(140, t); thump.frequency.exponentialRampToValueAtTime(42, t + .18);
+    const thump = audio.createOscillator(); thump.frequency.setValueAtTime(140 * pitch, t); thump.frequency.exponentialRampToValueAtTime(42 * pitch, t + .18);
     const tg = audio.createGain(); tg.gain.setValueAtTime(volume * .9, t); tg.gain.exponentialRampToValueAtTime(.001, t + .22);
     noise.connect(lp).connect(gain).connect(audio.destination); thump.connect(tg).connect(audio.destination);
     noise.start(t); thump.start(t); thump.stop(t + .25);
@@ -57,20 +58,23 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
   const sparkGeo = new THREE.BoxGeometry(.05, .05, .05), sparkMat = new THREE.MeshBasicMaterial({ color: 0xffc35a }), markGeo = new THREE.CircleGeometry(.09, 10), markMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: .8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
   function hitPoint(origin, dir) {
     ray.set(origin, dir); ray.far = 120;
-    const hits = ray.intersectObjects(pickables(), false).filter(h => { for (let o = h.object; o; o = o.parent) if (!o.visible) return false; return !h.object.userData?.link; });
+    const hits = ray.intersectObjects(pickables(), false).filter(h => { for (let o = h.object; o; o = o.parent) if (!o.visible) return false; return !h.object.userData?.link && h.object.material?.visible !== false; });   // invisible interaction zones don't stop bullets
     let best = hits[0] ? { point: hits[0].point.clone(), normal: hits[0].face ? hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld) : dir.clone().negate() } : null;
     if (ray.ray.intersectPlane(floor, tmp) && (!best || tmp.distanceTo(origin) < best.point.distanceTo(origin))) best = { point: tmp.clone(), normal: new THREE.Vector3(0, 1, 0) };
     return best || { point: origin.clone().addScaledVector(dir, 120), normal: null };
   }
-  function flash(at, dir) {
+  // One muzzle light for every shot, always in the scene (adding and removing lights recompiles every shader).
+  const light = new THREE.PointLight(0xffc06a, 0, 9); scene.add(light); let lightT = 1;
+  function flash(at, dir, size = 1.1) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    s.position.copy(at).addScaledVector(dir, .25); s.scale.setScalar(1.1); scene.add(s);
-    const light = new THREE.PointLight(0xffc06a, 6, 9); light.position.copy(s.position); scene.add(light);
-    flashes.push({ s, light, t: 0 });
+    s.position.copy(at).addScaledVector(dir, .25); s.scale.setScalar(size); scene.add(s);
+    light.position.copy(s.position); lightT = 0;
+    flashes.push({ s, t: 0 });
   }
   // One shot: `count` pellets in a small cone from `origin` along `dir`.
-  function shoot(origin, dir, { count = 6, spread = .045, volume = .5 } = {}) {
-    flash(origin, dir); bang(volume);
+  function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null } = {}) {
+    flash(origin, dir, flashSize); bang(volume, pitch);
+    if (dirs) { for (const d of dirs) { const hit = hitPoint(origin, d), mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(origin.clone().add(d)); scene.add(mesh); pellets.push({ mesh, from: origin.clone(), dir: d, dist: hit.point.distanceTo(origin), travelled: 0, hit }); } return; }
     for (let i = 0; i < count; i++) {
       const d = dir.clone().add(new THREE.Vector3((Math.random() - .5) * 2, (Math.random() - .5) * 2, (Math.random() - .5) * 2).multiplyScalar(spread)).normalize();
       const hit = hitPoint(origin, d), mesh = new THREE.Mesh(pelletGeo, pelletMat);
@@ -88,9 +92,10 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
     for (let i = pellets.length - 1; i >= 0; i--) { const p = pellets[i]; p.travelled += dt * 180; if (p.travelled >= p.dist) { impact(p.hit); scene.remove(p.mesh); pellets.splice(i, 1); continue; } p.mesh.position.copy(p.from).addScaledVector(p.dir, p.travelled); }
     for (let i = sparks.length - 1; i >= 0; i--) { const s = sparks[i]; s.t += dt; s.v.y -= 30 * dt; s.m.position.addScaledVector(s.v, dt); s.m.scale.setScalar(Math.max(.01, 1 - s.t * 2.5)); if (s.t > .4) { scene.remove(s.m); sparks.splice(i, 1); } }
     for (let i = marks.length - 1; i >= 0; i--) { const k = marks[i]; k.t += dt; if (k.t > 6) k.m.material.opacity = Math.max(0, .8 - (k.t - 6) * .4); if (k.t > 8) { scene.remove(k.m); k.m.material.dispose(); marks.splice(i, 1); } }
-    for (let i = flashes.length - 1; i >= 0; i--) { const f = flashes[i]; f.t += dt; f.s.material.opacity = Math.max(0, 1 - f.t * 14); f.light.intensity = Math.max(0, 6 - f.t * 90); if (f.t > .08) { scene.remove(f.s); scene.remove(f.light); f.s.material.dispose(); flashes.splice(i, 1); } }
+    for (let i = flashes.length - 1; i >= 0; i--) { const f = flashes[i]; f.t += dt; f.s.material.opacity = Math.max(0, 1 - f.t * 14); if (f.t > .08) { scene.remove(f.s); f.s.material.dispose(); flashes.splice(i, 1); } }
+    lightT += dt; light.intensity = Math.max(0, 6 - lightT * 90);
   }
-  return { shoot, update, get active() { return pellets.length + sparks.length + marks.length; } };
+  return { shoot, update, hitPoint, get active() { return pellets.length + sparks.length + marks.length; } };
 }
 
 // The local player's pistol: a first-person view model on the camera, recoil and a fire-rate limit.

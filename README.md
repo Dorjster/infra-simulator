@@ -1,4 +1,4 @@
-# Infra Simulator v35
+# Infra Simulator v36
 
 Build a working enterprise from an empty room: receive equipment, rack it, power it, cable it, configure it on real-looking consoles and GUIs, and prove every service works. Play solo, or with up to 12 engineers on your LAN.
 
@@ -31,7 +31,8 @@ Created by **Darja**.
 | Enter / T · middle mouse · Esc | Team chat · ping · menu |
 | Mouse wheel | Over the 3D view while walking: emote wheel · over any panel: scrolls the panel |
 | E at a casino table (Payday) | Blackjack · roulette · lotto · cashier (wallet & loans) |
-| 4 · left click | Darja only: draw / holster the pistol · fire (for fun, nothing is damaged) |
+| 4 · left click | Draw and cycle your guns (Payday: bought at the casino's weapon market; Darja always has her own) · fire, hold for automatic guns |
+| P | Switch first / third person |
 
 Field Engineer and Operations Engineer are cosmetic titles: both can do every task. Company credentials, physical reach and host-only controls are checked separately.
 
