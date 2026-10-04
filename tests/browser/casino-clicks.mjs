@@ -14,8 +14,8 @@ const slowClick = async sel => { const box = await p.locator(sel).first().boundi
 const T = id => p.evaluate(id => __infra.lab.world.operations.game.casino.tables[id], id);
 let ok = 0, n = 0; const check = (name, c) => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name); };
 await p.evaluate(() => { __infra.lab.enter(); __infra.lab.casinoUI.show('bj-1'); }); await p.waitForTimeout(600);
-await slowClick('[data-chip="100"]'); await slowClick('[data-act="bj-bet"]'); check('Blackjack: Bet & sit registers', (await T('bj-1')).seats.length === 1);
-await slowClick('[data-act="bj-bet"]'); check('Blackjack: Add during the betting countdown registers', (await T('bj-1')).seats[0]?.bet === 200);
+await slowClick('[data-chip="100000"]'); await slowClick('[data-act="bj-bet"]'); check('Blackjack: Bet & sit registers', (await T('bj-1')).seats.length === 1);
+await slowClick('[data-act="bj-bet"]'); check('Blackjack: Add during the betting countdown registers', (await T('bj-1')).seats[0]?.bet === 200000);
 await slowClick('[data-act="bj-deal"]'); await p.waitForTimeout(1500); let t = await T('bj-1'); check('Blackjack: Deal now registers', t.phase !== 'betting');
 if (t.phase === 'playing') { await slowClick('[data-act="bj-stand"]'); t = await T('bj-1'); check('Blackjack: Stand registers', t.phase !== 'playing'); }
 await p.evaluate(() => __infra.lab.casinoUI.show('rl-1')); await p.waitForTimeout(500);

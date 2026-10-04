@@ -1,30 +1,47 @@
 // Payday mode economy and casino. Pure state on `game` (operations.game), applied by the host only, so every
 // engineer on the LAN sees the same cards, spins, balances and loans. Play money: nothing leaves the game.
 //
-//  · Wallets: one per engineer (by name). Darja starts with $10,000, everyone else $500.
+//  · Money is Mongolian tögrög (₮, see money.js). Wallets: one per engineer (by name). Darja starts with
+//    36,000,000₮ (US$10,000), everyone else 1,800,000₮ (US$500).
 //  · Salary: each job pays the engineer who did it once; every Campaign level earned pays everyone a bonus.
 //  · Loans: lend cash to another engineer; they repay when they can (partial repayments allowed).
 //  · Tables (each with its own limits and state):
 //      Blackjack ×2 — up to 5 seats, 6-deck shoe, dealer stands on all 17s, blackjack 3:2, double down.
 //      Roulette ×2 — European single zero; number 35:1, dozen/column 2:1, even chances 1:1.
-//      Texas Hold'em — 5 seats, blinds $10/$20, buy-in $200–$5,000, side pots, 30 s to act.
-//      Slots ×3 — three reels; Lotto — $20 ticket, 5 of 36, shared jackpot.
+//      Texas Hold'em — 5 seats, blinds 50,000₮/100,000₮, side pots, 30 s to act.
+//      Slots ×3 — three reels; Lotto — 5 of 36, shared jackpot (draws queue on the one machine).
+//  · Bar: every drink costs 18,000,000₮ (US$5,000) and gives a few minutes of luck — good or bad, at random —
+//    that nudges your own slot spins and lotto draws. Roulette, blackjack and poker stay pure chance.
+//  · Weapon market: eight guns from 90,000,000₮ (US$25,000); see combat-logic.js for HP and hits.
 //  · Timing fields (spinMs, dealtAt, drawnAt…) let every client animate the 3D tables in step with the result.
-export const START_CASH = 500, DARJA_CASH = 10000, LEVEL_BONUS = 1500;
-export const SALARY = { rack: 150, mount: 120, 'rack-feed': 60, rails: 40, power: 35, patch: 30, optic: 25, boot: 40, unbox: 15, repair: 90, 'isp-order': 50 };
-export const LOTTO = { price: 20, numbers: 36, picks: 5, pays: { 2: 20, 3: 150, 4: 2500 }, seed: 5000, add: 10, drawMs: 8000 };   // drawMs = SYNC.lottoDraw: one draw on the machine
+import { mnt, money } from './money.js';
+import { WEAPONS } from './weapons-data.js';
+export const START_CASH = mnt(500), DARJA_CASH = mnt(10000), LEVEL_BONUS = mnt(1500);
+export const SALARY = Object.fromEntries(Object.entries({ rack: 150, mount: 120, 'rack-feed': 60, rails: 40, power: 35, patch: 30, optic: 25, boot: 40, unbox: 15, repair: 90, 'isp-order': 50 }).map(([k, v]) => [k, mnt(v)]));
+export const LOTTO = { price: 70000, numbers: 36, picks: 5, pays: { 2: 70000, 3: 500000, 4: 9000000 }, seed: 18000000, add: 35000, drawMs: 8000 };   // drawMs = SYNC.lottoDraw: one draw on the machine
 export const TABLES = [
-  { id: 'bj-1', game: 'blackjack', name: 'Blackjack', min: 10, max: 5000 },
-  { id: 'bj-2', game: 'blackjack', name: 'High-limit blackjack', min: 100, max: 25000 },
-  { id: 'rl-1', game: 'roulette', name: 'Roulette', min: 10, max: 5000 },
-  { id: 'rl-2', game: 'roulette', name: 'High-limit roulette', min: 100, max: 25000 },
-  { id: 'pk-1', game: 'poker', name: "Texas Hold'em", sb: 10, bb: 20, minBuy: 200, maxBuy: 5000, seats: 5 },
-  { id: 'sl-1', game: 'slots', name: 'Slot · Lucky 7', min: 1, max: 100 }, { id: 'sl-2', game: 'slots', name: 'Slot · Diamond', min: 1, max: 100 },
-  { id: 'sl-3', game: 'slots', name: 'Slot · High Roller', min: 25, max: 2500 },
+  { id: 'bj-1', game: 'blackjack', name: 'Blackjack', min: 50000, max: 20000000 },
+  { id: 'bj-2', game: 'blackjack', name: 'High-limit blackjack', min: 500000, max: 100000000 },
+  { id: 'rl-1', game: 'roulette', name: 'Roulette', min: 50000, max: 20000000 },
+  { id: 'rl-2', game: 'roulette', name: 'High-limit roulette', min: 500000, max: 100000000 },
+  { id: 'pk-1', game: 'poker', name: "Texas Hold'em", sb: 50000, bb: 100000, minBuy: 1000000, maxBuy: 20000000, seats: 5 },
+  { id: 'sl-1', game: 'slots', name: 'Slot · Lucky 7', min: 5000, max: 500000 }, { id: 'sl-2', game: 'slots', name: 'Slot · Diamond', min: 5000, max: 500000 },
+  { id: 'sl-3', game: 'slots', name: 'Slot · High Roller', min: 100000, max: 10000000 },
   { id: 'lotto', game: 'lotto', name: 'Lotto machine' },
-  { id: 'stage', game: 'stage', name: 'Center stage', min: 20, max: 5000 }
+  { id: 'stage', game: 'stage', name: 'Center stage', min: 70000, max: 20000000 },
+  { id: 'bar', game: 'bar', name: 'The Payday Bar' },
+  { id: 'guns', game: 'market', name: 'Weapon market' }
 ];
-// Centre-stage performer: a tip of $20+ requests one of six dances (queued, 18 s each, everyone sees the same).
+// Bar: every drink US$5,000; luck lasts `min` minutes, strength = chance a result is nudged your way (or against you).
+export const DRINK_PRICE = mnt(5000);
+export const DRINKS = [
+  { id: 'beer', name: 'Draught beer', min: 2, strength: .2 }, { id: 'airag', name: 'Airag', min: 2.5, strength: .22 },
+  { id: 'wine', name: 'Red wine', min: 3, strength: .24 }, { id: 'cocktail', name: 'Cocktail', min: 3, strength: .25 },
+  { id: 'champagne', name: 'Champagne', min: 3, strength: .27 }, { id: 'tequila', name: 'Tequila shot', min: 3.5, strength: .3 },
+  { id: 'vodka', name: 'Vodka', min: 4, strength: .32 }, { id: 'whisky', name: 'Single malt whisky', min: 4, strength: .35 }
+];
+export function luckOf(game, name, now = Date.now()) { const l = game.luck?.[key(name)]; return l && l.until > now ? l : null; }
+// Centre-stage performer: a tip of 70,000₮+ requests one of six dances (queued, 18 s each, everyone sees the same).
 export const DANCES = ['Pole spin', 'Climb & sit', 'Showgirl kicks', 'Body wave', 'Disco fever', 'Lay-back'], DANCE_MS = 18000;
 export const tableDef = id => TABLES.find(t => t.id === id);
 export const ROULETTE_SPIN_MS = 7000, POKER_ACT_MS = 30000;
@@ -36,7 +53,6 @@ export const SLOT_SYMBOLS = ['Cherry', 'Lemon', 'Plum', 'Bell', 'BAR', '7'];   /
 const SLOT_WEIGHTS = [24, 22, 18, 14, 9, 5], SLOT_PAYS = [6, 8, 15, 30, 75, 250];
 
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
-const money = n => '$' + Math.round(n).toLocaleString('en-US');
 const int = (v, label, min = 1, max = 1e9) => { const n = Math.floor(Number(v)); if (!Number.isFinite(n) || n < min || n > max) throw Error(label); return n; };
 const range = t => 'Bet between ' + money(t.min) + ' and ' + money(t.max);
 
@@ -46,17 +62,34 @@ function freshTable(def) {
   if (def.game === 'poker') return { phase: 'waiting', seats: Array(def.seats).fill(null), button: -1, deck: [], board: [], toAct: -1, currentBet: 0, minRaise: def.bb, actionEndsAt: 0, nextHandAt: 0, hand: 0, log: [], results: null, streetAt: 0 };
   if (def.game === 'slots') return { last: null, spins: 0 };
   if (def.game === 'lotto') return { jackpot: LOTTO.seed, last: [], tickets: 0 };
+  if (def.game === 'bar') return { served: 0, last: null };
+  if (def.game === 'market') return { sold: 0, last: null };
   if (def.game === 'stage') return { dance: -1, by: null, round: 0, startedAt: 0, until: 0, queue: [], tips: 0, log: [] };
   return {};
 }
-export function freshCasino() { const tables = {}; for (const d of TABLES) tables[d.id] = freshTable(d); return { version: 2, tables }; }
-export function startPayday(game) { game.payday = true; game.wallets = {}; game.loans = []; game.paidJobs = {}; game.paidLevels = 0; game.loanCounter = 0; game.casino = freshCasino(); }
+export function freshCasino() { const tables = {}; for (const d of TABLES) tables[d.id] = freshTable(d); return { version: 3, currency: 'MNT', tables }; }
+export function startPayday(game) { game.payday = true; game.wallets = {}; game.loans = []; game.paidJobs = {}; game.paidLevels = 0; game.loanCounter = 0; game.luck = {}; game.arsenal = {}; game.combat = null; game.casino = freshCasino(); }
 // v34 saves had one blackjack and one roulette table: return any chips still on them and move to v2 tables.
 export function migrateCasino(game) {
-  const c = game.casino; if (!c || c.version === 2) return;
+  const c = game.casino; if (!c) return;
+  if (c.version === 2) { toTugrik(game); return; }
+  if (c.version === 3) { for (const d of TABLES) c.tables[d.id] ??= freshTable(d); return; }
   for (const s of c.blackjack?.seats || []) if (c.blackjack.phase === 'betting' || c.blackjack.phase === 'playing') wallet(game, s.name).cash += s.bet;
   for (const b of c.roulette?.bets || []) wallet(game, b.name).cash += b.amount;
-  const lotto = c.lotto; game.casino = freshCasino(); if (lotto) Object.assign(game.casino.tables.lotto, { jackpot: lotto.jackpot, last: lotto.last || [], tickets: lotto.tickets || 0 });
+  const lotto = c.lotto; game.casino = freshCasino(); game.casino.version = 2; if (lotto) Object.assign(game.casino.tables.lotto, { jackpot: lotto.jackpot, last: lotto.last || [], tickets: lotto.tickets || 0 });
+  toTugrik(game);
+}
+// v35 saves were in US$: return every chip still on a table, convert wallets, loans and the jackpot to ₮.
+function toTugrik(game) {
+  const c = game.casino, T = c.tables || {}, x = v => mnt(v || 0);
+  for (const d of TABLES) { const t = T[d.id]; if (!t) continue;
+    if (d.game === 'blackjack' && ['betting', 'playing', 'dealer'].includes(t.phase)) for (const s of t.seats) wallet(game, s.name).cash += s.bet;
+    if (d.game === 'roulette') for (const b of t.bets || []) wallet(game, b.name).cash += b.amount;
+    if (d.game === 'poker') for (const s of t.seats || []) if (s) wallet(game, s.name).cash += (s.stack || 0) + (s.bet || 0); }
+  for (const w of Object.values(game.wallets || {})) { for (const k of ['cash', 'salary', 'won', 'lost']) w[k] = x(w[k]); for (const e of w.log || []) e.amount = x(e.amount); }
+  for (const l of game.loans || []) for (const k of ['amount', 'owed', 'repaid']) if (Number.isFinite(l[k])) l[k] = x(l[k]);
+  const lt = T.lotto; game.casino = freshCasino(); if (lt) Object.assign(game.casino.tables.lotto, { jackpot: x(lt.jackpot), last: [], tickets: lt.tickets || 0 });
+  game.luck ??= {}; game.arsenal ??= {};
 }
 
 export function wallet(game, name) {
@@ -264,7 +297,9 @@ export function slotPay(reels) { if (reels[0] === reels[1] && reels[1] === reels
 function slots(game, def, t, a, name, rng, now) {
   if (t.last && key(t.last.name) !== key(name) && now - t.last.at < 2600) throw Error(t.last.name + "'s reels are still spinning");
   const bet = int(a.amount, range(def), def.min, def.max), w = wallet(game, name); take(w, bet);
-  const reels = [reel(rng), reel(rng), reel(rng)], pay = Math.round(slotPay(reels) * bet); w.cash += pay; result(w, def.name + ' · ' + reels.map(r => SLOT_SYMBOLS[r]).join(' '), pay - bet);
+  let reels = [reel(rng), reel(rng), reel(rng)]; const l = luckOf(game, name, now), lucky = l?.kind === 'lucky';
+  if (l && (lucky ? slotPay(reels) === 0 : slotPay(reels) > 0) && rng() < l.strength) reels = [reel(rng), reel(rng), reel(rng)];   // the drink nudges one re-spin
+  const pay = Math.round(slotPay(reels) * bet); w.cash += pay; result(w, def.name + ' · ' + reels.map(r => SLOT_SYMBOLS[r]).join(' '), pay - bet);
   t.spins++; t.last = { name: w.name, reels, bet, pay, at: now, spin: t.spins }; return pay ? 'Win ' + money(pay) + '!' : 'No win';
 }
 function lotto(game, t, a, name, rng, now) {
@@ -274,7 +309,12 @@ function lotto(game, t, a, name, rng, now) {
   const wait = Math.max(0, (t.busyUntil || 0) - now); if (wait > 2 * LOTTO.drawMs) throw Error('The machine is busy · try again in ' + Math.ceil((wait - 2 * LOTTO.drawMs) / 1000 + 1) + ' s');
   const w = wallet(game, name); take(w, LOTTO.price, 'ticket'); t.jackpot += LOTTO.add; t.tickets++; t.busyUntil = now + wait + LOTTO.drawMs;
   const pool = Array.from({ length: LOTTO.numbers }, (_, i) => i + 1), balls = [];
-  for (let i = 0; i < LOTTO.picks; i++) balls.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+  const l = luckOf(game, name, now);
+  for (let i = 0; i < LOTTO.picks; i++) {
+    let b = pool.splice(Math.floor(rng() * pool.length), 1)[0];
+    if (l && (l.kind === 'lucky') !== picks.includes(b) && rng() < l.strength * .6) { pool.push(b); b = pool.splice(Math.floor(rng() * pool.length), 1)[0]; }   // luck redraws a ball
+    balls.push(b);
+  }
   const hits = picks.filter(n => balls.includes(n)).length; let prize = LOTTO.pays[hits] || 0;
   if (hits === LOTTO.picks) { prize = t.jackpot; t.jackpot = LOTTO.seed; }
   w.cash += prize; result(w, 'Lotto · ' + hits + ' of 5', prize - LOTTO.price);
@@ -288,14 +328,14 @@ function loans(game, a, name) {
   if (a.type === 'lend') {
     const to = String(a.to || '').trim(); if (!to || key(to) === key(name)) throw Error('Choose another engineer');
     if (!game.wallets?.[key(to)]) throw Error(to + ' has no wallet yet');
-    const amount = int(a.amount, 'Lend between $1 and $100,000', 1, 100000), from = wallet(game, name), b = wallet(game, to);
+    const amount = int(a.amount, 'Lend between 1,000₮ and 1,000,000,000₮', 1000, 1e9), from = wallet(game, name), b = wallet(game, to);
     take(from, amount); b.cash += amount; game.loanCounter = (game.loanCounter || 0) + 1;
     game.loans.push({ id: 'L' + game.loanCounter, lender: from.name, borrower: b.name, amount, owed: amount, at: Date.now() });
     note(from, 'Lent to ' + b.name, -amount); note(b, 'Loan from ' + from.name, amount); return 'Lent ' + money(amount) + ' to ' + b.name;
   }
   if (a.type === 'repay') {
     const loan = game.loans.find(l => l.id === a.id && key(l.borrower) === key(name) && l.owed > 0); if (!loan) throw Error('No open loan to repay');
-    const w = wallet(game, name), amount = Math.min(loan.owed, int(a.amount ?? loan.owed, 'Repay at least $1', 1, 1e9)); take(w, amount);
+    const w = wallet(game, name), amount = Math.min(loan.owed, int(a.amount ?? loan.owed, 'Repay at least 1,000₮', 1, 1e10)); take(w, amount);
     const lender = wallet(game, loan.lender); lender.cash += amount; loan.owed -= amount; note(w, 'Repaid ' + lender.name, -amount); note(lender, 'Repayment from ' + w.name, amount);
     return 'Repaid ' + money(amount) + ' to ' + lender.name + (loan.owed ? ' · still owe ' + money(loan.owed) : ' · loan cleared');
   }
@@ -319,6 +359,8 @@ export function casinoApply(game, a, name, rng = Math.random, now = Date.now()) 
   if (a?.type === 'hello') return 'Wallet ready · ' + money(wallet(game, name).cash);
   if (['lend', 'repay', 'forgive'].includes(a?.type)) return loans(game, a, name);
   if (a?.type === 'lotto') return lotto(game, game.casino.tables.lotto, a, name, rng, now);
+  if (a?.type === 'drink') return drink(game, a, name, rng, now);
+  if (a?.type === 'buy-weapon') return buyWeapon(game, a, name);
   const prefix = String(a?.type || '').split('-')[0], gameName = GAME_OF[prefix]; if (!gameName) throw Error('Unknown casino action');
   const id = a.table || TABLES.find(t => t.game === gameName).id, def = tableDef(id); if (def && !game.casino.tables[id]) game.casino.tables[id] = freshTable(def); const t = game.casino.tables[id];
   if (!def || def.game !== gameName || !t) throw Error('Unknown table');
@@ -328,6 +370,24 @@ export function casinoApply(game, a, name, rng = Math.random, now = Date.now()) 
   if (gameName === 'stage') return stage(game, def, t, a, name, now);
   return slots(game, def, t, a, name, rng, now);
 }
+
+// ---- Bar & weapon market ---------------------------------------------------------------------------------
+function drink(game, a, name, rng, now) {
+  const d = DRINKS.find(x => x.id === a.drink); if (!d) throw Error('That is not on the menu');
+  const w = wallet(game, name); take(w, DRINK_PRICE, d.name); note(w, 'Bar · ' + d.name, -DRINK_PRICE);
+  const kind = rng() < .5 ? 'lucky' : 'unlucky'; game.luck ??= {};
+  game.luck[key(name)] = { kind, strength: d.strength, drink: d.name, until: now + d.min * 60000 };
+  const bar = game.casino.tables.bar ??= freshTable(tableDef('bar')); bar.served++; bar.last = { name: w.name, drink: d.name, kind, at: now };
+  return d.name + ' · you feel ' + (kind === 'lucky' ? 'LUCKY' : 'UNLUCKY') + ' for ' + d.min + ' min (slots and lotto)';
+}
+function buyWeapon(game, a, name) {
+  const wpn = WEAPONS.find(x => x.id === a.weapon); if (!wpn) throw Error('Unknown weapon');
+  game.arsenal ??= {}; const own = game.arsenal[key(name)] ??= []; if (own.includes(wpn.id)) throw Error('You already own the ' + wpn.name);
+  const w = wallet(game, name); take(w, wpn.price, wpn.name); note(w, 'Weapon market · ' + wpn.name, -wpn.price); own.push(wpn.id);
+  const m = game.casino.tables.guns ??= freshTable(tableDef('guns')); m.sold++; m.last = { name: w.name, weapon: wpn.name };
+  return 'Bought the ' + wpn.name + ' · press 4 to draw it';
+}
+export const arsenalOf = (game, name) => [...(/^darja$/.test(key(name)) ? ['cannon'] : []), ...(game.arsenal?.[key(name)] || [])];
 
 // Timers and level bonuses. Returns true when state changed (the host then broadcasts it).
 export function casinoTick(game, rng = Math.random, now = Date.now()) {

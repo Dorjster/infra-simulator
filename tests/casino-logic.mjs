@@ -1,42 +1,46 @@
 // Payday economy and casino rules (host-side, deterministic with a seeded RNG).
 import assert from 'node:assert/strict';
-import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES } from '../dist/casino-logic.js';
+import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES, SALARY, START_CASH, DARJA_CASH, DRINKS, DRINK_PRICE, luckOf, arsenalOf } from '../dist/casino-logic.js';
+import { combatApply, combatTick, hpOf, isDown } from '../dist/combat-logic.js';
+import { WEAPONS, MAX_HP, RESPAWN_MS } from '../dist/weapons-data.js';
+import { mnt, money } from '../dist/money.js';
 
 let seed = 7; const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 const game = { mode: 'campaign', levels: { earned: {} } };
 assert.throws(() => casinoApply(game, { type: 'hello' }, 'Darja'), /Payday/);
 startPayday(game);
 const T = id => game.casino.tables[id], cash = n => wallet(game, n).cash;
-assert.equal(cash('Darja'), 10000, 'Darja starts with $10,000'); assert.equal(cash('darja '), 10000); assert.equal(cash('Sam'), 500);
+assert.equal(cash('Darja'), 36000000, 'Darja starts with 36,000,000₮ (US$10,000)'); assert.equal(cash('darja '), DARJA_CASH); assert.equal(cash('Sam'), 1800000);
+assert.equal(money(1800000), '1,800,000₮'); assert.equal(mnt(5000), 18000000);
 assert.equal(TABLES.filter(t => t.game === 'roulette').length, 2); assert.equal(TABLES.filter(t => t.game === 'blackjack').length, 2);
 
 // Salary once per job, level bonus.
-assert.equal(paySalary(game, 'Sam', { type: 'rack', id: 'S1', pad: 'PAD-R01' }), 150);
+assert.equal(paySalary(game, 'Sam', { type: 'rack', id: 'S1', pad: 'PAD-R01' }), SALARY.rack);
 assert.equal(paySalary(game, 'Sam', { type: 'rack', id: 'S1', pad: 'PAD-R01' }), 0);
-game.levels.earned = { 0: 1, 1: 1 }; casinoTick(game, rng); assert.equal(cash('Sam'), 650 + 2 * LEVEL_BONUS);
+game.levels.earned = { 0: 1, 1: 1 }; casinoTick(game, rng); assert.equal(cash('Sam'), START_CASH + SALARY.rack + 2 * LEVEL_BONUS);
 
 // Loans.
-const d0 = cash('Darja'); casinoApply(game, { type: 'lend', to: 'Sam', amount: 1000 }, 'Darja'); const loan = game.loans[0];
-casinoApply(game, { type: 'repay', id: loan.id, amount: 400 }, 'Sam'); assert.equal(loan.owed, 600); casinoApply(game, { type: 'repay', id: loan.id }, 'Sam'); assert.equal(cash('Darja'), d0);
+const d0 = cash('Darja'); casinoApply(game, { type: 'lend', to: 'Sam', amount: 3600000 }, 'Darja'); const loan = game.loans[0];
+casinoApply(game, { type: 'repay', id: loan.id, amount: 1400000 }, 'Sam'); assert.equal(loan.owed, 2200000); casinoApply(game, { type: 'repay', id: loan.id }, 'Sam'); assert.equal(cash('Darja'), d0);
 
 // Blackjack on both tables, limits per table.
 assert.equal(handValue(['A♠', 'K♥']), 21); assert.equal(handValue(['A♠', 'A♥', '9♦']), 21);
-assert.throws(() => casinoApply(game, { type: 'bj-bet', table: 'bj-2', amount: 50 }, 'Darja', rng), /\$100/);
+assert.throws(() => casinoApply(game, { type: 'bj-bet', table: 'bj-2', amount: 50000 }, 'Darja', rng), /500,000₮/);
 const before = cash('Darja') + cash('Sam');
-casinoApply(game, { type: 'bj-bet', table: 'bj-1', amount: 100 }, 'Darja', rng); casinoApply(game, { type: 'bj-bet', table: 'bj-1', amount: 50 }, 'Sam', rng);
+casinoApply(game, { type: 'bj-bet', table: 'bj-1', amount: 400000 }, 'Darja', rng); casinoApply(game, { type: 'bj-bet', table: 'bj-1', amount: 200000 }, 'Sam', rng);
 casinoApply(game, { type: 'bj-deal', table: 'bj-1' }, 'Sam', rng, 1000);
 assert.equal(redactCasino(game.casino, 'Sam').tables['bj-1'].dealer[1], game.casino.tables['bj-1'].phase === 'playing' ? '??' : game.casino.tables['bj-1'].dealer[1], 'dealer hole card hidden while playing');
 for (let g = 0; T('bj-1').phase === 'playing' && g < 20; g++) { const s = T('bj-1').seats[T('bj-1').turn]; casinoApply(game, { type: handValue(s.cards) < 15 ? 'bj-hit' : 'bj-stand', table: 'bj-1' }, s.name, rng, 1000); }
 casinoTick(game, rng, 2000); assert.equal(T('bj-1').phase, 'done');
-assert.equal(cash('Darja') + cash('Sam'), before - 150 + T('bj-1').seats.reduce((a, s) => a + s.payout, 0));
+assert.equal(cash('Darja') + cash('Sam'), before - 600000 + T('bj-1').seats.reduce((a, s) => a + s.payout, 0));
 
 // Roulette: timing for the 3D wheel and payouts.
 const r0 = cash('Darja');
-casinoApply(game, { type: 'rl-bet', table: 'rl-2', kind: 'red', amount: 200 }, 'Darja', rng); casinoApply(game, { type: 'rl-spin', table: 'rl-2' }, 'Darja', rng, 5000);
+casinoApply(game, { type: 'rl-bet', table: 'rl-2', kind: 'red', amount: 1000000 }, 'Darja', rng); casinoApply(game, { type: 'rl-spin', table: 'rl-2' }, 'Darja', rng, 5000);
 assert.equal(T('rl-2').landsAt - T('rl-2').spunAt, 7000);
 casinoTick(game, rng, 11999); assert.equal(T('rl-2').phase, 'spinning', 'ball still rolling'); casinoTick(game, rng, 12000);
 const n = T('rl-2').history[0], red = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36].includes(n);
-assert.equal(cash('Darja'), r0 - 200 + (red ? 400 : 0));
+assert.equal(cash('Darja'), r0 - 1000000 + (red ? 2000000 : 0));
 
 // Poker hand ranking.
 const H = (...c) => bestHand(c);
@@ -49,24 +53,24 @@ assert.equal(compareHands(H('A♠', 'K♦', 'Q♣', 'J♦', '9♠', '3♥', '2�
 assert(compareHands(H('6♠', '5♦', '4♣', '3♦', '2♠', 'K♥', 'K♣'), H('5♥', '4♣', '3♦', '2♣', 'A♦', 'Q♦', 'J♦')) > 0, '6-high straight beats the wheel');
 
 // Poker: three players, blinds, betting, an all-in with a side pot, conservation of chips.
-for (const p of ['Ana', 'Ben']) wallet(game, p).cash = 3000;
-casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 0, buyIn: 1000 }, 'Darja', rng, 0);
-casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 2, buyIn: 300 }, 'Ana', rng, 0);
-casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 4, buyIn: 1000 }, 'Ben', rng, 0);
-assert.throws(() => casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 2, buyIn: 500 }, 'Sam', rng, 0), /taken/);
+for (const p of ['Ana', 'Ben']) wallet(game, p).cash = 12000000;
+casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 0, buyIn: 4000000 }, 'Darja', rng, 0);
+casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 2, buyIn: 1200000 }, 'Ana', rng, 0);
+casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 4, buyIn: 4000000 }, 'Ben', rng, 0);
+assert.throws(() => casinoApply(game, { type: 'pk-sit', table: 'pk-1', seat: 2, buyIn: 2000000 }, 'Sam', rng, 0), /taken/);
 const pk = T('pk-1'), chips = () => pk.seats.filter(Boolean).reduce((a, s) => a + s.stack + s.total, 0) - (pk.phase === 'waiting' ? 0 : 0);
 casinoTick(game, rng, 6000); assert.equal(pk.phase, 'preflop', 'hand starts with 2+ players'); assert.equal(pk.hand, 1);
-const seated = pk.seats.filter(Boolean); assert(seated.every(s => s.cards.length === 2)); assert.equal(seated.reduce((a, s) => a + s.total, 0), 30, 'blinds posted');
+const seated = pk.seats.filter(Boolean); assert(seated.every(s => s.cards.length === 2)); assert.equal(seated.reduce((a, s) => a + s.total, 0), 150000, 'blinds posted');
 const masked = redactCasino(game.casino, 'Darja').tables['pk-1'].seats; assert.equal(masked[2].cards[0], '??', 'other hole cards hidden'); assert.notEqual(masked[0].cards[0], '??', 'own cards visible');
 const act = (type, extra = {}) => { const s = pk.seats[pk.toAct]; return casinoApply(game, { type, table: 'pk-1', ...extra }, s.name, rng, 7000); };
 assert.throws(() => casinoApply(game, { type: 'pk-check', table: 'pk-1' }, pk.seats[(pk.toAct + 2) % 5]?.name || 'Nobody', rng, 7000), /turn|seat/);
 // Preflop: the first to act raises to 100, the short stack goes all-in (300), the other calls.
-act('pk-raise', { to: 100 }); let guard = 0;
+act('pk-raise', { to: 400000 }); let guard = 0;
 while (pk.phase === 'preflop' && guard++ < 10) { const s = pk.seats[pk.toAct]; if (s.name === 'Ana') act('pk-allin'); else act(pk.currentBet > s.bet ? 'pk-call' : 'pk-check'); }
-assert.equal(chips(), 2300, 'chips conserved during the hand');
+assert.equal(chips(), 9200000, 'chips conserved during the hand');
 while (!['showdown'].includes(pk.phase) && guard++ < 40) { const s = pk.seats[pk.toAct]; if (!s) break; act(pk.currentBet > s.bet ? 'pk-call' : 'pk-check'); }
 assert.equal(pk.phase, 'showdown'); assert.equal(pk.board.length, 5);
-assert.equal(pk.seats.filter(Boolean).reduce((a, s) => a + s.stack, 0), 2300, 'every chip is awarded (main + side pot)');
+assert.equal(pk.seats.filter(Boolean).reduce((a, s) => a + s.stack, 0), 9200000, 'every chip is awarded (main + side pot)');
 assert(pk.results.winners.length >= 1);
 // A player who times out checks or folds; leaving cashes out to the wallet.
 casinoTick(game, rng, 7000 + 9001); casinoTick(game, rng, 7000 + 12000);
@@ -78,8 +82,8 @@ if (!pk.seats[0]) assert.equal(cash('Darja'), w0 + stackNow, 'cash-out returns t
 // Slots: pays and return-to-player.
 assert.equal(slotPay([5, 5, 5]), 250); assert.equal(slotPay([0, 0, 3]), 2.5); assert.equal(slotPay([1, 2, 3]), 0);
 const g2 = { levels: {} }; startPayday(g2); wallet(g2, 'Bot').cash = 1e9; let paid = 0; const spins = 40000;
-for (let i = 0; i < spins; i++) { const c0 = wallet(g2, 'Bot').cash; casinoApply(g2, { type: 'sl-spin', table: 'sl-1', amount: 1 }, 'Bot', rng); paid += wallet(g2, 'Bot').cash - c0 + 1; }
-const rtp = paid / spins; assert(rtp > .85 && rtp < .98, 'slot return-to-player ' + rtp.toFixed(3));
+for (let i = 0; i < spins; i++) { const c0 = wallet(g2, 'Bot').cash; casinoApply(g2, { type: 'sl-spin', table: 'sl-1', amount: 5000 }, 'Bot', rng); paid += wallet(g2, 'Bot').cash - c0 + 5000; }
+const rtp = paid / spins / 5000; assert(rtp > .85 && rtp < .98, 'slot return-to-player ' + rtp.toFixed(3));
 
 // Lotto.
 const j0 = T('lotto').jackpot, c0 = cash('Sam'), res = casinoApply(game, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'Sam', rng);
@@ -91,17 +95,55 @@ assert.equal(new Set(res.balls).size, 5); assert.equal(T('lotto').jackpot, res.h
   assert.throws(() => casinoApply(game, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'Darja', rng, now0), /machine is busy/);
   casinoApply(game, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'Darja', rng, now0 + LOTTO.drawMs); }
 // Slots: another player can't pull the lever while someone's reels are still turning.
-{ const now0 = 6e12; casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5 }, 'Darja', rng, now0);
-  assert.throws(() => casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5 }, 'Sam', rng, now0 + 1000), /still spinning/);
-  casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5 }, 'Sam', rng, now0 + 3000); }
+{ const now0 = 6e12; casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5000 }, 'Darja', rng, now0);
+  assert.throws(() => casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5000 }, 'Sam', rng, now0 + 1000), /still spinning/);
+  casinoApply(game, { type: 'sl-spin', table: 'sl-2', amount: 5000 }, 'Sam', rng, now0 + 3000); }
 
 // Stage: tips request dances, queued in order, each 18 s.
 const st = T('stage'), tip0 = cash('Darja');
-assert.match(casinoApply(game, { type: 'st-tip', dance: 2, amount: 50 }, 'Darja', rng, 100000), /starts now/); assert.equal(st.dance, 2); assert.equal(cash('Darja'), tip0 - 50);
-assert.match(casinoApply(game, { type: 'st-tip', dance: 5, amount: 20 }, 'Sam', rng, 101000), /next in line/);
-assert.throws(() => casinoApply(game, { type: 'st-tip', dance: 6, amount: 20 }, 'Sam', rng, 101000), /six dances/); assert.throws(() => casinoApply(game, { type: 'st-tip', dance: 1, amount: 5 }, 'Sam', rng, 101000), /\$20/);
+assert.match(casinoApply(game, { type: 'st-tip', dance: 2, amount: 200000 }, 'Darja', rng, 100000), /starts now/); assert.equal(st.dance, 2); assert.equal(cash('Darja'), tip0 - 200000);
+assert.match(casinoApply(game, { type: 'st-tip', dance: 5, amount: 70000 }, 'Sam', rng, 101000), /next in line/);
+assert.throws(() => casinoApply(game, { type: 'st-tip', dance: 6, amount: 70000 }, 'Sam', rng, 101000), /six dances/); assert.throws(() => casinoApply(game, { type: 'st-tip', dance: 1, amount: 10000 }, 'Sam', rng, 101000), /70,000₮/);
 casinoTick(game, rng, 118001); assert.equal(st.dance, 5); assert.equal(st.by, 'Sam'); casinoTick(game, rng, 136002); assert.equal(st.dance, -1);
 // v34 saves migrate: chips still on the old tables go back to their owners.
 const old = { payday: true, wallets: {}, casino: { blackjack: { phase: 'betting', seats: [{ name: 'Sam', bet: 40 }] }, roulette: { bets: [{ name: 'Sam', amount: 25 }] }, lotto: { jackpot: 7777, last: [], tickets: 3 } } };
-wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.cash, 165); assert.equal(old.casino.version, 2); assert.equal(old.casino.tables.lotto.jackpot, 7777);
-console.log('PASS: casino logic · lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');
+wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.cash, mnt(165), 'US$ chips returned, then converted'); assert.equal(old.casino.version, 3); assert.equal(old.casino.tables.lotto.jackpot, mnt(7777));
+// Bar: a drink costs US$5,000 in ₮ and gives timed luck, good or bad at random; luck nudges own slots.
+{ const g3 = { levels: {} }; startPayday(g3); wallet(g3, 'Bo').cash = 1e12; const kinds = new Set();
+  for (let i = 0; i < 40; i++) { casinoApply(g3, { type: 'drink', drink: DRINKS[i % 8].id }, 'Bo', rng, 1000); kinds.add(luckOf(g3, 'Bo', 1000).kind); }
+  assert.deepEqual([...kinds].sort(), ['lucky', 'unlucky'], 'drinks give both kinds of luck');
+  assert.equal(wallet(g3, 'Bo').cash, 1e12 - 40 * DRINK_PRICE); assert.equal(DRINK_PRICE, 18000000);
+  assert.equal(luckOf(g3, 'Bo', 1000 + 5 * 60000), null, 'luck wears off');
+  assert.throws(() => casinoApply(g3, { type: 'drink', drink: 'kumis' }, 'Bo', rng), /menu/);
+  const rtpWith = kind => { const g = { levels: {} }; startPayday(g); wallet(g, 'L').cash = 1e12; g.luck = { l: { kind, strength: .35, until: 9e15 } }; let paid = 0; const n = 30000;
+    for (let i = 0; i < n; i++) { const c = wallet(g, 'L').cash; casinoApply(g, { type: 'sl-spin', table: 'sl-1', amount: 5000 }, 'L', rng, 1e6 + i * 3000); paid += wallet(g, 'L').cash - c + 5000; } return paid / n / 5000; };
+  const lucky = rtpWith('lucky'), unlucky = rtpWith('unlucky'); assert(lucky > rtp + .05 && unlucky < rtp - .05, `luck moves slots: lucky ${lucky.toFixed(3)} · plain ${rtp.toFixed(3)} · unlucky ${unlucky.toFixed(3)}`);
+  globalThis.__luck = [lucky, unlucky]; }
+// Weapon market: eight guns from US$25,000 (90,000,000₮); bought once; Darja has her own.
+{ assert.equal(WEAPONS.length, 8); assert.equal(Math.min(...WEAPONS.map(w => w.price)), 90000000);
+  const g4 = { levels: {} }; startPayday(g4);
+  assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'pistol' }, 'Sam', rng), /Not enough cash/);
+  wallet(g4, 'Sam').cash = 1e9; assert.match(casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /Bought/); assert.equal(wallet(g4, 'Sam').cash, 1e9 - mnt(100000));
+  assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /already own/);
+  assert.deepEqual(arsenalOf(g4, 'Sam'), ['ak']); assert.deepEqual(arsenalOf(g4, 'Darja'), ['cannon']);
+  // Combat: host-checked hits, HP, head shots, range, fire rate, knock-out and respawn.
+  const players = [{ id: 'p1', name: 'Sam', pose: { x: 0, y: 9.7, z: 50 } }, { id: 'p2', name: 'Darja', pose: { x: 0, y: 9.7, z: 80 } }, { id: 'p3', name: 'Far', pose: { x: 0, y: 9.7, z: 1000 } }];
+  assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'sniper' }, 'Sam', players, 'p1', 1000), /own/);
+  let r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1000); assert.equal(r.hp, MAX_HP - 30);
+  assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1010), /Too fast/);
+  assert.throws(() => combatApply(g4, { type: 'hit', target: 'p3', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /range/);
+  assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /target/);
+  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak', head: true }, 'Sam', players, 'p1', 4000); assert.equal(r.dmg, 75, 'head shot ×2.5'); assert(r.down && hpOf(g4, 'Darja') === 0 && isDown(g4, 'Darja', 4001), '70 HP − 75 → knocked out');
+  assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'cannon' }, 'Darja', players, 'p2', 4500), /knocked out/);
+  assert.equal(g4.combat.kills.sam, 1); assert.equal(g4.combat.feed[0].target, 'Darja');
+  assert(combatTick(g4, 4000 + RESPAWN_MS)); assert.equal(hpOf(g4, 'Darja'), MAX_HP); assert.equal(g4.combat.respawns.darja, 1);
+  r = combatApply(g4, { type: 'hit', target: 'p1', weapon: 'cannon' }, 'Darja', players, 'p2', 20000); assert.equal(r.hp, MAX_HP - 40, "Darja's own gun works");
+  wallet(g4, 'Sam').cash = 1e9; casinoApply(g4, { type: 'buy-weapon', weapon: 'shotgun' }, 'Sam', rng);
+  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'shotgun', pellets: 5 }, 'Sam', [{ ...players[0], pose: { x: 0, y: 9.7, z: 70 } }, players[1]], 'p1', 30000); assert.equal(r.hp, MAX_HP - 65, 'shotgun: damage per pellet that hit'); }
+// Roulette is pure chance: every pocket about 1/37, colours independent of the previous spin.
+{ const g5 = { levels: {} }; startPayday(g5); wallet(g5, 'R').cash = 1e15; const counts = Array(37).fill(0), seq = []; let t = 1e7, rr = Math.random;
+  for (let i = 0; i < 37000; i++) { casinoApply(g5, { type: 'rl-bet', table: 'rl-1', kind: 'red', amount: 50000 }, 'R', rr, t); casinoApply(g5, { type: 'rl-spin', table: 'rl-1' }, 'R', rr, t); t += 7001; casinoTick(g5, rr, t); const n = g5.casino.tables['rl-1'].history[0]; counts[n]++; seq.push(n === 0 ? 'g' : [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36].includes(n) ? 'r' : 'b'); }
+  const chi = counts.reduce((a, c) => a + (c - 1000) ** 2 / 1000, 0); assert(chi < 75, 'chi-square over 36 d.o.f. ' + chi.toFixed(1));   // p ≈ 0.0002 cut-off
+  const rr2 = seq.slice(1).filter((c, i) => seq[i] === 'r' && c === 'r').length / seq.slice(0, -1).filter(c => c === 'r').length; assert(Math.abs(rr2 - 18 / 37) < .02, 'red after red ' + rr2.toFixed(3));
+  globalThis.__chi = chi; }
+console.log('PASS: casino logic · tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');

@@ -10,9 +10,12 @@ import { WHEEL, rouletteColor, TABLES, SLOT_SYMBOLS, LOTTO } from './casino-logi
 import { startedAt, SYNC, bjReveal, lottoPlan, boardLandsAt, hitLandsAt } from './casino-sync.js';
 import { createStage } from './casino-stage.js';
 import { drawSymbol } from './slot-symbols.js';
+import { money, short } from './money.js';
+import { WEAPONS, weaponById } from './weapons-data.js';
+import { weaponModel } from './weapon-models.js';
 
 const TABLE_H = 4.8, CARD_W = .38, CARD_H = .53, CHIP_R = .12, CHIP_T = .022;
-export const LAYOUT = { 'bj-1': { x: -24, z: 86 }, 'bj-2': { x: -24, z: 152 }, 'rl-1': { x: 12, z: 86 }, 'rl-2': { x: 12, z: 162 }, 'pk-1': { x: 48, z: 152 }, 'sl-1': { x: 64, z: 92 }, 'sl-2': { x: 64, z: 99 }, 'sl-3': { x: 64, z: 106 }, lotto: { x: 46, z: 72 }, wallet: { x: -32, z: 66 }, stage: { x: 14, z: 123 } };
+export const LAYOUT = { 'bj-1': { x: -24, z: 86 }, 'bj-2': { x: -24, z: 152 }, 'rl-1': { x: 12, z: 86 }, 'rl-2': { x: 12, z: 162 }, 'pk-1': { x: 48, z: 152 }, 'sl-1': { x: 64, z: 92 }, 'sl-2': { x: 64, z: 99 }, 'sl-3': { x: 64, z: 106 }, lotto: { x: 46, z: 72 }, bar: { x: 5, z: 183 }, guns: { x: -36, z: 134 }, wallet: { x: -32, z: 66 }, stage: { x: 14, z: 123 } };
 const BJ_SEAT_ANGLES = [0, 1, 2, 3, 4].map(i => Math.PI * (.18 + i * .16)), PK_ANGLES = [172, 128, 90, 52, 8].map(d => d * Math.PI / 180), PK_A = 7, PK_B = 4;
 // Where a player stands / looks for a table seat (camera pose for "take a seat").
 export function seatPose(id, seat = 0) {
@@ -22,6 +25,8 @@ export function seatPose(id, seat = 0) {
   if (def?.game === 'poker') { const a = PK_ANGLES[Math.max(0, Math.min(4, seat))]; return { px: L.x + Math.cos(a) * PK_A * 1.75, pz: L.z + Math.sin(a) * PK_B * 2.1, tx: L.x, ty: TABLE_H, tz: L.z }; }
   if (def?.game === 'slots') return { px: L.x - 5.2, pz: L.z, tx: L.x, ty: 6.8, tz: L.z };
   if (id === 'lotto') { const dx = (seat % 5 - 2) * 1.6; return { px: L.x - 1 + dx, pz: L.z - 11, tx: L.x + 1.5 + dx * .3, ty: 7, tz: L.z }; }   // watchers stand side by side
+  if (id === 'bar') { const x = L.x + (seat % 5 - 2) * 6; return { px: x, pz: L.z - 13, tx: x, ty: 6, tz: L.z + 4 }; }
+  if (id === 'guns') return { px: L.x + 10, pz: L.z, tx: L.x - 3, ty: 6.5, tz: L.z };
   if (id === 'stage') { const a = -Math.PI / 2 + (seat % 5 - 2) * .35; return { px: L.x + Math.cos(a) * 12, pz: L.z + Math.sin(a) * 12, tx: L.x, ty: 7, tz: L.z }; }
   return { px: L.x, pz: L.z - 6, tx: L.x, ty: 4, tz: L.z };
 }
@@ -37,7 +42,6 @@ export function rlSpot(kind, value) {
 
 const noCanvas = new Proxy({}, { get: () => () => {}, set: () => true });
 function canvasTexture(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; const ctx = c.getContext?.('2d'); return { c, g: typeof ctx?.beginPath === 'function' ? ctx : noCanvas, t }; }
-const money = n => '$' + Math.round(n || 0).toLocaleString('en-US');
 const key = s => String(s || '').trim().toLowerCase();
 
 // Card faces (cached) — '??' is the back.
@@ -58,7 +62,8 @@ function ballMaterial(n) {
   for (let k = 0; k < 4; k++) { g.fillStyle = '#fff'; g.beginPath(); g.arc(32 + k * 64, 64, 26, 0, 7); g.fill(); g.fillStyle = '#111'; g.font = 'bold 30px system-ui'; g.fillText(String(n), 32 + k * 64, 75); }
   const m = new THREE.MeshStandardMaterial({ map: s.t, roughness: .25, metalness: .05 }); m.userData.shared = true; ballMats.set(n, m); return m;
 }
-const DENOMS = [[1000, 0xd8a945], [500, 0x8b5cf6], [100, 0x1a1a1a], [25, 0x16a34a], [5, 0xdc2626], [1, 0xf5f5f5]];
+const mnt5k = 18000000;
+const DENOMS = [[20000000, 0x0e7490], [5000000, 0xd8a945], [1000000, 0x8b5cf6], [500000, 0x1a1a1a], [100000, 0x16a34a], [50000, 0xdc2626], [10000, 0xf5f5f5]];   // tögrög chips
 function chipsFor(amount, cap = 24) { const out = []; let left = Math.round(amount); for (const [v, c] of DENOMS) while (left >= v && out.length < cap) { out.push(c); left -= v; } return out; }
 
 export function createCasinoScene(scene, { pickables = [], localName = () => '' } = {}) {
@@ -283,11 +288,18 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   const CA = LAYOUT.wallet; box(13, 4.6, 2.6, CA.x, 2.3, CA.z, M.wood); box(13.4, .3, 3, CA.x, 4.75, CA.z, M.gold); box(13, 9, .3, CA.x, 9.5, CA.z + 3.5, M.panel);
   for (let i = 0; i < 3; i++) box(.15, 4, .15, CA.x - 4 + i * 4, 7, CA.z - 1.1, M.gold);
   const cashSign = screen(9, 3, CA.x, 11, CA.z + 3.2); hit(14, 6, 3.6, CA.x, CA.z, { casino: 'wallet' });
+  { const GL = LAYOUT.guns; box(3, 4.6, 14, GL.x + 2, 2.3, GL.z, M.black); box(3.4, .3, 14.4, GL.x + 2, 4.75, GL.z, M.chrome);
+    box(.4, 12, 18, minX + .5, 7, GL.z, M.panel); box(.2, 9, 16, minX + .8, 8, GL.z, new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: .9 }));
+    WEAPONS.forEach((w, i) => { const m = weaponModel(w.id, w.kind === 'pistol' ? 2.6 : 1.3); m.rotation.y = 0; /* side-on along the wall */ m.position.set(minX + 1.2, 12 - (i % 4) * 2.3, GL.z - 3.8 + Math.floor(i / 4) * 7.6); group.add(m); });
+    sign(screen(10, 2.4, GL.x + 3.6, 13.5, GL.z, -Math.PI / 2, 500), 'WEAPON MARKET', ['Eight guns from ' + money(WEAPONS[0].price), 'Payday shoot-outs · 100 HP · press E']);
+    hit(6, 7, 15, GL.x + 2, GL.z, { casino: 'table', table: 'guns' }); }
   const rich = screen(16, 7.5, minX + .4, 11, cz - 10, Math.PI / 2, 800); let richKey = '';
+  const BOTTLE_GEO = new THREE.CylinderGeometry(.18, .22, 1.4, 8), BOTTLES = [0x2f6b2a, 0x7a3b12, 0xc9b06a, 0x5a1426, 0x2a4f7a, 0xd9e4e8].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: .15, metalness: .1 }));
+  hit(50, 7, 7, 5, maxZ - 8, { casino: 'table', table: 'bar' });
   box(50, 4.4, 2.6, 5, 2.2, maxZ - 7, M.wood); box(50.4, .3, 3, 5, 4.55, maxZ - 7, M.gold); box(50, 12, .4, 5, 9, maxZ - .6, M.panel);
-  for (let r = 0; r < 3; r++) { box(46, .2, 1.2, 5, 7 + r * 3, maxZ - 1.2, M.gold); for (let i = 0; i < 22; i++) add(new THREE.CylinderGeometry(.18, .22, 1.4, 8), new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL((i * 37 % 100) / 100, .6, .45), roughness: .2, transparent: true, opacity: .85 }), -16 + i * 2, 7.8 + r * 3, maxZ - 1.2); }
+  for (let r = 0; r < 3; r++) { box(46, .2, 1.2, 5, 7 + r * 3, maxZ - 1.2, M.gold); for (let i = 0; i < 22; i++) add(BOTTLE_GEO, BOTTLES[(i + r * 3) % BOTTLES.length], -16 + i * 2, 7.8 + r * 3, maxZ - 1.2); }
   for (let i = 0; i < 9; i++) { add(new THREE.CylinderGeometry(.9, .9, .3, 16), M.velvet, -15 + i * 5, 4.6, maxZ - 10.5); add(new THREE.CylinderGeometry(.12, .12, 4.4, 8), M.chrome, -15 + i * 5, 2.2, maxZ - 10.5); }
-  sign(screen(12, 2.6, 5, 15.5, maxZ - .9, Math.PI, 600), 'THE PAYDAY BAR', ['Drinks on the house · play responsibly', 'Play money only']);
+  sign(screen(12, 2.6, 5, 15.5, maxZ - .9, Math.PI, 600), 'THE PAYDAY BAR', ['Every drink ' + money(mnt5k) + ' · press E at the bar', 'Luck — or bad luck — for a few minutes', 'Play money only · drink responsibly']);
   for (const [x, z] of [[minX + 3, minZ + 3], [maxX - 3, minZ + 3], [minX + 3, maxZ - 3], [maxX - 3, maxZ - 14]]) { add(new THREE.CylinderGeometry(1, .8, 2.4, 12), M.gold, x, 1.2, z); add(new THREE.SphereGeometry(1.8, 12, 10), new THREE.MeshStandardMaterial({ color: 0x1f6b35, roughness: .8 }), x, 3.6, z); }
 
   const ST = LAYOUT.stage, stage = createStage(group, ST, { hit }), stageSign = screen(10, 3, ST.x, 21, ST.z - 9.6); chandelier(ST.x - 14, ST.z); chandelier(ST.x + 14, ST.z);
@@ -309,6 +321,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   function clear(x, z) {
     if (z < ROOM.maxZ + 1.2) return open && x > d0 + .4 && x < d1 - .4;
     if (!open || x < minX + 1 || x > maxX - 1 || z > maxZ - 1) return false;
+    if (x < LAYOUT.guns.x + 4 && Math.abs(z - LAYOUT.guns.z) < 7.6) return false;   // weapon market counter
     for (const id of ['bj-1', 'bj-2']) { const L = LAYOUT[id]; if (Math.abs(x - L.x) < 7.2 && z > L.z - 3.4 && z < L.z + 1.2) return false; if (z >= L.z && Math.hypot(x - L.x, z - L.z) < 7.2) return false; }
     for (const id of ['rl-1', 'rl-2']) { const L = LAYOUT[id]; if (Math.abs(x - L.x - 1) < 9 && Math.abs(z - L.z) < 4.4 || Math.abs(x - L.x + 4.4) < 1.6 && Math.abs(z - L.z + 5.2) < 1.2) return false; }
     { const L = LAYOUT['pk-1']; if (((x - L.x) / (PK_A + 1)) ** 2 + ((z - L.z) / (PK_B + 1)) ** 2 < 1 || Math.abs(x - L.x) < 1.6 && Math.abs(z - L.z + PK_B + 2.2) < 1.2) return false; }
