@@ -13,6 +13,7 @@ import { drawSymbol } from './slot-symbols.js';
 import { money, short } from './money.js';
 import { WEAPONS, weaponById } from './weapons-data.js';
 import { weaponModel } from './weapon-models.js';
+import { createAvatar } from './avatar.js';
 
 const TABLE_H = 4.8, CARD_W = .38, CARD_H = .53, CHIP_R = .12, CHIP_T = .022;
 export const LAYOUT = { 'bj-1': { x: -24, z: 86 }, 'bj-2': { x: -24, z: 152 }, 'rl-1': { x: 12, z: 86 }, 'rl-2': { x: 12, z: 162 }, 'pk-1': { x: 48, z: 152 }, 'sl-1': { x: 64, z: 92 }, 'sl-2': { x: 64, z: 99 }, 'sl-3': { x: 64, z: 106 }, lotto: { x: 46, z: 72 }, bar: { x: 5, z: 183 }, guns: { x: -36, z: 134 }, wallet: { x: -32, z: 66 }, stage: { x: 14, z: 123 } };
@@ -81,6 +82,8 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     velvet: new THREE.MeshStandardMaterial({ color: 0x8c1020, roughness: .9 })
   };
   M.bowl = new THREE.MeshStandardMaterial({ color: 0x4a2412, roughness: .35, side: THREE.DoubleSide });
+  M.rail = new THREE.MeshStandardMaterial({ color: 0x121214, roughness: .42, metalness: .05 }); M.trackWood = new THREE.MeshStandardMaterial({ color: 0x6b3216, roughness: .28, metalness: .05 });
+  const TRAY_CHIPS = new THREE.CylinderGeometry(.13, .13, .62, 14), trayMats = new Map(), trayMat = col => { if (!trayMats.has(col)) trayMats.set(col, new THREE.MeshStandardMaterial({ color: col, roughness: .5 })); return trayMats.get(col); };
   for (const m of Object.values(M)) m.userData.shared = true;
   // Shell: floor, ceiling, walls with gold trim, columns, the doorway with frame, neon sign and glass doors.
   box(W, .2, D, cx, -.08, cz, M.carpet); box(W, .3, D, cx, H, cz, M.ceiling);
@@ -98,6 +101,18 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   function chandelier(x, z) { const c = add(new THREE.TorusGeometry(2.4, .14, 8, 28), M.gold, x, H - 4, z); c.rotation.x = Math.PI / 2; for (let i = 0; i < 12; i++) add(new THREE.SphereGeometry(.28, 10, 8), M.lamp, x + Math.cos(i / 12 * 6.283) * 2.4, H - 4.35, z + Math.sin(i / 12 * 6.283) * 2.4); box(.08, 4, .08, x, H - 2, z, M.gold); add(new THREE.SphereGeometry(.6, 12, 10), M.lamp, x, H - 4.6, z); }
   function screen(w, h, x, y, z, ry = Math.PI, px = 640) { const s = canvasTexture(px, Math.round(px * h / w)), m = add(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: s.t }), x, y, z); m.rotation.y = ry; const f = box(w + .35, h + .35, .1, x - Math.sin(ry) * .07, y, z - Math.cos(ry) * .07, M.gold); f.rotation.y = ry; return s; }
   function sign(s, title, lines, accent = '#e2bc5c') { const g = s.g, w = s.c.width, h = s.c.height; g.fillStyle = '#12060b'; g.fillRect(0, 0, w, h); g.textAlign = 'center'; g.fillStyle = accent; g.font = `bold ${h * .19}px Georgia, serif`; g.fillText(title, w / 2, h * .24); g.fillStyle = '#f5ead3'; g.font = `${h * .115}px system-ui, sans-serif`; lines.slice(0, 4).forEach((l, i) => g.fillText(String(l).slice(0, 60), w / 2, h * (.44 + i * .155))); g.textAlign = 'left'; s.t.needsUpdate = true; }
+  // Casino swivel chair: padded seat and back on a post with a five-star base, facing (fx, fz) in parent space.
+  const CHAIR = { seat: new THREE.CylinderGeometry(1.15, 1.05, .45, 20), back: new THREE.BoxGeometry(2.1, 2.1, .38), post: new THREE.CylinderGeometry(.14, .14, 2.4, 8), arm: new THREE.BoxGeometry(1.3, .12, .16), wheel: new THREE.SphereGeometry(.14, 8, 6) };
+  function chair(parent, x, z, fx, fz) {
+    const c = new THREE.Group(); c.position.set(x, 0, z); c.rotation.y = Math.atan2(fx - x, fz - z); parent.add(c);
+    add(CHAIR.seat, M.leather, 0, 2.85, 0, c); const back = add(CHAIR.back, M.leather, 0, 4.15, -1.0, c); back.rotation.x = -.12;
+    add(CHAIR.post, M.chrome, 0, 1.5, 0, c); add(CHAIR.post, M.chrome, 0, 2.9, -.95, c).scale.y = .5;
+    for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2, arm = add(CHAIR.arm, M.chrome, Math.sin(a) * .62, .3, Math.cos(a) * .62, c); arm.rotation.y = a + Math.PI / 2; add(CHAIR.wheel, M.black, Math.sin(a) * 1.25, .14, Math.cos(a) * 1.25, c); }
+    return c;
+  }
+  // Dealers: one per table, standing in the dealer's spot in a black waistcoat; idle until cards or the ball are in play.
+  const dealers = [];
+  function dealer(parent, x, z, ry, look = {}) { const d = createAvatar({ color: 0x15171a, name: '', face: 'smile', skin: 'yellow', hat: 'hair', outfit: 'plain', ...look }); if (d.label) d.label.visible = false; d.g.position.set(x, 0, z); d.g.rotation.y = ry; parent.add(d.g); dealers.push(d); return d; }
   const hit = (w, h, d, x, z, data) => { const m = add(new THREE.BoxGeometry(w, h, d), new THREE.MeshBasicMaterial({ visible: false }), x, h / 2, z); m.userData = data; pickables.push(m); return m; };
   // Chip stacks (instanced, per table) — world coordinates.
   function chipLayer(max = 600) { const m = new THREE.InstancedMesh(new THREE.CylinderGeometry(CHIP_R, CHIP_R, CHIP_T, 14), new THREE.MeshStandardMaterial({ roughness: .4 }), max); m.count = 0; m.frustumCulled = false; group.add(m); const d = new THREE.Object3D(), c = new THREE.Color(); let n = 0; return { m, begin() { n = 0; }, stack(x, z, amount, y = TABLE_H + .02, cap = 24) { chipsFor(amount, cap).forEach((col, i) => { if (n >= max) return; d.position.set(x + Math.floor(i / 12) * CHIP_R * 2.1, y + (i % 12) * CHIP_T + CHIP_T / 2, z); d.updateMatrix(); m.setMatrixAt(n, d.matrix); m.setColorAt(n, c.setHex(col)); n++; }); }, end() { m.count = n; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; } }; }
@@ -118,8 +133,8 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     const fm = add(feltGeo, new THREE.MeshStandardMaterial({ map: feltTex.t, roughness: .95 }), 0, TABLE_H + .05, 0, g); fm.rotation.x = -Math.PI / 2;
     { const c = feltTex.g; c.fillStyle = felt; c.fillRect(0, 0, 1024, 512); c.strokeStyle = '#e2bc5c'; c.lineWidth = 3; c.beginPath(); c.arc(512, 0, 300, 0, Math.PI); c.stroke(); c.textAlign = 'center'; c.fillStyle = '#e2bc5c'; c.font = 'bold 30px Georgia'; c.fillText('BLACKJACK PAYS 3 TO 2', 512, 200); c.font = '22px Georgia'; c.fillText('Dealer must stand on all 17s · ' + money(def.min) + '–' + money(def.max), 512, 236); BJ_SEAT_ANGLES.forEach(a => { c.beginPath(); c.arc(512 - Math.cos(a) * 512 * (5 / 6), Math.sin(a) * 512 * (5 / 6), 30, 0, 7); c.stroke(); }); feltTex.t.needsUpdate = true; }
     box(10.5, TABLE_H - .5, 2.4, 0, (TABLE_H - .5) / 2, .6, M.wood, g); add(new THREE.CylinderGeometry(.8, 1.2, TABLE_H - .5, 12), M.wood, 0, (TABLE_H - .5) / 2, 3.2, g);
-    box(.9, .6, 1.4, 4.6, TABLE_H + .3, .9, M.black, g); BJ_SEAT_ANGLES.forEach(a => add(new THREE.CylinderGeometry(.8, .8, 2.9, 14), M.leather, -Math.cos(a) * 8.3, 1.45, Math.sin(a) * 8.3, g));
-    box(2.2, 7.8, 1.4, 0, 3.9, -2.4, M.panel, g);
+    box(.9, .6, 1.4, 4.6, TABLE_H + .3, .9, M.black, g); BJ_SEAT_ANGLES.forEach(a => chair(g, -Math.cos(a) * 8.4, Math.sin(a) * 8.4, 0, 0));
+    dealer(g, 0, -1.9, Math.PI, { skin: id === 'bj-1' ? 'yellow' : 'pink' });
     const sg = screen(8, 3, L.x, 11.5, L.z - 3.2); chandelier(L.x, L.z + 2); hit(14, 9, 9, L.x, L.z + 3, { casino: 'table', table: id });
     tables[id] = { L, sg, chips: chipLayer(), cards: cardLayer({ x: L.x + 4.6, z: L.z + .9 }), key: '' };
     tables[id].chips.y = TABLE_H + .07;
@@ -142,12 +157,12 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     const L = LAYOUT[id], g = new THREE.Group(); g.position.set(L.x, 0, L.z); group.add(g);
     box(16.6, TABLE_H - .3, 7.4, 1, (TABLE_H - .3) / 2, 0, M.wood, g); box(17, .3, 7.8, 1, TABLE_H - .15, 0, M.leather, g);
     const layoutTex = canvasTexture(1300, 693), lay = add(new THREE.PlaneGeometry(RL_W, RL_D), new THREE.MeshStandardMaterial({ map: layoutTex.t, roughness: .95 }), 3.3, TABLE_H + .01, 0, g); lay.rotation.x = -Math.PI / 2;
-    { const c = layoutTex.g, w = 1300, h = 693, cw = w / 13, rh = h / 4.8; c.fillStyle = '#0f6b3c'; c.fillRect(0, 0, w, h); c.strokeStyle = '#f2e6c4'; c.lineWidth = 2; c.textAlign = 'center'; c.font = 'bold 40px Georgia';
-      c.fillStyle = '#0d7a3e'; c.fillRect(0, 0, cw, rh * 3); c.strokeRect(0, 0, cw, rh * 3); c.fillStyle = '#fff'; c.fillText('0', cw / 2, rh * 1.6);
-      for (let n = 1; n <= 36; n++) { const [u, v] = rlSpot('straight', n), x = u * w - cw / 2, y = v * h - rh / 2; c.fillStyle = rouletteColor(n) === 'red' ? '#b51624' : '#151515'; c.fillRect(x + 6, y + 6, cw - 12, rh - 12); c.strokeRect(x, y, cw, rh); c.fillStyle = '#fff'; c.fillText(String(n), x + cw / 2, y + rh / 2 + 14); }
-      for (let v = 1; v <= 3; v++) { const [u, vv] = rlSpot('column', v); c.strokeRect(u * w - cw / 2, vv * h - rh / 2, cw, rh); c.fillStyle = '#fff'; c.font = 'bold 26px Georgia'; c.fillText('2:1', u * w, vv * h + 9); }
-      for (let v = 1; v <= 3; v++) { const [u, vv] = rlSpot('dozen', v); c.strokeRect(u * w - cw * 2, vv * h - rh * .45, cw * 4, rh * .9); c.fillStyle = '#fff'; c.font = 'bold 30px Georgia'; c.fillText(['1st 12', '2nd 12', '3rd 12'][v - 1], u * w, vv * h + 10); }
-      [['low', '1–18'], ['even', 'EVEN'], ['red', ''], ['black', ''], ['odd', 'ODD'], ['high', '19–36']].forEach(([k2, label]) => { const [u, vv] = rlSpot(k2), x = u * w; c.strokeRect(x - cw, vv * h - rh * .45, cw * 2, rh * .9); if (k2 === 'red' || k2 === 'black') { c.fillStyle = k2 === 'red' ? '#b51624' : '#151515'; c.beginPath(); c.moveTo(x, vv * h - rh * .35); c.lineTo(x + cw * .7, vv * h); c.lineTo(x, vv * h + rh * .35); c.lineTo(x - cw * .7, vv * h); c.fill(); } else { c.fillStyle = '#fff'; c.font = 'bold 28px Georgia'; c.fillText(label, x, vv * h + 10); } });
+    { const c = layoutTex.g, up = (t, x, y) => { c.save(); c.translate(x, y); c.rotate(Math.PI); c.textBaseline = 'middle'; c.fillText(t, 0, 0); c.restore(); }, w = 1300, h = 693, cw = w / 13, rh = h / 4.8; c.fillStyle = '#0f6b3c'; c.fillRect(0, 0, w, h); c.strokeStyle = '#f2e6c4'; c.lineWidth = 2; c.textAlign = 'center'; c.font = 'bold 40px Georgia';
+      c.fillStyle = '#0d7a3e'; c.fillRect(0, 0, cw, rh * 3); c.strokeRect(0, 0, cw, rh * 3); c.fillStyle = '#fff'; up('0', cw / 2, rh * 1.5);
+      for (let n = 1; n <= 36; n++) { const [u, v] = rlSpot('straight', n), x = u * w - cw / 2, y = v * h - rh / 2; c.fillStyle = rouletteColor(n) === 'red' ? '#b51624' : '#151515'; c.fillRect(x + 6, y + 6, cw - 12, rh - 12); c.strokeRect(x, y, cw, rh); c.fillStyle = '#fff'; up(String(n), x + cw / 2, y + rh / 2); }
+      for (let v = 1; v <= 3; v++) { const [u, vv] = rlSpot('column', v); c.strokeRect(u * w - cw / 2, vv * h - rh / 2, cw, rh); c.fillStyle = '#fff'; c.font = 'bold 26px Georgia'; up('2:1', u * w, vv * h); }
+      for (let v = 1; v <= 3; v++) { const [u, vv] = rlSpot('dozen', v); c.strokeRect(u * w - cw * 2, vv * h - rh * .45, cw * 4, rh * .9); c.fillStyle = '#fff'; c.font = 'bold 30px Georgia'; up(['1st 12', '2nd 12', '3rd 12'][v - 1], u * w, vv * h); }
+      [['low', '1–18'], ['even', 'EVEN'], ['red', ''], ['black', ''], ['odd', 'ODD'], ['high', '19–36']].forEach(([k2, label]) => { const [u, vv] = rlSpot(k2), x = u * w; c.strokeRect(x - cw, vv * h - rh * .45, cw * 2, rh * .9); if (k2 === 'red' || k2 === 'black') { c.fillStyle = k2 === 'red' ? '#b51624' : '#151515'; c.beginPath(); c.moveTo(x, vv * h - rh * .35); c.lineTo(x + cw * .7, vv * h); c.lineTo(x, vv * h + rh * .35); c.lineTo(x - cw * .7, vv * h); c.fill(); } else { c.fillStyle = '#fff'; c.font = 'bold 28px Georgia'; up(label, x, vv * h); } });
       layoutTex.t.needsUpdate = true; }
     // Bowl: a wooden base whose inner wall slopes up to the ball track; eight diamond deflectors on the slope.
     add(new THREE.CylinderGeometry(3.05, 3.2, .8, 56), M.wood, -4.4, TABLE_H + .2, 0, g);
@@ -164,7 +179,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     for (const ry of [0, Math.PI / 2]) { const bar = add(new THREE.CylinderGeometry(.04, .04, 1.1, 8), M.chrome, 0, .78, 0, wheel); bar.rotation.set(0, ry, Math.PI / 2); for (const sx of [-1, 1]) add(new THREE.SphereGeometry(.08, 10, 8), M.chrome, Math.cos(ry) * .55 * sx, .78, -Math.sin(ry) * .55 * sx, wheel); }
     const ball = add(new THREE.SphereGeometry(.09, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .15, emissive: 0x2a2a2a }), 0, 0, 0, g);
     const dolly = add(new THREE.CylinderGeometry(.14, .2, .5, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: .3, roughness: .3, emissive: 0x444444 }), 0, 0, 0, g); dolly.visible = false;
-    box(2.2, 7.8, 1.4, -4.4, 3.9, -5.2, M.panel, g);
+    dealer(g, -.6, -5.2, Math.PI, { skin: id === 'rl-1' ? 'mint' : 'yellow' });
     const sg = screen(8, 3, L.x + 2, 11.5, L.z - 4.6); chandelier(L.x + 1, L.z); hit(18, 9, 10, L.x + 1, L.z + 1, { casino: 'table', table: id });
     tables[id] = { L, wheel, ball, dolly, sg, chips: chipLayer(), key: '' };
   }
@@ -197,13 +212,38 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   }
 
   // ---- Texas Hold'em: 2.3 × 1.3 m oval, dealer on the north side, five seats. ----
+  // Racetrack (stadium) outline: half-length a along x, half-width b along z.
+  function stadium(a, b) { const s = new THREE.Shape(), l = a - b; s.moveTo(-l, -b); s.lineTo(l, -b); s.absarc(l, 0, b, -Math.PI / 2, Math.PI / 2, false); s.lineTo(-l, b); s.absarc(-l, 0, b, Math.PI / 2, Math.PI * 1.5, false); return s; }
+  // ---- Texas Hold'em: a 2.3 × 1.3 m racetrack table — padded leather rail, wood racetrack, printed felt with the betting
+  //      line, five community-card boxes and seat numbers, the dealer's chip tray, twin pedestals, swivel chairs and a dealer. ----
   function buildPoker(id) {
     const L = LAYOUT[id], g = new THREE.Group(); g.position.set(L.x, 0, L.z); group.add(g);
-    add(new THREE.CylinderGeometry(1, 1, .45, 48), M.leather, 0, TABLE_H - .2, 0, g).scale.set(PK_A + .5, 1, PK_B + .5);
-    add(new THREE.CylinderGeometry(1, 1, .1, 48), M.blueFelt, 0, TABLE_H + .02, 0, g).scale.set(PK_A - .2, 1, PK_B - .2);
-    add(new THREE.CylinderGeometry(1.4, 2, TABLE_H - .5, 16), M.wood, 0, (TABLE_H - .5) / 2, 0, g);
-    PK_ANGLES.forEach(a => add(new THREE.CylinderGeometry(.8, .8, 2.9, 14), M.leather, Math.cos(a) * PK_A * 1.45, 1.45, Math.sin(a) * PK_B * 1.75, g));
-    box(2.2, 7.8, 1.4, 0, 3.9, -PK_B - 2.2, M.panel, g);
+    const flat = (geo, mat, y) => { const m = add(geo, mat, 0, y, 0, g); m.rotation.x = -Math.PI / 2; return m; };
+    // Rail: a padded ring (bevelled extrusion) sitting on the table edge.
+    const rail = stadium(PK_A + .55, PK_B + .55); rail.holes.push(new THREE.Path(stadium(PK_A - .15, PK_B - .15).getPoints(48)));
+    flat(new THREE.ExtrudeGeometry(rail, { depth: .32, bevelEnabled: true, bevelThickness: .16, bevelSize: .16, bevelSegments: 4, curveSegments: 32 }), M.rail, TABLE_H - .05);
+    const track = stadium(PK_A - .1, PK_B - .1); track.holes.push(new THREE.Path(stadium(PK_A - .62, PK_B - .62).getPoints(48)));
+    flat(new THREE.ExtrudeGeometry(track, { depth: .05, bevelEnabled: false, curveSegments: 32 }), M.trackWood, TABLE_H + .03);
+    // Felt with printed markings.
+    const fw = PK_A - .6, fh = PK_B - .6, feltGeo = new THREE.ShapeGeometry(stadium(fw, fh), 32);
+    { const P = feltGeo.attributes.position, UV = feltGeo.attributes.uv; for (let i = 0; i < P.count; i++) UV.setXY(i, (P.getX(i) / fw + 1) / 2, (P.getY(i) / fh + 1) / 2); }   /* canvas top = dealer side (−z): players read the felt upright */
+    const ft = canvasTexture(1400, 800); { const c = ft.g, W = 1400, H = 800, sx = W / (2 * fw), sy = H / (2 * fh);
+      const grad = c.createRadialGradient?.(W / 2, H / 2, 60, W / 2, H / 2, W * .6); if (grad?.addColorStop) { grad.addColorStop(0, '#13724a'); grad.addColorStop(1, '#0b4d31'); c.fillStyle = grad; } else c.fillStyle = '#0f5f3d'; c.fillRect(0, 0, W, H);
+      const ring = (a, b) => { c.beginPath(); const l = (a - b) * sx, r = b * sy; c.moveTo(W / 2 - l, H / 2 - r); c.lineTo(W / 2 + l, H / 2 - r); c.arc(W / 2 + l, H / 2, r, -Math.PI / 2, Math.PI / 2); c.lineTo(W / 2 - l, H / 2 + r); c.arc(W / 2 - l, H / 2, r, Math.PI / 2, Math.PI * 1.5); c.closePath(); c.stroke(); };
+      c.strokeStyle = '#e2bc5c'; c.lineWidth = 4; ring(fw - .9, fh - .9);                                                        // betting line
+      c.lineWidth = 2; c.strokeStyle = '#e2bc5ccc'; for (let i = 0; i < 5; i++) c.strokeRect(W / 2 + (-1.1 + i * .55 - .2) * sx, H / 2 - .3 * sy, .4 * sx, .56 * sy);   // community cards
+      c.textAlign = 'center'; c.fillStyle = '#e2bc5c'; c.font = 'bold 44px Georgia'; c.fillText("TEXAS HOLD'EM", W / 2, H / 2 - .62 * sy); c.font = 'italic 26px Georgia'; c.fillText('PAYDAY CASINO · NO LIMIT', W / 2, H / 2 + .62 * sy + 18);
+      PK_ANGLES.forEach((a, i) => { const x = W / 2 + Math.cos(a) * (fw - .45) * sx * .92, y = H / 2 + Math.sin(a) * (fh - .45) * sy * .9; c.beginPath(); c.arc(x, y, 22, 0, 7); c.stroke(); c.font = 'bold 24px Georgia'; c.fillText(String(i + 1), x, y + 8); });
+      ft.t.needsUpdate = true; }
+    flat(feltGeo, new THREE.MeshStandardMaterial({ map: ft.t, roughness: .95 }), TABLE_H + .02);
+    // Table body under the felt and two pedestals.
+    flat(new THREE.ExtrudeGeometry(stadium(PK_A + .3, PK_B + .3), { depth: .5, bevelEnabled: false, curveSegments: 32 }), M.wood, TABLE_H - .55);
+    for (const x of [-PK_A * .45, PK_A * .45]) { add(new THREE.CylinderGeometry(.42, .55, TABLE_H - .6, 14), M.wood, x, (TABLE_H - .6) / 2, 0, g); add(new THREE.CylinderGeometry(1.5, 1.6, .2, 24), M.wood, x, .1, 0, g); }
+    // Dealer's chip tray on the dealer side, with stacks of every colour.
+    box(2.6, .1, .7, 0, TABLE_H + .06, -PK_B + .95, M.black, g);
+    [0x0e7490, 0xd8a945, 0x8b5cf6, 0x1a1a1a, 0x16a34a, 0xdc2626, 0xf5f5f5].forEach((col, i) => { const st = add(TRAY_CHIPS, trayMat(col), -1.1 + i * .37, TABLE_H + .22, -PK_B + .95, g); st.rotation.x = Math.PI / 2; });
+    PK_ANGLES.forEach(a => chair(g, Math.cos(a) * (PK_A + 2.1), Math.sin(a) * (PK_B + 2.3), 0, 0));
+    dealer(g, 0, -PK_B - 1.3, Math.PI, { skin: 'red' });
     const button = add(new THREE.CylinderGeometry(.2, .2, .05, 16), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x333333 }), 0, TABLE_H + .1, 0, g);
     const turn = add(new THREE.TorusGeometry(1.1, .06, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffe28a }), 0, .1, 0, g); turn.rotation.x = Math.PI / 2;
     const sg = screen(9, 3.2, L.x, 11.8, L.z - 6.6); chandelier(L.x, L.z); hit(17, 9, 11, L.x, L.z, { casino: 'table', table: id });
@@ -221,7 +261,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     T.cards.end(); T.chips.end();
     if (t.button >= 0) { const [bx, bz] = at(t.button, .62); T.button.position.set(bx - L.x + .5, TABLE_H + .1, bz - L.z); }
     T.turn.visible = t.toAct >= 0 && !['waiting', 'showdown'].includes(t.phase); if (T.turn.visible) { const [tx, tz] = at(t.toAct, 1.45); T.turn.position.set(tx - L.x, .1, tz - L.z); }
-    const k = JSON.stringify([t.phase, t.hand, t.board, t.seats.map(s => s && [s.name, s.stack, s.lastAction]), t.results?.winners]); if (k !== T.key) { T.key = k; sign(T.sg, "TEXAS HOLD'EM", ['Blinds $10/$20 · 5 seats · buy-in $200–$5,000', t.phase === 'waiting' ? (seated < 2 ? 'Waiting for players' : 'Next hand shortly') : t.phase === 'showdown' ? (t.results?.winners || []).map(w => w.name + ' +' + money(w.amount) + ' ' + w.hand).join(' · ') : t.phase.toUpperCase() + ' · pot ' + money(t.seats.reduce((a, s) => a + (s?.total || 0), 0)), t.seats.filter(Boolean).map(s => s.name + ' ' + money(s.stack)).join(' · ')]); }
+    const k = JSON.stringify([t.phase, t.hand, t.board, t.seats.map(s => s && [s.name, s.stack, s.lastAction]), t.results?.winners]); if (k !== T.key) { T.key = k; sign(T.sg, "TEXAS HOLD'EM", ['Blinds ' + short(TABLES.find(d => d.id === id).sb) + '/' + short(TABLES.find(d => d.id === id).bb) + ' · 5 seats · buy-in ' + short(TABLES.find(d => d.id === id).minBuy) + '–' + short(TABLES.find(d => d.id === id).maxBuy), t.phase === 'waiting' ? (seated < 2 ? 'Waiting for players' : 'Next hand shortly') : t.phase === 'showdown' ? (t.results?.winners || []).map(w => w.name + ' +' + money(w.amount) + ' ' + w.hand).join(' · ') : t.phase.toUpperCase() + ' · pot ' + money(t.seats.reduce((a, s) => a + (s?.total || 0), 0)), t.seats.filter(Boolean).map(s => s.name + ' ' + money(s.stack)).join(' · ')]); }
   }
 
   // ---- Slots: three cabinets on the east wall; the reels stop on the host's result. ----
@@ -281,7 +321,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
       b.p.addScaledVector(b.v, dt); if (b.p.length() > DR - .4) { b.p.setLength(DR - .4); b.v.reflect(b.p.clone().normalize()).multiplyScalar(drawing ? .9 : .35); }
       b.m.position.copy(DRUM).add(b.p); b.m.rotation.y += b.v.length() * dt;
     }
-    const done = !drawing, lk = lt.jackpot + ':' + lt.tickets + ':' + done + ':' + last?.ticket + ':' + queued; if (lk !== ltKey) { ltKey = lk; sign(ltSign, 'LOTTO · JACKPOT ' + money(lt.jackpot), [queued ? queued + ' ticket' + (queued > 1 ? 's' : '') + ' waiting · drawn in order' : '$20 a ticket · pick 5 of 36 · draws on demand', last ? last.name + ': ' + (done ? last.balls.join(' · ') : 'drawing…') : 'Match all 5 for the jackpot', last && done ? (last.prize ? 'WON ' + money(last.prize) : last.hits + ' matched') : '2 → $20 · 3 → $150 · 4 → $2,500']); }
+    const done = !drawing, lk = lt.jackpot + ':' + lt.tickets + ':' + done + ':' + last?.ticket + ':' + queued; if (lk !== ltKey) { ltKey = lk; sign(ltSign, 'LOTTO · JACKPOT ' + money(lt.jackpot), [queued ? queued + ' ticket' + (queued > 1 ? 's' : '') + ' waiting · drawn in order' : money(LOTTO.price) + ' a ticket · pick 5 of 36 · draws in turn', last ? last.name + ': ' + (done ? last.balls.join(' · ') : 'drawing…') : 'Match all 5 for the jackpot', last && done ? (last.prize ? 'WON ' + money(last.prize) : last.hits + ' matched') : '2 → ' + short(LOTTO.pays[2]) + ' · 3 → ' + short(LOTTO.pays[3]) + ' · 4 → ' + short(LOTTO.pays[4])]); }
   }
 
   // ---- Cashier, rich list, bar, plants ----
@@ -313,6 +353,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
     // The room is skipped (not drawn, not animated) while nobody can see into it.
     for (const c of group.children) if (c !== neonMesh && !doors.includes(c)) c.visible = near;
     for (const l of lightRig.children) if (l.isLight) l.intensity = near ? l.userData.on : 0; if (!near) return;
+    for (const d of dealers) d.update(dt, { speed: 0 });
     const c = game?.casino?.tables; if (!game?.payday || !c) { stage.update(null, performance.now()); for (const T of Object.values(tables)) if (T.wheel) T.wheel.rotation.y = wheelAngleAt(performance.now()); return; }
     for (const def of TABLES) { const t = c[def.id]; if (!t) continue; if (def.game === 'blackjack') updateBlackjack(def.id, t); else if (def.game === 'roulette') updateRoulette(def.id, t); else if (def.game === 'poker') updatePoker(def.id, t); else if (def.game === 'slots') updateSlot(def.id, t); else if (def.game === 'lotto') updateLotto(t, dt); else if (def.game === 'stage') stage.update(t, performance.now(), lines => sign(stageSign, 'CENTER STAGE', lines, '#ff7ab0')); }
     const list = Object.values(game.wallets || {}).sort((x, y) => y.cash - x.cash), rk = JSON.stringify([list.map(w => [w.name, w.cash]), (game.loans || []).filter(l => l.owed > 0).length]); if (rk !== richKey) { richKey = rk; sign(rich, 'PAYDAY RICH LIST', list.slice(0, 4).map((w, i) => (i + 1) + '. ' + w.name + '   ' + money(w.cash)), '#ff7ab0'); sign(cashSign, 'CASHIER', ['Wallets · loans · salaries', list.length + ' engineers · ' + (game.loans || []).filter(l => l.owed > 0).length + ' open loans']); }
@@ -336,7 +377,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   // Static furniture: merged into one mesh per material (hundreds of draw calls → a few dozen) and frozen
   // (no per-frame matrix work). Anything that moves, changes or is picked stays a separate object.
   function optimizeStatic() {
-    const live = new Set([neonMesh, ...doors, stage.group, ...lotto.map(b => b.m)]);
+    const live = new Set([neonMesh, ...doors, stage.group, ...lotto.map(b => b.m), ...dealers.map(d => d.g)]);
     for (const T of Object.values(tables)) for (const k of ['wheel', 'ball', 'dolly', 'lever', 'beacon', 'button', 'turn']) if (T[k]) live.add(T[k]);
     for (const T of Object.values(tables)) for (const r of T.reels || []) live.add(r);
     const keep = new Set(); for (const o of live) { o.traverse(c => keep.add(c)); for (let a = o.parent; a; a = a.parent) keep.add(a); }
