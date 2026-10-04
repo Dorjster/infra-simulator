@@ -121,3 +121,34 @@ Better image quality on every preset, tiered so slower computers stay smooth (Se
 - **Performance:** measured on this Mac on High, it holds 60 fps in the hall, the casino room and at the stage, even with the CPU slowed 4×. The adaptive resolution scaler still lowers pixels if a slower GPU struggles.
 - **New files:** `dist/graphics.js`; the three.js r180 post-processing add-ons are vendored in `dist/post/` (MIT).
 
+## v36.3: clearer, smarter objectives
+
+**Objective coach (Campaign and Payday, top left).** It reads the live checks and shows:
+- the goal, then **Do now** (one concrete action) and **How** (the exact menu path or place);
+- **Where**: the distance and an arrow that turns with your view towards the target ("You are here" on arrival);
+- **Carrying**: what you hold and how to put it down;
+- **Then**: the next two steps, and a progress bar across the level;
+- a green **✓** with the step's name the moment a step completes.
+
+"Minimal hints" in Settings keeps only the goal and the place.
+
+**Payday goals.** Each engineer has three personal goals, decided by the host from real events:
+- finish 3 or 5 paid jobs, or help earn the next level;
+- win a hand (or three) of blackjack, win a roulette bet or hit a single number;
+- win on a slot, match 2+ lotto numbers or win a Hold'em pot;
+- tip the dancer or order a drink.
+
+Each pays a bonus (300–5,000 US$ worth in ₮). A finished goal waits for **Claim** in the casino's Wallet tab, the objective card says so, and a new goal takes its place.
+
+**Challenges are service tickets.**
+- The list shows what users report ("Core uplink flapping", "Internet works by IP but not by name"), with Work order / Incident / Major incident and the difficulty, never the cause.
+- During a challenge you see the reporter, their words and the clues you've unlocked. **Hint** reveals three clues one at a time, then the precise technical pointer.
+- When service is restored the ticket closes with the **root cause** as a debrief.
+- All 43 challenges have tickets.
+
+**Tögrög everywhere:** the remaining $ amounts (level rewards, the saved-campaign card, panel headers, project and ISP prices, contract rewards, salary messages, poker blinds, partial loan repayment) now show ₮.
+
+**Tests:**
+- `npm test` passes: 112 groups, including Payday goals (events, claim, refill) and the challenge test updated for clues-then-pointer.
+- Passing: casino LAN 37/37, combat, clicks 10/10, level 0, and the solo campaign 0→10.
+

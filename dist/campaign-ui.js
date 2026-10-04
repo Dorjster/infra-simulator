@@ -3,7 +3,9 @@
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
 import * as THREE from './three.module.js';
-import {usdMoney} from './money.js';
+import {TICKETS} from './tickets.js';
+import {usdMoney, short} from './money.js';
+import {goalsView, goalsDoneOf} from './casino-logic.js';
 import {notify} from './hud.js';
 import {savePreferences} from './player-preferences.js';
 import {LEVELS, PLACES, CATEGORY_LEVEL, OFFICE_ITEM_LEVEL} from './campaign-levels.js';
@@ -25,7 +27,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.2</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.3</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
@@ -103,7 +105,7 @@ export function createCampaignUI(ctx) {
   async function renderStart() {
     saved = await saveInfo().catch(() => null); paydaySaved = await paydayInfo().catch(() => null);
     const card = (k, title, text, cls = '', tag = '') => `<button data-start="${k}" class="ss-card ${cls}">${tag ? `<em>${tag}</em>` : ''}<strong>${title}</strong><span>${text}</span></button>`;
-    $('ss-grid').innerHTML = (saved ? card('continue', 'Continue Campaign', esc(saved.name) + ' · ' + esc(levelText(saved)) + ' · $' + (saved.budget || 0).toLocaleString(), 'ss-primary', 'Continue') + card('new', 'New Campaign', 'Start again at Level 0 on an empty site') : card('new', 'New Campaign', 'Levels 0–10 · from an empty site to a commissioned enterprise', 'ss-primary', 'Recommended'))
+    $('ss-grid').innerHTML = (saved ? card('continue', 'Continue Campaign', esc(saved.name) + ' · ' + esc(levelText(saved)) + ' · ' + usdMoney(saved.budget || 0), 'ss-primary', 'Continue') + card('new', 'New Campaign', 'Start again at Level 0 on an empty site') : card('new', 'New Campaign', 'Levels 0–10 · from an empty site to a commissioned enterprise', 'ss-primary', 'Recommended'))
       + card('host', 'LAN Host Campaign', 'Host the campaign for up to 12 engineers on your network') + card('join', 'Join LAN', 'Join a room hosted on your network')
       + card('payday', 'Payday · Work & Casino', paydaySaved ? 'Continue ' + esc(paydaySaved.name) + ' · ' + esc(levelText(paydaySaved)) + ' · do jobs, earn salary, gamble' : 'Do the jobs, get paid, then hit the casino · solo or LAN', '', 'New mode')
       + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
@@ -201,7 +203,7 @@ export function createCampaignUI(ctx) {
 <p class="ss-note">Built with Three.js and Electron.<br>Thank you for playing, and to everyone who tested it on their LAN.</p></div>`;
   }
   function startChallenges() {
-    subPanel(`<h2>Challenges</h2><p class="ss-note">Each challenge builds a healthy facility, then injects a fault when you press Begin. Diagnose it from alarms, GUIs and CLIs, repair it, and the check completes on its own.</p><div class="ss-challenges">${CHALLENGES.map((n, i) => `<button data-ch="${i}"><small>${String(i + 1).padStart(2, '0')}</small>${esc(n)}</button>`).join('')}</div>`, el => {
+    subPanel(`<h2>Challenges</h2><p class="ss-note">Each challenge is a service ticket: you get what users report, not the cause. The facility is healthy until you press Begin; then diagnose from alarms, GUIs and CLIs. Hint reveals one clue at a time, and the ticket closes itself when service is restored, with the root cause as a debrief.</p><div class="ss-challenges">${CHALLENGES.map((n, i) => { const tk = TICKETS[i]; return `<button data-ch="${i}"><small>${tk ? esc(tk.kind.toUpperCase()) + ' · ' + esc(tk.level) : String(i + 1).padStart(2, '0')}</small>${esc(tk?.title || n)}</button>`; }).join('')}</div>`, el => {
       el.querySelectorAll('[data-ch]').forEach(b => b.addEventListener('click', async () => { if (await sandbox({ type: 'mode', mode: 'challenge', index: +b.dataset.ch })) { begin(); engineering.panel('projects'); } }));
     });
   }
@@ -227,7 +229,7 @@ export function createCampaignUI(ctx) {
   function objective() {
     const G = g();
     if (!levels()) {
-      if (G.mode === 'challenge') return `<h2>Challenge</h2><p>${esc(CHALLENGES[G.challenge?.index] || '')}</p><button data-adv="projects" class="primary">Open challenge controls</button>`;
+      if (G.mode === 'challenge') { const c = G.challenge || {}, tk = TICKETS[c.index]; return `<h2>${esc(tk ? tk.kind + ' · ' + tk.title : CHALLENGES[c.index] || 'Challenge')}</h2>${tk ? `<p><small>Reported by ${esc(tk.by)} · ${esc(tk.level)}</small><br>“${esc(tk.report)}”</p>${c.hints ? '<ol>' + tk.clues.slice(0, c.hints).map(x => '<li>' + esc(x) + '</li>').join('') + '</ol>' : ''}${c.finished ? '<p><b>Resolved.</b> Root cause: ' + esc(tk.cause) + '</p>' : ''}` : ''}<button data-adv="projects" class="primary">${c.started ? 'Ticket controls · Hint' : 'Begin the ticket'}</button>`; }
       if (G.mode === 'free') return `<h2>Free Build</h2><p>A configured facility with every product unlocked. There are no objectives here; your campaign is not affected.</p><button data-go="start">Back to the start screen</button>`;
       return `<h2>Campaign</h2><p>This save uses an older campaign track.</p><button data-adv="projects">Open projects</button>`;
     }
@@ -331,7 +333,7 @@ export function createCampaignUI(ctx) {
   function render() {
     if (!open) return;
     $('cp-title').textContent = levels() ? 'CAMPAIGN · ' + g().name : g().mode === 'free' ? 'FREE BUILD' : g().mode === 'challenge' ? 'CHALLENGE' : 'CAMPAIGN';
-    $('cp-context').textContent = (lan.connected ? 'LAN · ' + (lan.canManageWorld ? 'host' : 'guest') : 'Solo') + ' · $' + g().budget.toLocaleString();
+    $('cp-context').textContent = (lan.connected ? 'LAN · ' + (lan.canManageWorld ? 'host' : 'guest') : 'Solo') + ' · ' + usdMoney(g().budget);
     $('cp-nav').innerHTML = TABS.map(([id, name, key]) => `<button data-tab="${id}" aria-pressed="${tab === id}">${name}${key ? ` <kbd>${key}</kbd>` : ''}</button>`).join('') + '<button data-tab="advanced" class="cp-adv">Advanced ▸</button>';
     const body = { objective, inventory, map: mapView, laptop, team, settings: settingsView }[tab], el = $('cp-body');
     // Keep what the player opened or chose (sections, cable lengths, scroll) across the live refresh.
@@ -369,14 +371,26 @@ export function createCampaignUI(ctx) {
 
   // ---- HUD -------------------------------------------------------------------------------------------------
   let focus = null;
+  const coach = { level: -1, done: [], flash: null };
   function hud() {
     const el = $('level-hud'), show = levels() && !startOpen && !open && settings.assistance !== 'Off';
     el.hidden = !show; { const eo = $('eng-objective'); if (eo) eo.dataset.hide = levels() ? '1' : ''; }
     if (!show) { marker.visible = !!focus && Date.now() < focus.until; if (marker.visible) marker.position.set(focus.x, 0, focus.z); return; }
     const st = C.status(); if (!st) return;
     if (st.complete) { el.innerHTML = `<div class="lh-top"><b>CAMPAIGN COMPLETE</b><span>11/11</span></div><div class="${st.repairs.length ? 'lh-repair' : 'lh-next ok'}">${st.repairs.length ? '⚠ ' + st.repairs.length + ' repair objective(s) · J' : '✓ Facility operational · J for the summary'}</div>`; marker.visible = false; return; }
-    const next = st.next, t = next ? targetOf(next) : null, d = t ? Math.round(Math.hypot(camera.position.x - t.x, camera.position.z - t.z) * .18) : null;
-    el.innerHTML = `<div class="lh-top"><b>LEVEL ${st.level.id} · ${esc(st.level.title.toUpperCase())}</b><span>${st.done}/${st.total}</span></div>${next ? `<div class="lh-next">▶ ${esc(next.label)}</div>${settings.assistance === 'Minimal hints' ? '' : `<div class="lh-why">${esc(next.detail)}</div>`}` : '<div class="lh-next ok">✓ All checks pass · accepting…</div>'}${t ? `<div class="lh-where">${d} m · ${esc(t.label)}</div>` : ''}${st.repairs.length ? `<div class="lh-repair">⚠ Repair: level ${st.repairs[0].id} · ${esc(st.repairs[0].check.label)}</div>` : ''}<div class="lh-keys">J objective · H hint · M map</div>`;
+    // Objective coach: one clear action, how, where (distance + an arrow relative to where you look), what you
+    // carry, progress, and a ✓ when a step completes. "Minimal hints" keeps only the goal and the place.
+    const next = st.next, t = next ? targetOf(next) : null, d = t ? Math.round(Math.hypot(camera.position.x - t.x, camera.position.z - t.z) * .18) : null, full = settings.assistance !== 'Minimal hints';
+    const doneNow = st.level.checks.filter(c => c.ok).map(c => c.label); if (coach.level === st.level.id) { const fresh = doneNow.find(l => !coach.done.includes(l)); if (fresh) coach.flash = { text: fresh, until: Date.now() + 2800 }; } coach.level = st.level.id; coach.done = doneNow;
+    let arrow = ''; if (t && d > 2) { const f = camera.getWorldDirection(new THREE.Vector3()), a = Math.atan2(t.x - camera.position.x, t.z - camera.position.z) - Math.atan2(f.x, f.z); arrow = `<i class="lh-arrow" style="transform:rotate(${(-a * 180 / Math.PI).toFixed(0)}deg)">▲</i>`; }
+    const carried = engineering?.carriedName, upcoming = st.level.checks.filter(c => !c.ok && c !== next).slice(0, 2);
+    const dots = st.level.checks.map(c => `<i class="${c.ok ? 'on' : c === next ? 'cur' : ''}"></i>`).join('');
+    el.innerHTML = `<div class="lh-top"><b>LEVEL ${st.level.id} · ${esc(st.level.title.toUpperCase())}</b><span>${st.done}/${st.total}</span></div><div class="lh-dots">${dots}</div>`
+      + (coach.flash && Date.now() < coach.flash.until ? `<div class="lh-done">✓ ${esc(coach.flash.text)}</div>` : '')
+      + (next ? `<div class="lh-next">▶ ${esc(next.label)}</div>${full ? `<div class="lh-do"><b>Do now</b> ${esc(next.detail || next.label)}</div>${next.fix ? `<div class="lh-how"><b>How</b> ${esc(next.fix)}</div>` : ''}` : ''}` : '<div class="lh-next ok">✓ All checks pass · accepting…</div>')
+      + (t ? `<div class="lh-where">${arrow}${d <= 2 ? 'You are here · ' : d + ' m · '}${esc(t.label)}</div>` : '')
+      + (full && carried ? `<div class="lh-carry">Carrying ${esc(carried)} · G to put down</div>` : '')
+      + (full && upcoming.length ? `<div class="lh-later">Then: ${upcoming.map(c => esc(c.label)).join(' · ')}</div>` : '') + (g().payday ? (() => { const me = world.localName || 'Engineer', gl = goalsView(g(), me), rd = goalsDoneOf(g(), me); return `<div class="lh-goals"><b>PAYDAY GOALS</b>${rd.length ? `<div class="lh-done">✓ ${rd.length} met · claim at the casino cashier (Wallet tab)</div>` : ''}${gl.map(x => `<div>○ ${esc(x.text)} <span>${x.progress}/${x.need} · +${short(x.reward)}</span></div>`).join('')}</div>`; })() : '') + `${st.repairs.length ? `<div class="lh-repair">⚠ Repair: level ${st.repairs[0].id} · ${esc(st.repairs[0].check.label)}</div>` : ''}<div class="lh-keys">J objective · H hint · M map</div>`;
     const target = focus && Date.now() < focus.until ? focus : t;
     marker.visible = !!target; if (target) marker.position.set(target.x, 0, target.z);
   }
@@ -389,7 +403,7 @@ export function createCampaignUI(ctx) {
     lastLevel = cur;
     $('resume-hint').hidden = !(document.body.classList.contains?.('walking') && !document.pointerLockElement && !open && !startOpen && !engineering.isOpen && !kit.isOpen && !officeUI?.isOpen && !lan.isOpen);
   }
-  function celebrate(def) { if (!def) return; engineering.saveNow?.(); notify('LEVEL ' + def.id + ' COMPLETE · ' + def.title + ' · +$' + def.reward.toLocaleString() + ' · unlocked: ' + def.unlock); const el = document.createElement('div'); el.className = 'level-toast'; el.innerHTML = `<span>LEVEL ${def.id} COMPLETE</span><strong>${esc(def.title)}</strong><small>+${usdMoney(def.reward)} · Unlocked: ${esc(def.unlock)}</small>`; document.body.append(el); setTimeout(() => el.remove(), 5200); }
+  function celebrate(def) { if (!def) return; engineering.saveNow?.(); notify('LEVEL ' + def.id + ' COMPLETE · ' + def.title + ' · +' + usdMoney(def.reward) + ' · unlocked: ' + def.unlock); const el = document.createElement('div'); el.className = 'level-toast'; el.innerHTML = `<span>LEVEL ${def.id} COMPLETE</span><strong>${esc(def.title)}</strong><small>+${usdMoney(def.reward)} · Unlocked: ${esc(def.unlock)}</small>`; document.body.append(el); setTimeout(() => el.remove(), 5200); }
   function key(k) {
     if (startOpen) return false;
     if (k === 'j') { open && tab === 'objective' ? (close(), enter()) : panel('objective'); return true; }

@@ -1,6 +1,6 @@
 // Payday economy and casino rules (host-side, deterministic with a seeded RNG).
 import assert from 'node:assert/strict';
-import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES, SALARY, START_CASH, DARJA_CASH, DRINKS, DRINK_PRICE, luckOf, arsenalOf } from '../dist/casino-logic.js';
+import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES, SALARY, START_CASH, DARJA_CASH, DRINKS, DRINK_PRICE, luckOf, arsenalOf, goalsOf, goalsDoneOf, GOALS } from '../dist/casino-logic.js';
 import { combatApply, combatTick, hpOf, isDown } from '../dist/combat-logic.js';
 import { WEAPONS, MAX_HP, RESPAWN_MS } from '../dist/weapons-data.js';
 import { mnt, money } from '../dist/money.js';
@@ -164,4 +164,13 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   for (let i = 0; i < 4000; i++) { casinoApply(g8, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'L', rr, lt); lt += 9000; for (const b of g8.casino.tables.lotto.last[0].balls) balls[b]++; }
   const exp = 4000 * 5 / 36, chiL = balls.slice(1).reduce((a, c) => a + (c - exp) ** 2 / exp, 0); assert(chiL < 70, 'lotto balls uniform · χ² ' + chiL.toFixed(1) + ' (35 dof)');
   globalThis.__fair = 'blackjack χ² ' + chiR.toFixed(0) + '/12, starting 20 ' + (p20 * 100).toFixed(1) + '%, lotto χ² ' + chiL.toFixed(0) + '/35'; }
-console.log('PASS: casino logic · fairness (' + globalThis.__fair + '), tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');
+// Payday goals: three each, advanced by real events, claimed for a bonus, replaced by a new goal.
+{ const g9 = { levels: {} }; startPayday(g9); wallet(g9, 'Gi').cash = 1e12; let s9 = 3; const r9 = () => (s9 = (s9 * 16807) % 2147483647) / 2147483647;
+  assert.equal(goalsOf(g9, 'Gi', r9).length, 3); g9.goals.gi = [{ id: 'drink', progress: 0 }, { id: 'jobs', progress: 0 }, { id: 'tip', progress: 0 }];
+  casinoApply(g9, { type: 'drink', drink: 'beer' }, 'Gi', r9, 1000);
+  assert.equal(goalsDoneOf(g9, 'Gi').length, 1, 'drink goal met'); assert.equal(goalsOf(g9, 'Gi', r9).length, 3, 'a new goal replaces it'); assert(!g9.goals.gi.some(x => x.id === 'drink'));
+  paySalary(g9, 'Gi', { type: 'rack', id: 'A', pad: '1' }); paySalary(g9, 'Gi', { type: 'patch', id: 'B', port: '2' }); assert.equal(g9.goals.gi.find(x => x.id === 'jobs').progress, 2);
+  paySalary(g9, 'Gi', { type: 'unbox', id: 'C' }); assert.equal(goalsDoneOf(g9, 'Gi').length, 2, 'three jobs met');
+  const c0 = wallet(g9, 'Gi').cash, want = GOALS.find(x => x.id === 'drink').reward + GOALS.find(x => x.id === 'jobs').reward;
+  assert.match(casinoApply(g9, { type: 'claim-goals' }, 'Gi', r9), /claimed/); assert.equal(wallet(g9, 'Gi').cash, c0 + want); assert.throws(() => casinoApply(g9, { type: 'claim-goals' }, 'Gi', r9), /No finished/); }
+console.log('PASS: casino logic · Payday goals (events, claim, refill), fairness (' + globalThis.__fair + '), tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');
