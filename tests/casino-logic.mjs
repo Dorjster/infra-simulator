@@ -146,4 +146,22 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   const chi = counts.reduce((a, c) => a + (c - 1000) ** 2 / 1000, 0); assert(chi < 75, 'chi-square over 36 d.o.f. ' + chi.toFixed(1));   // p ≈ 0.0002 cut-off
   const rr2 = seq.slice(1).filter((c, i) => seq[i] === 'r' && c === 'r').length / seq.slice(0, -1).filter(c => c === 'r').length; assert(Math.abs(rr2 - 18 / 37) < .02, 'red after red ' + rr2.toFixed(3));
   globalThis.__chi = chi; }
-console.log('PASS: casino logic · tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');
+// Blackjack, Hold'em and lotto are fair: full decks, every card / ball equally likely.
+{ const g6 = { levels: {} }; startPayday(g6); wallet(g6, 'B').cash = 1e15; const ranks = {}, first = {}; let t = 1e8, rounds = 6000, rr = Math.random;
+  for (let i = 0; i < rounds; i++) { casinoApply(g6, { type: 'bj-bet', table: 'bj-1', amount: 50000 }, 'B', rr, t); casinoApply(g6, { type: 'bj-deal', table: 'bj-1' }, 'B', rr, t);
+    const tb = g6.casino.tables['bj-1'], cs = [...tb.seats[0].cards, ...tb.dealer]; for (const c of cs) { const r = c.slice(0, -1); ranks[r] = (ranks[r] || 0) + 1; } const v = handValue(tb.seats[0].cards); first[v] = (first[v] || 0) + 1;
+    if (tb.phase === 'playing') casinoApply(g6, { type: 'bj-stand', table: 'bj-1' }, 'B', rr, t); for (let k = 0; k < 4 && tb.phase !== 'done'; k++) casinoTick(g6, rr, t += 50); t += 9000; casinoTick(g6, rr, t); }
+  const shoe = g6.casino.tables['bj-1'].shoe; assert(shoe.length <= 312);
+  const total = Object.values(ranks).reduce((a, b) => a + b, 0), chiR = Object.values(ranks).reduce((a, c) => a + (c - total / 13) ** 2 / (total / 13), 0);
+  assert.equal(Object.keys(ranks).length, 13); assert(chiR < 40, 'blackjack ranks uniform · χ² ' + chiR.toFixed(1) + ' (12 dof)');
+  const p20 = first[20] / rounds; assert(p20 > .085 && p20 < .125, 'starting 20 ≈ 10.3% · got ' + (p20 * 100).toFixed(1) + '%');
+  // Hold'em: 52 unique cards per hand.
+  const g7 = { levels: {} }; startPayday(g7); for (const n of ['P1', 'P2', 'P3', 'P4', 'P5']) wallet(g7, n).cash = 1e12; ['P1', 'P2', 'P3', 'P4', 'P5'].forEach((n, i) => casinoApply(g7, { type: 'pk-sit', table: 'pk-1', seat: i, buyIn: 4000000 }, n, rr, 0));
+  casinoTick(g7, rr, 6000); const pt = g7.casino.tables['pk-1'], dealt = [...pt.deck, ...pt.seats.flatMap(x => x.cards)];
+  assert.equal(dealt.length, 52); assert.equal(new Set(dealt).size, 52, 'one full deck per hand');
+  // Lotto: every ball equally likely.
+  const g8 = { levels: {} }; startPayday(g8); wallet(g8, 'L').cash = 1e15; const balls = Array(37).fill(0); let lt = 1e9;
+  for (let i = 0; i < 4000; i++) { casinoApply(g8, { type: 'lotto', picks: [1, 2, 3, 4, 5] }, 'L', rr, lt); lt += 9000; for (const b of g8.casino.tables.lotto.last[0].balls) balls[b]++; }
+  const exp = 4000 * 5 / 36, chiL = balls.slice(1).reduce((a, c) => a + (c - exp) ** 2 / exp, 0); assert(chiL < 70, 'lotto balls uniform · χ² ' + chiL.toFixed(1) + ' (35 dof)');
+  globalThis.__fair = 'blackjack χ² ' + chiR.toFixed(0) + '/12, starting 20 ' + (p20 * 100).toFixed(1) + '%, lotto χ² ' + chiL.toFixed(0) + '/35'; }
+console.log('PASS: casino logic · fairness (' + globalThis.__fair + '), tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');

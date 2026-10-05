@@ -70,3 +70,34 @@ The camera steps back over your right shoulder, kept inside the room you're in, 
   - **Third person** switches the view.
   - **Result:** all checks pass, with no page errors.
 - `payday-casino-e2e` 37/37, `casino-clicks` 10/10, `pistol-and-wheel`, start flow, level 0 and the solo campaign 0→10 all pass.
+
+## v36.1: realistic tables, dealers, a livelier dancer
+
+**Texas Hold'em table:**
+- A proper 2.3 × 1.3 m racetrack table with a padded black leather rail and a polished wood racetrack.
+- Green felt printed with the betting line, five community-card boxes, seat numbers and the table name, readable from the players' side.
+- The dealer's chip tray holds stacks of every colour, the table stands on twin pedestals, and there are five swivel chairs.
+- The tall black block that stood in the middle of the view is gone.
+
+**Dealers:** every blackjack, roulette and poker table now has a dealer in a black waistcoat in the dealer's spot, instead of the black stand.
+
+**Chairs:** blackjack seats are swivel chairs too.
+
+**Roulette layout:** the numbers and labels ("EVEN", "1st 12", "2:1"…) now read upright from the player's side; before, they faced the croupier.
+
+**Signs in ₮:** the poker blinds and buy-in and the lotto prizes now show tögrög.
+
+**Dancer:**
+- Showgirl kicks have curved, raised arms and a soft supporting knee.
+- Disco moves flow between "up" and "down" instead of snapping.
+- Every move breathes.
+- Her fingers close around the pole when she grips it and relax when she lets go.
+
+**Performance:** chairs and bar bottles now batch with the rest of the room. The main room uses 136 draw calls (143 before) and holds 60 fps with the CPU slowed 4×.
+
+**Fairness, tested:**
+- **Roulette:** pocket spread χ² 33 over 36 degrees of freedom, and red after red at 18/37.
+- **Blackjack:** card ranks χ² 4 over 12; a starting 20 comes up 10.3% of the time, the real 6-deck rate.
+- **Hold'em:** one full 52-card deck per hand.
+- **Lotto:** ball spread χ² 41 over 35.
+- **Luck:** only bar luck changes your own slot and lotto odds.

@@ -131,6 +131,7 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
   const pole = h => g.localToWorld(new THREE.Vector3(0, h, 0)), grip = (s, h) => reach(arms[s].sh, arms[s].el, wrists[s], pole(h), ...L.arm, -1, L.hand), hook = (s, h, off = .25) => reach(legs[s].hp, legs[s].kn, ankles[s], pole(h), ...L.leg, 1, off);
   // Poses (after the reference: pole hold, climb-and-sit, lay-back, body wave against the pole).
   // orbit = angle of the dancer around the pole (−π/2 faces the casino entrance); face = her turn on the spot.
+  const gripping = { [-1]: false, [1]: false };
   function pose(dance, t) {
     const w = Math.sin; let orbit = -Math.PI / 2, r = .95, y = 0, face = 0, grips = [], hooks = [];
     set(hips); set(spine); set(neck); set(tail, .12 + w(t * 3) * .08); for (const s of [-1, 1]) { set(arms[s].sh, 0, 0, s * .12); set(arms[s].el); set(legs[s].hp); set(legs[s].kn); }
@@ -142,13 +143,19 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
       set(spine, .2, 0, -.15); set(neck, .1, .3, 0); const climb = p < 4 ? w(p * 5) * .5 : 0;
       grips = [[-1, 12.2 + y + climb], [1, 10.4 + y - climb]]; set(legs[-1].hp, -1.35, 0, -.1); set(legs[-1].kn, 1.9); set(legs[1].hp, -.9, 0, .25); set(legs[1].kn, 2.1); hooks = [[-1, 4.1 + y, .35]];
     } else if (dance === 2) {                // Showgirl kicks downstage, hands free
-      r = 3; face = Math.PI / 2; const k = Math.floor(t * 1.6) % 2 ? 1 : -1, ph = (t * 1.6) % 1;
-      set(legs[k].hp, -Math.sin(ph * Math.PI) * 1.9); set(legs[-k].kn, .2); for (const s of [-1, 1]) set(arms[s].sh, 0, 0, s * (1.4 + w(t * 6 + s) * .5)); set(hips, 0, 0, w(t * 3.2) * .12);
+      // Alternating kicks with a soft supporting knee; arms held high and curved, fanning with the beat.
+      r = 3; face = Math.PI / 2; const k = Math.floor(t * 1.6) % 2 ? 1 : -1, ph = (t * 1.6) % 1, kick = Math.sin(ph * Math.PI), e = kick * kick * (3 - 2 * kick);
+      set(legs[k].hp, -e * 1.75); set(legs[k].kn, .5 * (1 - e)); set(legs[-k].kn, .18 + .12 * e); set(hips, -.06 * e, 0, k * .08 * e);
+      for (const s of [-1, 1]) { set(arms[s].sh, -.25, 0, s * (2.2 + w(t * 3.2 + s) * .25)); set(arms[s].el, -.55 - w(t * 3.2) * .15); }
+      set(spine, .08 * e, 0, -k * .05 * e); set(neck, -.1, 0, k * .08);
     } else if (dance === 3) {                // Body wave against the pole: both hands high, ankles crossed, a slow wave through the body
       r = .85; face = Math.PI / 2 - .35; const wv = w(t * 2.2); set(hips, -wv * .12, 0, .08); set(spine, wv * .18, 0, -.06); set(neck, -wv * .2 - .15, -.3, 0);
       set(legs[-1].hp, .05, 0, -.12); set(legs[1].hp, -.05, 0, -.14); set(legs[1].kn, .25 + Math.max(0, wv) * .3); grips = [[-1, 12.9 + wv * .2], [1, 12.4 + wv * .2]];
     } else if (dance === 4) {                // Disco: point up, point down, hips side to side
-      r = 2.8; face = Math.PI / 2; const up = Math.floor(t * 2) % 2 === 0; set(arms[1].sh, 0, 0, up ? 2.6 : .5); set(arms[1].el, up ? 0 : -1.2); set(arms[-1].sh, 0, 0, -.4); set(arms[-1].el, -1.4); set(hips, 0, 0, up ? .18 : -.18); set(legs[1].hp, 0, 0, .25); set(legs[-1].kn, up ? .4 : 0); set(neck, 0, up ? .3 : -.3);
+      // Point up, point down: a smooth square wave (no snapping), hips rocking, the other hand on the hip.
+      r = 2.8; face = Math.PI / 2; const u = .5 + .5 * Math.tanh(Math.sin(t * Math.PI * 2) * 3), mix = (a, b) => a + (b - a) * u;
+      set(arms[1].sh, mix(-.2, -.6), 0, mix(.6, 2.7)); set(arms[1].el, mix(-1.1, -.1)); set(arms[-1].sh, .2, 0, -.55); set(arms[-1].el, -1.6);
+      set(hips, 0, 0, mix(-.18, .18)); set(spine, 0, 0, mix(.1, -.1)); set(legs[1].hp, 0, 0, .25); set(legs[-1].kn, mix(0, .45)); set(legs[1].kn, mix(.3, 0)); set(neck, mix(-.15, .1), mix(-.3, .3), 0);
     } else if (dance === 5) {                // Lay-back: hands high and low on the pole, body arched out, one knee raised; then a slow turn
       const p = t % 8, arch = Math.min(1, p / 1.5) * (p < 6 ? 1 : 1 - (p - 6) / 2); orbit = -Math.PI / 2 + (p > 6 ? (p - 6) * 1.5 : 0); r = 1.3 + arch * .6; face = Math.PI / 2 - .9 * arch;
       set(spine, -.55 * arch, 0, -.25 * arch); set(neck, -.6 * arch, .2, 0); set(legs[1].hp, -1.4 * arch, 0, .3); set(legs[1].kn, 1.9 * arch); set(legs[-1].hp, .35 * arch); set(legs[-1].kn, .3 * arch);
@@ -168,6 +175,8 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
       set(legs[-1].hp, -.9, 0, -.15); set(legs[-1].kn, 1.4 + b * .15); set(legs[1].hp, .05, 0, .06); grips = [[-1, 12.7]];
     }
     body.position.set(Math.cos(orbit) * r, 1.4 + y, Math.sin(orbit) * r); body.rotation.y = -orbit + face;
+    spine.rotation.x += Math.sin(t * 1.7) * .025; neck.rotation.x -= Math.sin(t * 1.7) * .02;                       // breathing
+    gripping[-1] = grips.some(g => g[0] === -1); gripping[1] = grips.some(g => g[0] === 1);
     for (const [s, h] of grips) grip(s, h); for (const [s, h, off] of hooks) hook(s, h, off);
   }
   // Rigged model (dist/models/dancer.glb, Mixamo skeleton). The jointed figure above keeps running every
@@ -217,6 +226,14 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
     skinMesh.visible = false;
     const order = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'RightShoulder', 'LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm', 'LeftHand', 'RightHand', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg', 'LeftFoot', 'RightFoot'].map(n => B[n]);
     const tq = new THREE.Quaternion(), pq = new THREE.Quaternion(), dh = new THREE.Quaternion(), ds = new THREE.Quaternion(), tp = new THREE.Vector3();
+    // Fingers: curl around the knuckle line (index → pinky) towards the palm, firmly while the hand grips the pole.
+    const fingers = { [-1]: [], [1]: [] }, Y = new THREE.Vector3(0, -1, 0);
+    for (const s of [-1, 1]) { const k = side(s); if (!B[k + 'HandIndex1'] || !B[k + 'HandPinky1'] || !B[k + 'HandMiddle2']) continue;
+      const across = wp(B[k + 'HandIndex1']).sub(wp(B[k + 'HandPinky1'])).normalize(), along = wp(B[k + 'HandMiddle2']).sub(wp(B[k + 'HandMiddle1'])).normalize();
+      if (new THREE.Vector3().crossVectors(across, along).dot(Y) < 0) across.negate();              // positive turn bends towards the palm (palms face down in the T-pose)
+      for (const f of ['Index', 'Middle', 'Ring', 'Pinky']) for (let j = 1; j <= 3; j++) { const b = B[k + 'Hand' + f + j]; if (!b) continue;
+        fingers[s].push({ b, rest: b.quaternion.clone(), axis: across.clone().applyQuaternion(wq(b).invert()).normalize(), w: [0, .9, 1.1, .75][j] }); } }
+    const fq = new THREE.Quaternion(), curl = { [-1]: .25, [1]: .25 };
     // The jointed figure is now only a driver: drop its head, hands, feet and bust meshes (less to update).
     for (const b of boneList) for (const c of [...b.children]) if (!c.isBone) b.remove(c);
     // Blend: when the move changes, ease from the pose she was in over 0.8 s instead of snapping.
@@ -237,6 +254,7 @@ export function createStage(parent, at, { hit, model = new URL('./models/dancer.
         B.Hips.position.copy(B.Hips.parent.worldToLocal(hips.getWorldPosition(tp)));
         const u = Math.min(1, (nowMs - blendAt) / BLEND_MS);
         if (u < 1) { const k = u * u * (3 - 2 * u); for (const b of order) { const q0 = snap.get(b); if (q0) b.quaternion.slerpQuaternions(q0, b.quaternion.clone(), k); } B.Hips.position.lerpVectors(snapHips, B.Hips.position.clone(), k); }
+        for (const s of [-1, 1]) { curl[s] += ((gripping[s] ? 1.15 : .22) - curl[s]) * .2; for (const f of fingers[s]) f.b.quaternion.copy(f.rest).multiply(fq.setFromAxisAngle(f.axis, curl[s] * f.w)); }
       },
     };
   }
