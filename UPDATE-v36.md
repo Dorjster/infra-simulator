@@ -152,3 +152,26 @@ Each pays a bonus (300–5,000 US$ worth in ₮). A finished goal waits for **Cl
 - `npm test` passes: 112 groups, including Payday goals (events, claim, refill) and the challenge test updated for clues-then-pointer.
 - Passing: casino LAN 37/37, combat, clicks 10/10, level 0, and the solo campaign 0→10.
 
+## v36.4: a console that helps like real gear
+
+The service laptop's console now assists you the way switch and firewall CLIs do. It is built from each device's own command list: switch-style commands on switches, FortiOS-style on the FortiGate.
+
+- **Tab** completes the word you're typing:
+  - one match → the full word and a space;
+  - several → extends to their common part (`show int` → `show interface`), and pressing Tab again lists the options in columns;
+  - placeholders show an example taken from the device (`<n>  e.g. 10`).
+- **?** lists what can come next without clearing the line: `show ?` lists the show commands, and `show int?` lists the words starting with "int".
+- **Suggestion line** under the prompt, while you type:
+  - the most likely full command (`Tab ▸ show interfaces status`);
+  - or, for an abbreviation, exactly what Enter will run (`↵ runs: show interfaces status`).
+- **Abbreviations** run as the full command:
+  - `sh int st` → show interfaces status, `sh ip int br` → show ip interface brief;
+  - `conf t` → configure terminal, `wr mem` → write memory, `no sh` → no shutdown;
+  - FortiOS: `get sys stat` → get system status.
+  - Ambiguous input runs as typed, and a bare `sh` never runs `shutdown`.
+
+**Tests:**
+- `tests/cli-assist.mjs`, part of `npm test`, now at 113 groups.
+- `tests/browser/cli-assist.mjs` types real keystrokes in the laptop console: 10/10.
+- Level 1, the casino LAN test (37/37) and clicks (10/10) still pass.
+

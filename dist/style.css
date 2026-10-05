@@ -43,3 +43,6 @@ header{height:78px}.intro-copy{left:3.5%;top:117px;max-width:250px}.intro-copy h
 #field-laptop #detach-laptop:disabled{opacity:.4;cursor:not-allowed}
 #field-laptop #laptop-output{max-height:46vh;overflow:auto}
 @media(max-width:900px){.link-diagram{flex-direction:column}.ld-wire{width:4px;height:22px;flex:0 0 22px;align-self:flex-start;margin:4px 0 4px 24px}.ld-wire span{left:14px;top:3px;transform:none}#field-laptop .laptop-info{position:static}}
+
+/* CLI assistance (v36.4) */
+.laptop-suggest{min-height:16px;margin:3px 0 0 18px;font:12px ui-monospace,Menlo,Consolas,monospace;color:#7fe3a0;white-space:pre}.laptop-suggest.idle{color:#6f8796}
