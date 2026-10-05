@@ -188,3 +188,33 @@ The service laptop's console now assists you the way switch and firewall CLIs do
 - The announcements never leave the local network (UDP broadcast on port 47790). If Windows asks about the firewall the first time, allow Infra Simulator on private networks.
 - **Tested** with two desktop apps: the guest saw "Payday · 1 engineer · 172.16.130.235:8080" and joined with one click (2 engineers, Payday).
 
+## v36.6: Darja's bank, salary loans, real drink prices
+
+- **Darja's bank (creative mode).**
+  - An engineer named **Darja** can give money to anyone, herself included, or take it back.
+  - It opens from the 🏦 Bank tab in the casino panel, or by clicking the wallet badge anywhere in Payday.
+  - The tab is shown only to Darja, and the host refuses bank actions from anyone else. Gifts appear in the receiver's wallet history.
+- **Цалингийн зээл (salary loan).**
+  - Every engineer can take a **20,000,000₮** loan from the bank, one at a time.
+  - It is repaid in **2–10 monthly installments**. Each is 1/n of the loan plus **2% interest (хүү)** on the 20,000,000₮; for 10 months that's 10 × 2,400,000₮ = 24,000,000₮.
+  - The plan is shown before you take it. **Pay installment** pays the next one; **Pay off now** costs the principal left plus this month's interest, so paying early saves interest.
+  - Loans between engineers work as before.
+- **Real drink prices:**
+
+  | Drink | Price |
+  | --- | --- |
+  | Airag | 5,000₮ |
+  | Vodka shot | 8,000₮ |
+  | Draught beer | 9,000₮ |
+  | Tequila | 15,000₮ |
+  | Wine | 25,000₮ |
+  | Cocktail | 32,000₮ |
+  | Whisky | 38,000₮ |
+  | Champagne | 45,000₮ |
+
+  Each button shows its price and greys out when you can't afford it, with a note on how to get money. Errors now also pop up on screen.
+- **Guns 10% cheaper:** from 81,000,000₮ (US$22,500) to 810,000,000₮.
+- **Tests:**
+  - **Rules:** the bank (only Darja; gives and takes, never below 0); loan plans, installments, early pay-off and exact totals; per-drink prices.
+  - **LAN:** the bank tab appears only for Darja; she gives Sam 50,000,000₮ from the screen; Sam takes a 4-month loan, sees 4 × 5,400,000₮, then pays one installment.
+

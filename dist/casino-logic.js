@@ -10,9 +10,10 @@
 //      Roulette ×2 — European single zero; number 35:1, dozen/column 2:1, even chances 1:1.
 //      Texas Hold'em — 5 seats, blinds 50,000₮/100,000₮, side pots, 30 s to act.
 //      Slots ×3 — three reels; Lotto — 5 of 36, shared jackpot (draws queue on the one machine).
-//  · Bar: every drink costs 18,000,000₮ (US$5,000) and gives a few minutes of luck — good or bad, at random —
+//  · Bar: drinks at real Ulaanbaatar bar prices (5,000₮ airag … 45,000₮ champagne) give a few minutes of luck — good or bad, at random —
 //    that nudges your own slot spins and lotto draws. Roulette, blackjack and poker stay pure chance.
-//  · Weapon market: eight guns from 90,000,000₮ (US$25,000); see combat-logic.js for HP and hits.
+//  · Weapon market: eight guns from 81,000,000₮ (US$22,500); see combat-logic.js for HP and hits.
+//  · Darja's bank (creative mode): an engineer named Darja can give money to anyone, or take it back.
 //  · Timing fields (spinMs, dealtAt, drawnAt…) let every client animate the 3D tables in step with the result.
 import { mnt, money } from './money.js';
 import { WEAPONS } from './weapons-data.js';
@@ -32,14 +33,15 @@ export const TABLES = [
   { id: 'bar', game: 'bar', name: 'The Payday Bar' },
   { id: 'guns', game: 'market', name: 'Weapon market' }
 ];
-// Bar: every drink US$5,000; luck lasts `min` minutes, strength = chance a result is nudged your way (or against you).
-export const DRINK_PRICE = mnt(5000);
+// Bar: real bar prices in tögrög (a casino bar in Ulaanbaatar, 2026); luck lasts `min` minutes, strength = chance a
+// result is nudged your way (or against you).
 export const DRINKS = [
-  { id: 'beer', name: 'Draught beer', min: 2, strength: .2 }, { id: 'airag', name: 'Airag', min: 2.5, strength: .22 },
-  { id: 'wine', name: 'Red wine', min: 3, strength: .24 }, { id: 'cocktail', name: 'Cocktail', min: 3, strength: .25 },
-  { id: 'champagne', name: 'Champagne', min: 3, strength: .27 }, { id: 'tequila', name: 'Tequila shot', min: 3.5, strength: .3 },
-  { id: 'vodka', name: 'Vodka', min: 4, strength: .32 }, { id: 'whisky', name: 'Single malt whisky', min: 4, strength: .35 }
+  { id: 'beer', name: 'Draught beer (0.5 l)', price: 9000, min: 2, strength: .2 }, { id: 'airag', name: 'Airag (bowl)', price: 5000, min: 2.5, strength: .22 },
+  { id: 'wine', name: 'Red wine (glass)', price: 25000, min: 3, strength: .24 }, { id: 'cocktail', name: 'Cocktail', price: 32000, min: 3, strength: .25 },
+  { id: 'champagne', name: 'Champagne (glass)', price: 45000, min: 3, strength: .27 }, { id: 'tequila', name: 'Tequila shot', price: 15000, min: 3.5, strength: .3 },
+  { id: 'vodka', name: 'Vodka shot', price: 8000, min: 4, strength: .32 }, { id: 'whisky', name: 'Single malt whisky', price: 38000, min: 4, strength: .35 }
 ];
+export const DRINK_PRICE = Math.min(...DRINKS.map(d => d.price));   // cheapest drink (for "can I afford anything?")
 // Payday goals: every engineer has three personal goals; the host advances them from real events and pays a
 // bonus when one is met, then draws a new one. Kinds: work (salary jobs, levels) and casino (wins, the bar, the stage).
 export const GOALS = [
@@ -52,7 +54,7 @@ export const GOALS = [
   { id: 'lotto-2', text: 'Match 2+ numbers in the lotto', need: 1, usd: 1000 },
   { id: 'pk-pot', text: "Win a Hold'em pot", need: 1, usd: 1200 },
   { id: 'tip', text: 'Tip the dancer for a special move', need: 1, usd: 300 },
-  { id: 'drink', text: 'Order a drink at the bar', need: 1, usd: 1500 },
+  { id: 'drink', text: 'Order a drink at the bar', need: 1, usd: 150 },
   { id: 'jobs-5', text: 'Finish 5 paid jobs', need: 5, usd: 3000 },
   { id: 'bj-3', text: 'Win 3 hands of blackjack', need: 3, usd: 2500 },
 ].map(x => ({ ...x, reward: mnt(x.usd) }));
@@ -361,8 +363,34 @@ function lotto(game, t, a, name, rng, now) {
 }
 
 // ---- Loans ----------------------------------------------------------------------------------------------
+// Цалингийн зээл (salary loan): any engineer can borrow 20,000,000₮ from the bank, one at a time, repaid in 2–10
+// monthly installments with 2% interest (хүү) a month on the amount borrowed: each installment is 1/n of the
+// loan plus one month's interest. Paying off early costs the principal left plus the current month's interest.
+// Loans between engineers work as before.
+export const SALARY_LOAN = 20000000, SALARY_LENDER = 'Цалингийн зээл · bank', SALARY_RATE = .02;
+export function salaryPlan(months, P = SALARY_LOAN) {
+  const n = Math.max(2, Math.min(10, Math.round(months) || 6)), monthly = Math.round(P * SALARY_RATE), part = Math.round(P / n / 1000) * 1000;
+  return { months: n, monthly, part, installment: part + monthly, interest: monthly * n, total: P + monthly * n };
+}
+// What a bank loan costs to clear right now.
+export const payoffOf = l => l.bank ? Math.min(l.owed, l.principalLeft + (l.paid < l.months ? l.monthly : 0)) : l.owed;
 function loans(game, a, name) {
   game.loans ??= [];
+  if (a.type === 'salary-loan') {
+    const w = wallet(game, name); if (game.loans.some(l => l.bank && key(l.borrower) === key(name) && l.owed > 0)) throw Error('Repay your salary loan first');
+    const plan = salaryPlan(a.months); game.loanCounter = (game.loanCounter || 0) + 1;
+    game.loans.push({ id: 'L' + game.loanCounter, lender: SALARY_LENDER, bank: true, borrower: w.name, amount: SALARY_LOAN, owed: plan.total, principalLeft: SALARY_LOAN, months: plan.months, monthly: plan.monthly, part: plan.part, installment: plan.installment, interest: plan.interest, paid: 0, at: Date.now() });
+    w.cash += SALARY_LOAN; note(w, 'Salary loan (Цалингийн зээл) · ' + plan.months + ' months', SALARY_LOAN);
+    return 'Salary loan · +' + money(SALARY_LOAN) + ' · ' + plan.months + ' × ' + money(plan.installment) + ' (хүү ' + money(plan.interest) + ')';
+  }
+  if (a.type === 'pay-installment' || (a.type === 'repay' && game.loans.find(l => l.id === a.id)?.bank)) {
+    const loan = game.loans.find(l => l.id === a.id && l.bank && key(l.borrower) === key(name) && l.owed > 0); if (!loan) throw Error('No open salary loan');
+    const w = wallet(game, name), full = a.type === 'repay', pay = full ? payoffOf(loan) : Math.min(loan.owed, loan.paid === loan.months - 1 ? loan.principalLeft + loan.monthly : loan.installment); take(w, pay);
+    if (full) { loan.principalLeft = 0; loan.owed = 0; loan.paid = loan.months; }
+    else { const principal = Math.min(loan.principalLeft, pay - loan.monthly); loan.principalLeft -= principal; loan.paid++; loan.owed = loan.paid >= loan.months || loan.principalLeft <= 0 ? 0 : loan.principalLeft + loan.monthly * (loan.months - loan.paid); }
+    note(w, full ? 'Salary loan paid off' : 'Salary loan installment ' + loan.paid + '/' + loan.months, -pay);
+    return (full ? 'Salary loan paid off · ' : 'Installment ' + loan.paid + '/' + loan.months + ' · ') + money(pay) + (loan.owed ? ' · still owe ' + money(loan.owed) : ' · loan cleared');
+  }
   if (a.type === 'lend') {
     const to = String(a.to || '').trim(); if (!to || key(to) === key(name)) throw Error('Choose another engineer');
     if (!game.wallets?.[key(to)]) throw Error(to + ' has no wallet yet');
@@ -374,6 +402,7 @@ function loans(game, a, name) {
   if (a.type === 'repay') {
     const loan = game.loans.find(l => l.id === a.id && key(l.borrower) === key(name) && l.owed > 0); if (!loan) throw Error('No open loan to repay');
     const w = wallet(game, name), amount = Math.min(loan.owed, int(a.amount ?? loan.owed, 'Repay at least 1,000₮', 1, 1e10)); take(w, amount);
+    if (loan.bank) { loan.owed -= amount; note(w, 'Repaid salary loan', -amount); return 'Repaid ' + money(amount) + ' of your salary loan' + (loan.owed ? ' · still owe ' + money(loan.owed) : ' · loan cleared'); }
     const lender = wallet(game, loan.lender); lender.cash += amount; loan.owed -= amount; note(w, 'Repaid ' + lender.name, -amount); note(lender, 'Repayment from ' + w.name, amount);
     return 'Repaid ' + money(amount) + ' to ' + lender.name + (loan.owed ? ' · still owe ' + money(loan.owed) : ' · loan cleared');
   }
@@ -395,10 +424,11 @@ export function casinoApply(game, a, name, rng = Math.random, now = Date.now()) 
   if (!game.payday) throw Error('The casino and wallets are part of Payday mode');
   if (!game.casino) game.casino = freshCasino(); migrateCasino(game); wallet(game, name); goalsOf(game, name, rng);
   if (a?.type === 'hello') return 'Wallet ready · ' + money(wallet(game, name).cash);
-  if (['lend', 'repay', 'forgive'].includes(a?.type)) return loans(game, a, name);
+  if (['lend', 'repay', 'forgive', 'salary-loan', 'pay-installment'].includes(a?.type)) return loans(game, a, name);
   if (a?.type === 'lotto') return lotto(game, game.casino.tables.lotto, a, name, rng, now);
   if (a?.type === 'drink') return drink(game, a, name, rng, now);
   if (a?.type === 'claim-goals') return claimGoals(game, name);
+  if (a?.type === 'bank') return bank(game, a, name);
   if (a?.type === 'buy-weapon') return buyWeapon(game, a, name);
   const prefix = String(a?.type || '').split('-')[0], gameName = GAME_OF[prefix]; if (!gameName) throw Error('Unknown casino action');
   const id = a.table || TABLES.find(t => t.game === gameName).id, def = tableDef(id); if (def && !game.casino.tables[id]) game.casino.tables[id] = freshTable(def); const t = game.casino.tables[id];
@@ -410,10 +440,22 @@ export function casinoApply(game, a, name, rng = Math.random, now = Date.now()) 
   return slots(game, def, t, a, name, rng, now);
 }
 
+// ---- Darja's bank (creative mode) ------------------------------------------------------------------------
+// Only an engineer named Darja may use it (checked here on the host). amount > 0 gives, < 0 takes (never below 0).
+export const isBanker = name => /^darja$/.test(key(name));
+function bank(game, a, name) {
+  if (!isBanker(name)) throw Error("Only Darja can use the bank");
+  const to = String(a.to || '').trim(); if (!to) throw Error('Choose a player');
+  const amount = Math.round(Number(a.amount)); if (!Number.isFinite(amount) || !amount || Math.abs(amount) > 1e12) throw Error('Enter an amount up to 1,000,000,000,000₮');
+  const w = wallet(game, to), moved = amount > 0 ? amount : -Math.min(w.cash, -amount); w.cash += moved;
+  note(w, moved >= 0 ? "Darja's bank · gift" : "Darja's bank · taken back", moved);
+  return (moved >= 0 ? 'Gave ' + money(moved) + ' to ' : 'Took ' + money(-moved) + ' from ') + w.name + ' · now ' + money(w.cash);
+}
+
 // ---- Bar & weapon market ---------------------------------------------------------------------------------
 function drink(game, a, name, rng, now) {
   const d = DRINKS.find(x => x.id === a.drink); if (!d) throw Error('That is not on the menu');
-  const w = wallet(game, name); take(w, DRINK_PRICE, d.name); note(w, 'Bar · ' + d.name, -DRINK_PRICE);
+  const w = wallet(game, name); take(w, d.price, d.name); note(w, 'Bar · ' + d.name, -d.price);
   const kind = rng() < .5 ? 'lucky' : 'unlucky'; game.luck ??= {};
   game.luck[key(name)] = { kind, strength: d.strength, drink: d.name, until: now + d.min * 60000 };
   goal(game, name, 'drink');

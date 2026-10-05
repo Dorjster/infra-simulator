@@ -1,6 +1,6 @@
 // Payday economy and casino rules (host-side, deterministic with a seeded RNG).
 import assert from 'node:assert/strict';
-import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES, SALARY, START_CASH, DARJA_CASH, DRINKS, DRINK_PRICE, luckOf, arsenalOf, goalsOf, goalsDoneOf, GOALS } from '../dist/casino-logic.js';
+import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES, SALARY, START_CASH, DARJA_CASH, DRINKS, DRINK_PRICE, luckOf, arsenalOf, SALARY_LOAN, salaryPlan, payoffOf, goalsOf, goalsDoneOf, GOALS } from '../dist/casino-logic.js';
 import { combatApply, combatTick, hpOf, isDown } from '../dist/combat-logic.js';
 import { WEAPONS, MAX_HP, RESPAWN_MS } from '../dist/weapons-data.js';
 import { mnt, money } from '../dist/money.js';
@@ -112,7 +112,7 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
 { const g3 = { levels: {} }; startPayday(g3); wallet(g3, 'Bo').cash = 1e12; const kinds = new Set();
   for (let i = 0; i < 40; i++) { casinoApply(g3, { type: 'drink', drink: DRINKS[i % 8].id }, 'Bo', rng, 1000); kinds.add(luckOf(g3, 'Bo', 1000).kind); }
   assert.deepEqual([...kinds].sort(), ['lucky', 'unlucky'], 'drinks give both kinds of luck');
-  assert.equal(wallet(g3, 'Bo').cash, 1e12 - 40 * DRINK_PRICE); assert.equal(DRINK_PRICE, 18000000);
+  assert.equal(wallet(g3, 'Bo').cash, 1e12 - [...Array(40).keys()].reduce((a, i) => a + DRINKS[i % 8].price, 0), 'each drink at its own price'); assert.equal(DRINK_PRICE, 5000); assert(DRINKS.every(d => d.price >= 5000 && d.price <= 50000), 'real bar prices');
   assert.equal(luckOf(g3, 'Bo', 1000 + 5 * 60000), null, 'luck wears off');
   assert.throws(() => casinoApply(g3, { type: 'drink', drink: 'kumis' }, 'Bo', rng), /menu/);
   const rtpWith = kind => { const g = { levels: {} }; startPayday(g); wallet(g, 'L').cash = 1e12; g.luck = { l: { kind, strength: .35, until: 9e15 } }; let paid = 0; const n = 30000;
@@ -120,10 +120,10 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   const lucky = rtpWith('lucky'), unlucky = rtpWith('unlucky'); assert(lucky > rtp + .05 && unlucky < rtp - .05, `luck moves slots: lucky ${lucky.toFixed(3)} · plain ${rtp.toFixed(3)} · unlucky ${unlucky.toFixed(3)}`);
   globalThis.__luck = [lucky, unlucky]; }
 // Weapon market: eight guns from US$25,000 (90,000,000₮); bought once; Darja has her own.
-{ assert.equal(WEAPONS.length, 8); assert.equal(Math.min(...WEAPONS.map(w => w.price)), 90000000);
+{ assert.equal(WEAPONS.length, 8); assert.equal(Math.min(...WEAPONS.map(w => w.price)), 81000000, 'guns 10% under the first list');
   const g4 = { levels: {} }; startPayday(g4);
   assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'pistol' }, 'Sam', rng), /Not enough cash/);
-  wallet(g4, 'Sam').cash = 1e9; assert.match(casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /Bought/); assert.equal(wallet(g4, 'Sam').cash, 1e9 - mnt(100000));
+  wallet(g4, 'Sam').cash = 1e9; assert.match(casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /Bought/); assert.equal(wallet(g4, 'Sam').cash, 1e9 - mnt(90000));
   assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /already own/);
   assert.deepEqual(arsenalOf(g4, 'Sam'), ['ak']); assert.deepEqual(arsenalOf(g4, 'Darja'), ['cannon']);
   // Combat: host-checked hits, HP, head shots, range, fire rate, knock-out and respawn.
@@ -173,4 +173,28 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   paySalary(g9, 'Gi', { type: 'unbox', id: 'C' }); assert.equal(goalsDoneOf(g9, 'Gi').length, 2, 'three jobs met');
   const c0 = wallet(g9, 'Gi').cash, want = GOALS.find(x => x.id === 'drink').reward + GOALS.find(x => x.id === 'jobs').reward;
   assert.match(casinoApply(g9, { type: 'claim-goals' }, 'Gi', r9), /claimed/); assert.equal(wallet(g9, 'Gi').cash, c0 + want); assert.throws(() => casinoApply(g9, { type: 'claim-goals' }, 'Gi', r9), /No finished/); }
-console.log('PASS: casino logic · Payday goals (events, claim, refill), fairness (' + globalThis.__fair + '), tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');
+// Цалингийн зээл: 20,000,000₮ from the bank, 2–10 installments with 2% a month interest (хүү), one loan at a time.
+{ const gl = { levels: {} }; startPayday(gl); const c0 = wallet(gl, 'Tuul').cash; wallet(gl, 'Tuul').cash += 1e9; const W = () => wallet(gl, 'Tuul').cash;
+  const p10 = salaryPlan(10); assert.deepEqual([p10.installment, p10.interest, p10.total], [2400000, 4000000, 24000000]); assert.equal(salaryPlan(1).months, 2); assert.equal(salaryPlan(40).months, 10);
+  let w0 = W(); assert.match(casinoApply(gl, { type: 'salary-loan', months: 10 }, 'Tuul', rng), /10 × 2,400,000₮/); assert.equal(W(), w0 + SALARY_LOAN);
+  assert.throws(() => casinoApply(gl, { type: 'salary-loan', months: 4 }, 'Tuul', rng), /Repay your salary loan first/);
+  const ln = gl.loans.find(l => l.bank); w0 = W();
+  for (let i = 0; i < 3; i++) casinoApply(gl, { type: 'pay-installment', id: ln.id }, 'Tuul', rng);
+  assert.equal(W(), w0 - 3 * 2400000); assert.equal(ln.paid, 3); assert.equal(ln.owed, 14000000 + 7 * 400000);
+  w0 = W(); assert.equal(payoffOf(ln), 14000000 + 400000, 'pay off = principal left + this month'); casinoApply(gl, { type: 'repay', id: ln.id }, 'Tuul', rng); assert.equal(W(), w0 - 14400000); assert.equal(ln.owed, 0);
+  // 3 months: rounding lands in the last installment, the bank gets exactly 20,000,000 + 3 × 400,000.
+  w0 = W(); casinoApply(gl, { type: 'salary-loan', months: 3 }, 'Tuul', rng); const l3 = gl.loans.filter(l => l.bank).at(-1);
+  for (let i = 0; i < 3; i++) casinoApply(gl, { type: 'pay-installment', id: l3.id }, 'Tuul', rng);
+  assert.equal(l3.owed, 0); assert.equal(W(), w0 + SALARY_LOAN - (SALARY_LOAN + 3 * 400000), 'exact total repaid');
+  assert(!Object.values(gl.wallets).some(w => /bank/i.test(w.name)), 'the bank has no wallet');
+  casinoApply(gl, { type: 'salary-loan', months: 2 }, 'Tuul', rng); wallet(gl, 'Bat'); const b0 = wallet(gl, 'Bat').cash;
+  assert.match(casinoApply(gl, { type: 'lend', to: 'Bat', amount: 1e7 }, 'Tuul', rng), /Lent 10,000,000₮ to Bat/); assert.equal(wallet(gl, 'Bat').cash, b0 + 1e7, 'salary-loan money can be lent on'); }
+// Darja's bank: only Darja; gives, takes back (never below 0), shows in the wallet history.
+{ const gb = { levels: {} }; startPayday(gb);
+  assert.match(casinoApply(gb, { type: 'bank', to: 'Sam', amount: 5e8 }, 'Darja', rng), /Gave 500,000,000₮ to Sam/); assert.equal(wallet(gb, 'Sam').cash, START_CASH + 5e8);
+  assert.match(casinoApply(gb, { type: 'bank', to: 'Darja', amount: 1e9 }, 'darja', rng), /Gave/); assert.equal(wallet(gb, 'Darja').cash, DARJA_CASH + 1e9);
+  assert.match(casinoApply(gb, { type: 'bank', to: 'Sam', amount: -1e12 }, 'Darja', rng), /Took/); assert.equal(wallet(gb, 'Sam').cash, 0, 'never below zero');
+  assert.throws(() => casinoApply(gb, { type: 'bank', to: 'Sam', amount: 1e6 }, 'Sam', rng), /Only Darja/);
+  assert.throws(() => casinoApply(gb, { type: 'bank', to: 'Sam', amount: 1e6 }, 'Darja Jr', rng), /Only Darja/);
+  assert.match(wallet(gb, 'Sam').log[1].text, /Darja's bank/); }
+console.log('PASS: casino logic · salary loan 20M₮ in 2–10 installments with хүү, Darja bank, Payday goals (events, claim, refill), fairness (' + globalThis.__fair + '), tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');

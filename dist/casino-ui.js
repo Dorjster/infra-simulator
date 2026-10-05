@@ -2,7 +2,7 @@
 // E at a table also walks the camera to a seat there. Everything shown comes from the shared game state and
 // is revealed on the same clock as the 3D table (casino-sync.js): cards appear as they land, the roulette
 // number when the ball stops, slot wins when the reels stop, lotto balls as they reach the rack.
-import { handValue, rouletteColor, LOTTO, TABLES, DANCES, SLOT_SYMBOLS, tableDef, DRINKS, DRINK_PRICE, luckOf, arsenalOf, goalsView, goalsDoneOf } from './casino-logic.js';
+import { handValue, rouletteColor, LOTTO, TABLES, DANCES, SLOT_SYMBOLS, tableDef, DRINKS, DRINK_PRICE, luckOf, arsenalOf, goalsView, goalsDoneOf, isBanker, SALARY_LOAN, SALARY_RATE, salaryPlan, payoffOf } from './casino-logic.js';
 import { startedAt, SYNC, bjReveal, lottoPlan, boardLandsAt, hitLandsAt } from './casino-sync.js';
 import { symbolImg } from './slot-symbols.js';
 import { money, short } from './money.js';
@@ -38,7 +38,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   const myWallet = () => g().wallets?.[key(me())], T = id => g().casino?.tables?.[id];
   document.body.insertAdjacentHTML('beforeend', `<div id="cz-badge" hidden><span>WALLET</span><strong id="cz-cash">0₮</strong><em id="cz-delta"></em><b id="cz-luck" hidden></b></div>
 <section id="casino-panel" hidden aria-label="Casino"><header><div><small id="cz-kicker">PAYDAY CASINO</small><h2 id="cz-title">Casino</h2></div><div class="cz-wallet"><span>Wallet</span><strong id="cz-panel-cash">0₮</strong></div><button id="cz-close" aria-label="Close">×</button></header>
-<nav><button data-cz="table">This table</button><button data-cz="wallet">Wallet &amp; loans</button></nav><div id="cz-body"></div><p id="cz-msg" role="status"></p></section>`);
+<nav><button data-cz="table">This table</button><button data-cz="wallet">Wallet &amp; loans</button><button data-cz="bank" id="cz-tab-bank" hidden>🏦 Bank</button></nav><div id="cz-body"></div><p id="cz-msg" role="status"></p></section>`);
   const style = document.createElement('style'); style.textContent = `
 #cz-badge{position:fixed;top:16px;right:120px;z-index:36;background:linear-gradient(135deg,#2a0e19,#4a1626);border:1px solid #d8a945;border-radius:10px;padding:6px 14px;color:#f5ead3;font:600 13px system-ui;display:flex;gap:10px;align-items:baseline;box-shadow:0 4px 16px #0006}
 #cz-badge span{font-size:10px;letter-spacing:.14em;color:#e2bc5c}#cz-badge strong{font-size:18px}#cz-badge em{font-style:normal;color:#7dffb0;font-size:13px;opacity:0;transition:opacity .3s}#cz-badge em.on{opacity:1}#cz-badge em.neg{color:#ff8a8a}
@@ -67,7 +67,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   function send(action) {
     return (lan.connected ? lan.send({ type: 'casino', action }) : Promise.resolve().then(() => world.apply({ type: 'casino', action }, actor())))
       .then(r => { const m = typeof r === 'string' ? r : r?.message || '', wait = SUSPENSE[action.type]; $('cz-msg').textContent = wait ? wait[0] : m; if (wait) setTimeout(() => { if ($('cz-msg').textContent === wait[0]) $('cz-msg').textContent = ''; }, wait[1]); render(true); return m; })
-      .catch(e => { $('cz-msg').textContent = e.message; render(true); return 'ERR ' + e.message; });
+      .catch(e => { $('cz-msg').textContent = e.message; notify(e.message); render(true); return 'ERR ' + e.message; });
   }
   // Results arrive with the reply, but are revealed only when the 3D table shows them.
   const SUSPENSE = { 'sl-spin': ['Reels spinning…', SYNC.slots], lotto: ['Ticket bought · watch the machine', 3000], 'rl-spin': ['No more bets · watch the wheel', SYNC.roulette] };   // [text, ms shown]
@@ -89,9 +89,11 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   function mySeat(id) { const t = T(id), def = tableDef(id); if (!t || !def) return 0; if (def.game === 'blackjack') { const i = t.seats.findIndex(s => key(s.name) === key(me())); return i >= 0 ? i : Math.min(4, t.seats.length); } if (def.game === 'poker') { const i = t.seats.findIndex(s => s && key(s.name) === key(me())); return i >= 0 ? i : Math.max(0, t.seats.findIndex(s => !s)); } return hash(me()) % 5; }
   function show(which) {
     if (!g().payday) { notify('The casino is open in Payday mode · start it from the start screen'); return false; }
-    if (which === 'wallet') { tab = 'wallet'; } else if (which) { table = which; tab = 'table'; }
+    if (which === 'wallet') { tab = 'wallet'; } else if (which === 'bank') { if (!isBanker(me())) { notify('Only Darja can open the bank'); return false; } tab = 'bank'; } else if (which) { table = which; tab = 'table'; }
     open = true; $('casino-panel').hidden = false; document.exitPointerLock?.(); onOpen(); if (tab === 'table') onSeat(table, mySeat(table)); render(true); return true;
   }
+  // Darja: the wallet badge opens her bank anywhere in Payday.
+  $('cz-badge').addEventListener('click', () => { if (isBanker(me()) && g().payday) show('bank'); });
   function hide() { if (!open) return; open = false; $('casino-panel').hidden = true; onClose(); }
   $('cz-close').onclick = hide;
   [...(document.querySelectorAll?.('[data-cz]') || [])].forEach(b => b.onclick = () => { tab = b.dataset.cz; render(true); });
@@ -154,8 +156,9 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
   // Bar: every drink the same price; each gives a few minutes of random luck (good or bad) on your own slots and lotto.
   function barHTML(t) {
     const l = luckOf(g(), me()), left = l ? Math.ceil((l.until - Date.now()) / 1000) : 0;
-    return `<div class="cz-box">${l ? `<b style="color:${l.kind === 'lucky' ? '#7dffb0' : '#ff8a8a'}">${l.kind === 'lucky' ? '🍀 LUCKY' : '☁ UNLUCKY'}</b> from ${esc(l.drink)} · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left` : 'Sober · no luck either way'}<br><small>Every drink is ${money(DRINK_PRICE)}. Luck is random — good or bad — and only touches <b>your own</b> slot spins and lotto draws. Roulette, blackjack and poker stay pure chance.</small></div>
-     <div class="cz-dances">${DRINKS.map(d => `<button data-drink="${d.id}"><b>${esc(d.name)}</b>${d.min} min · ${Math.round(d.strength * 100)}% effect</button>`).join('')}</div>
+    return `<div class="cz-box">${l ? `<b style="color:${l.kind === 'lucky' ? '#7dffb0' : '#ff8a8a'}">${l.kind === 'lucky' ? '🍀 LUCKY' : '☁ UNLUCKY'}</b> from ${esc(l.drink)} · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left` : 'Sober · no luck either way'}<br><small>Real bar prices, from ${money(DRINK_PRICE)}. Luck is random — good or bad — and only touches <b>your own</b> slot spins and lotto draws. Roulette, blackjack and poker stay pure chance.</small></div>
+     ${shownCash() < DRINK_PRICE ? `<div class="cz-box" style="border-color:#ffb347"><b style="color:#ffb347">You have ${money(shownCash())} · the cheapest drink is ${money(DRINK_PRICE)}</b><br><small>Earn more with paid jobs and Payday goals, win at the tables, borrow from a teammate (Wallet tab)${isBanker(me()) ? '' : ', or ask Darja — her bank can give money'}.</small></div>` : ''}
+     <div class="cz-dances">${DRINKS.map(d => { const short_ = shownCash() < d.price; return `<button data-drink="${d.id}" ${short_ ? 'disabled style="opacity:.55"' : ''}><b>${esc(d.name)}</b>${money(d.price)} · ${d.min} min · ${Math.round(d.strength * 100)}% effect${short_ ? '<br><small>Not enough cash</small>' : ''}</button>`; }).join('')}</div>
      ${t?.last ? `<p><small>Last served: ${esc(t.last.name)} · ${esc(t.last.drink)}</small></p>` : ''}`;
   }
   // Weapon market: eight guns, each bought once; press 4 to draw and cycle.
@@ -164,6 +167,18 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
     return `<p><small>Guns are for Payday shoot-outs between engineers: 100 HP each, head shots hurt more, a knocked-out engineer respawns after 5 s. Press <b>4</b> to draw and cycle your guns, <b>left click</b> to fire, <b>P</b> to switch first / third person.</small></p>
      <table class="cz-table">${WEAPONS.map(w => `<tr><td><b>${esc(w.name)}</b><br><small>${w.pellets ? w.pellets + ' × ' + w.dmg : w.dmg} dmg · ${Math.round(60000 / w.rateMs)} rpm${w.auto ? ' · auto' : ''} · range ${Math.round(w.range * .165)} m</small></td><td>${money(w.price)}</td><td>${own.includes(w.id) ? '<b style="color:#7dffb0">Owned</b>' : `<button class="cz-btn" data-buy="${w.id}" ${cash < w.price ? 'disabled' : ''}>Buy</button>`}</td></tr>`).join('')}</table>
      ${own.includes('cannon') ? `<p><small>You also carry ${esc(weaponById('cannon').name)}.</small></p>` : ''}`;
+  }
+  // Darja's bank (creative mode): only shown to an engineer named Darja; the host checks it again.
+  let bankTo = '', bankAmt = 10000000, loanMonths = 6;
+  function bankHTML() {
+    const names = [...new Set([...Object.values(g().wallets || {}).map(w => w.name), ...(lan.players || []).map(p => p.name), me()].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    if (!names.includes(bankTo)) bankTo = names.find(n => key(n) !== key(me())) || names[0] || '';
+    const cashOf = n => g().wallets?.[key(n)]?.cash ?? null;
+    return `<p><small>Creative mode for Darja: give money to anyone (yourself too) or take it back. Everyone sees it in their wallet history as a gift from Darja's bank.</small></p>
+     <div class="cz-form"><label>Player <select id="cz-bank-to">${names.map(n => `<option ${n === bankTo ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label><label>Amount <input id="cz-bank-amt" type="number" min="1000" step="1000000" value="${bankAmt}"></label></div>
+     <div class="cz-row">${[1e6, 1e7, 1e8, 1e9].map(v => `<button class="cz-btn alt" data-bank-quick="${v}">+${short(v)}</button>`).join('')}</div>
+     <div class="cz-row" style="margin-top:8px"><button class="cz-btn" data-act="bank-give">Give</button><button class="cz-btn alt" data-act="bank-take">Take back</button></div>
+     <h3>All wallets</h3><table class="cz-table">${names.map(n => `<tr><td>${esc(n)}</td><th>${cashOf(n) === null ? '<em>no wallet yet</em>' : money(cashOf(n))}</th><td><button class="cz-btn alt" data-bank-pick="${esc(n)}">Select</button></td></tr>`).join('')}</table>`;
   }
   function stageHTML(def, t) {
     const active = t.dance >= 0 && Date.now() < t.until;
@@ -177,8 +192,15 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
     const goals = goalsView(g(), me()), ready = goalsDoneOf(g(), me());
     const goalHTML = `<h3>Payday goals</h3>${ready.length ? `<div class="cz-box" style="border-color:#7dffb0"><b style="color:#7dffb0">✓ ${ready.length} goal${ready.length > 1 ? 's' : ''} met</b> · ${ready.map(x => esc(x.text)).join(' · ')}<div class="cz-row" style="margin-top:6px"><button class="cz-btn" data-act="claim-goals">Claim +${money(ready.reduce((a, x) => a + x.reward, 0))}</button></div></div>` : ''}<table class="cz-table">${goals.map(x => `<tr><td>${esc(x.text)}</td><td>${x.progress}/${x.need}</td><td>+${short(x.reward)}</td></tr>`).join('') || '<tr><td><em>Goals appear after your first job or bet</em></td></tr>'}</table>`;
     return goalHTML + `<table class="cz-table"><tr><td>Cash</td><th>${money(shownCash())}</th></tr><tr><td>Salary earned</td><td>${money(w.salary)}</td></tr><tr><td>Casino winnings / losses</td><td>${money(w.won)} / ${money(w.lost)}</td></tr></table>
+     <h3>Цалингийн зээл · Salary loan</h3>${(() => { const mine = (g().loans || []).find(l => l.bank && key(l.borrower) === key(me()) && l.owed > 0);
+       if (mine) { const last = mine.paid === mine.months - 1, next = last ? mine.principalLeft + mine.monthly : Math.min(mine.owed, mine.installment);
+         return `<div class="cz-box">Installment <b>${mine.paid + 1}/${mine.months}</b> · you owe <b>${money(mine.owed)}</b> (borrowed ${money(mine.amount)}, хүү ${Math.round(SALARY_RATE * 100)}%/month)<div class="cz-row" style="margin-top:6px"><button class="cz-btn" data-pay-installment="${mine.id}">Pay installment · ${money(next)}</button><button class="cz-btn alt" data-payoff="${mine.id}">Pay off now · ${money(payoffOf(mine))}</button></div><small>Paying off early saves the interest of the months you don't use.</small></div>`; }
+       const pl = salaryPlan(loanMonths);
+       return `<div class="cz-form"><label>Repay in <select id="cz-loan-months">${[2, 3, 4, 5, 6, 7, 8, 9, 10].map(m => `<option value="${m}" ${m === pl.months ? 'selected' : ''}>${m} months</option>`).join('')}</select></label></div>
+       <div class="cz-box">${money(SALARY_LOAN)} now · <b>${pl.months} × ${money(pl.installment)}</b> · хүү ${Math.round(SALARY_RATE * 100)}%/month = ${money(pl.interest)} · total ${money(pl.total)}</div>
+       <div class="cz-row"><button class="cz-btn" data-act="salary-loan">Take the ${money(SALARY_LOAN)} salary loan</button><small>from the bank · one at a time</small></div>`; })()}
      <h3>Lend money</h3>${others.length ? `<div class="cz-form"><label>To <select id="cz-lend-to">${others.map(o => `<option>${esc(o.name)}</option>`).join('')}</select></label><label>Amount <input id="cz-lend-amt" type="number" min="1000" step="100000" value="1000000"></label><button class="cz-btn" data-act="lend">Lend</button></div>` : '<p>Nobody else has a wallet yet.</p>'}
-     <h3>Loans</h3><table class="cz-table">${loans.map(l => `<tr><td>${esc(l.lender)} → ${esc(l.borrower)}</td><td>${money(l.owed)} / ${money(l.amount)}</td><td>${key(l.borrower) === key(me()) ? `<button class="cz-btn" data-repay="${l.id}">Repay</button> <button class="cz-btn alt" data-repay-part="${l.id}">${short(1000000)}</button>` : key(l.lender) === key(me()) ? `<button class="cz-btn alt" data-forgive="${l.id}">Forgive</button>` : ''}</td></tr>`).join('') || '<tr><td>No open loans</td></tr>'}</table>
+     <h3>Loans</h3><table class="cz-table">${loans.map(l => `<tr><td>${esc(l.lender)} → ${esc(l.borrower)}</td><td>${money(l.owed)} / ${money(l.amount)}</td><td>${key(l.borrower) === key(me()) && l.bank ? `<small>${l.paid}/${l.months} paid</small>` : key(l.borrower) === key(me()) ? `<button class="cz-btn" data-repay="${l.id}">Repay</button> <button class="cz-btn alt" data-repay-part="${l.id}">${short(1000000)}</button>` : key(l.lender) === key(me()) ? `<button class="cz-btn alt" data-forgive="${l.id}">Forgive</button>` : ''}</td></tr>`).join('') || '<tr><td>No open loans</td></tr>'}</table>
      <h3>Rich list</h3><table class="cz-table">${all.map((x, i) => `<tr><td>${i + 1}. ${esc(x.name)}</td><th>${money(x.cash)}</th><td><small>salary ${money(x.salary)}</small></td></tr>`).join('')}</table>
      <h3>History</h3><table class="cz-table">${(w.log || []).slice(0, 12).map(e => `<tr><td>${esc(e.text)}</td><td style="color:${e.amount >= 0 ? '#7dffb0' : '#ff8a8a'}">${e.amount >= 0 ? '+' : ''}${money(e.amount)}</td></tr>`).join('')}</table>`;
   }
@@ -189,21 +211,27 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
     const k = JSON.stringify([tab, table, t, tab === 'wallet' ? [game.wallets, game.loans, shownCash()] : shownCash(), chip, [...picks], anim]);
     if (!force && k === lastKey) return; const typing = document.activeElement?.closest?.('#casino-panel') && document.activeElement.tagName === 'INPUT'; if (!force && typing && k.slice(0, -4) === lastKey.slice(0, -4)) return; lastKey = k;
     [...(document.querySelectorAll?.('[data-cz]') || [])].forEach(b => b.classList?.toggle('on', b.dataset.cz === tab));
-    $('cz-kicker').textContent = tab === 'wallet' ? 'PAYDAY CASINO · CASHIER' : 'PAYDAY CASINO · ' + (def.min ? money(def.min) + '–' + money(def.max) : def.game === 'poker' ? 'BLINDS ' + money(def.sb) + ' / ' + money(def.bb) : 'LOTTO');
-    $('cz-title').textContent = tab === 'wallet' ? 'Wallet & loans' : def.name; $('cz-panel-cash').textContent = money(shownCash());
+    $('cz-tab-bank').hidden = !isBanker(me()); $('cz-kicker').textContent = tab === 'bank' ? "PAYDAY CASINO · DARJA'S BANK" : tab === 'wallet' ? 'PAYDAY CASINO · CASHIER' : 'PAYDAY CASINO · ' + (def.min ? money(def.min) + '–' + money(def.max) : def.game === 'poker' ? 'BLINDS ' + money(def.sb) + ' / ' + money(def.bb) : 'LOTTO');
+    $('cz-title').textContent = tab === 'bank' ? 'Bank · give money' : tab === 'wallet' ? 'Wallet & loans' : def.name; $('cz-panel-cash').textContent = money(shownCash());
     const body = $('cz-body'), scroll = body.scrollTop;
-    morph(body, tab === 'wallet' ? walletHTML() : def.game === 'blackjack' ? blackjackHTML(table, def, t) : def.game === 'roulette' ? rouletteHTML(table, def, t) : def.game === 'poker' ? pokerHTML(table, def, t) : def.game === 'slots' ? slotsHTML(table, def, t) : def.game === 'stage' ? stageHTML(def, t) : def.game === 'bar' ? barHTML(t) : def.game === 'market' ? marketHTML(t) : lottoHTML(t));
+    if (tab === 'bank' && !isBanker(me())) tab = 'wallet';
+    morph(body, tab === 'bank' ? bankHTML() : tab === 'wallet' ? walletHTML() : def.game === 'blackjack' ? blackjackHTML(table, def, t) : def.game === 'roulette' ? rouletteHTML(table, def, t) : def.game === 'poker' ? pokerHTML(table, def, t) : def.game === 'slots' ? slotsHTML(table, def, t) : def.game === 'stage' ? stageHTML(def, t) : def.game === 'bar' ? barHTML(t) : def.game === 'market' ? marketHTML(t) : lottoHTML(t));
     body.scrollTop = scroll;
     const q = s => [...(body.querySelectorAll?.(s) || [])], num = (sel, fallback) => +(body.querySelector?.(sel)?.value ?? fallback);
     q('[data-chip]').forEach(b => b.onclick = () => { chip = +b.dataset.chip; render(true); });
     q('[data-rl]').forEach(b => b.onclick = () => send({ type: 'rl-bet', table, kind: b.dataset.rl, value: b.dataset.v !== undefined ? +b.dataset.v : undefined, amount: chip }));
     q('[data-pick]').forEach(b => b.onclick = () => { const x = +b.dataset.pick; if (picks.has(x)) picks.delete(x); else if (picks.size < LOTTO.picks) picks.add(x); render(true); });
     q('[data-sit]').forEach(b => b.onclick = () => { buyIn = num('#cz-buyin', buyIn); send({ type: 'pk-sit', table, seat: +b.dataset.sit, buyIn }).then(() => onSeat(table, mySeat(table))); });
+    q('[data-pay-installment]').forEach(b => b.onclick = () => send({ type: 'pay-installment', id: b.dataset.payInstallment }));
+    q('[data-payoff]').forEach(b => b.onclick = () => send({ type: 'repay', id: b.dataset.payoff }));
+    q('#cz-loan-months').forEach(sel => sel.onchange = () => { loanMonths = +sel.value; render(true); });
+    q('[data-bank-quick]').forEach(b => b.onclick = () => { bankTo = body.querySelector('#cz-bank-to').value; send({ type: 'bank', to: bankTo, amount: +b.dataset.bankQuick }); });
+    q('[data-bank-pick]').forEach(b => b.onclick = () => { bankTo = b.dataset.bankPick; render(true); });
     q('[data-drink]').forEach(b => b.onclick = () => send({ type: 'drink', drink: b.dataset.drink }));
     q('[data-buy]').forEach(b => b.onclick = () => send({ type: 'buy-weapon', weapon: b.dataset.buy }));
     q('[data-dance]').forEach(b => b.onclick = () => { tipAmt = num('#cz-tip', tipAmt); send({ type: 'st-tip', table: 'stage', dance: +b.dataset.dance, amount: tipAmt }); });
     q('[data-repay]').forEach(b => b.onclick = () => send({ type: 'repay', id: b.dataset.repay })); q('[data-repay-part]').forEach(b => b.onclick = () => send({ type: 'repay', id: b.dataset.repayPart, amount: 1000000 })); q('[data-forgive]').forEach(b => b.onclick = () => send({ type: 'forgive', id: b.dataset.forgive }));
-    q('input').forEach(i => i.oninput = () => { if (i.id === 'cz-buyin') buyIn = +i.value; if (i.id === 'cz-raise') raiseTo = +i.value; if (i.id === 'cz-tip') tipAmt = +i.value; if (i.id === 'cz-slotbet') slotBet = +i.value; });
+    q('input').forEach(i => i.oninput = () => { if (i.id === 'cz-buyin') buyIn = +i.value; if (i.id === 'cz-raise') raiseTo = +i.value; if (i.id === 'cz-tip') tipAmt = +i.value; if (i.id === 'cz-slotbet') slotBet = +i.value; if (i.id === 'cz-bank-amt') bankAmt = +i.value; });
     q('[data-act]').forEach(b => b.onclick = () => {
       const a = b.dataset.act;
       if (a === 'bj-bet') return send({ type: 'bj-bet', table, amount: chip }).then(() => onSeat(table, mySeat(table)));
@@ -211,6 +239,8 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
       if (a === 'clearpicks') { picks = new Set(); return render(true); }
       if (a === 'lotto') return send({ type: 'lotto', picks: [...picks] });
       if (a === 'claim-goals') return send({ type: 'claim-goals' });
+      if (a === 'salary-loan') return send({ type: 'salary-loan', months: loanMonths });
+      if (a === 'bank-give' || a === 'bank-take') { bankTo = body.querySelector('#cz-bank-to').value; bankAmt = num('#cz-bank-amt', bankAmt); return send({ type: 'bank', to: bankTo, amount: a === 'bank-give' ? bankAmt : -bankAmt }); }
       if (a === 'lend') return send({ type: 'lend', to: body.querySelector('#cz-lend-to').value, amount: num('#cz-lend-amt', 0) });
       if (a === 'pk-raise') return send({ type: 'pk-raise', table, to: num('#cz-raise', raiseTo) });
       if (a === 'pk-rebuy') return send({ type: 'pk-rebuy', table, amount: Math.min(2000000, def.maxBuy - (T(table).seats.find(s => s && key(s.name) === key(me()))?.stack || 0)) });
@@ -225,7 +255,7 @@ export function createCasinoUI({ world, lan, name, notify = () => {}, onOpen = (
     const w = myWallet();
     if (!w && Date.now() - helloAt > 4000) { helloAt = Date.now(); send({ type: 'hello' }).catch(() => {}); }
     { const l = luckOf(game, me()), b = $('cz-luck'); b.hidden = !l; if (l) { b.textContent = l.kind === 'lucky' ? '🍀 lucky' : '☁ unlucky'; b.style.color = l.kind === 'lucky' ? '#7dffb0' : '#ff8a8a'; } }
-    if (w) { const cash = shownCash(); $('cz-cash').textContent = money(cash); if (lastCash !== null && cash !== lastCash) { const d = cash - lastCash, el = $('cz-delta'); el.textContent = (d > 0 ? '+' : '') + money(d) + (w.log?.[0]?.text?.startsWith('Salary') && d > 0 ? ' salary' : w.log?.[0]?.text === 'Level bonus' ? ' level bonus' : ''); el.className = 'on' + (d < 0 ? ' neg' : ''); clearTimeout(deltaTimer); deltaTimer = setTimeout(() => el.className = '', 2600); } lastCash = cash; }
+    if (w) { const cash = shownCash(); $('cz-cash').textContent = money(cash); if (lastCash !== null && cash !== lastCash) { const d = cash - lastCash, el = $('cz-delta'); el.textContent = (d > 0 ? '+' : '') + money(d) + (w.log?.[0]?.text?.startsWith('Salary loan') && d > 0 ? ' loan' : w.log?.[0]?.text?.startsWith('Salary') && d > 0 ? ' salary' : /Darja's bank/.test(w.log?.[0]?.text || '') ? " from Darja's bank" : w.log?.[0]?.text === 'Level bonus' ? ' level bonus' : ''); el.className = 'on' + (d < 0 ? ' neg' : ''); clearTimeout(deltaTimer); deltaTimer = setTimeout(() => el.className = '', 2600); } lastCash = cash; }
     render(false);
   }
   const VERB = { blackjack: 'Play blackjack', roulette: 'Play roulette', poker: "Sit at the Hold'em table", slots: 'Play the slot machine', lotto: 'Buy a lotto ticket', stage: 'Tip the dancer', bar: 'Order a drink', market: 'Browse the weapon market' };

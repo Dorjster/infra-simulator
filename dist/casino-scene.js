@@ -6,7 +6,7 @@
 // The doors open only in Payday mode.
 import * as THREE from './three.module.js';
 import { CASINO, ROOM } from './facility-layout.js';
-import { WHEEL, rouletteColor, TABLES, SLOT_SYMBOLS, LOTTO } from './casino-logic.js';
+import { WHEEL, rouletteColor, TABLES, SLOT_SYMBOLS, LOTTO, DRINKS } from './casino-logic.js';
 import { startedAt, SYNC, bjReveal, lottoPlan, boardLandsAt, hitLandsAt } from './casino-sync.js';
 import { createStage } from './casino-stage.js';
 import { drawSymbol } from './slot-symbols.js';
@@ -339,7 +339,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   box(50, 4.4, 2.6, 5, 2.2, maxZ - 7, M.wood); box(50.4, .3, 3, 5, 4.55, maxZ - 7, M.gold); box(50, 12, .4, 5, 9, maxZ - .6, M.panel);
   for (let r = 0; r < 3; r++) { box(46, .2, 1.2, 5, 7 + r * 3, maxZ - 1.2, M.gold); for (let i = 0; i < 22; i++) add(BOTTLE_GEO, BOTTLES[(i + r * 3) % BOTTLES.length], -16 + i * 2, 7.8 + r * 3, maxZ - 1.2); }
   for (let i = 0; i < 9; i++) { add(new THREE.CylinderGeometry(.9, .9, .3, 16), M.velvet, -15 + i * 5, 4.6, maxZ - 10.5); add(new THREE.CylinderGeometry(.12, .12, 4.4, 8), M.chrome, -15 + i * 5, 2.2, maxZ - 10.5); }
-  sign(screen(12, 2.6, 5, 15.5, maxZ - .9, Math.PI, 600), 'THE PAYDAY BAR', ['Every drink ' + money(mnt5k) + ' · press E at the bar', 'Luck — or bad luck — for a few minutes', 'Play money only · drink responsibly']);
+  sign(screen(12, 2.6, 5, 15.5, maxZ - .9, Math.PI, 600), 'THE PAYDAY BAR', ['Drinks from ' + money(Math.min(...DRINKS.map(d => d.price))) + ' · press E at the bar', 'Luck — or bad luck — for a few minutes', 'Play money only · drink responsibly']);
   for (const [x, z] of [[minX + 3, minZ + 3], [maxX - 3, minZ + 3], [minX + 3, maxZ - 3], [maxX - 3, maxZ - 14]]) { add(new THREE.CylinderGeometry(1, .8, 2.4, 12), M.gold, x, 1.2, z); add(new THREE.SphereGeometry(1.8, 12, 10), new THREE.MeshStandardMaterial({ color: 0x1f6b35, roughness: .8 }), x, 3.6, z); }
 
   const ST = LAYOUT.stage, stage = createStage(group, ST, { hit }), stageSign = screen(10, 3, ST.x, 21, ST.z - 9.6); chandelier(ST.x - 14, ST.z); chandelier(ST.x + 14, ST.z);
