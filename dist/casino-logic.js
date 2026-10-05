@@ -56,16 +56,17 @@ export const GOALS = [
   { id: 'jobs-5', text: 'Finish 5 paid jobs', need: 5, usd: 3000 },
   { id: 'bj-3', text: 'Win 3 hands of blackjack', need: 3, usd: 2500 },
 ].map(x => ({ ...x, reward: mnt(x.usd) }));
-export function goalsOf(game, name, rng = Math.random) {
+export function goalsOf(game, name, rng = Math.random, avoid = []) {
   game.goals ??= {}; const k = key(name), list = game.goals[k] ??= [];
-  while (list.length < 3) { const pool = GOALS.filter(gl => !list.some(x => x.id === gl.id)); const gl = pool[Math.floor(rng() * pool.length)]; list.push({ id: gl.id, progress: 0, at: Date.now() }); }
+  while (list.length < 3) { const pool = GOALS.filter(gl => !list.some(x => x.id === gl.id) && !avoid.includes(gl.id)); /* never hand back the goal just finished */ const gl = pool[Math.floor(rng() * pool.length)]; list.push({ id: gl.id, progress: 0, at: Date.now() }); }
   return list.map(x => ({ ...GOALS.find(gl => gl.id === x.id), progress: x.progress }));
 }
 function goal(game, name, id, n = 1, rng = Math.random) {
   if (!game.payday || !name) return; const list = (goalsOf(game, name, rng), game.goals[key(name)]), match = list.filter(x => x.id === id || (id === 'jobs' && x.id === 'jobs-5') || (id === 'bj-win' && x.id === 'bj-3'));
+  const finished = [];
   for (const x of match) { const def = GOALS.find(gl => gl.id === x.id); x.progress = Math.min(def.need, x.progress + n);
-    if (x.progress >= def.need) { list.splice(list.indexOf(x), 1); (game.goalsDone ??= {})[key(name)] ??= []; game.goalsDone[key(name)].push({ id: def.id, text: def.text, reward: def.reward, at: Date.now() }); } }
-  goalsOf(game, name, rng);
+    if (x.progress >= def.need) { list.splice(list.indexOf(x), 1); finished.push(def.id); (game.goalsDone ??= {})[key(name)] ??= []; game.goalsDone[key(name)].push({ id: def.id, text: def.text, reward: def.reward, at: Date.now() }); } }
+  goalsOf(game, name, rng, finished);
 }
 // A met goal waits to be claimed (the bonus lands in the wallet when the engineer presses Claim).
 export const goalsDoneOf = (game, name) => game.goalsDone?.[key(name)] || [];
