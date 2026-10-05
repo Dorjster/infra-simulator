@@ -175,3 +175,16 @@ The service laptop's console now assists you the way switch and firewall CLIs do
 - `tests/browser/cli-assist.mjs` types real keystrokes in the laptop console: 10/10.
 - Level 1, the casino LAN test (37/37) and clicks (10/10) still pass.
 
+## v36.5: smoother LAN, one-click joining
+
+**Smooth movement of other engineers.**
+- **Before:** each avatar chased the newest position it had heard about, so it lurched forward whenever an update arrived (every 100–250 ms) and then slowed down.
+- **Now:** every engineer sends their position 15× a second (was ~8), stamped with their own capture time, and the room relays positions 20× a second (was 10). Each avatar is played back ~120 ms in the past, between two real samples on the sender's own clock, so its speed is steady and network jitter doesn't show. A late update continues the last motion for up to 150 ms.
+- **Measured** on a guest watching a host walk a smooth path (`tests/browser/lan-smooth.mjs`): 3 speed lurches in 5 s, against 36 before.
+
+**One-click joining (desktop app).**
+- While you host, the app announces the game on the local network once a second: your name, the mode (Payday or Campaign), the number of engineers, the address and the version.
+- **Join LAN** now lists **Games on your network**. Click one and you join, with no IP or code to type. Typing an address still works as before.
+- The announcements never leave the local network (UDP broadcast on port 47790). If Windows asks about the firewall the first time, allow Infra Simulator on private networks.
+- **Tested** with two desktop apps: the guest saw "Payday · 1 engineer · 172.16.130.235:8080" and joined with one click (2 engineers, Payday).
+

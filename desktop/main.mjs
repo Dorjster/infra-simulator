@@ -7,6 +7,8 @@ import { readFile, writeFile, rename, copyFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
+import dgram from 'node:dgram';
+import os from 'node:os';
 
 // Windows Squirrel installer events: Setup.exe runs the app with --squirrel-install (and --squirrel-updated /
 // --squirrel-uninstall) and waits for it to exit. Create or remove the Start menu and desktop shortcuts and
@@ -91,18 +93,39 @@ async function exportSave() {
   try { await copyFile(savePath(), r.filePath); } catch (e) { dialog.showErrorBox('Export failed', e.code === 'ENOENT' ? 'There is no hosted campaign save yet. Solo campaigns: Team → Save → Export in the game.' : e.message); }
 }
 
+// LAN discovery: while hosting, the app announces its game once a second (UDP broadcast on port 47790: app,
+// version, host name, port, room code); every running app listens, so the Join screen can list
+// "Games on your network" for one-click joining. LAN only (broadcasts never leave the local network).
+const DISCOVERY_PORT = 47790, found = new Map(); let beacon = null, beaconName = '', listener = null;
+function broadcastAddresses() { const out = new Set(['255.255.255.255']); for (const list of Object.values(os.networkInterfaces())) for (const i of list || []) if (i.family === 'IPv4' && !i.internal && i.netmask) { const ip = i.address.split('.').map(Number), m = i.netmask.split('.').map(Number); out.add(ip.map((b, k) => (b & m[k]) | (~m[k] & 255)).join('.')); } return [...out]; }
+function listen() {
+  if (listener) return; listener = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  listener.on('message', (buf, rinfo) => { try { const m = JSON.parse(String(buf)); if (m.app !== 'infra-simulator' || !Number.isInteger(m.port)) return; if (room && m.port === room.port && room.addresses().some(a => a.startsWith(rinfo.address + ':'))) return; found.set(rinfo.address + ':' + m.port, { address: rinfo.address + ':' + m.port, name: String(m.name || 'LAN game').slice(0, 40), code: String(m.code || '').slice(0, 12), version: String(m.version || ''), players: m.players | 0, mode: String(m.mode || ''), seen: Date.now() }); } catch {} });
+  listener.on('error', () => { try { listener.close(); } catch {} listener = null; });
+  listener.bind(DISCOVERY_PORT, () => { try { listener.setBroadcast(true); } catch {} });
+}
+function startBeacon() {
+  if (beacon) return; const sock = dgram.createSocket('udp4'); sock.bind(() => { try { sock.setBroadcast(true); } catch {} });
+  const send = () => { if (!room || !hosting) return; const msg = Buffer.from(JSON.stringify({ app: 'infra-simulator', version: app.getVersion(), name: beaconName || os.hostname(), port: room.port, code: room.roomCode, players: room.players, mode: (g => g?.payday ? 'Payday' : g?.mode === 'campaign' ? 'Campaign' : g?.mode || '')(room.world?.operations?.game) })); for (const a of broadcastAddresses()) sock.send(msg, DISCOVERY_PORT, a, () => {}); };
+  beacon = { sock, timer: setInterval(send, 1000) }; send();
+}
+function stopBeacon() { if (!beacon) return; clearInterval(beacon.timer); try { beacon.sock.close(); } catch {} beacon = null; }
+ipcMain.handle('desktop:discover', () => { listen(); const now = Date.now(); for (const [k, v] of found) if (now - v.seen > 4000) found.delete(k); return [...found.values()]; });
+
 // Renderer bridge (see preload.cjs): host on the LAN, stop hosting, app info.
-ipcMain.handle('desktop:host', async () => {
+ipcMain.handle('desktop:host', async (_e, opts = {}) => {
+  beaconName = String(opts?.name || '').slice(0, 40);
   if (!hosting) { const port = room.port; try { await room.rebind('0.0.0.0', port); } catch { await room.rebind('0.0.0.0', 0); } hosting = true; }
+  startBeacon();
   return { port: room.port, roomCode: room.roomCode, addresses: room.addresses(), hosting };
 });
-ipcMain.handle('desktop:stop-hosting', async () => { if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } return { hosting }; });
+ipcMain.handle('desktop:stop-hosting', async () => { stopBeacon(); if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } return { hosting }; });
 ipcMain.handle('desktop:info', () => ({ version: app.getVersion(), platform: process.platform, hosting, port: room.port, savePath: savePath() }));
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(async () => {
   app.setAboutPanelOptions({ applicationName: 'Infra Simulator', applicationVersion: app.getVersion(), credits: 'Created by Darja', copyright: '© Darja' });
-  await openRoom();
+  await openRoom(); listen();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     { label: 'File', submenu: [{ label: 'Import campaign save…', click: importSave }, { label: 'Export hosted campaign save…', click: exportSave }, { label: 'Show saves folder', click: () => shell.openPath(app.getPath('userData')) }, { type: 'separator' }, process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }] },
