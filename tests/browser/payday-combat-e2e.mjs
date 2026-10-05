@@ -46,13 +46,29 @@ try {
   // 3. Bar.
   const dr = await casino(guest, { type: 'drink', drink: 'whisky' }); await guest.waitForTimeout(700);
   const badge = await guest.evaluate(() => { const b = document.getElementById('cz-luck'); return b && !b.hidden ? b.textContent : ''; });
-  check('Bar: whisky costs 18,000,000₮ and gives luck (good or bad) shown on the wallet badge', /LUCKY|UNLUCKY/.test(dr) && /lucky/.test(badge) && (await cash(host, 'sam')) === 2e9 - 18000000, dr + ' · ' + badge);
+  check('Bar: whisky costs 38,000₮ and gives luck (good or bad) shown on the wallet badge', /LUCKY|UNLUCKY/.test(dr) && /lucky/.test(badge) && (await cash(host, 'sam')) === 2e9 - 38000, dr + ' · ' + badge);
   await guest.evaluate(() => { __infra.lab.enter(); __infra.lab.casinoUI.show('bar'); }); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out, 'bar.png') }); await guest.evaluate(() => __infra.lab.casinoUI.hide());
   // 4. Weapon market.
-  check('Market: Darja buys the Assault Rifle (360,000,000₮)', /Bought the Assault Rifle/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
-  check('Market: Sam buys the 9mm Pistol (90,000,000₮)', /Bought the 9mm Pistol/.test(await casino(guest, { type: 'buy-weapon', weapon: 'pistol' })));
+  check('Market: Darja buys the Assault Rifle (324,000,000₮)', /Bought the Assault Rifle/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
+  check('Market: Sam buys the 9mm Pistol (81,000,000₮)', /Bought the 9mm Pistol/.test(await casino(guest, { type: 'buy-weapon', weapon: 'pistol' })));
   check('Market: buying a gun you own is refused', /already own/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
   await host.evaluate(() => { __infra.lab.enter(); __infra.lab.casinoUI.show('guns'); }); await host.waitForTimeout(900); await host.screenshot({ path: path.join(out, 'weapon-market.png') }); await host.evaluate(() => __infra.lab.casinoUI.hide());
+  // Darja's bank: only Darja sees it; giving through the screen reaches Sam; Sam can't use it.
+  check("Bank tab shows only for Darja", await host.evaluate(() => __infra.lab.casinoUI.show('bank') && !document.getElementById('cz-tab-bank').hidden) && await guest.evaluate(() => !__infra.lab.casinoUI.show('bank') && document.getElementById('cz-tab-bank').hidden));
+  const samBefore = await cash(host, 'sam');
+  await host.selectOption('#cz-bank-to', 'Sam'); await host.fill('#cz-bank-amt', '50000000'); await host.click('[data-act="bank-give"]'); await host.waitForTimeout(800);
+  await host.screenshot({ path: path.join(out, 'bank.png') });
+  check("Darja's bank gives Sam 50,000,000₮ from the screen", (await cash(host, 'sam')) === samBefore + 5e7 && await until(guest, v => __infra.lab.world.operations.game.wallets.sam.cash === v, samBefore + 5e7, 4000), String(await cash(host, 'sam')));
+  // Цалингийн зээл from the Wallet tab: choose 4 months, take 20,000,000₮, pay one installment (5,000,000 + 400,000 хүү).
+  const s0 = await cash(host, 'sam'); await guest.evaluate(() => __infra.lab.casinoUI.show('wallet')); await guest.waitForTimeout(500);
+  await guest.selectOption('#cz-loan-months', '4'); await guest.waitForTimeout(300);
+  const preview = await guest.evaluate(() => document.getElementById('cz-body').innerText);
+  await guest.click('[data-act="salary-loan"]'); await guest.waitForTimeout(900);
+  check('Salary loan (Цалингийн зээл): 4 × 5,400,000₮ shown before taking it, +20,000,000₮ after', /4 × 5,400,000₮/.test(preview) && (await cash(host, 'sam')) === s0 + 2e7 && /Installment 1\/4/.test(await guest.evaluate(() => document.getElementById('cz-body').innerText)), String(await cash(host, 'sam') - s0));
+  await guest.click('[data-pay-installment]'); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out, 'salary-loan.png') });
+  check('Paying one installment takes 5,400,000₮ and moves to 2/4', (await cash(host, 'sam')) === s0 + 2e7 - 5400000 && /Installment 2\/4/.test(await guest.evaluate(() => document.getElementById('cz-body').innerText)), String(await cash(host, 'sam') - s0));
+  check("Sam can't use the bank", /Only Darja/.test(await casino(guest, { type: 'bank', to: 'Sam', amount: 1e9 })));
+  await host.evaluate(() => __infra.lab.casinoUI.hide()); await guest.evaluate(() => __infra.lab.casinoUI.hide());
   // 5. Shoot-out: Sam stands near the casino entrance, Darja aims at him from 26 units away and fires.
   await guest.evaluate(() => { __infra.lab.enter(); __infra.lab.look(14, 64, 14, 9.7, 40); }); await host.evaluate(() => { __infra.lab.enter(); __infra.lab.look(14, 90, 14, 6, 64); });
   await host.waitForTimeout(2000);
