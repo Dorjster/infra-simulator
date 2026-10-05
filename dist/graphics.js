@@ -1,6 +1,9 @@
 // Image quality, tiered by the graphics preset so every computer stays smooth.
 //  · Every preset: a reflection environment (three.js RoomEnvironment, prefiltered once) so metal, chrome,
 //    gold, glass and lacquer reflect light instead of looking flat. It costs nothing per frame after startup.
+//  · Every preset: a light pool. Every surface computes every light in the scene, so instead of 12 fixed point
+//    lights the scene uses 4 pooled ones that take the place of the strongest lights near the player, refreshed
+//    5× a second. The count never changes, so no shader ever recompiles; lighting where you stand looks the same.
 //  · High / Ultra (not on software rendering): real shadows from the key light, which follows the player
 //    so a small shadow map stays sharp, and a soft glow (bloom) on lamps, neon and LEDs.
 import * as THREE from './three.module.js';
@@ -11,27 +14,33 @@ import { UnrealBloomPass } from './post/UnrealBloomPass.js';
 import { OutputPass } from './post/OutputPass.js';
 import { AVATAR_SHADOW } from './avatar.js';
 
-export function createGraphics({ renderer, scene, camera, sun, preset, software = false }) {
+export function createGraphics({ renderer, scene, camera, sun, preset, prefs = () => ({}), software = false, jobs = null }) {
   // Reflections.
+  // Reflections are the costliest effect on a Retina laptop, so they follow the mode: on for Quality / Ultra,
+  // off for Performance / Balanced, unless Settings → Reflections says otherwise.
+  let envTexture = null;
   try { const pmrem = new THREE.PMREMGenerator(renderer), room = new RoomEnvironment();
-    scene.environment = pmrem.fromScene(room, .04).texture; scene.environmentIntensity = .38; room.dispose?.(); pmrem.dispose(); }
+    envTexture = pmrem.fromScene(room, .04).texture; scene.environmentIntensity = .38; room.dispose?.(); pmrem.dispose(); }
   catch (e) { console.warn('reflections unavailable:', e.message); }                                            // the game still runs without them
   // Shadows: the key light casts; its shadow box moves with the player.
   const SHADOW_BOX = 70, sunOffset = sun.position.clone(), LIGHT_DIST = 17;
   sun.shadow.camera.left = sun.shadow.camera.bottom = -SHADOW_BOX; sun.shadow.camera.right = sun.shadow.camera.top = SHADOW_BOX;
   sun.shadow.camera.near = .5; sun.shadow.camera.far = 170; sun.shadow.bias = -.0004; sun.shadow.normalBias = .04; scene.add(sun.target);
-  let composer = null, bloom = null, mode = '', frame = 0; const hemi = scene.children.find(o => o.isHemisphereLight), base = { sun: sun.intensity, hemi: hemi?.intensity };
-  const high = () => !software && ['High', 'Ultra'].includes(preset());
+  let composer = null, bloom = null, mode = '', frame = 0, fxOn = false; const hemi = scene.children.find(o => o.isHemisphereLight), base = { sun: sun.intensity, hemi: hemi?.intensity };
+  const auto = (v, def) => v === 'on' ? true : v === 'off' ? false : def;
+  const high = () => !software && auto(prefs().effects, ['High', 'Ultra'].includes(preset()));
+  const reflect = () => !!envTexture && auto(prefs().reflections, ['High', 'Ultra'].includes(preset()));
   function apply() {
-    const want = high() ? preset() : 'basic'; if (want === mode) return; mode = want;
-    const on = want !== 'basic';
+    const fx = high() ? (preset() === 'Ultra' ? 'Ultra' : 'High') : 'basic', want = fx + (reflect() ? '+env' : ''); if (want === mode) return; mode = want;
+    const on = fx !== 'basic'; fxOn = on; scene.environment = reflect() ? envTexture : null;
     renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap; sun.castShadow = on;
     AVATAR_SHADOW.visible = !on;                                                                             // contact shadows only without real ones
     sun.intensity = base.sun * (on ? 1.55 : 1); if (hemi) hemi.intensity = base.hemi * (on ? .72 : 1);              // more light from the shadow-casting key on High
-    sun.shadow.mapSize.setScalar(want === 'Ultra' ? 4096 : 2048); sun.shadow.map?.dispose(); sun.shadow.map = null;
+    sun.shadow.mapSize.setScalar(fx === 'Ultra' ? 2048 : 1024); sun.shadow.map?.dispose(); sun.shadow.map = null;
+    if (on) flagShadows();   // first time at once; the job keeps it current
     if (on && !composer) {
       const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-      const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });   // MSAA inside the composer
+      const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: fx === 'Ultra' ? 4 : 0 });   // MSAA only on Ultra (it is the costliest part on Retina)
       composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera));
       bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05); composer.addPass(bloom); composer.addPass(new OutputPass());
     }
@@ -53,13 +62,25 @@ export function createGraphics({ renderer, scene, camera, sun, preset, software 
       o.receiveShadow = m?.visible !== false; o.castShadow = !clear;
     });
   }
+  // Light pool (see top). Point lights created later (casino, office) are picked up by the periodic rescan.
+  const POOL = 4, pool = Array.from({ length: POOL }, () => { const l = new THREE.PointLight(0xffffff, 0, 1, 2); l.userData.pooled = true; scene.add(l); return l; });
+  const sources = new Set(), wp = new THREE.Vector3(); let poolAt = 0, scanAt = 0;
+  function scanLights() { scene.traverse(o => { if (o.isPointLight && !o.userData.pooled && !o.userData.noPool && !sources.has(o)) { sources.add(o); o.visible = false; } }); }
+  function updatePool(now) {
+    if (jobs) jobs.add('light-scan', scanLights, 2000); else if (now - scanAt > 2000) { scanAt = now; scanLights(); }
+    if (now - poolAt < 200) return; poolAt = now;
+    const cam = camera.position, ranked = [];
+    for (const l of sources) { if (!l.parent) continue; const i = l.intensity; if (i <= 0) continue; l.getWorldPosition(wp); const d = wp.distanceTo(cam), reach = l.distance || 200; if (d > reach * 1.4) continue; ranked.push({ l, w: i / (1 + (d / Math.max(8, reach * .35)) ** 2), p: wp.clone() }); }
+    ranked.sort((a, b) => b.w - a.w);
+    pool.forEach((p, k) => { const r = ranked[k]; if (!r) { p.intensity = 0; return; } p.position.copy(r.p); p.color.copy(r.l.color); p.intensity = r.l.intensity; p.distance = r.l.distance; p.decay = r.l.decay; });
+  }
   return {
-    get post() { return !!composer && mode !== 'basic'; },
+    get post() { return !!composer && fxOn; },
     setSize(w, h) { if (composer) { const s = renderer.getDrawingBufferSize(new THREE.Vector2()); composer.setSize(w, h); composer.setPixelRatio?.(renderer.getPixelRatio()); bloom?.resolution.set(s.x / 2, s.y / 2); } },
     render() {
-      apply(); frame++;
-      if (mode !== 'basic') {
-        if (frame % 120 === 1) { flagShadows(); glow(true); }
+      apply(); frame++; updatePool(performance.now());
+      if (fxOn) {
+        if (jobs) jobs.add('shadow-flags', () => { if (fxOn) { flagShadows(); glow(true); } }, 2000); else if (frame % 120 === 1) { flagShadows(); glow(true); }
         const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
         sun.target.position.set(camera.position.x, 0, camera.position.z); sun.position.copy(sun.target.position).add(sunOffset.clone().setLength(LIGHT_DIST));   // just under the ceilings, so they don't shade the rooms
         composer.render();

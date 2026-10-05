@@ -218,3 +218,35 @@ The service laptop's console now assists you the way switch and firewall CLIs do
   - **Rules:** the bank (only Darja; gives and takes, never below 0); loan plans, installments, early pay-off and exact totals; per-drink prices.
   - **LAN:** the bank tab appears only for Darja; she gives Sam 50,000,000₮ from the screen; Sam takes a 4-month loan, sees 4 × 5,400,000₮, then pays one installment.
 
+## v36.7: lighter on the laptop, sharper picture, passcode joining
+
+**What made it laggy (measured on an M3 MacBook Air):**
+- **Too many lights:** 12 point lights in the scene, each computed for every surface. They took a Retina frame from 60 to 27 fps.
+- **Reflections on every preset:** costly at high resolution.
+- **No frame cap:** the game drew as fast as possible even on the start screen or behind other apps, which kept the laptop busy.
+- **A slow resolution scaler:** it reacted slowly, then got stuck at the lowest resolution, so the picture looked low.
+
+**Fixes:**
+- **Light pool:** 4 lights follow the brightest lamps around you, so lighting where you stand looks the same at a third of the cost.
+- **Frame governor:** 60 fps in game (or your Settings cap), 30 fps on the start screen, and 20 fps when the desktop window isn't in front. Game logic and LAN keep running.
+- **Background jobs, one at a time:** heavy periodic work (scene scans, culling, shadow and light refresh) runs as scheduled jobs, at most one per frame and only when the frame has time left, like background refresh on a phone.
+- **Smarter resolution:** the scaler uses the median frame time (a loading hitch doesn't count), waits 6 s after start, reacts within a second, and climbs back when there is room.
+
+**Graphics mode in Settings:**
+
+| Mode | Reflections | Shadows and glow | Notes |
+| --- | --- | --- | --- |
+| Performance | off | off | |
+| Balanced | off | off | 1.5× sharper than before |
+| Quality | on | on | |
+| Ultra | on | on | 4× anti-aliasing, for desktop GPUs |
+
+Reflections and Shadows & glow are also separate switches (Auto, On or Off). On a Retina screen, Performance and Balanced hold 60 fps, and Quality runs about 50 fps at full sharpness.
+
+**Menus:** fields, boxes and buttons on the start screen sit on one straight line, with helper text as a small caption underneath.
+
+**LAN passcode:**
+- When hosting, you can set your own passcode: Payday has a "LAN passcode" field, and LAN Campaign has Passcode → Set.
+- Join LAN lists the games on your network. **Select** one, type its passcode, and press Enter or Join room.
+- The passcode is never broadcast, and a wrong one is refused ("Incorrect passcode").
+

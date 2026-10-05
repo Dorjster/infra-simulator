@@ -106,7 +106,7 @@ function listen() {
 }
 function startBeacon() {
   if (beacon) return; const sock = dgram.createSocket('udp4'); sock.bind(() => { try { sock.setBroadcast(true); } catch {} });
-  const send = () => { if (!room || !hosting) return; const msg = Buffer.from(JSON.stringify({ app: 'infra-simulator', version: app.getVersion(), name: beaconName || os.hostname(), port: room.port, code: room.roomCode, players: room.players, mode: (g => g?.payday ? 'Payday' : g?.mode === 'campaign' ? 'Campaign' : g?.mode || '')(room.world?.operations?.game) })); for (const a of broadcastAddresses()) sock.send(msg, DISCOVERY_PORT, a, () => {}); };
+  const send = () => { if (!room || !hosting) return; const msg = Buffer.from(JSON.stringify({ app: 'infra-simulator', version: app.getVersion(), name: beaconName || os.hostname(), port: room.port, locked: true, players: room.players, mode: (g => g?.payday ? 'Payday' : g?.mode === 'campaign' ? 'Campaign' : g?.mode || '')(room.world?.operations?.game) })); for (const a of broadcastAddresses()) sock.send(msg, DISCOVERY_PORT, a, () => {}); };
   beacon = { sock, timer: setInterval(send, 1000) }; send();
 }
 function stopBeacon() { if (!beacon) return; clearInterval(beacon.timer); try { beacon.sock.close(); } catch {} beacon = null; }
@@ -115,6 +115,7 @@ ipcMain.handle('desktop:discover', () => { listen(); const now = Date.now(); for
 // Renderer bridge (see preload.cjs): host on the LAN, stop hosting, app info.
 ipcMain.handle('desktop:host', async (_e, opts = {}) => {
   beaconName = String(opts?.name || '').slice(0, 40);
+  if (opts?.code) await room.setCode(opts.code);
   if (!hosting) { const port = room.port; try { await room.rebind('0.0.0.0', port); } catch { await room.rebind('0.0.0.0', 0); } hosting = true; }
   startBeacon();
   return { port: room.port, roomCode: room.roomCode, addresses: room.addresses(), hosting };

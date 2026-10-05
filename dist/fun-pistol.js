@@ -64,7 +64,7 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
     return best || { point: origin.clone().addScaledVector(dir, 120), normal: null };
   }
   // One muzzle light for every shot, always in the scene (adding and removing lights recompiles every shader).
-  const light = new THREE.PointLight(0xffc06a, 0, 9); scene.add(light); let lightT = 1;
+  const light = new THREE.PointLight(0xffc06a, 0, 9); light.userData.noPool = true; scene.add(light); let lightT = 1;
   function flash(at, dir, size = 1.1) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     s.position.copy(at).addScaledVector(dir, .25); s.scale.setScalar(size); scene.add(s);
