@@ -67,6 +67,8 @@ for (let i = 0; i < LOGIC_CHALLENGES.length; i++) {
   const gui = pseudo ? (pseudo.gui || L.pdu(r.device)?.gui) : L.gui(a.byId[r.device]); if (gui) assert(gui.blocking, def.name + ' GUI blocking box');
   if (!recipe.pc) { const leds = pseudo ? pseudo.leds : L.leds(a.byId[def.family === 'provider-router' && def.fault !== 'cpe-power' ? r.device : r.device]); assert(nonGreen(leds), def.name + ' LEDs show the fault ' + JSON.stringify(leds.front)); }
   const ev = recipe.cli(r); if (ev) assert.match(await cli(ev[0], ev[1]), ev[2], def.name + ' CLI evidence');
+  // Hints: three ticket clues first (never naming the cause), then the precise pointer naming the device.
+  const clues = [1, 2, 3].map(() => engineering({ type: 'hint' })); assert(clues.every((c, k) => c.startsWith('Clue ' + (k + 1) + '/3')), def.name + ' clues first ' + clues[0]);
   const hint = engineering({ type: 'hint' }); assert.match(hint, new RegExp(r.device.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'hint names the device');
   await recipe.fix(r); ticks(1);
   op.game.challenge.started -= 2000; op.tick();

@@ -11,6 +11,7 @@
 // The host earns the current level when all its checks pass, pays the reward and unlocks the next
 // level. An earned level stays earned: if its checks fail later, it appears as a repair objective.
 import {physicalOffline} from './operations.js';
+import {usdMoney} from './money.js';
 import {livePSUs, grid, feedKey, inputFed} from './power-grid.js';
 import {configuredProduct, productProfile} from './product-profiles.js';
 import {contractSteps} from './contract-steps.js';
@@ -243,7 +244,7 @@ export function createCampaign(world, network, ctx) {
     if (lvl?.ok) {
       const def = LEVELS[cur]; G.levels.earned[cur] = { at: now, reward: def.reward, summary: lvl.checks.map(c => c.label) };
       G.budget += def.reward; G.reputation = Math.min(100, (G.reputation || 50) + 3); G.levels.current = cur + 1;
-      G.history.unshift({ at: now, actor: 'customer', message: 'Level ' + cur + ' · ' + def.title + ' accepted · $' + def.reward.toLocaleString() + ' · unlocked: ' + def.unlock }); G.history = G.history.slice(0, 300);
+      G.history.unshift({ at: now, actor: 'customer', message: 'Level ' + cur + ' · ' + def.title + ' accepted · ' + usdMoney(def.reward) + ' · unlocked: ' + def.unlock }); G.history = G.history.slice(0, 300);
       levelCache.clear(); changed = true;
     }
     return changed;

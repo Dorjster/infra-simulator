@@ -138,3 +138,11 @@ body.cp-open #game-notifications,body.at-start #game-notifications{top:auto!impo
 .ss-credits-name{font-size:42px;font-weight:800;letter-spacing:.06em;color:var(--cp-accent);margin:4px 0 16px;text-shadow:0 0 24px color-mix(in srgb,var(--cp-accent) 45%,transparent)}
 .ss-credits dl{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;max-width:420px;margin:0 auto 14px;text-align:left}.ss-credits dt{text-align:right;color:var(--cp-muted);font-size:13px}.ss-credits dd{margin:0;font-weight:600}
 .lv-credit{color:var(--cp-muted);font-size:13px}.lv-credit strong{color:var(--cp-accent)}
+
+/* Objective coach (v36.3) */
+#level-hud .lh-dots{display:flex;gap:3px;margin-top:5px}#level-hud .lh-dots i{flex:1;height:4px;border-radius:2px;background:#ffffff26}#level-hud .lh-dots i.on{background:var(--cp-accent)}#level-hud .lh-dots i.cur{background:#ffd36b}
+#level-hud .lh-done{margin-top:6px;color:#7dffb0;font-weight:700;animation:lhpop .35s}@keyframes lhpop{from{transform:scale(.9);opacity:0}}
+#level-hud .lh-do,#level-hud .lh-how{font-size:.92em;margin-top:3px;color:#d6e4ec}#level-hud .lh-do b,#level-hud .lh-how b{display:inline-block;min-width:52px;color:#ffd36b;font-size:.8em;letter-spacing:.08em;text-transform:uppercase}
+#level-hud .lh-how{color:#b9cad4}#level-hud .lh-carry{margin-top:4px;font-size:.88em;color:#9fd8ff}#level-hud .lh-later{margin-top:4px;font-size:.82em;color:#8aa2b0}
+#level-hud .lh-arrow{display:inline-block;margin-right:6px;font-style:normal;color:#ffd36b;transition:transform .3s}
+#level-hud .lh-goals{margin-top:7px;padding-top:6px;border-top:1px solid #ffffff1f;font-size:.86em;color:#d6e4ec}#level-hud .lh-goals b{color:#ffd36b;font-size:.85em;letter-spacing:.1em}#level-hud .lh-goals span{color:#9fd8ff;margin-left:4px}

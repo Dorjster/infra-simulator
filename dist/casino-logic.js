@@ -40,6 +40,42 @@ export const DRINKS = [
   { id: 'champagne', name: 'Champagne', min: 3, strength: .27 }, { id: 'tequila', name: 'Tequila shot', min: 3.5, strength: .3 },
   { id: 'vodka', name: 'Vodka', min: 4, strength: .32 }, { id: 'whisky', name: 'Single malt whisky', min: 4, strength: .35 }
 ];
+// Payday goals: every engineer has three personal goals; the host advances them from real events and pays a
+// bonus when one is met, then draws a new one. Kinds: work (salary jobs, levels) and casino (wins, the bar, the stage).
+export const GOALS = [
+  { id: 'jobs', text: 'Finish 3 paid jobs (racking, cabling, power…)', need: 3, usd: 1500 },
+  { id: 'level', text: 'Help earn the next campaign level', need: 1, usd: 3000 },
+  { id: 'bj-win', text: 'Win a hand of blackjack', need: 1, usd: 800 },
+  { id: 'rl-win', text: 'Win a roulette bet', need: 1, usd: 600 },
+  { id: 'rl-number', text: 'Hit a single number at roulette', need: 1, usd: 5000 },
+  { id: 'slot-win', text: 'Win on a slot machine', need: 1, usd: 400 },
+  { id: 'lotto-2', text: 'Match 2+ numbers in the lotto', need: 1, usd: 1000 },
+  { id: 'pk-pot', text: "Win a Hold'em pot", need: 1, usd: 1200 },
+  { id: 'tip', text: 'Tip the dancer for a special move', need: 1, usd: 300 },
+  { id: 'drink', text: 'Order a drink at the bar', need: 1, usd: 1500 },
+  { id: 'jobs-5', text: 'Finish 5 paid jobs', need: 5, usd: 3000 },
+  { id: 'bj-3', text: 'Win 3 hands of blackjack', need: 3, usd: 2500 },
+].map(x => ({ ...x, reward: mnt(x.usd) }));
+export function goalsOf(game, name, rng = Math.random) {
+  game.goals ??= {}; const k = key(name), list = game.goals[k] ??= [];
+  while (list.length < 3) { const pool = GOALS.filter(gl => !list.some(x => x.id === gl.id)); const gl = pool[Math.floor(rng() * pool.length)]; list.push({ id: gl.id, progress: 0, at: Date.now() }); }
+  return list.map(x => ({ ...GOALS.find(gl => gl.id === x.id), progress: x.progress }));
+}
+function goal(game, name, id, n = 1, rng = Math.random) {
+  if (!game.payday || !name) return; const list = (goalsOf(game, name, rng), game.goals[key(name)]), match = list.filter(x => x.id === id || (id === 'jobs' && x.id === 'jobs-5') || (id === 'bj-win' && x.id === 'bj-3'));
+  for (const x of match) { const def = GOALS.find(gl => gl.id === x.id); x.progress = Math.min(def.need, x.progress + n);
+    if (x.progress >= def.need) { list.splice(list.indexOf(x), 1); (game.goalsDone ??= {})[key(name)] ??= []; game.goalsDone[key(name)].push({ id: def.id, text: def.text, reward: def.reward, at: Date.now() }); } }
+  goalsOf(game, name, rng);
+}
+// A met goal waits to be claimed (the bonus lands in the wallet when the engineer presses Claim).
+export const goalsDoneOf = (game, name) => game.goalsDone?.[key(name)] || [];
+// Read-only view for the screens (never creates goals: on a guest that would invent goals the host doesn't have).
+export const goalsView = (game, name) => (game.goals?.[key(name)] || []).map(x => ({ ...GOALS.find(gl => gl.id === x.id), progress: x.progress })).filter(x => x.id);
+function claimGoals(game, name) {
+  const done = game.goalsDone?.[key(name)] || []; if (!done.length) throw Error('No finished goals to claim');
+  const w = wallet(game, name), total = done.reduce((a, x) => a + x.reward, 0); for (const x of done) note(w, 'Goal · ' + x.text, x.reward);
+  w.cash += total; w.won += total; game.goalsDone[key(name)] = []; return 'Goals claimed · +' + money(total);
+}
 export function luckOf(game, name, now = Date.now()) { const l = game.luck?.[key(name)]; return l && l.until > now ? l : null; }
 // Centre-stage performer: a tip of 70,000₮+ requests one of six dances (queued, 18 s each, everyone sees the same).
 export const DANCES = ['Pole spin', 'Climb & sit', 'Showgirl kicks', 'Body wave', 'Disco fever', 'Lay-back'], DANCE_MS = 18000;
@@ -104,7 +140,7 @@ export function paySalary(game, name, action) {
   if (!game.payday) return 0; const rate = SALARY[action?.type]; if (!rate) return 0;
   const job = action.type + ':' + (action.id ?? action.node ?? action.rack ?? '') + ':' + (action.pad ?? action.unit ?? action.pa ?? action.feed ?? action.port ?? '');
   game.paidJobs ??= {}; if (game.paidJobs[job]) return 0; game.paidJobs[job] = true;
-  const w = wallet(game, name); w.cash += rate; w.salary += rate; note(w, 'Salary · ' + action.type, rate); return rate;
+  const w = wallet(game, name); w.cash += rate; w.salary += rate; note(w, 'Salary · ' + action.type, rate); goal(game, name, 'jobs'); return rate;
 }
 
 // ---- Cards ------------------------------------------------------------------------------------------------
@@ -122,7 +158,7 @@ function settleBlackjack(game, t, rng, now) {
   for (const s of t.seats) {
     const w = wallet(game, s.name), p = handValue(s.cards); let pay = 0, r;
     if (p > 21) r = 'bust'; else if (s.natural && !dn) { pay = s.bet * 2.5; r = 'blackjack'; } else if (dn && !s.natural) r = 'lose'; else if (d > 21 || p > d) { pay = s.bet * 2; r = 'win'; } else if (p === d) { pay = s.bet; r = 'push'; } else r = 'lose';
-    s.result = r; s.payout = pay; w.cash += pay; result(w, 'Blackjack · ' + r, pay - s.bet);
+    s.result = r; s.payout = pay; w.cash += pay; result(w, 'Blackjack · ' + r, pay - s.bet); if (r === 'win' || r === 'blackjack') goal(game, s.name, 'bj-win');
   }
   t.phase = 'done'; t.doneAt = now + 8000; t.settledAt = now; t.log.unshift('Dealer ' + (d > 21 ? 'busts with ' + d : d) + ' · ' + t.seats.map(s => s.name + ' ' + s.result).join(' · ')); t.log.length = Math.min(t.log.length, 8);
 }
@@ -171,6 +207,7 @@ function roulette(game, def, t, a, name, rng, now) {
 function settleRoulette(game, t) {
   const n = t.result, winners = {};
   for (const b of t.bets) { const w = wallet(game, b.name), won = wins(b.kind, b.value, n), pay = won ? b.amount * (BETS[b.kind] + 1) : 0; w.cash += pay; result(w, 'Roulette ' + n + ' · ' + b.kind, pay - b.amount); if (won) winners[w.name] = (winners[w.name] || 0) + pay - b.amount; b.won = won; }
+  for (const b of t.bets) if (b.won) { goal(game, b.name, 'rl-win'); if (b.kind === 'straight') goal(game, b.name, 'rl-number'); }
   t.history.unshift(n); t.history.length = Math.min(t.history.length, 14); t.lastWinners = winners; t.lastBets = t.bets; t.bets = []; t.phase = 'betting';
 }
 
@@ -300,7 +337,7 @@ function slots(game, def, t, a, name, rng, now) {
   let reels = [reel(rng), reel(rng), reel(rng)]; const l = luckOf(game, name, now), lucky = l?.kind === 'lucky';
   if (l && (lucky ? slotPay(reels) === 0 : slotPay(reels) > 0) && rng() < l.strength) reels = [reel(rng), reel(rng), reel(rng)];   // the drink nudges one re-spin
   const pay = Math.round(slotPay(reels) * bet); w.cash += pay; result(w, def.name + ' · ' + reels.map(r => SLOT_SYMBOLS[r]).join(' '), pay - bet);
-  t.spins++; t.last = { name: w.name, reels, bet, pay, at: now, spin: t.spins }; return pay ? 'Win ' + money(pay) + '!' : 'No win';
+  t.spins++; t.last = { name: w.name, reels, bet, pay, at: now, spin: t.spins }; if (pay > 0) goal(game, name, 'slot-win'); return pay ? 'Win ' + money(pay) + '!' : 'No win';
 }
 function lotto(game, t, a, name, rng, now) {
   const picks = [...new Set((a.picks || []).map(Number))].filter(n => Number.isInteger(n) && n >= 1 && n <= LOTTO.numbers);
@@ -318,7 +355,7 @@ function lotto(game, t, a, name, rng, now) {
   const hits = picks.filter(n => balls.includes(n)).length; let prize = LOTTO.pays[hits] || 0;
   if (hits === LOTTO.picks) { prize = t.jackpot; t.jackpot = LOTTO.seed; }
   w.cash += prize; result(w, 'Lotto · ' + hits + ' of 5', prize - LOTTO.price);
-  t.last.unshift({ name: w.name, picks, balls, hits, prize, at: now, wait, ticket: t.tickets }); t.last.length = Math.min(t.last.length, 8);
+  t.last.unshift({ name: w.name, picks, balls, hits, prize, at: now, wait, ticket: t.tickets }); if (hits >= 2) goal(game, name, 'lotto-2'); t.last.length = Math.min(t.last.length, 8);
   return { message: prize ? 'Lotto · ' + hits + ' numbers · won ' + money(prize) : 'Lotto · ' + hits + ' numbers · no prize', balls, hits, prize };
 }
 
@@ -349,24 +386,25 @@ function stage(game, def, t, a, name, now) {
   if (a.type !== 'st-tip') throw Error('Unknown stage action');
   const dance = int(a.dance, 'Choose one of the six dances', 0, DANCES.length - 1), amount = int(a.amount, 'Tip between ' + money(def.min) + ' and ' + money(def.max), def.min, def.max), w = wallet(game, name);
   if (t.queue.length >= 6) throw Error('Six dances are already requested · tip again in a moment');
-  take(w, amount, 'tip'); result(w, 'Tip · ' + DANCES[dance], -amount); t.tips += amount; const req = { name: w.name, dance, amount };
+  take(w, amount, 'tip'); result(w, 'Tip · ' + DANCES[dance], -amount); goal(game, name, 'tip'); t.tips += amount; const req = { name: w.name, dance, amount };
   if (now >= t.until) { startDance(t, req, now); return 'Thank you! ' + DANCES[dance] + ' starts now'; }
   t.queue.push(req); return 'Thank you! ' + DANCES[dance] + ' is next in line (' + t.queue.length + ')';
 }
 export function casinoApply(game, a, name, rng = Math.random, now = Date.now()) {
   if (!game.payday) throw Error('The casino and wallets are part of Payday mode');
-  if (!game.casino) game.casino = freshCasino(); migrateCasino(game); wallet(game, name);
+  if (!game.casino) game.casino = freshCasino(); migrateCasino(game); wallet(game, name); goalsOf(game, name, rng);
   if (a?.type === 'hello') return 'Wallet ready · ' + money(wallet(game, name).cash);
   if (['lend', 'repay', 'forgive'].includes(a?.type)) return loans(game, a, name);
   if (a?.type === 'lotto') return lotto(game, game.casino.tables.lotto, a, name, rng, now);
   if (a?.type === 'drink') return drink(game, a, name, rng, now);
+  if (a?.type === 'claim-goals') return claimGoals(game, name);
   if (a?.type === 'buy-weapon') return buyWeapon(game, a, name);
   const prefix = String(a?.type || '').split('-')[0], gameName = GAME_OF[prefix]; if (!gameName) throw Error('Unknown casino action');
   const id = a.table || TABLES.find(t => t.game === gameName).id, def = tableDef(id); if (def && !game.casino.tables[id]) game.casino.tables[id] = freshTable(def); const t = game.casino.tables[id];
   if (!def || def.game !== gameName || !t) throw Error('Unknown table');
   if (gameName === 'blackjack') return blackjack(game, def, t, a, name, rng, now);
   if (gameName === 'roulette') return roulette(game, def, t, a, name, rng, now);
-  if (gameName === 'poker') return poker(game, def, t, a, name, rng, now);
+  if (gameName === 'poker') { const r = poker(game, def, t, a, name, rng, now); pokerGoals(game, t); return r; }
   if (gameName === 'stage') return stage(game, def, t, a, name, now);
   return slots(game, def, t, a, name, rng, now);
 }
@@ -377,6 +415,7 @@ function drink(game, a, name, rng, now) {
   const w = wallet(game, name); take(w, DRINK_PRICE, d.name); note(w, 'Bar · ' + d.name, -DRINK_PRICE);
   const kind = rng() < .5 ? 'lucky' : 'unlucky'; game.luck ??= {};
   game.luck[key(name)] = { kind, strength: d.strength, drink: d.name, until: now + d.min * 60000 };
+  goal(game, name, 'drink');
   const bar = game.casino.tables.bar ??= freshTable(tableDef('bar')); bar.served++; bar.last = { name: w.name, drink: d.name, kind, at: now };
   return d.name + ' · you feel ' + (kind === 'lucky' ? 'LUCKY' : 'UNLUCKY') + ' for ' + d.min + ' min (slots and lotto)';
 }
@@ -390,10 +429,13 @@ function buyWeapon(game, a, name) {
 export const arsenalOf = (game, name) => [...(/^darja$/.test(key(name)) ? ['cannon'] : []), ...(game.arsenal?.[key(name)] || [])];
 
 // Timers and level bonuses. Returns true when state changed (the host then broadcasts it).
+// Hold'em winners advance their goals once per hand (results are written where the game state isn't at hand).
+function pokerGoals(game, t) { if (t.results && t.goalsHand !== t.results.hand) { t.goalsHand = t.results.hand; for (const o of t.results.winners || []) goal(game, o.name, 'pk-pot'); } }
 export function casinoTick(game, rng = Math.random, now = Date.now()) {
+  for (const d of TABLES) if (d.game === 'poker' && game.casino?.tables?.[d.id]) pokerGoals(game, game.casino.tables[d.id]);
   if (!game.payday || !game.casino) return false; migrateCasino(game); let changed = false;
   const earned = Object.keys(game.levels?.earned || {}).length;
-  if (earned > (game.paidLevels || 0)) { const n = earned - (game.paidLevels || 0); game.paidLevels = earned; for (const w of Object.values(game.wallets || {})) { w.cash += LEVEL_BONUS * n; w.salary += LEVEL_BONUS * n; note(w, 'Level bonus', LEVEL_BONUS * n); } changed = true; }
+  if (earned > (game.paidLevels || 0)) { const n = earned - (game.paidLevels || 0); game.paidLevels = earned; for (const w of Object.values(game.wallets || {})) { w.cash += LEVEL_BONUS * n; w.salary += LEVEL_BONUS * n; note(w, 'Level bonus', LEVEL_BONUS * n); goal(game, w.name, 'level', n, rng); } changed = true; }
   for (const def of TABLES) {
     const t = game.casino.tables[def.id] ??= freshTable(def);
     if (def.game === 'blackjack') {

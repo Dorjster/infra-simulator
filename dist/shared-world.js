@@ -1,4 +1,5 @@
 import {createOffice} from './office-sim.js';
+import {money} from './money.js';
 import {casinoApply,paySalary} from './casino-logic.js';
 import {combatApply} from './combat-logic.js';
 import {createOperations} from './operations.js';
@@ -27,7 +28,7 @@ for(const r of data.operations?.racks||[])ctx.addRack?.(r);for(const d of data.d
  // Wallet owner for an action: the room roster name on the host, the local player's name when solo.
  function nameOf(actor,players){return players?.find?.(p=>p.id===actor)?.name||api.localName||'Engineer';}
  function applyAction(action,actor,players,permissions={isHost:true}){if(action.type==='combat')return combatApply(operations.game,action.action||{},nameOf(actor,players),players||[],actor);if(action.type!=='engineering'&&operations.game.stock.some(s=>s.holders.includes(actor||'ENGINEER-01')))throw Error('Finish this task or put the item down first');if(action.type==='office')return office.apply(action.action,actor,permissions.isHost===true);if(action.type==='casino')return casinoApply(operations.game,action.action||{},nameOf(actor,players));
- if(action.type==='engineering'){let result=operations.apply(action.action,actor,players);if(operations.game.payday&&typeof result==='string'){/* Payday: the engineer who did the job is paid (once per job). */const pay=paySalary(operations.game,nameOf(actor,players),action.action);if(pay)result+=' · +$'+pay+' salary';}if(action.action.type==='mode'&&!action.action.resume)office.reset(action.action.mode==='campaign'?'campaign':'free');return result;}if(action.type==='config')return network.apply(action.action);
+ if(action.type==='engineering'){let result=operations.apply(action.action,actor,players);if(operations.game.payday&&typeof result==='string'){/* Payday: the engineer who did the job is paid (once per job). */const pay=paySalary(operations.game,nameOf(actor,players),action.action);if(pay)result+=' · +'+money(pay)+' salary';}if(action.action.type==='mode'&&!action.action.resume)office.reset(action.action.mode==='campaign'?'campaign':'free');return result;}if(action.type==='config')return network.apply(action.action);
  if(action.type==='campaign')return campaign.apply(action.action||{},actor);
  if(action.type==='reset-cables'){for(const n of nodes)for(const p of n.ports)p.link=null;for(const l of links)l.unplugged=true;for(const l of initial){l.unplugged=false;l.pa.link=l;l.pb.link=l;}refreshFaults();return 'Original cabling restored';}
  if(action.type==='cable'){const l=links.find(l=>cableID(l,byId)===action.id);if(!l||l.pa.medium==='Internal'||l.pb.medium==='Internal')throw new Error('Cable unavailable');if(action.unplugged){l.unplugged=true;if(l.pa.link===l)l.pa.link=null;if(l.pb.link===l)l.pb.link=null;}else{if(l.pa.link&&l.pa.link!==l||l.pb.link&&l.pb.link!==l)throw new Error('Port occupied');l.unplugged=false;l.pa.link=l;l.pb.link=l;}refreshFaults();return l.unplugged?'Cable unplugged':'Cable reconnected';}
