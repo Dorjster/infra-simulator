@@ -19,6 +19,14 @@ try {
   console.log('host', JSON.stringify(info), 'ip', ip); await host.screenshot({ path: path.join(out, 'host.png') });
   const G = await launch(9342); let guest = G.pg;
   await guest.click('[data-start=join]'); await guest.waitForTimeout(500);
+  if (process.env.DISCOVER) {   // one-click join from "Games on your network"
+    await guest.waitForSelector('.ss-found-game', { timeout: 8000 }).catch(() => {});
+    const listed = await guest.evaluate(() => document.getElementById('ss-found')?.innerText || ''); console.log('found', JSON.stringify(listed));
+    await guest.fill('#ss-jname', 'Sam'); await guest.click('.ss-found-game', { noWaitAfter: true }); await new Promise(r => setTimeout(r, 6000));
+    guest = G.b.contexts()[0].pages()[0]; console.log('guest url', guest.url());
+    const st = await guest.evaluate(() => ({ connected: globalThis.__infra?.lab?.lan?.connected, players: globalThis.__infra?.lab?.lan?.players?.length, payday: !!globalThis.__infra?.lab?.world?.operations?.game?.payday })).catch(e => ({ err: e.message }));
+    console.log('guest state', JSON.stringify(st)); for (const a of apps) a.kill(); process.exit(st.connected && st.players === 2 ? 0 : 1);
+  }
   await guest.fill('#ss-jname', 'Sam'); await guest.fill('#ss-code', info.roomCode); await guest.fill('#ss-addr', badAddr || ip);
   await guest.click('#ss-join', { noWaitAfter: true }); await new Promise(r => setTimeout(r, +(process.env.WAIT || 6000)));
   guest = G.b.contexts()[0].pages()[0]; console.log('guest url', guest.url());

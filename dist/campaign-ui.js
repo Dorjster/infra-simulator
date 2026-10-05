@@ -27,7 +27,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.4</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.5</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
@@ -138,7 +138,7 @@ export function createCampaignUI(ctx) {
   async function startSolo() { return saved ? continueCampaign() : newCampaign(); }
   async function startHost() {
     let hosted = null;
-    if (desktop) { try { hosted = await desktop.hostLan(); } catch (e) { subPanel(`<h2>LAN Host Campaign</h2><p>Could not open the room on your network: ${esc(e.message)}</p>`); return; } }
+    if (desktop) { try { hosted = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host' }); } catch (e) { subPanel(`<h2>LAN Host Campaign</h2><p>Could not open the room on your network: ${esc(e.message)}</p>`); return; } }
     const info = await roomInfo();
     if (!info) { subPanel(`<h2>LAN Host Campaign</h2><p>Hosting needs the local room server. In the desktop app choose <strong>LAN Host</strong> from the launcher. From the web package run <code>node lan/server.mjs</code> and open the address it prints on this computer.</p>`); return; }
     if (!info.localHost && !(lan.connected && lan.canManageWorld)) { subPanel(`<h2>LAN Host Campaign</h2><p>This room already has a host, or this is not the host computer. Choose <strong>Join LAN</strong> instead.</p>`); return; }
@@ -165,7 +165,7 @@ export function createCampaignUI(ctx) {
       });
       const start = async host => {
         if (paydaySaved && !confirm('Start a new Payday game? The current Payday save (' + paydaySaved.name + ') will be replaced. Your Campaign is not affected.')) return;
-        if (host) { let hosted = null; if (desktop) { try { hosted = await desktop.hostLan(); } catch (e) { notify(e.message); return; } } const i = await roomInfo(); if (!lan.connected && i?.localHost) await lan.join({ name: localStorage.getItem('infra-name') || 'Host', code: i.roomCode, hostKey: i.hostKey }, true); await setInvite(hosted); }
+        if (host) { let hosted = null; if (desktop) { try { hosted = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host' }); } catch (e) { notify(e.message); return; } } const i = await roomInfo(); if (!lan.connected && i?.localHost) await lan.join({ name: localStorage.getItem('infra-name') || 'Host', code: i.roomCode, hostKey: i.hostKey }, true); await setInvite(hosted); }
         else if (desktop) await joinLocalRoom(); else lan.playSolo();
         engineering.setRole(el.querySelector('#ss-title').value);
         run(send({ type: 'mode', mode: 'campaign', track: 'levels', payday: true, name: el.querySelector('#ss-name').value || 'Payday Inc.' }), () => { hintTier = {}; begin(); if (host) notify('Hosting Payday · friends: Join LAN → ' + (invite?.addrs?.[0] || 'your address') + ' · code ' + (invite?.code || lan.roomCode || '')); });
@@ -176,7 +176,12 @@ export function createCampaignUI(ctx) {
   }
   async function startJoin() {
     const info = await roomInfo(), params = new URLSearchParams(globalThis.location?.search || '');
-    subPanel(`<h2>Join LAN</h2><div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Room code<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info && !desktop ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${info ? 'You are on ' + esc(location.host) + '. ' : ''}Guests share the host's world: you can do every task, but only the host chooses the mode and saves.</p><p id="ss-join-status" class="ss-note"></p>`, el => {
+    subPanel(`<h2>Join LAN</h2>${desktop?.discover ? '<div id="ss-found" class="ss-found"><small>Looking for games on your network…</small></div>' : ''}<div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Room code<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info && !desktop ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${info ? 'You are on ' + esc(location.host) + '. ' : ''}Guests share the host's world: you can do every task, but only the host chooses the mode and saves.</p><p id="ss-join-status" class="ss-note"></p>`, el => {
+      // Games announced on this network by other desktop apps: one click fills the address and code and joins.
+      if (desktop?.discover) { const box = el.querySelector('#ss-found'); const poll = async () => { if (!box.isConnected) return; const list = await desktop.discover().catch(() => []);
+        box.innerHTML = list.length ? '<b>Games on your network</b>' + list.map(gm => `<button class="ss-found-game" data-addr="${esc(gm.address)}" data-code="${esc(gm.code)}"><strong>${esc(gm.name)}</strong><span>${esc(gm.mode || 'LAN game')} · ${gm.players} engineer${gm.players === 1 ? '' : 's'} · ${esc(gm.address)}${gm.version ? ' · v' + esc(gm.version) : ''}</span><em>Join</em></button>`).join('') : '<small>No games found on this network yet · when a friend hosts, it appears here (or type the address below)</small>';
+        box.querySelectorAll('[data-addr]').forEach(btn => btn.onclick = () => { el.querySelector('#ss-addr').value = btn.dataset.addr; el.querySelector('#ss-code').value = btn.dataset.code; el.querySelector('#ss-join').click(); });
+        setTimeout(poll, 1500); }; poll(); }
       el.querySelector('#ss-join').addEventListener('click', async () => {
         const name = el.querySelector('#ss-jname').value, code = el.querySelector('#ss-code').value, addr = el.querySelector('#ss-addr')?.value.trim();
         if (addr) {
