@@ -369,6 +369,7 @@ export function createCampaignUI(ctx) {
      <h3>Controls</h3><div class="cp-row ctl-tabs">${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
      <input id="ctl-search" class="ctl-search" placeholder="Search controls…" value="${esc(ctlFilter)}"><table class="ctl"><tbody><tr><td><kbd>Mouse</kbd></td><td>Look</td><td></td></tr>${actionsIn(ctlCtx).filter(a => !ctlFilter || a.label.toLowerCase().includes(ctlFilter.toLowerCase())).map(a => `<tr><td><button class="ctl-key${capturing === a.id ? ' wait' : ''}" data-rebind="${a.id}">${capturing === a.id ? 'Press a key… (Esc cancels)' : esc(labelOf(ctlCtx, a.id))}</button></td><td>${esc(a.label)}</td><td><button class="ctl-x" data-unbind="${a.id}" title="Unbind">×</button></td></tr>`).join('')}<tr><td><kbd>Esc</kbd></td><td>Menu (fixed)</td><td></td></tr></tbody></table>
      <div class="cp-row"><button data-ctl="reset">Reset ${esc(CONTEXTS[ctlCtx].split(' (')[0])}</button><button data-ctl="reset-all">Reset all</button><button data-ctl="export">Export controls</button><button data-ctl="import">Import controls</button></div><p class="cp-muted">Controls are saved on this computer only. Joining a LAN room never changes them.</p>
+     <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. Without them the arena uses the engineer avatars.</p>
      <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
   }
 
@@ -408,6 +409,11 @@ export function createCampaignUI(ctx) {
     else if (go === 'inspect') { close(); document.body.classList.remove('in-game'); exit(); }
   });
   $('campaign-panel').addEventListener('click', e => {
+    const imp = e.target.closest?.('[data-csimp]');
+    if (imp) { const team = imp.dataset.csimp, chars = ctx.characters; if (!chars) return;
+      if (team === 'clear') { if (confirm('Remove the imported arena character models from this computer?')) chars.clear().then(() => { notify('Imported characters removed'); render(); }); return; }
+      const f = document.createElement('input'); f.type = 'file'; f.multiple = true; f.accept = '.mdl,.zip';
+      f.onchange = () => chars.import(team, [...f.files]).then(n => { notify('Imported ' + n + (team === 't' ? ' Terrorist' : ' Counter-Terrorist') + ' model' + (n > 1 ? 's' : '')); render(); }, err => notify(err.message)); f.click(); return; }
     const t = e.target.closest?.('[data-ctlctx],[data-rebind],[data-unbind],[data-ctl]'); if (!t) return;
     if (t.dataset.ctlctx) { ctlCtx = t.dataset.ctlctx; capturing = null; render(); return; }
     if (t.dataset.rebind) { capturing = capturing === t.dataset.rebind ? null : t.dataset.rebind; render(); return; }
