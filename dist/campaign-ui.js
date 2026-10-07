@@ -3,6 +3,7 @@
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
 import * as THREE from './three.module.js';
+import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
 import {TICKETS} from './tickets.js';
 import {usdMoney, short} from './money.js';
 import {goalsView, goalsDoneOf} from './casino-logic.js';
@@ -325,6 +326,17 @@ export function createCampaignUI(ctx) {
      ${(!lan.connected || host) ? `<h3>Save</h3><div class="cp-row"><button data-adv="saves">Export / import / checkpoints</button></div><p class="cp-muted">${lan.connected ? 'The host autosaves after every change.' : 'Solo campaigns autosave in this browser (desktop app: in your user folder).'}</p>` : ''}
      <h3>Session</h3><div class="cp-row"><button data-go="start">Start screen</button></div>`;
   }
+  // Controls screen state: which context is shown, the search text, and the action waiting for a key.
+  let ctlCtx = 'infra', ctlFilter = '', capturing = null;
+  function finishCapture(code) {
+    const id = capturing; capturing = null; if (!id || !code) { render(); return; }
+    let r = rebind(ctlCtx, id, code);
+    if (r.conflict && confirm(`That key is already used for "${r.conflict.label}". Swap the two?`)) r = rebind(ctlCtx, id, code, { swap: true });
+    if (r.error) notify(r.error); render();
+  }
+  // Key capture runs before the game's own handlers and swallows the key.
+  addEventListener('keydown', e => { if (!capturing) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture(e.code === 'Escape' ? null : e.code); }, true);
+  addEventListener('mousedown', e => { if (!capturing || e.target.closest?.('[data-rebind]')) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture('Mouse' + e.button); }, true);
   function settingsView() {
     const p = settings;
     return `<h2>Settings</h2><div class="set-grid">
@@ -339,7 +351,9 @@ export function createCampaignUI(ctx) {
      <label>Frame rate limit<select data-set="fpsCap">${[[0, 'Auto · 60, 30 in menus'], [120, '120 FPS'], [60, '60 FPS'], [30, '30 FPS (battery)']].map(([v, t]) => `<option value="${v}" ${+(p.fpsCap || 0) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
      <label>Guidance<select data-set="assistance">${['Off', 'Minimal hints', 'Guided'].map(v => `<option ${p.assistance === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
      ${['toggleSprint', 'toggleCrouch', 'headBob', 'invertY', 'showFPS', 'showControls'].map(k => `<label class="chk"><input type="checkbox" data-set="${k}" ${p[k] ? 'checked' : ''}> ${({ toggleSprint: 'Toggle run', toggleCrouch: 'Toggle crouch', headBob: 'Head bob', invertY: 'Invert mouse Y', showFPS: 'Show FPS', showControls: 'Show control hints' })[k]}</label>`).join('')}</div>
-     <h3>Controls</h3><table class="ctl"><tbody>${[['W A S D', 'Walk'], ['Shift', 'Run'], ['C / Ctrl', 'Crouch (low ports)'], ['Q', 'Raise view (top of rack)'], ['Mouse', 'Look'], ['E', 'The action shown under the crosshair'], ['G', 'Put down what you carry'], ['X', 'Cancel: return a loose cable end / unplug the laptop'], ['R', 'Remove a device or optic (hands empty)'], ['F', 'Inspect what you aim at'], ['V', 'Service action (clean fibre, provider ticket, re-mount)'], ['L', 'Service laptop'], ['1 / 2', 'Console cable / service Ethernet'], ['J', 'Objective'], ['I', 'Inventory & orders'], ['M', 'Map'], ['H', 'Next hint'], ['Enter / T', 'Team chat'], ['Esc', 'Menu']].map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</tbody></table>
+     <h3>Controls</h3><div class="cp-row ctl-tabs">${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
+     <input id="ctl-search" class="ctl-search" placeholder="Search controls…" value="${esc(ctlFilter)}"><table class="ctl"><tbody><tr><td><kbd>Mouse</kbd></td><td>Look</td><td></td></tr>${actionsIn(ctlCtx).filter(a => !ctlFilter || a.label.toLowerCase().includes(ctlFilter.toLowerCase())).map(a => `<tr><td><button class="ctl-key${capturing === a.id ? ' wait' : ''}" data-rebind="${a.id}">${capturing === a.id ? 'Press a key… (Esc cancels)' : esc(labelOf(ctlCtx, a.id))}</button></td><td>${esc(a.label)}</td><td><button class="ctl-x" data-unbind="${a.id}" title="Unbind">×</button></td></tr>`).join('')}<tr><td><kbd>Esc</kbd></td><td>Menu (fixed)</td><td></td></tr></tbody></table>
+     <div class="cp-row"><button data-ctl="reset">Reset ${esc(CONTEXTS[ctlCtx].split(' (')[0])}</button><button data-ctl="reset-all">Reset all</button><button data-ctl="export">Export controls</button><button data-ctl="import">Import controls</button></div><p class="cp-muted">Controls are saved on this computer only. Joining a LAN room never changes them.</p>
      <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
   }
 
@@ -378,7 +392,19 @@ export function createCampaignUI(ctx) {
     else if (go === 'diagnostics') { const text = JSON.stringify(globalThis.__infraDiagnostics?.() || {}, null, 2); navigator.clipboard?.writeText(text).then(() => notify('Diagnostics copied · paste them into your message'), () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = 'infra-diagnostics.json'; a.click(); notify('Diagnostics saved as infra-diagnostics.json'); }); }
     else if (go === 'inspect') { close(); document.body.classList.remove('in-game'); exit(); }
   });
-  $('campaign-panel').addEventListener('input', e => { const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
+  $('campaign-panel').addEventListener('click', e => {
+    const t = e.target.closest?.('[data-ctlctx],[data-rebind],[data-unbind],[data-ctl]'); if (!t) return;
+    if (t.dataset.ctlctx) { ctlCtx = t.dataset.ctlctx; capturing = null; render(); return; }
+    if (t.dataset.rebind) { capturing = capturing === t.dataset.rebind ? null : t.dataset.rebind; render(); return; }
+    if (t.dataset.unbind) { unbind(ctlCtx, t.dataset.unbind); render(); return; }
+    const a = t.dataset.ctl;
+    if (a === 'reset' && confirm('Restore the default keys for ' + CONTEXTS[ctlCtx] + '?')) resetContext(ctlCtx);
+    if (a === 'reset-all' && confirm('Restore the default keys everywhere?')) resetAll();
+    if (a === 'export') { const url = URL.createObjectURL(new Blob([exportBindings()], { type: 'application/json' })), l = document.createElement('a'); l.href = url; l.download = 'infra-controls.json'; l.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    if (a === 'import') { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,application/json'; f.onchange = async () => { try { importBindings(await f.files[0].text()); notify('Controls imported'); } catch (err) { notify('Could not import: ' + err.message + ' · your current controls are kept'); } render(); }; f.click(); }
+    render();
+  });
+  $('campaign-panel').addEventListener('input', e => { if (e.target.id === 'ctl-search') { ctlFilter = e.target.value; const pos = e.target.selectionStart; render(); const el = $('ctl-search'); el?.focus(); el?.setSelectionRange(pos, pos); return; } const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
   $('site-map') || 0;
   document.addEventListener('click', e => { const place = e.target.closest?.('#site-map [data-place]'); if (!place) return; const p = PLACES[place.dataset.place]; if (p?.x !== null && p) { focus = { x: p.x, z: p.z, label: p.label, until: Date.now() + 60000 }; notify('Marker · ' + p.label); render(); } });
 

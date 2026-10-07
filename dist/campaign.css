@@ -161,3 +161,9 @@ body.cp-open #game-notifications,body.at-start #game-notifications{top:auto!impo
 .ss-form button{display:inline-flex;align-items:center;padding-top:0;padding-bottom:0}
 .ss-found-game.on{border-color:#7fe3a0;box-shadow:0 0 0 2px #7fe3a055}.ss-found-game.on em{background:#7fe3a0}
 .ss-pass-set{display:flex;gap:6px;margin-top:6px}.ss-pass-set input{width:130px;background:#07131c;color:var(--cp-text);border:1px solid #426174;border-radius:6px;padding:5px 8px}.ss-pass-set button{border-radius:6px}
+
+/* Controls (v40) */
+.ctl-tabs{margin-bottom:8px}.ctl-tabs button[aria-pressed=true]{background:var(--cp-accent);color:#06202a}
+.ctl-search{width:100%;max-width:320px;margin:4px 0 8px;background:#07131c;color:var(--cp-text);border:1px solid #426174;border-radius:6px;padding:7px 10px}
+.ctl-key{min-width:90px;background:#0d2231;color:#e8f6fa;border:1px solid #3fb5c9;border-radius:6px;padding:4px 10px;font:600 12px ui-monospace,Menlo,monospace;cursor:pointer}.ctl-key.wait{background:#3fb5c9;color:#06202a;animation:ctlblink 1s infinite}@keyframes ctlblink{50%{opacity:.6}}
+.ctl-x{background:none;border:0;color:#8aa2b0;cursor:pointer;font-size:16px}.ctl-x:hover{color:#ff8a8a}
