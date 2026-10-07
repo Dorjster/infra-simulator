@@ -27,7 +27,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.8</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.9</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>

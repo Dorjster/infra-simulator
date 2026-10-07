@@ -31,6 +31,7 @@ const M = {
   wood: new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0, roughness: 1, ...T.wood }),
   tan: new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: .05, roughness: 1, ...T.tanPoly }),
   glass: new THREE.MeshStandardMaterial({ color: 0x1d4e7a, metalness: .3, roughness: .1, emissive: 0x0a1c2c }),
+  awp: new THREE.MeshStandardMaterial({ color: 0x6b7f4a, metalness: .05, roughness: 1, ...T.tanPoly }),
 };
 // Without a canvas (tests) the textures are missing: fall back to the plain colours.
 for (const [k, c] of [['black', 0x24272b], ['steel', 0x6a7179], ['poly', 0x2b2e33], ['wood', 0x6e3a1c], ['tan', 0x8b7a5a]]) if (!M[k].map) { M[k].color.setHex(c); M[k].roughness = .5; }
@@ -45,19 +46,65 @@ export function weaponModel(id, scale = 1) {
   // Details every gun gets: trigger guard, trigger, front and rear sights, ejection port.
   const details = (z = .25, top = .3, front = -.5) => { const tg = new THREE.Mesh(GUARD, M.black); tg.position.set(0, -.08, z - .2); tg.rotation.y = Math.PI / 2; g.add(tg); box(.03, .1, .03, M.steel, 0, -.06, z - .2, .3); box(.04, .06, .05, M.steel, 0, top, front); box(.1, .05, .04, M.steel, 0, top, z + .05); box(.012, .07, .18, M.steel, .1, top - .12, z - .45); };
   const rail = (len, y, z) => { for (let k = 0; k < len; k += .14) box(.13, .03, .07, M.black, 0, y, z - k); };
-  if (id === 'pistol') { box(.17, .2, 1.05, M.black, 0, .14, -.1); box(.15, .1, .85, M.poly, 0, .0, -.12); tube(.04, .1, M.steel, 0, .15, -.62); grip(M.poly, .28);  details(.28, .26, -.55); }
-  else if (id === 'deagle') { box(.22, .24, 1.35, M.steel, 0, .16, -.15); box(.19, .11, 1.1, M.black, 0, -.01, -.15); tube(.06, .1, M.black, 0, .17, -.83); grip(M.black, .35);  details(.35, .3, -.75); }
-  else if (id === 'smg') { box(.22, .3, 2, M.black, 0, .14, -.5); tube(.05, .55, M.steel, 0, .16, -1.5); box(.12, .62, .16, M.steel, 0, -.32, -.65); grip(M.poly, .25); box(.08, .08, 1.0, M.steel, 0, .16, .95); box(.06, .3, .06, M.steel, 0, .02, 1.42);  details(.25, .3, -1.2); rail(1, .32, .6); }
-  else if (id === 'shotgun') { tube(.075, 4.4, M.steel, 0, .2, -.2); tube(.06, 3.2, M.black, 0, .04, -.6); box(.2, .18, .9, M.wood, 0, .04, -1.9); box(.22, .3, 1.4, M.black, 0, .13, .05); grip(M.wood, .5); box(.2, .36, 1.6, M.wood, 0, -.02, 1.55, -.12);  details(.5, .31, -2.2); }
-  else if (id === 'ak') { box(.22, .32, 2.2, M.black, 0, .14, -.1); tube(.05, 2.2, M.steel, 0, .2, -1.2); box(.24, .24, 1.1, M.wood, 0, .1, -1.6); const mag = box(.16, .8, .3, M.black, 0, -.38, -.45, .35); mag.position.z = -.55; grip(M.wood, .5); box(.2, .34, 1.7, M.wood, 0, -.02, 1.75, -.1); box(.04, .12, .05, M.steel, 0, .38, -3.25);  details(.5, .38, -3.2); }
-  else if (id === 'm4') { box(.22, .34, 2.1, M.black, 0, .14, -.1); tube(.045, 2.3, M.black, 0, .2, -1.15); box(.26, .26, 1.3, M.poly, 0, .14, -1.65); box(.15, .72, .26, M.black, 0, -.36, -.45, .12); grip(M.poly, .5); box(.16, .3, 1.3, M.poly, 0, .05, 1.6); box(.12, .1, 1.5, M.black, 0, .38, -.5); box(.04, .15, .05, M.black, 0, .42, -2.3);  details(.5, .45, -2.2); rail(1.3, .45, .3); }
-  else if (id === 'sniper') { box(.22, .3, 2.6, M.tan, 0, .12, .2); tube(.055, 4.4, M.black, 0, .2, -1.1); tube(.12, 1.6, M.black, 0, .55, .9); for (const z of [.85, -.75]) tube(.15, .25, M.black, 0, .55, z); { const lens = tube(.11, .02, M.glass, 0, .55, -.73); } box(.15, .5, .25, M.black, 0, -.3, -.3); grip(M.tan, .9); box(.2, .38, 1.8, M.tan, 0, .0, 2.3, -.05); box(.03, .7, .03, M.steel, .12, -.3, -2.8, .5); box(.03, .7, .03, M.steel, -.12, -.3, -2.8, .5);  details(.9, .32, -3.2); }
-  else if (id === 'lmg') { box(.3, .4, 2.6, M.black, 0, .15, -.1); tube(.075, 2.6, M.steel, 0, .2, -1.4); box(.45, .5, .55, M.tan, .22, -.3, -.4); grip(M.poly, .6); box(.2, .36, 1.5, M.poly, 0, .02, 1.8); box(.03, .8, .03, M.steel, .14, -.35, -3.3, .45); box(.03, .8, .03, M.steel, -.14, -.35, -3.3, .45); box(.1, .1, .9, M.steel, 0, .44, -.3);  details(.6, .4, -3.1); rail(1, .5, .2); }
+  // Shapes after the real guns (low-poly). Helpers: wedge = box tilted on x; curvedMag = segments that bend forward.
+  const wedge = (w, h, d, mat, x, y, z, rx) => box(w, h, d, mat, x, y, z, rx);
+  const curvedMag = (mat, x, y, z, n, seg, bend, w = .15, d = .3) => { let yy = y, zz = z, a = 0; for (let i = 0; i < n; i++) { const m = box(w, seg + .02, d, mat, x, yy - seg / 2, zz, -a); yy -= Math.cos(a) * seg; zz -= Math.sin(a) * seg; a += bend; } };
+  const scope = (y, z, len, r) => { tube(r * .8, len, M.black, 0, y, z); tube(r * 1.25, .35, M.black, 0, y, z + len / 2 + .1); tube(r * 1.15, .35, M.black, 0, y, z - len / 2 + .2); tube(r * .7, .02, M.glass, 0, y, z - len / 2 - .15); for (const zz of [z + .4, z - .4]) box(.12, .22, .14, M.black, 0, y - .2, zz); };
+  if (id === 'pistol') {            // Glock: blocky slide with rear serrations, polymer frame, accessory rail, flared magazine well
+    box(.17, .19, 1.05, M.black, 0, .15, -.12); for (let i = 0; i < 5; i++) box(.18, .14, .02, M.steel, 0, .16, .25 + i * .045);
+    box(.15, .1, .9, M.poly, 0, .0, -.15); box(.13, .03, .35, M.poly, 0, -.06, -.45); tube(.04, .06, M.steel, 0, .16, -.64);
+    const gp = box(.16, .5, .25, M.poly, 0, -.27, .3, -.32); for (let i = 0; i < 3; i++) box(.165, .04, .26, M.poly, 0, -.15 - i * .11, .27 + i * .04, -.32); box(.19, .05, .29, M.poly, 0, -.52, .42, -.32);
+    details(.28, .26, -.55);
+  }
+  else if (id === 'deagle') {       // Desert Eagle: tall triangular-profile slide, fixed barrel with top rib, big steel frame
+    box(.22, .26, 1.4, M.steel, 0, .17, -.15); box(.16, .06, 1.4, M.steel, 0, .32, -.15); box(.2, .14, 1.15, M.black, 0, -.02, -.15);
+    tube(.065, .12, M.black, 0, .17, -.85); for (let i = 0; i < 6; i++) box(.225, .17, .02, M.black, 0, .18, .32 + i * .04);
+    box(.2, .55, .3, M.black, 0, -.3, .38, -.25); box(.22, .05, .33, M.steel, 0, -.58, .5, -.25); details(.36, .36, -.8);
+  }
+  else if (id === 'smg') {          // MP5: round receiver, slim curved magazine, chunky handguard, ring front sight, sliding stock
+    tube(.11, 1.7, M.black, 0, .14, .7); box(.22, .22, .7, M.poly, 0, .08, -1.0); tube(.045, .35, M.steel, 0, .14, -1.35);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(.07, .015, 6, 14), M.black); ring.position.set(0, .34, -1.25); g.add(ring); box(.03, .14, .03, M.black, 0, .27, -1.25);
+    curvedMag(M.black, 0, -.02, -.32, 6, .13, .07, .12, .22); grip(M.poly, .32);
+    box(.04, .04, 1.1, M.steel, .09, .14, 1.15); box(.04, .04, 1.1, M.steel, -.09, .14, 1.15); box(.22, .3, .06, M.black, 0, .05, 1.7); details(.32, .32, -1.15);
+  }
+  else if (id === 'shotgun') {      // Nova: long barrel over a magazine tube, ribbed pump, polymer stock with pistol grip
+    tube(.075, 4.2, M.black, 0, .22, -.25); tube(.07, 3.0, M.black, 0, .05, -.65); box(.04, .03, 4.0, M.steel, 0, .31, -.25);
+    const pump = box(.24, .22, 1.0, M.poly, 0, .06, -1.75); for (let i = 0; i < 8; i++) box(.25, .23, .03, M.poly, 0, .06, -2.15 + i * .12);
+    box(.24, .32, 1.3, M.poly, 0, .14, .1); grip(M.poly, .55); box(.2, .38, 1.5, M.poly, 0, -.05, 1.5, -.15); box(.22, .42, .1, M.black, 0, -.13, 2.25, -.15); details(.55, .33, -2.3);
+  }
+  else if (id === 'ak') {           // AK-47: wooden handguard and stock, gas tube over the barrel, curved 30-round magazine, muzzle brake
+    box(.22, .3, 1.7, M.black, 0, .13, .1); box(.2, .05, 1.5, M.black, 0, .3, .1);
+    tube(.045, 2.0, M.steel, 0, .2, -1.0); tube(.055, .25, M.black, 0, .2, -3.0); tube(.05, 1.1, M.black, 0, .34, -1.3);
+    box(.24, .22, 1.0, M.wood, 0, .1, -1.35); box(.2, .1, .9, M.wood, 0, .34, -1.25);
+    box(.04, .2, .05, M.black, 0, .42, -2.85); box(.14, .06, .1, M.black, 0, .33, -2.85);
+    curvedMag(M.black, 0, -.05, -.45, 7, .14, .09, .15, .3);
+    grip(M.wood, .55); box(.2, .33, 1.6, M.wood, 0, -.02, 1.75, -.12); box(.22, .38, .08, M.black, 0, -.1, 2.52, -.12); details(.55, .38, -2.85);
+  }
+  else if (id === 'm4') {           // M4A1: flat-top receiver with rail, triangle front sight, round handguard, buffer tube and collapsible stock
+    box(.22, .32, 1.5, M.black, 0, .15, .05); rail(1.4, .34, .7);
+    tube(.1, 1.4, M.black, 0, .18, -1.25); for (let i = 0; i < 6; i++) tube(.105, .03, M.poly, 0, .18, -.7 - i * .2); tube(.04, 1.0, M.black, 0, .18, -2.0);
+    box(.05, .32, .06, M.black, 0, .38, -2.35, -.3); tube(.05, .2, M.black, 0, .18, -2.95);
+    curvedMag(M.black, 0, -.03, -.4, 6, .14, .03, .15, .28); grip(M.poly, .5);
+    tube(.07, 1.0, M.black, 0, .14, 1.35); box(.2, .34, .7, M.poly, 0, .06, 1.75); box(.21, .38, .06, M.black, 0, .03, 2.1); details(.5, .45, -2.35);
+  }
+  else if (id === 'sniper') {       // AWP: long heavy barrel, large scope, green thumbhole stock, bolt handle, folded bipod
+    const green = M.awp; box(.26, .32, 2.7, green, 0, .1, .3); tube(.07, 4.0, M.black, 0, .2, -1.4); tube(.085, .3, M.black, 0, .2, -3.3);
+    scope(.58, .4, 1.9, .13); box(.16, .5, .3, M.black, 0, -.3, -.45);
+    const bolt = tube(.03, .32, M.steel, .22, .28, .75); bolt.rotation.set(0, 0, Math.PI / 2); { const knob = new THREE.Mesh(new THREE.SphereGeometry(.06, 8, 6), M.steel); knob.position.set(.38, .28, .75); g.add(knob); }
+    box(.24, .7, .3, green, 0, -.2, 1.15, -.4); box(.24, .5, 1.6, green, 0, .0, 2.1); box(.26, .2, 1.2, green, 0, -.3, 2.25); box(.26, .48, .1, M.black, 0, -.05, 2.9);
+    box(.03, .03, .8, M.steel, .1, -.05, -1.9); box(.03, .03, .8, M.steel, -.1, -.05, -1.9); details(.9, .34, -3.2);
+  }
+  else if (id === 'lmg') {          // M249: box magazine on the side, carry handle, heat shield, bipod, skeleton stock
+    box(.3, .4, 2.4, M.black, 0, .15, .0); tube(.07, 2.3, M.black, 0, .2, -1.5); tube(.08, .2, M.black, 0, .2, -2.75);
+    box(.28, .16, 1.0, M.poly, 0, .3, -1.2); box(.5, .55, .6, M.tan, .25, -.2, -.25); box(.08, .2, .9, M.black, 0, .52, -.1); box(.08, .22, .08, M.black, 0, .42, .3); box(.08, .22, .08, M.black, 0, .42, -.5);
+    grip(M.poly, .65); box(.2, .4, 1.4, M.poly, 0, .0, 1.85); box(.22, .1, 1.3, M.poly, 0, -.2, 1.85);
+    for (const sx of [-1, 1]) { const leg = box(.035, .9, .035, M.steel, sx * .14, -.32, -2.1, .55); leg.rotation.z = sx * .15; } details(.65, .44, -2.8);
+  }
   else return pistolModel(scale);
   g.scale.setScalar(scale);
   return g;
 }
 // Where the muzzle is in model space (for flashes and tracers), per weapon.
-export const MUZZLE = { pistol: [0, .15, -.7], deagle: [0, .17, -.95], cannon: [0, .17, -.65], smg: [0, .16, -2.1], shotgun: [0, .2, -2.45], ak: [0, .2, -2.35], m4: [0, .2, -2.35], sniper: [0, .2, -3.35], lmg: [0, .2, -2.75] };
+export const MUZZLE = { pistol: [0, .16, -.68], deagle: [0, .17, -.92], cannon: [0, .17, -.65], smg: [0, .14, -1.55], shotgun: [0, .22, -2.4], ak: [0, .2, -3.15], m4: [0, .18, -3.05], sniper: [0, .2, -3.48], lmg: [0, .2, -2.88] };
 // How the view model sits in front of the camera (pistols close and small, long guns lower and further back).
 export const VIEW = { pistol: [.62, -.62, -1.25, .55], deagle: [.62, -.6, -1.25, .5], cannon: [.62, -.62, -1.25, .55], smg: [.55, -.58, -1.15, .4], shotgun: [.52, -.56, -1.15, .3], ak: [.5, -.56, -1.2, .3], m4: [.5, -.55, -1.2, .3], sniper: [.48, -.54, -1.15, .27], lmg: [.52, -.6, -1.2, .28] };
