@@ -27,7 +27,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.7</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.8</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
@@ -159,7 +159,7 @@ export function createCampaignUI(ctx) {
     subPanel(`<h2>Payday · Work &amp; Casino</h2>
      ${paydaySaved ? `<div class="ss-save"><strong>${esc(paydaySaved.name)}</strong><span>${esc(levelText(paydaySaved))}${paydaySaved.wallets ? ' · ' + paydaySaved.wallets + ' wallets' : ''}</span><button id="ss-pay-continue" class="primary">Continue Payday</button></div>` : ''}
      <div class="ss-form"><label>Company name<input id="ss-name" maxlength="40" value="Payday Inc."></label>${titlePicker()}${canHost && desktop ? '<label>LAN passcode<input id="ss-pass" maxlength="12" autocomplete="off" placeholder="e.g. DARJA1 (optional)"></label>' : ''}<button id="ss-pay-solo" class="${paydaySaved ? '' : 'primary'}">New Payday · solo</button>${canHost ? '<button id="ss-pay-host">New Payday · host on LAN</button>' : ''}</div>
-     <p class="ss-note">The same Levels 0–10 as the Campaign, but every engineer has a wallet. Each job you finish pays you a salary (racking, mounting, patching, power…), and every level pays everyone a bonus. Spend it in the <strong>casino</strong> through the door in the north wall of the server hall: blackjack, roulette, Hold'em, slots, the lotto machine, the bar and the weapon market. Money is in tögrög (₮). Lend money to teammates from the casino's Wallet tab. Everyone starts with 1,800,000₮ — engineers named <strong>Darja</strong> start with 36,000,000₮. Drinks at the bar cost real bar prices (from 5,000₮) and bring luck, good or bad; guns at the weapon market start at 81,000,000₮. Need cash? Take a salary loan (Цалингийн зээл) in the Wallet tab. Play money only. Your Campaign is not affected.</p>`, el => {
+     <p class="ss-note">The same Levels 0–10 as the Campaign, but every engineer has a wallet. Each job you finish pays you a salary (racking, mounting, patching, power…), and every level pays everyone a bonus. Spend it in the <strong>casino</strong> through the door in the north wall of the server hall: blackjack, roulette, Hold'em, slots, the lotto machine, the bar and the weapon market. Money is in tögrög (₮). Lend money to teammates from the casino's Wallet tab. Everyone starts with 1,800,000₮ — engineers named <strong>Darja</strong> start with 36,000,000₮. Drinks at the bar cost real bar prices (from 5,000₮) and bring luck, good or bad; guns at the weapon market cost real-life prices (from 1,620,000₮). Need cash? Take a salary loan (Цалингийн зээл) in the Wallet tab. Play money only. Your Campaign is not affected.</p>`, el => {
       el.querySelector('#ss-pay-continue')?.addEventListener('click', async () => {
         if (paydaySaved.where === 'room') { await joinLocalRoom(); if (g().mode !== 'campaign' || !g().payday) { const m = await send({ type: 'mode', mode: 'campaign', resume: true, payday: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } return begin(); }
         lan.playSolo(); try { world.restore(paydaySaved.data); kit.refreshTargets?.(); } catch (e) { notify('Save could not load: ' + e.message); return; } begin();
@@ -181,6 +181,10 @@ export function createCampaignUI(ctx) {
       // Games announced on this network by other desktop apps: one click fills the address and code and joins.
       if (desktop?.discover) { const box = el.querySelector('#ss-found'); let picked = ''; el.querySelector('#ss-code').addEventListener('keydown', e => { if (e.key === 'Enter') el.querySelector('#ss-join').click(); }); const poll = async () => { if (!box.isConnected) return; const list = await desktop.discover().catch(() => []);
         box.innerHTML = list.length ? '<b>Games on your network</b>' + list.map(gm => `<button class="ss-found-game" data-addr="${esc(gm.address)}" data-code="${esc(gm.code)}"><strong>${esc(gm.name)}</strong><span>${esc(gm.mode || 'LAN game')} · ${gm.players} engineer${gm.players === 1 ? '' : 's'} · ${esc(gm.address)}${gm.version ? ' · v' + esc(gm.version) : ''}</span><em>Select</em></button>`).join('') : '<small>No games found on this network yet · when a friend hosts, it appears here (or type the address below)</small>';
+        if (!picked) { let last = null; try { last = JSON.parse(localStorage.getItem('infra-last-lan') || 'null'); } catch {}
+          const btns = [...box.querySelectorAll('[data-addr]')], again = last && btns.find(b => b.dataset.addr === last.addr), only = btns.length === 1 ? btns[0] : null, pick = again || only;
+          if (pick) { picked = pick.dataset.addr; el.querySelector('#ss-addr').value = picked; const c = el.querySelector('#ss-code'); if (again && last.code && !c.value) c.value = last.code; c.focus();
+            el.querySelector('#ss-join-status').textContent = again && last.code ? 'Last game found · press Join room (or Enter)' : 'Found ' + pick.querySelector('strong').textContent + ' · type its passcode and press Enter'; } }
         box.querySelectorAll('[data-addr]').forEach(btn => { btn.classList.toggle('on', btn.dataset.addr === picked); btn.onclick = () => { picked = btn.dataset.addr; el.querySelector('#ss-addr').value = picked; const c = el.querySelector('#ss-code'); c.value = ''; c.focus(); el.querySelector('#ss-join-status').textContent = 'Type the passcode ' + btn.querySelector('strong').textContent + ' gave you, then Join room (or press Enter).'; poll.now?.(); box.querySelectorAll('[data-addr]').forEach(x => x.classList.toggle('on', x === btn)); }; });
         setTimeout(poll, 1500); }; poll(); }
       el.querySelector('#ss-join').addEventListener('click', async () => {
@@ -194,6 +198,7 @@ export function createCampaignUI(ctx) {
           const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 5000);
           const reachable = await fetch(url.origin + '/api/room', { mode: 'no-cors', signal: ctl.signal }).then(() => true, () => false); clearTimeout(timer);
           if (!reachable) { status.innerHTML = `<b>Can't reach ${esc(url.host)}.</b> Use the address and port in the host's invite bar (top of their screen), be on the same network, and on the host allow Infra Simulator through the firewall (private networks).`; return; }
+          try { localStorage.setItem('infra-last-lan', JSON.stringify({ addr: url.host, code, at: Date.now() })); } catch {}
           url.pathname = '/'; url.search = '?join=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name); location.href = url.href; return;
         }
         engineering.setRole(el.querySelector('#ss-jtitle').value);

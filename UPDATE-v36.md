@@ -250,3 +250,31 @@ Reflections and Shadows & glow are also separate switches (Auto, On or Off). On 
 - Join LAN lists the games on your network. **Select** one, type its passcode, and press Enter or Join room.
 - The passcode is never broadcast, and a wrong one is refused ("Incorrect passcode").
 
+## v36.8: real gun prices and textures, easier LAN, shinier metal
+
+**Real-life gun prices** (approximate US shop prices, at 3,600₮ per US$):
+
+| Gun | Price |
+| --- | --- |
+| Pump shotgun | 1,620,000₮ |
+| 9mm pistol | 1,980,000₮ |
+| Assault rifle | 3,960,000₮ |
+| Carbine | 4,320,000₮ |
+| .50 hand cannon | 7,200,000₮ |
+| Compact SMG | 10,080,000₮ |
+| Sniper rifle | 16,200,000₮ |
+| Light machine gun | 32,400,000₮ |
+
+**Gun textures and details:**
+- Surfaces are drawn once at start: brushed steel, blued metal with worn edges, stippled polymer (black and tan) and walnut grain. Each also varies roughness, so light catches it.
+- Every gun gets a trigger guard, trigger, front and rear sights and an ejection port; the SMG, carbine and machine gun get rails.
+- Long guns sit further from the camera in first person, so you see the whole gun, not just the barrel.
+
+**Metal shine in every mode:** in Performance and Balanced, only metal surfaces (guns, chrome, gold, slot cabinets) get reflections, so they gleam at a fraction of the cost of full reflections. Every mode holds about 60 fps on a Retina MacBook Air; Quality now settles at 1.5× sharpness.
+
+**Easier LAN:**
+- **Games found even when broadcasts are blocked:** if the Windows firewall or the Wi-Fi drops the announcements, Join LAN also asks every address on your network for a game on port 8080 (found in about 3 s).
+- **Fewer steps:** if only one game is found it's selected automatically, with the passcode box ready. Type the passcode and press Enter.
+- **Rejoin in one click:** the last game and passcode are remembered, so it's just Join room.
+- **Test:** `tests/browser/lan-scan-join.mjs`.
+

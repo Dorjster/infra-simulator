@@ -120,10 +120,10 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   const lucky = rtpWith('lucky'), unlucky = rtpWith('unlucky'); assert(lucky > rtp + .05 && unlucky < rtp - .05, `luck moves slots: lucky ${lucky.toFixed(3)} · plain ${rtp.toFixed(3)} · unlucky ${unlucky.toFixed(3)}`);
   globalThis.__luck = [lucky, unlucky]; }
 // Weapon market: eight guns from US$25,000 (90,000,000₮); bought once; Darja has her own.
-{ assert.equal(WEAPONS.length, 8); assert.equal(Math.min(...WEAPONS.map(w => w.price)), 81000000, 'guns 10% under the first list');
+{ assert.equal(WEAPONS.length, 8); assert.equal(Math.min(...WEAPONS.map(w => w.price)), 1620000, 'real-life prices'); assert.equal(Math.max(...WEAPONS.map(w => w.price)), 32400000);
   const g4 = { levels: {} }; startPayday(g4);
-  assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'pistol' }, 'Sam', rng), /Not enough cash/);
-  wallet(g4, 'Sam').cash = 1e9; assert.match(casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /Bought/); assert.equal(wallet(g4, 'Sam').cash, 1e9 - mnt(90000));
+  wallet(g4, 'Sam').cash = 1e6; assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'pistol' }, 'Sam', rng), /Not enough cash/);
+  wallet(g4, 'Sam').cash = 1e9; assert.match(casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /Bought/); assert.equal(wallet(g4, 'Sam').cash, 1e9 - mnt(1100));
   assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /already own/);
   assert.deepEqual(arsenalOf(g4, 'Sam'), ['ak']); assert.deepEqual(arsenalOf(g4, 'Darja'), ['cannon']);
   // Combat: host-checked hits, HP, head shots, range, fire rate, knock-out and respawn.

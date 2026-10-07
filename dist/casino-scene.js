@@ -331,7 +331,7 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   { const GL = LAYOUT.guns; box(3, 4.6, 14, GL.x + 2, 2.3, GL.z, M.black); box(3.4, .3, 14.4, GL.x + 2, 4.75, GL.z, M.chrome);
     box(.4, 12, 18, minX + .5, 7, GL.z, M.panel); box(.2, 9, 16, minX + .8, 8, GL.z, new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: .9 }));
     WEAPONS.forEach((w, i) => { const m = weaponModel(w.id, w.kind === 'pistol' ? 2.6 : 1.3); m.rotation.y = 0; /* side-on along the wall */ m.position.set(minX + 1.2, 12 - (i % 4) * 2.3, GL.z - 3.8 + Math.floor(i / 4) * 7.6); group.add(m); });
-    sign(screen(10, 2.4, GL.x + 3.6, 13.5, GL.z, -Math.PI / 2, 500), 'WEAPON MARKET', ['Eight guns from ' + money(WEAPONS[0].price), 'Payday shoot-outs · 100 HP · press E']);
+    sign(screen(10, 2.4, GL.x + 3.6, 13.5, GL.z, -Math.PI / 2, 500), 'WEAPON MARKET', ['Eight guns from ' + money(Math.min(...WEAPONS.map(w => w.price))), 'Payday shoot-outs · 100 HP · press E']);
     hit(6, 7, 15, GL.x + 2, GL.z, { casino: 'table', table: 'guns' }); }
   const rich = screen(16, 7.5, minX + .4, 11, cz - 10, Math.PI / 2, 800); let richKey = '';
   const BOTTLE_GEO = new THREE.CylinderGeometry(.18, .22, 1.4, 8), BOTTLES = [0x2f6b2a, 0x7a3b12, 0xc9b06a, 0x5a1426, 0x2a4f7a, 0xd9e4e8].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: .15, metalness: .1 }));

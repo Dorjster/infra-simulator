@@ -45,7 +45,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05); composer.addPass(bloom); composer.addPass(new OutputPass());
     }
     scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });                              // shadow / no-shadow shaders
-    glow(on);
+    glow(on); metalShine();
   }
   // Lamps, neon, LEDs (bright unlit colours without a texture) become HDR on High so the bloom picks them up.
   const boosted = new Set();
@@ -62,6 +62,12 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       o.receiveShadow = m?.visible !== false; o.castShadow = !clear;
     });
   }
+  // Metal shine in every mode: when full reflections are off, only metallic surfaces (guns, chrome, gold, slot
+  // cabinets) get the reflection map, so they still gleam for a fraction of the cost (few pixels are metal).
+  const shiny = new Set();
+  function metalShine() { if (!envTexture) return; const full = !!scene.environment;
+    scene.traverse(o => { const m = o.material; if (!m || Array.isArray(m) || !m.isMeshStandardMaterial || (m.metalness ?? 0) < .4) return;
+      if (full) { if (shiny.has(m)) { m.envMap = null; m.needsUpdate = true; shiny.delete(m); } } else if (!m.envMap) { m.envMap = envTexture; m.envMapIntensity = m.userData.envI ??= Math.min(m.envMapIntensity ?? 1, .9); m.needsUpdate = true; shiny.add(m); } }); }
   // Light pool (see top). Point lights created later (casino, office) are picked up by the periodic rescan.
   const POOL = 4, pool = Array.from({ length: POOL }, () => { const l = new THREE.PointLight(0xffffff, 0, 1, 2); l.userData.pooled = true; scene.add(l); return l; });
   const sources = new Set(), wp = new THREE.Vector3(); let poolAt = 0, scanAt = 0;
@@ -79,6 +85,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     setSize(w, h) { if (composer) { const s = renderer.getDrawingBufferSize(new THREE.Vector2()); composer.setSize(w, h); composer.setPixelRatio?.(renderer.getPixelRatio()); bloom?.resolution.set(s.x / 2, s.y / 2); } },
     render() {
       apply(); frame++; updatePool(performance.now());
+      if (jobs) jobs.add('metal-shine', metalShine, 3000); else if (frame % 180 === 2) metalShine();
       if (fxOn) {
         if (jobs) jobs.add('shadow-flags', () => { if (fxOn) { flagShadows(); glow(true); } }, 2000); else if (frame % 120 === 1) { flagShadows(); glow(true); }
         const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
