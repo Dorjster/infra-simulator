@@ -28,7 +28,7 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
     hitMarker(kill, head) { hitSound(kill ? 'kill' : head ? 'head' : 'body'); const m = $('cb-mark'); m.className = kill ? 'kill' : ''; m.style.opacity = 1; clearTimeout(markTimer); markTimer = setTimeout(() => m.style.opacity = 0, kill ? 500 : 160); },
     get down() { const g = world.operations.game; return !!g.payday && isDown(g, name()); },
     update() {
-      const g = world.operations.game, on = !!g.payday && lan.connected; $('cb-hp').hidden = !on;
+      const g = world.operations.game, arena = g.mode === 'arena', on = (!!g.payday || arena) && lan.connected; $('cb-hp').hidden = !on;
       if (!on) { $('cb-down').hidden = true; return; }
       const hp = hpOf(g, name()); $('cb-hp-t').textContent = 'HP ' + hp; $('cb-hp-n').textContent = hp; $('cb-hp').classList.toggle('low', hp <= 25);
       if (hp < lastHp) { const f = $('cb-flash'); f.style.opacity = .85; setTimeout(() => f.style.opacity = 0, 120); } lastHp = hp;
@@ -36,7 +36,7 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
       if (down) $('cb-down').innerHTML = `<div>KNOCKED OUT<small>by ${String(d.by).replace(/[<>&]/g, '')} · ${d.weapon} · back in ${Math.max(0, Math.ceil((d.until - Date.now()) / 1000))} s</small></div>`;
       const r = g.combat?.respawns?.[key(name())] || 0; if (lastRespawn !== null && r > lastRespawn) onRespawn(); lastRespawn = r;
       const feed = (g.combat?.feed || []).filter(f => Date.now() - f.at < 8000), fk = feed.map(f => f.at).join();
-      if (fk !== feedKey) { feedKey = fk; $('cb-feed').innerHTML = feed.map(f => `<p>${String(f.by).replace(/[<>&]/g, '')} <b style="color:#ffb347">⟶</b> ${String(f.target).replace(/[<>&]/g, '')} <small>${f.weapon}${f.head ? ' · head' : ''}</small></p>`).join(''); }
+      if (arena) { $('cb-feed').innerHTML = ''; feedKey = ''; } else if (fk !== feedKey) { feedKey = fk; $('cb-feed').innerHTML = feed.map(f => `<p>${String(f.by).replace(/[<>&]/g, '')} <b style="color:#ffb347">⟶</b> ${String(f.target).replace(/[<>&]/g, '')} <small>${f.weapon}${f.head ? ' · head' : ''}</small></p>`).join(''); }
       // Engineers who are down fall over on everyone's screen.
       for (const [id, m] of lan.models || []) { const p = lan.players?.find(x => x.id === id); const dn = !!p && isDown(g, p.name); if (dn && !m.cbDown) m.play?.('dead'); m.cbDown = dn; }
     }

@@ -4,6 +4,8 @@ export const ROOM={minX:-44,maxX:164,minZ:-28,maxZ:55};
 // Payday casino: north of the server hall through a doorway at x 1–9.
 // Real-life scale ≈ 0.165 m per unit: the room is ~18.5 × 22 m (4.3 m ceiling), the doorway 2.3 m wide and high.
 export const CASINO={minX:-42,maxX:70,minZ:56,maxZ:190,doorX:[-1,13],doorH:14,height:26};
+// Shooting arena: a separate area far south of the hall; only the active arena map is built and walkable there.
+export const ARENA={minX:-160,maxX:160,minZ:-560,maxZ:-240,cx:0,cz:-400};
 // Core rack bays R01–R06 hold the building racks in Free Play and older campaigns. In the empty-site
 // campaign (levels 0–10) they start bare and the team places purchased racks on them.
 export const CORE_PADS=[-9,-3,3,9,22,28].map((x,i)=>({id:'PAD-R0'+(i+1),rack:'R0'+(i+1),x,z:0,core:true}));

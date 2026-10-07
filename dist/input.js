@@ -39,6 +39,23 @@ export const ACTIONS = [
   // Payday only: guns (never in Campaign / Free Build / Challenges).
   { id: 'guns', label: 'Draw / next gun', legacy: '4', def: ['Digit4'], ctx: ['payday'] },
   { id: 'reload', label: 'Reload (gun drawn)', legacy: 'reload', def: ['KeyR'], ctx: ['payday'] },
+  // Shooting arena (its own context: the same keys mean different things here).
+  { id: 'a-forward', label: 'Move forward', legacy: 'w', def: ['KeyW'], ctx: ['arena'], hold: true },
+  { id: 'a-left', label: 'Move left', legacy: 'a', def: ['KeyA'], ctx: ['arena'], hold: true },
+  { id: 'a-back', label: 'Move back', legacy: 's', def: ['KeyS'], ctx: ['arena'], hold: true },
+  { id: 'a-right', label: 'Move right', legacy: 'd', def: ['KeyD'], ctx: ['arena'], hold: true },
+  { id: 'a-walk', label: 'Walk quietly (hold)', legacy: 'walk', def: ['ShiftLeft'], ctx: ['arena'], hold: true },
+  { id: 'a-crouch', label: 'Crouch / sit (hold)', legacy: 'c', def: ['ControlLeft', 'KeyC'], ctx: ['arena'], hold: true },
+  { id: 'a-primary', label: 'Primary weapon (rifle, sniper, SMG, shotgun)', legacy: 'slot1', def: ['Digit1'], ctx: ['arena'] },
+  { id: 'a-secondary', label: 'Pistol', legacy: 'slot2', def: ['Digit2'], ctx: ['arena'] },
+  { id: 'a-knife', label: 'Knife', legacy: 'slot3', def: ['Digit3'], ctx: ['arena'] },
+  { id: 'a-utility', label: 'Grenades (cycle)', legacy: 'slot4', def: ['Digit4'], ctx: ['arena'] },
+  { id: 'a-objective', label: 'Bomb (defuse matches)', legacy: 'slot5', def: ['Digit5'], ctx: ['arena'] },
+  { id: 'a-reload', label: 'Reload', legacy: 'reload', def: ['KeyR'], ctx: ['arena'] },
+  { id: 'a-scores', label: 'Scoreboard (hold)', legacy: 'scores', def: ['Tab'], ctx: ['arena'], hold: true },
+  { id: 'a-buy', label: 'Buy menu', legacy: 'buy', def: ['KeyB'], ctx: ['arena'] },
+  { id: 'a-third', label: 'First / third person', legacy: 'p', def: ['KeyP'], ctx: ['arena'] },
+  { id: 'a-chat', label: 'Chat', legacy: 't', def: ['KeyY'], ctx: ['arena'] },
 ];
 export const CONTEXTS = { infra: 'Infrastructure (Campaign, Free Build, Challenges)', payday: 'Payday', arena: 'Shooting arena' };
 const STORE = 'infra-bindings-v1';

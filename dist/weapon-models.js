@@ -39,6 +39,14 @@ for (const m of Object.values(M)) m.userData.shared = true;
 
 export function weaponModel(id, scale = 1) {
   if (id === 'cannon') return pistolModel(scale);
+  if (id === 'knife' || id === 'karambit') {       // knives: default (black) and Darja's karambit (curved, ruby-red blade)
+    const k = new THREE.Group(), ruby = id === 'karambit';
+    const blade = new THREE.MeshStandardMaterial({ color: ruby ? 0xb0102a : 0xb8bec4, metalness: ruby ? .6 : .9, roughness: ruby ? .18 : .25, emissive: ruby ? 0x3a0008 : 0 }); blade.userData.shared = true;
+    if (ruby) { for (let i = 0; i < 6; i++) { const seg = new THREE.Mesh(new THREE.BoxGeometry(.05, .1, .16), blade), a = i * .22; seg.position.set(0, .05 + Math.sin(a) * .35 - .1, -.1 - Math.cos(a) * .3 + .3 - i * .02); seg.rotation.x = a; k.add(seg); } const ring = new THREE.Mesh(new THREE.TorusGeometry(.09, .025, 8, 16), M.steel); ring.position.set(0, -.05, .55); ring.rotation.y = Math.PI / 2; k.add(ring); }
+    else { const b = new THREE.Mesh(new THREE.BoxGeometry(.04, .14, .9), blade); b.position.set(0, .05, -.35); k.add(b); const tip = new THREE.Mesh(new THREE.ConeGeometry(.07, .2, 4), blade); tip.rotation.x = -Math.PI / 2; tip.position.set(0, .05, -.88); tip.scale.x = .5; k.add(tip); }
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(.1, .16, .55), ruby ? M.black : M.poly); handle.position.set(0, -.02, .3); k.add(handle);
+    k.scale.setScalar(scale); return k;
+  }
   const g = new THREE.Group();
   const box = (w, h, d, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.rotation.x = rx; g.add(m); return m; };
   const tube = (r, len, mat, x, y, z) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat); m.rotation.x = Math.PI / 2; m.position.set(x, y, z - len / 2); g.add(m); return m; };
@@ -105,6 +113,6 @@ export function weaponModel(id, scale = 1) {
   return g;
 }
 // Where the muzzle is in model space (for flashes and tracers), per weapon.
-export const MUZZLE = { pistol: [0, .16, -.68], deagle: [0, .17, -.92], cannon: [0, .17, -.65], smg: [0, .14, -1.55], shotgun: [0, .22, -2.4], ak: [0, .2, -3.15], m4: [0, .18, -3.05], sniper: [0, .2, -3.48], lmg: [0, .2, -2.88] };
+export const MUZZLE = { knife: [0, 0, -.9], karambit: [0, 0, -.6], pistol: [0, .16, -.68], deagle: [0, .17, -.92], cannon: [0, .17, -.65], smg: [0, .14, -1.55], shotgun: [0, .22, -2.4], ak: [0, .2, -3.15], m4: [0, .18, -3.05], sniper: [0, .2, -3.48], lmg: [0, .2, -2.88] };
 // How the view model sits in front of the camera (pistols close and small, long guns lower and further back).
-export const VIEW = { pistol: [.62, -.62, -1.25, .55], deagle: [.62, -.6, -1.25, .5], cannon: [.62, -.62, -1.25, .55], smg: [.55, -.58, -1.15, .4], shotgun: [.52, -.56, -1.15, .3], ak: [.5, -.56, -1.2, .3], m4: [.5, -.55, -1.2, .3], sniper: [.48, -.54, -1.15, .27], lmg: [.52, -.6, -1.2, .28] };
+export const VIEW = { knife: [.55, -.55, -.9, .9], karambit: [.55, -.55, -.9, .9], pistol: [.62, -.62, -1.25, .55], deagle: [.62, -.6, -1.25, .5], cannon: [.62, -.62, -1.25, .55], smg: [.55, -.58, -1.15, .4], shotgun: [.52, -.56, -1.15, .3], ak: [.5, -.56, -1.2, .3], m4: [.5, -.55, -1.2, .3], sniper: [.48, -.54, -1.15, .27], lmg: [.52, -.6, -1.2, .28] };

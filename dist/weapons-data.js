@@ -18,7 +18,12 @@ export const WEAPONS = [
 ].map(w => ({ ...w, price: mnt(w.usd) }));
 // Darja's chrome hand cannon: her own, not for sale.
 export const DARJA_GUN = { id: 'cannon', name: "Darja's Hand Cannon", kind: 'pistol', usd: 0, price: 0, dmg: 53, rangeMod: .81, rateMs: 450, auto: false, range: 240, spread: .01, head: 2, mag: 9, reloadMs: 1900, recoil: [.035, .01] };
-export const weaponById = id => id === 'cannon' ? DARJA_GUN : WEAPONS.find(w => w.id === id) || null;
+// Knives (slot 3): everyone has the default knife; an engineer named Darja carries her own ruby karambit.
+export const KNIVES = [
+  { id: 'knife', name: 'Knife', kind: 'knife', usd: 0, price: 0, dmg: 40, rangeMod: 1, rateMs: 450, auto: false, range: 11, spread: 0, mag: 0, reloadMs: 0, recoil: [0, 0] },
+  { id: 'karambit', name: '★ Karambit | Ruby', kind: 'knife', usd: 0, price: 0, dmg: 40, rangeMod: 1, rateMs: 400, auto: false, range: 11, spread: 0, mag: 0, reloadMs: 0, recoil: [0, 0] },
+];
+export const weaponById = id => id === 'cannon' ? DARJA_GUN : WEAPONS.find(w => w.id === id) || KNIVES.find(k => k.id === id) || null;
 export const MAX_HP = 100, RESPAWN_MS = 5000;
 // CS2 damage model: base × hit-group multiplier × rangeMod^(distance / 500 CS units). One game unit ≈ 6.5 CS units.
 export const HIT_GROUPS = { head: 4, chest: 1, stomach: 1.25, legs: .75 };

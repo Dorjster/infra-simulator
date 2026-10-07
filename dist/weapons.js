@@ -3,6 +3,7 @@
 // other engineers' bodies (what you see is what you hit, walls block) and the hit is sent to the host, which
 // re-checks it and takes the HP (combat-logic.js). Effects (tracer, flash, sound) are shared with fun-pistol.js.
 import * as THREE from './three.module.js';
+import { audioCtx, outAt } from './spatial-audio.js';
 import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, zoneAt, HIT_GROUPS } from './weapons-data.js';
 import { weaponModel, MUZZLE, VIEW } from './weapon-models.js';
 
@@ -26,17 +27,19 @@ function rayCapsule(o, d, feet) {
 
 // Small synthesized sounds (no audio files): dry-fire click, magazine out / in, bolt.
 let actx = null;
-function tick(freq = 1800, len = .05, vol = .25, type = 'square') { try { actx ??= new AudioContext(); if (actx.state === 'suspended') actx.resume(); const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * .4, t + len); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + len + .02); } catch {} }
-export function warmTicks() { try { actx ??= new AudioContext(); if (actx.state === 'suspended') actx.resume(); } catch {} }
-export const sounds = { dry: () => tick(2400, .04, .18), magOut: () => tick(420, .09, .3, 'triangle'), magIn: () => tick(620, .07, .35, 'triangle'), bolt: () => { tick(900, .05, .3); setTimeout(() => tick(1300, .04, .25), 70); } };
+function tick(freq = 1800, len = .05, vol = .25, type = 'square', at = null) { try { actx = audioCtx(); const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * .4, t + len); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len); o.connect(g).connect(outAt(actx, at)); o.start(t); o.stop(t + len + .02); } catch {} }
+export function warmTicks() { try { actx = audioCtx(); } catch {} }
+// `at`: where the sound happens (another player / bot); left out = your own sound.
+export const sounds = { slash: at => { tick(300, .12, .25, 'sawtooth', at); setTimeout(() => tick(180, .08, .15, 'sawtooth', at), 40); }, dry: at => tick(2400, .04, .18, 'square', at), magOut: at => tick(420, .09, .3, 'triangle', at), magIn: at => tick(620, .07, .35, 'triangle', at), bolt: at => { tick(900, .05, .3, 'square', at); setTimeout(() => tick(1300, .04, .25, 'square', at), 70); } };
 
 // recoil(up, side): called per shot so the game turns the camera (the aim really moves, like CS spray).
 export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, recoil = () => {} }) {
-  let current = null, view = null, lastShot = 0, shots = 0, kick = 0, held = false, reloadUntil = 0, burst = 0, lastDry = 0;
+  // equip by id also accepts a knife id (arena slot 3).
+  let current = null, view = null, lastShot = 0, shots = 0, kick = 0, held = false, reloadUntil = 0, burst = 0, lastDry = 0, reloads = 0;
   const ammo = new Map(), dir = new THREE.Vector3(), muzzle = new THREE.Vector3();
   const hud = (() => { try { document.body.insertAdjacentHTML('beforeend', '<div id="wp-ammo" hidden><b id="wp-name"></b><span id="wp-count"></span><i id="wp-reload"></i></div>'); const st = document.createElement('style'); st.textContent = '#wp-ammo{position:fixed;right:24px;bottom:92px;z-index:36;color:#fff;font:700 13px system-ui;text-align:right;text-shadow:0 1px 3px #000}#wp-ammo[hidden]{display:none}#wp-ammo b{display:block;font-size:12px;letter-spacing:.06em;color:#ffd36b}#wp-ammo span{font:800 30px ui-monospace,Menlo,monospace}#wp-ammo span.low{color:#ff6b6b}#wp-ammo i{display:block;font-style:normal;font-size:12px;color:#9fd8ff}'; (document.head || document.body).append?.(st); return id => document.getElementById(id); } catch { return () => null; } })();
   const left = () => current ? (ammo.has(current.id) ? ammo.get(current.id) : current.mag) : 0;
-  function drawHud() { const el = hud('wp-ammo'); if (!el) return; el.hidden = !current; if (!current) return; hud('wp-name').textContent = current.name; const n = left(), c = hud('wp-count'); c.textContent = n + ' / ' + current.mag; c.className = n <= Math.ceil(current.mag * .2) ? 'low' : ''; hud('wp-reload').textContent = reloading() ? 'Reloading…' : n === 0 ? 'R to reload' : ''; }
+  function drawHud() { const el = hud('wp-ammo'); if (!el) return; el.hidden = !current; if (!current) return; hud('wp-name').textContent = current.name; if (current.kind === 'knife') { hud('wp-count').textContent = ''; hud('wp-reload').textContent = ''; return; } const n = left(), c = hud('wp-count'); c.textContent = n + ' / ' + current.mag; c.className = n <= Math.ceil(current.mag * .2) ? 'low' : ''; hud('wp-reload').textContent = reloading() ? 'Reloading…' : n === 0 ? 'R to reload' : ''; }
   const reloading = () => performance.now() < reloadUntil;
   function setView(id) {
     if (view) { camera.remove(view); view = null; }
@@ -47,13 +50,22 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   function cycle() { const own = arsenal(); if (!own.length) return null; const i = current ? own.indexOf(current.id) : -1; return equip(i + 1 < own.length ? own[i + 1] : null); }
   // R: swap the magazine (time depends on the gun); the rounds left in the old magazine are dropped, like CS.
   function reload() {
-    if (!current || reloading() || left() === current.mag) return false;
-    const id = current.id; reloadUntil = performance.now() + current.reloadMs; held = false; sounds.magOut();
+    if (!current || current.kind === 'knife' || reloading() || left() === current.mag) return false;
+    const id = current.id; reloadUntil = performance.now() + current.reloadMs; held = false; reloads++; sounds.magOut();
     setTimeout(() => { if (current?.id !== id) return; ammo.set(id, current.mag); sounds.magIn(); setTimeout(() => current?.id === id && sounds.bolt(), 180); drawHud(); }, current.reloadMs);
     drawHud(); return true;
   }
+  // Knife: a short-range swing (no ammo, no tracer); hits the engineer in front of you within reach.
+  function swing() {
+    lastShot = performance.now(); shots++; kick = 1; sounds.slash();
+    camera.getWorldDirection(dir); const origin = camera.getWorldPosition(new THREE.Vector3()); let best = null;
+    for (const tgt of targets()) { const t = rayCapsule(origin, dir, tgt.feet); if (t !== null && t <= current.range && (!best || t < best.t)) best = { t, tgt }; }
+    if (best) report({ type: 'hit', target: best.tgt.id, weapon: current.id, pellets: 1, zone: zoneAt(origin.y + dir.y * best.t - best.tgt.feet.y), head: false });
+    return true;
+  }
   function fire() {
     if (!current || !canFire() || reloading() || performance.now() - lastShot < current.rateMs) return false;
+    if (current.kind === 'knife') return swing();
     if (left() <= 0) { if (performance.now() - lastDry > 250) { lastDry = performance.now(); sounds.dry(); } reload(); return false; }
     lastShot = performance.now(); shots++; kick = 1; ammo.set(current.id, left() - 1);
     camera.getWorldDirection(dir); const origin = camera.getWorldPosition(new THREE.Vector3());
@@ -73,7 +85,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     drawHud(); return true;
   }
   return {
-    get current() { return current; }, get shots() { return shots; }, get equipped() { return !!current; }, get ammo() { return left(); }, get reloading() { return reloading(); },
+    get current() { return current; }, get shots() { return shots; }, get reloads() { return reloads; }, get equipped() { return !!current; }, get ammo() { return left(); }, get reloading() { return reloading(); },
     equip, cycle, fire, reload, setView,
     press(on) { held = on; if (on) fire(); },
     hideView(hidden) { if (view) view.visible = !hidden; },

@@ -109,7 +109,7 @@ export function createCampaignUI(ctx) {
     $('ss-grid').innerHTML = (saved ? card('continue', 'Continue Campaign', esc(saved.name) + ' · ' + esc(levelText(saved)) + ' · ' + usdMoney(saved.budget || 0), 'ss-primary', 'Continue') + card('new', 'New Campaign', 'Start again at Level 0 on an empty site') : card('new', 'New Campaign', 'Levels 0–10 · from an empty site to a commissioned enterprise', 'ss-primary', 'Recommended'))
       + card('host', 'LAN Host Campaign', 'Host the campaign for up to 12 engineers on your network') + card('join', 'Join LAN', 'Join a room hosted on your network')
       + card('payday', 'Payday · Work & Casino', paydaySaved ? 'Continue ' + esc(paydaySaved.name) + ' · ' + esc(levelText(paydaySaved)) + ' · do jobs, earn salary, gamble' : 'Do the jobs, get paid, then hit the casino · solo or LAN', '', 'New mode')
-      + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
+      + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('arena', 'Shooting Arena', 'Deathmatch with bots or friends on LAN · CS-style guns · never touches your saves') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
   }
   // True only when other engineers share this room; otherwise sandbox modes run locally and leave the save alone.
   const sharedRoom = () => lan.connected && (lan.players?.length || 1) > 1;
@@ -153,6 +153,21 @@ export function createCampaignUI(ctx) {
       el.querySelector('#ss-pass-btn')?.addEventListener('click', async () => { try { const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', code: el.querySelector('#ss-pass').value }); el.querySelector('#ss-cur-pass').textContent = h.roomCode; await setInvite(h); notify('Passcode set · friends type ' + h.roomCode); } catch (e) { notify(e.message.replace(/^Error invoking remote method [^:]*: (Error: )?/, '')); } });
       el.querySelector('#ss-host-continue')?.addEventListener('click', async () => { if (g().mode !== 'campaign' || g().payday) { const m = await send({ type: 'mode', mode: 'campaign', resume: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } begin(); });
       el.querySelector('#ss-host-new').addEventListener('click', () => { if (summary && !confirm('Replace the hosted campaign with a new one? The previous save is overwritten.')) return; engineering.setRole(el.querySelector('#ss-title').value); run(send({ type: 'mode', mode: 'campaign', track: 'levels', name: el.querySelector('#ss-name').value || 'LAN HQ' }), () => { hintTier = {}; begin(); }); });
+    });
+  }
+  // Shooting arena: deathmatch on one of two maps, with bots (solo) or friends (LAN). Separate from every save.
+  async function startArena() {
+    const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
+    subPanel(`<h2>Shooting Arena · Deathmatch</h2>
+     <div class="ss-form"><label>Map<select id="ss-ar-map"><option value="yard">Freight Yard</option><option value="town">Old Town</option></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div>
+     <p class="ss-note">Everyone against everyone. Pick any gun for free (B), knife on 3 — Darja carries her ruby karambit. Respawn in 2.5 s; most kills in 10 minutes wins. Add or remove bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
+      const go = async host => {
+        if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); } catch (e) { notify(e.message); return; } }
+        if (!(await joinLocalRoom())) { notify('The arena runs on this computer’s room · start the game from the desktop app or the room server'); return; }
+        run(send({ type: 'mode', mode: 'arena', map: el.querySelector('#ss-ar-map').value, bots: +el.querySelector('#ss-ar-bots').value }), () => { begin(); });
+      };
+      el.querySelector('#ss-ar-solo').addEventListener('click', () => go(false));
+      el.querySelector('#ss-ar-host')?.addEventListener('click', () => go(true));
     });
   }
   async function startPayday() {
@@ -223,7 +238,7 @@ export function createCampaignUI(ctx) {
     const b = e.target.closest('[data-start]'); if (!b) return;
     const k = b.dataset.start; $('start-screen').querySelectorAll('.ss-card').forEach(x => x.classList.toggle('active', x === b));
     if (k === 'continue') continueCampaign(); else if (k === 'new') newCampaign(); else if (k === 'solo') startSolo();
-    else if (k === 'host') startHost(); else if (k === 'join') startJoin(); else if (k === 'challenges') startChallenges(); else if (k === 'payday') startPayday();
+    else if (k === 'host') startHost(); else if (k === 'join') startJoin(); else if (k === 'challenges') startChallenges(); else if (k === 'payday') startPayday(); else if (k === 'arena') startArena();
     else if (k === 'free') { if (await sandbox({ type: 'mode', mode: 'free' })) begin(); }
     else if (k === 'settings') { showStart(false); panel('settings'); }
     else if (k === 'inspect') { showStart(false); document.body.classList.remove('in-game'); exit(); }
