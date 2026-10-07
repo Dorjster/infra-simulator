@@ -12,7 +12,7 @@
 //      Slots ×3 — three reels; Lotto — 5 of 36, shared jackpot (draws queue on the one machine).
 //  · Bar: drinks at real Ulaanbaatar bar prices (5,000₮ airag … 45,000₮ champagne) give a few minutes of luck — good or bad, at random —
 //    that nudges your own slot spins and lotto draws. Roulette, blackjack and poker stay pure chance.
-//  · Weapon market: eight guns from 81,000,000₮ (US$22,500); see combat-logic.js for HP and hits.
+//  · Weapon market: eight guns at real-life shop prices (1,620,000₮ shotgun … 32,400,000₮ machine gun); see combat-logic.js.
 //  · Darja's bank (creative mode): an engineer named Darja can give money to anyone, or take it back.
 //  · Timing fields (spinMs, dealtAt, drawnAt…) let every client animate the 3D tables in step with the result.
 import { mnt, money } from './money.js';

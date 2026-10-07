@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import dgram from 'node:dgram';
+import http from 'node:http';
 import os from 'node:os';
 
 // Windows Squirrel installer events: Setup.exe runs the app with --squirrel-install (and --squirrel-updated /
@@ -110,7 +111,19 @@ function startBeacon() {
   beacon = { sock, timer: setInterval(send, 1000) }; send();
 }
 function stopBeacon() { if (!beacon) return; clearInterval(beacon.timer); try { beacon.sock.close(); } catch {} beacon = null; }
-ipcMain.handle('desktop:discover', () => { listen(); const now = Date.now(); for (const [k, v] of found) if (now - v.seen > 4000) found.delete(k); return [...found.values()]; });
+// Fallback when broadcasts are blocked (Windows firewall on UDP, Wi-Fi that drops broadcasts): ask every
+// address on this computer's /24 networks for a game on port 8080 (the same TCP port joining uses anyway).
+// ~254 tiny requests with a short timeout, at most every 5 s while the Join screen is open.
+let scanAt = 0, scanning = false;
+async function scanSubnets() {
+  if (scanning || Date.now() - scanAt < 5000) return; scanning = true; scanAt = Date.now();
+  const own = new Set(), targets = [];
+  for (const list of Object.values(os.networkInterfaces())) for (const i of list || []) if (i.family === 'IPv4' && !i.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(i.address)) { own.add(i.address); const base = i.address.split('.').slice(0, 3).join('.'); for (let n = 1; n < 255; n++) targets.push(base + '.' + n); }
+  const probe = ip => new Promise(res => { const req = http.get({ host: ip, port: LAN_PORT, path: '/api/room', timeout: 600 }, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { const m = JSON.parse(d); if (m.protocol === 'infra-lan-v1' && m.hosting !== false && !(own.has(ip) && hosting)) found.set(ip + ':' + LAN_PORT, { address: ip + ':' + LAN_PORT, name: String(m.name || 'LAN game').slice(0, 40), version: '', players: m.players | 0, mode: String(m.mode || ''), seen: Date.now() }); } catch {} res(); }); }); req.on('timeout', () => { req.destroy(); res(); }); req.on('error', () => res()); });
+  for (let k = 0; k < targets.length; k += 64) await Promise.all(targets.slice(k, k + 64).map(probe));
+  scanning = false;
+}
+ipcMain.handle('desktop:discover', () => { listen(); scanSubnets(); const now = Date.now(); for (const [k, v] of found) if (now - v.seen > 9000) found.delete(k); return [...found.values()]; });
 
 // Renderer bridge (see preload.cjs): host on the LAN, stop hosting, app info.
 ipcMain.handle('desktop:host', async (_e, opts = {}) => {

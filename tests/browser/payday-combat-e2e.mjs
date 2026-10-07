@@ -49,8 +49,8 @@ try {
   check('Bar: whisky costs 38,000₮ and gives luck (good or bad) shown on the wallet badge', /LUCKY|UNLUCKY/.test(dr) && /lucky/.test(badge) && (await cash(host, 'sam')) === 2e9 - 38000, dr + ' · ' + badge);
   await guest.evaluate(() => { __infra.lab.enter(); __infra.lab.casinoUI.show('bar'); }); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out, 'bar.png') }); await guest.evaluate(() => __infra.lab.casinoUI.hide());
   // 4. Weapon market.
-  check('Market: Darja buys the Assault Rifle (324,000,000₮)', /Bought the Assault Rifle/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
-  check('Market: Sam buys the 9mm Pistol (81,000,000₮)', /Bought the 9mm Pistol/.test(await casino(guest, { type: 'buy-weapon', weapon: 'pistol' })));
+  check('Market: Darja buys the Assault Rifle (3,960,000₮)', /Bought the Assault Rifle/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
+  check('Market: Sam buys the 9mm Pistol (1,980,000₮)', /Bought the 9mm Pistol/.test(await casino(guest, { type: 'buy-weapon', weapon: 'pistol' })));
   check('Market: buying a gun you own is refused', /already own/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
   await host.evaluate(() => { __infra.lab.enter(); __infra.lab.casinoUI.show('guns'); }); await host.waitForTimeout(900); await host.screenshot({ path: path.join(out, 'weapon-market.png') }); await host.evaluate(() => __infra.lab.casinoUI.hide());
   // Darja's bank: only Darja sees it; giving through the screen reaches Sam; Sam can't use it.
