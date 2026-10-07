@@ -16,8 +16,11 @@ export function setListener(camera) {
   if (L.positionX) { L.positionX.value = x; L.positionY.value = y; L.positionZ.value = z; L.forwardX.value = fwd.x; L.forwardY.value = fwd.y; L.forwardZ.value = fwd.z; L.upX.value = e[4]; L.upY.value = e[5]; L.upZ.value = e[6]; }
   else { L.setPosition?.(x, y, z); L.setOrientation?.(fwd.x, fwd.y, fwd.z, e[4], e[5], e[6]); }
 }
-// A footstep: a short filtered noise thud (concrete-ish), slightly different every step.
+// Recorded footsteps: the game sets a hook that picks the surface and plays a sample (sound-bank.js); without it
+// (or before the samples load) a footstep is a short filtered noise thud (concrete-ish), different every step.
+let stepHook = null; export const setStepHook = f => { stepHook = f; };
 export function footstep(at, volume = .5) {
+  if (stepHook?.(at, volume)) return;
   try {
     const c = audioCtx(), t = c.currentTime, len = .09, buf = c.createBuffer(1, Math.ceil(c.sampleRate * len), c.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 4);

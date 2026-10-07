@@ -4,6 +4,7 @@
 // In Payday, engineers can also buy guns (weapons.js) and shots at other engineers take HP (combat-logic.js).
 // The model is an original chrome "hand cannon" (long slide, black grip), not a copy of any real product.
 import * as THREE from './three.module.js';
+import { shotSound } from './sound-bank.js';
 import { audioCtx, outAt } from './spatial-audio.js';
 
 export const isDarja = name => /^\s*darja\s*$/i.test(String(name || ''));
@@ -79,8 +80,8 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
     flashes.push({ s, t: 0 });
   }
   // One shot: `count` pellets in a small cone from `origin` along `dir`.
-  function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null, at = null } = {}) {
-    flash(origin, dir, flashSize); bang(volume, pitch, at);
+  function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null, at = null, id = null } = {}) {
+    flash(origin, dir, flashSize); if (!(id && shotSound(id, { at, volume: .8 }))) bang(volume, pitch, at);   // recorded shot (sound-bank.js), else synthesized
     if (dirs) { for (const d of dirs) { const hit = hitPoint(origin, d), mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(origin.clone().add(d)); scene.add(mesh); pellets.push({ mesh, from: origin.clone(), dir: d, dist: hit.point.distanceTo(origin), travelled: 0, hit }); } return; }
     for (let i = 0; i < count; i++) {
       const d = dir.clone().add(new THREE.Vector3((Math.random() - .5) * 2, (Math.random() - .5) * 2, (Math.random() - .5) * 2).multiplyScalar(spread)).normalize();

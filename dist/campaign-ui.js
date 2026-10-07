@@ -109,7 +109,7 @@ export function createCampaignUI(ctx) {
     $('ss-grid').innerHTML = (saved ? card('continue', 'Continue Campaign', esc(saved.name) + ' · ' + esc(levelText(saved)) + ' · ' + usdMoney(saved.budget || 0), 'ss-primary', 'Continue') + card('new', 'New Campaign', 'Start again at Level 0 on an empty site') : card('new', 'New Campaign', 'Levels 0–10 · from an empty site to a commissioned enterprise', 'ss-primary', 'Recommended'))
       + card('host', 'LAN Host Campaign', 'Host the campaign for up to 12 engineers on your network') + card('join', 'Join LAN', 'Join a room hosted on your network')
       + card('payday', 'Payday · Work & Casino', paydaySaved ? 'Continue ' + esc(paydaySaved.name) + ' · ' + esc(levelText(paydaySaved)) + ' · do jobs, earn salary, gamble' : 'Do the jobs, get paid, then hit the casino · solo or LAN', '', 'New mode')
-      + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('arena', 'Shooting Arena', 'Deathmatch with bots or friends on LAN · CS-style guns · never touches your saves') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
+      + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('arena', 'Global Defensive', 'Deathmatch with bots or friends on LAN · CS-style guns · never touches your saves') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
   }
   // True only when other engineers share this room; otherwise sandbox modes run locally and leave the save alone.
   const sharedRoom = () => lan.connected && (lan.players?.length || 1) > 1;
@@ -158,7 +158,7 @@ export function createCampaignUI(ctx) {
   // Shooting arena: deathmatch on one of two maps, with bots (solo) or friends (LAN). Separate from every save.
   async function startArena() {
     const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
-    subPanel(`<h2>Shooting Arena · Deathmatch</h2>
+    subPanel(`<h2>Global Defensive · Deathmatch</h2>
      <div class="ss-form"><label>Map<select id="ss-ar-map"><option value="yard">Freight Yard</option><option value="town">Old Town</option></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div>
      <p class="ss-note">Everyone against everyone. Pick any gun for free (B), knife on 3 — Darja carries her ruby karambit. Respawn in 2.5 s; most kills in 10 minutes wins. Add or remove bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
       const go = async host => {
@@ -352,6 +352,7 @@ export function createCampaignUI(ctx) {
   // Key capture runs before the game's own handlers and swallows the key.
   addEventListener('keydown', e => { if (!capturing) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture(e.code === 'Escape' ? null : e.code); }, true);
   addEventListener('mousedown', e => { if (!capturing || e.target.closest?.('[data-rebind]')) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture('Mouse' + e.button); }, true);
+  addEventListener('wheel', e => { if (!capturing || Math.abs(e.deltaY) < 1) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture(e.deltaY > 0 ? 'WheelDown' : 'WheelUp'); }, { capture: true, passive: false });
   function settingsView() {
     const p = settings;
     return `<h2>Settings</h2><div class="set-grid">

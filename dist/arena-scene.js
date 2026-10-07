@@ -44,10 +44,17 @@ function merge(geos) {
   const m = new THREE.BufferGeometry(); m.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); m.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); m.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); m.setIndex(I); m.computeBoundingSphere(); return m;
 }
 
+// One small box per arena material (every map), for the graphics warm-up: compiles their shaders and uploads
+// their textures before anyone enters the arena.
+export function arenaWarmMeshes() {
+  const names = new Set(); for (const m of Object.values(ARENA_MAPS)) { names.add(m.floor); for (const s of m.solids) names.add(s[5]); }
+  return [...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; });
+}
 export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.visible = false; scene.add(group);
   let current = null, boxes = [], bounds = null, savedBg = null, savedFog = null;
-  function clearMap() { for (const o of [...group.children]) { group.remove(o); o.geometry?.dispose(); const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
+  function clearMap() { for (const o of [...group.children]) { if (o.userData.ground) continue;   // dropped guns: arena-ui owns them
+    group.remove(o); o.geometry?.dispose(); const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
   function build(id) {
     if (current === id) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id;
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
@@ -57,12 +64,15 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   }
   return {
     group,
-    get map() { return current; }, get boxes() { return boxes; },
+    get map() { return current; }, get boxes() { return boxes; }, get bounds() { return bounds; },
     // Show / hide the arena (and swap the dark indoor background for a sky while inside it).
-    show(id) { build(id); group.visible = true; if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id]; scene.background = new THREE.Color(map?.sky || 0x9fb8cc); scene.fog = new THREE.Fog(map?.sky || 0x9fb8cc, 180, 520); },
+    show(id) { build(id); group.visible = true; if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id]; scene.background = new THREE.Color(map?.sky || 0x9fb8cc); scene.fog = new THREE.FogExp2(map?.sky || 0x9fb8cc, .0029); },   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
     hide() { group.visible = false; if (savedBg !== null) { scene.background = savedBg; scene.fog = savedFog; savedBg = null; } },
     inArena: z => z < ARENA.maxZ,
     clear(x, z) { return !!bounds && walkable(boxes, bounds, x, z); },
+    // What the feet are on at (x, z) with feet at height y, for footstep sounds: wood, metal, grass (sand) or concrete.
+    surfaceAt(x, z, y = 0) { const b = y > .3 && boxes.find(b => Math.abs(b.y1 - y) < .6 && x > b.minX - 1 && x < b.maxX + 1 && z > b.minZ - 1 && z < b.maxZ + 1), m = b ? b.mat : ARENA_MAPS[current]?.floor || 'concrete';
+      return /wood|crate/.test(m) ? 'wood' : /metal/.test(m) ? 'metal' : /sand/.test(m) ? 'grass' : 'concrete'; },
     spawnFor(i) { const map = ARENA_MAPS[current]; if (!map) return null; const s = map.spawns[((i % map.spawns.length) + map.spawns.length) % map.spawns.length]; return { x: ARENA.cx + s[0], z: ARENA.cz + s[1] }; },
   };
 }

@@ -29,7 +29,8 @@ await p.screenshot({ path: path.join(out, 'buy-menu.png') });
 await p.click('#ar-buy [data-pick="ak"]'); await p.waitForTimeout(600); await p.click('#ar-buy [data-act="close"]');
 check('AK-47 in the loadout and in hand', await p.evaluate(() => __infra.lab.world.operations.game.arena.loadout.darja?.primary === 'ak' && __infra.lab.pistol.current?.id === 'ak'));
 await p.evaluate(() => __infra.lab.enter()); await p.waitForTimeout(400);
-for (const [k, want] of [['3', 'karambit'], ['2', 'pistol'], ['1', 'ak']]) { await p.keyboard.press(k); await p.waitForTimeout(150); check('Key ' + k + ' selects ' + want, await p.evaluate(w => __infra.lab.pistol.current?.id === w, want)); }
+for (const [k, want] of [['3', 'karambit'], ['2', 'pistol'], ['1', 'ak']]) { await p.keyboard.press(k); await p.waitForTimeout(150); const st = await p.evaluate(() => ({ cur: __infra.lab.pistol.current?.id, down: !!__infra.lab.world.operations.game.combat.down?.darja, spawns: __infra.lab.world.operations.game.combat.respawns?.darja || 0, active: __infra.lab.active }));
+  check('Key ' + k + ' selects ' + want, st.cur === want, JSON.stringify(st)); }
 await p.screenshot({ path: path.join(out, 'arena-view.png') });
 for (let i = 0; i < 2; i++) await p.evaluate(() => __infra.lab.lan.send({ type: 'arena', action: { type: 'remove-bot' } })); await p.waitForTimeout(800);
 check('Removing bots leaves one', await p.evaluate(() => __infra.lab.world.operations.game.arena.bots.length === 1 && [...__infra.lab.lan.models.keys()].filter(k => k.startsWith('bot-')).length === 1));

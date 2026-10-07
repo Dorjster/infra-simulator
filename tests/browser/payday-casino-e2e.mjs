@@ -38,12 +38,12 @@ const watch = (p, body, ms) => p.evaluate(async ({ body, ms }) => {
 const seat = async (p, table, file, wait = 900) => { await p.evaluate(t => { __infra.lab.enter(); __infra.lab.casinoUI.show(t); }, table); await p.waitForTimeout(wait); if (file) await p.screenshot({ path: path.join(out, file) }); };
 try {
   const host = await client('Darja');
-  await host.click('[data-start=payday]'); await host.waitForTimeout(800); await host.click('#ss-pay-host'); await host.waitForTimeout(2500);
+  await host.evaluate(sel => document.querySelector(sel).click(), '[data-start=payday]'); await host.waitForTimeout(800); await host.evaluate(sel => document.querySelector(sel).click(), '#ss-pay-host'); await host.waitForTimeout(2500);
   let g = await G(host); check('Host started Payday', g.payday && g.mode === 'campaign');
   await until(host, () => !!__infra.lab.world.operations.game.wallets?.darja);
   check('Darja starts with 36,000,000₮', (await cash(host, 'Darja')) === 36000000);
   const guest = await client('Sam');
-  await guest.click('[data-start=join]'); await guest.fill('#ss-code', 'PAY777'); await guest.click('#ss-join'); await guest.waitForTimeout(2500);
+  await guest.evaluate(sel => document.querySelector(sel).click(), '[data-start=join]'); await guest.fill('#ss-code', 'PAY777'); await guest.evaluate(sel => document.querySelector(sel).click(), '#ss-join'); await guest.waitForTimeout(2500);
   await until(guest, () => !!__infra.lab.world.operations.game.wallets?.sam);
   check('Guest Sam gets a 1,800,000₮ wallet', (await cash(guest, 'Sam')) === 1800000);
   const job = await guest.evaluate(async () => {

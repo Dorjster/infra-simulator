@@ -23,7 +23,9 @@ export const KNIVES = [
   { id: 'knife', name: 'Knife', kind: 'knife', usd: 0, price: 0, dmg: 40, rangeMod: 1, rateMs: 450, auto: false, range: 11, spread: 0, mag: 0, reloadMs: 0, recoil: [0, 0] },
   { id: 'karambit', name: '★ Karambit | Ruby', kind: 'knife', usd: 0, price: 0, dmg: 40, rangeMod: 1, rateMs: 400, auto: false, range: 11, spread: 0, mag: 0, reloadMs: 0, recoil: [0, 0] },
 ];
-export const weaponById = id => id === 'cannon' ? DARJA_GUN : WEAPONS.find(w => w.id === id) || KNIVES.find(k => k.id === id) || null;
+// Grenades (Global Defensive, slot 4): held and thrown; their effects are host-run (arena-nades.js).
+export const GRENADES = [['he', 'HE Grenade'], ['flash', 'Flashbang'], ['smoke', 'Smoke Grenade'], ['molotov', 'Molotov']].map(([id, name]) => ({ id, name, kind: 'nade', usd: 0, price: 0, dmg: 0, rangeMod: 1, rateMs: 900, auto: false, range: 0, spread: 0, mag: 0, reloadMs: 0, recoil: [0, 0] }));
+export const weaponById = id => id === 'cannon' ? DARJA_GUN : WEAPONS.find(w => w.id === id) || KNIVES.find(k => k.id === id) || GRENADES.find(g => g.id === id) || null;
 export const MAX_HP = 100, RESPAWN_MS = 5000;
 // CS2 damage model: base × hit-group multiplier × rangeMod^(distance / 500 CS units). One game unit ≈ 6.5 CS units.
 export const HIT_GROUPS = { head: 4, chest: 1, stomach: 1.25, legs: .75 };

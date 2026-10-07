@@ -5,10 +5,14 @@
 import * as THREE from './three.module.js';
 import { audioCtx, outAt } from './spatial-audio.js';
 import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, zoneAt, HIT_GROUPS } from './weapons-data.js';
-import { weaponModel, MUZZLE, VIEW } from './weapon-models.js';
+import { loadSounds, reloadSound } from './sound-bank.js';
+import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT } from './weapon-models.js';
 
+// Draw (deploy) time per weapon, CS2-like: it swings up from below; no shooting until it's up.
+export const DRAW_MS = { he: 500, flash: 500, smoke: 500, molotov: 550, knife: 450, karambit: 500, pistol: 550, deagle: 700, cannon: 550, smg: 700, shotgun: 800, ak: 850, m4: 850, sniper: 1000, lmg: 1100 };
+const AXES = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
 const SOUND = { pistol: [.5, 1], deagle: [.6, .8], cannon: [.55, .85], smg: [.32, 1.35], shotgun: [.75, .62], ak: [.5, .95], m4: [.45, 1.05], sniper: [.85, .7], lmg: [.45, .9] };
-export const shotFx = (wpn) => ({ volume: (SOUND[wpn.id] || SOUND.pistol)[0], pitch: (SOUND[wpn.id] || SOUND.pistol)[1], flashSize: wpn.kind === 'pistol' ? 1.1 : wpn.kind === 'shotgun' || wpn.kind === 'lmg' ? 1.8 : 1.5 });
+export const shotFx = (wpn) => ({ id: wpn.id, volume: (SOUND[wpn.id] || SOUND.pistol)[0], pitch: (SOUND[wpn.id] || SOUND.pistol)[1], flashSize: wpn.kind === 'pistol' ? 1.1 : wpn.kind === 'shotgun' || wpn.kind === 'lmg' ? 1.8 : 1.5 });
 // Pellet directions for one shot (the shotgun fires several, everything else one), with the gun's spread.
 export function shotDirs(dir, wpn, rand = Math.random) {
   const n = wpn.pellets || 1, out = [];
@@ -30,29 +34,38 @@ let actx = null;
 function tick(freq = 1800, len = .05, vol = .25, type = 'square', at = null) { try { actx = audioCtx(); const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * .4, t + len); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len); o.connect(g).connect(outAt(actx, at)); o.start(t); o.stop(t + len + .02); } catch {} }
 export function warmTicks() { try { actx = audioCtx(); } catch {} }
 // `at`: where the sound happens (another player / bot); left out = your own sound.
-export const sounds = { slash: at => { tick(300, .12, .25, 'sawtooth', at); setTimeout(() => tick(180, .08, .15, 'sawtooth', at), 40); }, dry: at => tick(2400, .04, .18, 'square', at), magOut: at => tick(420, .09, .3, 'triangle', at), magIn: at => tick(620, .07, .35, 'triangle', at), bolt: at => { tick(900, .05, .3, 'square', at); setTimeout(() => tick(1300, .04, .25, 'square', at), 70); } };
+export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kind === 'knife') tick(1800, .07, .1, 'sawtooth', at); else reloadSound(2, id, at) || tick(900, .05, .2, 'square', at); }, slash: at => { tick(300, .12, .25, 'sawtooth', at); setTimeout(() => tick(180, .08, .15, 'sawtooth', at), 40); }, dry: at => tick(2400, .04, .18, 'square', at), magOut: (at, id) => reloadSound(0, id, at) || tick(420, .09, .3, 'triangle', at), magIn: (at, id) => reloadSound(1, id, at) || tick(620, .07, .35, 'triangle', at), bolt: (at, id) => reloadSound(2, id, at) || (tick(900, .05, .3, 'square', at), setTimeout(() => tick(1300, .04, .25, 'square', at), 70)) };
+// `id`: the weapon (picks the recorded reload sounds, sound-bank.js); synthesized clicks until they're loaded.
 
 // recoil(up, side): called per shot so the game turns the camera (the aim really moves, like CS spray).
-export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, recoil = () => {} }) {
+// inaccuracy(id): extra spread factor from moving / jumping (arena: CS2 rules, arena-move.js).
+// throwNade(id): a grenade in hand is thrown instead of fired (the arena sends it to the host).
+export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, recoil = () => {}, inaccuracy = () => 1, throwNade = () => {} }) {
   // equip by id also accepts a knife id (arena slot 3).
   let current = null, view = null, lastShot = 0, shots = 0, kick = 0, held = false, reloadUntil = 0, burst = 0, lastDry = 0, reloads = 0;
   const ammo = new Map(), dir = new THREE.Vector3(), muzzle = new THREE.Vector3();
   const hud = (() => { try { document.body.insertAdjacentHTML('beforeend', '<div id="wp-ammo" hidden><b id="wp-name"></b><span id="wp-count"></span><i id="wp-reload"></i></div>'); const st = document.createElement('style'); st.textContent = '#wp-ammo{position:fixed;right:24px;bottom:92px;z-index:36;color:#fff;font:700 13px system-ui;text-align:right;text-shadow:0 1px 3px #000}#wp-ammo[hidden]{display:none}#wp-ammo b{display:block;font-size:12px;letter-spacing:.06em;color:#ffd36b}#wp-ammo span{font:800 30px ui-monospace,Menlo,monospace}#wp-ammo span.low{color:#ff6b6b}#wp-ammo i{display:block;font-style:normal;font-size:12px;color:#9fd8ff}'; (document.head || document.body).append?.(st); return id => document.getElementById(id); } catch { return () => null; } })();
   const left = () => current ? (ammo.has(current.id) ? ammo.get(current.id) : current.mag) : 0;
-  function drawHud() { const el = hud('wp-ammo'); if (!el) return; el.hidden = !current; if (!current) return; hud('wp-name').textContent = current.name; if (current.kind === 'knife') { hud('wp-count').textContent = ''; hud('wp-reload').textContent = ''; return; } const n = left(), c = hud('wp-count'); c.textContent = n + ' / ' + current.mag; c.className = n <= Math.ceil(current.mag * .2) ? 'low' : ''; hud('wp-reload').textContent = reloading() ? 'Reloading…' : n === 0 ? 'R to reload' : ''; }
+  function drawHud() { const el = hud('wp-ammo'); if (!el) return; el.hidden = !current; if (!current) return; hud('wp-name').textContent = current.name; if (current.kind === 'knife' || current.kind === 'nade') { hud('wp-count').textContent = ''; hud('wp-reload').textContent = ''; return; } const n = left(), c = hud('wp-count'); c.textContent = n + ' / ' + current.mag; c.className = n <= Math.ceil(current.mag * .2) ? 'low' : ''; hud('wp-reload').textContent = reloading() ? 'Reloading…' : n === 0 ? 'R to reload' : ''; }
   const reloading = () => performance.now() < reloadUntil;
-  function setView(id) {
+  // The realistic models arrive a moment after start: swap the gun in hand once they do.
+  loadSounds();
+  loadRealWeapons().then(n => { if (n && current) setView(current.id); });
+  let drawAt = 0, drawMs = 1;
+  function setView(id, draw = false) {
     if (view) { camera.remove(view); view = null; }
-    if (!id) return; const [x, y, z, sc] = VIEW[id] || VIEW.pistol; view = weaponModel(id, sc); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; camera.add(view);
+    if (draw && id) { drawAt = performance.now(); drawMs = DRAW_MS[id] || 600; sounds.draw(null, id); }
+    if (!id) return; const [x, y, z, sc] = VIEW[id] || VIEW.pistol; const m = weaponModel(id, sc); for (const [ax, r] of VIEW_ROT[id] || []) m.rotateOnWorldAxis(AXES[ax], r);   // how it's held
+    view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; camera.add(view);   // kick / sway move `view`
     if (!camera.parent) scene.add(camera);
   }
-  function equip(id) { current = id ? weaponById(id) : null; setView(current?.id); held = false; reloadUntil = 0; burst = 0; drawHud(); return current; }
+  function equip(id) { const was = current?.id; current = id ? weaponById(id) : null; setView(current?.id, current?.id !== was); held = false; reloadUntil = 0; burst = 0; drawHud(); return current; }
   function cycle() { const own = arsenal(); if (!own.length) return null; const i = current ? own.indexOf(current.id) : -1; return equip(i + 1 < own.length ? own[i + 1] : null); }
   // R: swap the magazine (time depends on the gun); the rounds left in the old magazine are dropped, like CS.
   function reload() {
-    if (!current || current.kind === 'knife' || reloading() || left() === current.mag) return false;
-    const id = current.id; reloadUntil = performance.now() + current.reloadMs; held = false; reloads++; sounds.magOut();
-    setTimeout(() => { if (current?.id !== id) return; ammo.set(id, current.mag); sounds.magIn(); setTimeout(() => current?.id === id && sounds.bolt(), 180); drawHud(); }, current.reloadMs);
+    if (!current || current.kind === 'knife' || current.kind === 'nade' || reloading() || left() === current.mag) return false;
+    const id = current.id; reloadUntil = performance.now() + current.reloadMs; held = false; reloads++; sounds.magOut(null, id);
+    setTimeout(() => { if (current?.id !== id) return; ammo.set(id, current.mag); sounds.magIn(null, id); setTimeout(() => current?.id === id && sounds.bolt(null, id), 180); drawHud(); }, current.reloadMs);
     drawHud(); return true;
   }
   // Knife: a short-range swing (no ammo, no tracer); hits the engineer in front of you within reach.
@@ -64,14 +77,15 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     return true;
   }
   function fire() {
-    if (!current || !canFire() || reloading() || performance.now() - lastShot < current.rateMs) return false;
+    if (!current || !canFire() || reloading() || performance.now() - lastShot < current.rateMs || performance.now() - drawAt < drawMs) return false;
     if (current.kind === 'knife') return swing();
+    if (current.kind === 'nade') { lastShot = performance.now(); shots++; kick = 1; held = false; throwNade(current.id); return true; }
     if (left() <= 0) { if (performance.now() - lastDry > 250) { lastDry = performance.now(); sounds.dry(); } reload(); return false; }
     lastShot = performance.now(); shots++; kick = 1; ammo.set(current.id, left() - 1);
     camera.getWorldDirection(dir); const origin = camera.getWorldPosition(new THREE.Vector3());
     view?.updateMatrixWorld(); muzzle.set(...(MUZZLE[current.id] || MUZZLE.pistol)); if (view) muzzle.applyMatrix4(view.matrixWorld); else muzzle.copy(origin);
     // First shot is accurate; spray widens the cone (and the kick climbs) the longer you hold, like CS.
-    const spread = { ...current, spread: current.spread * (1 + Math.min(burst, 8) * .35) };
+    const spread = { ...current, spread: current.spread * (1 + Math.min(burst, 8) * .35) * inaccuracy(current.id) };
     const dirs = shotDirs(dir, spread); effects.shoot(muzzle, dir.clone(), { ...shotFx(current), dirs });
     const hits = new Map();
     for (const d of dirs) {
@@ -94,7 +108,8 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       if (performance.now() - lastShot > current.rateMs * 2.5) burst = Math.max(0, burst - dt * 20);
       kick = Math.max(0, kick - dt * (current.auto ? 14 : 7));
       const r = reloading() ? Math.sin(Math.min(1, 1 - (reloadUntil - performance.now()) / current.reloadMs) * Math.PI) : 0;   // dip the gun while reloading
-      if (view) { const [x, y, z] = view.userData.base, k = current.kind === 'pistol' ? 1 : current.kind === 'sniper' || current.kind === 'shotgun' ? 1.4 : .5; view.position.set(x, y + kick * .05 * k - r * .35, z + kick * .22 * k); view.rotation.x = kick * .35 * k - r * .6; view.rotation.z = r * .4; }
+      if (view) { const [x, y, z] = view.userData.base, k = current.kind === 'pistol' ? 1 : current.kind === 'sniper' || current.kind === 'shotgun' ? 1.4 : .5; const d = 1 - Math.min(1, (performance.now() - drawAt) / drawMs), dr = d * d * (3 - 2 * d), spin = current.kind === 'knife' ? (current.id === 'karambit' ? Math.PI * 2 : Math.PI) * d * d : 0;   // drawing: from below, eased; knives twirl in
+        view.position.set(x, y + kick * .05 * k - r * .35 - dr * .55, z + kick * .22 * k + dr * .15); view.rotation.x = kick * .35 * k - r * .6 - dr * .9; view.rotation.z = r * .4 + dr * .35 + spin; }
     }
   };
 }

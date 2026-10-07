@@ -6,6 +6,8 @@ import { combatApply, combatTick, hpOf, isDown, arenaArsenalOf } from '../dist/c
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
 import { MAX_HP } from '../dist/weapons-data.js';
+// Deterministic: bots, spawns and hits use Math.random — seed it so the test never flakes.
+let seed = 12345; Math.random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 const game = { levels: {} }; let now = 1e9;
 startArena(game, { map: 'yard', bots: 2 }, now);
 assert.equal(game.mode, 'arena'); assert.equal(game.payday, false); assert.equal(game.arena.bots.length, 2);
@@ -20,9 +22,9 @@ arenaApply(game, { type: 'remove-bot' }, 'Sam'); assert.equal(game.arena.bots.le
 arenaApply(game, { type: 'add-bot', count: 20 }, 'Sam'); assert.equal(game.arena.bots.length, MAX_BOTS);
 // Movement: 60 s of simulated bot time, never inside a wall or crate.
 const map = ARENA_MAPS.yard, boxes = mapBoxes(map, ARENA.cx, ARENA.cz), bounds = { minX: ARENA.cx - 130, maxX: ARENA.cx + 130, minZ: ARENA.cz - 130, maxZ: ARENA.cz + 130 };
-const start = game.arena.bots.map(b => [b.x, b.z]);
-for (let i = 0; i < 1200; i++) { now += 50; arenaTick(game, [], .05, now); combatTick(game, now); for (const b of game.arena.bots) if (!isDown(game, b.name, now)) assert(walkable(boxes, bounds, b.x, b.z, 1.2), b.name + ' inside a wall at ' + b.x.toFixed(1) + ',' + b.z.toFixed(1)); }
-assert(game.arena.bots.some((b, i) => Math.hypot(b.x - start[i][0], b.z - start[i][1]) > 20), 'bots move around');
+const start = game.arena.bots.map(b => [b.x, b.z]), far = start.map(() => 0);   // farthest each bot got (they may respawn back at the start)
+for (let i = 0; i < 1200; i++) { now += 50; arenaTick(game, [], .05, now); combatTick(game, now); game.arena.bots.forEach((b, j) => { far[j] = Math.max(far[j], Math.hypot(b.x - start[j][0], b.z - start[j][1])); }); for (const b of game.arena.bots) if (!isDown(game, b.name, now)) assert(walkable(boxes, bounds, b.x, b.z, 1.2), b.name + ' inside a wall at ' + b.x.toFixed(1) + ',' + b.z.toFixed(1)); }
+assert(far.some(d => d > 20), 'bots move around');
 assert(Object.values(game.combat.kills).reduce((a, b) => a + b, 0) > 0, 'bots fight each other in deathmatch');
 assert(game.combat.feed.length > 0 && game.combat.feed[0].wid, 'kill feed with weapon');
 // Line of sight: a wall between two points blocks; open ground does not.
@@ -42,4 +44,27 @@ combatTick(g2, now + 5000 + 2600); assert.equal(hpOf(g2, bot.name), MAX_HP); are
 g2.combat.down.sam = { until: now + 8000 }; combatTick(g2, now + 8100); arenaTick(g2, players, .05, now + 8150); assert(Number.isInteger(g2.combat.spawnTo.sam?.i), 'spawn order for the player');
 // Match clock: over after 10 minutes, then a new match on the same map.
 arenaTick(g2, players, .05, g2.arena.endsAt + 1); assert(g2.arena.over); arenaTick(g2, players, .05, g2.arena.endsAt + 13000); assert(!g2.arena.over);
-console.log('PASS: arena logic · deathmatch, loadouts (' + PRIMARIES.length + ' primaries), knives + Darja karambit, bots (move without clipping, LOS, fight), CS2 damage on bots, respawn + spawn orders, match clock');
+// Dropped weapons: G drops, auto pickup into an empty slot, E swaps, the dead drop their gun, bots upgrade, expiry.
+{ const g3 = { levels: {} }, t = 2e9; startArena(g3, { map: 'yard', bots: 0 }, t); const cx = ARENA.cx, cz = ARENA.cz + 100;
+  const pl = [{ name: 'Ann', pose: { x: cx, y: 9.7, z: cz, yaw: 0 } }, { name: 'Bo', pose: { x: cx + 40, y: 9.7, z: cz, yaw: 0 } }];
+  arenaApply(g3, { type: 'loadout', primary: 'ak' }, 'Ann', pl, t);
+  assert.match(arenaApply(g3, { type: 'drop', slot: 'primary' }, 'Ann', pl, t), /Dropped AK-47/); assert.deepEqual(arenaArsenalOf(g3, 'Ann'), ['pistol', 'knife']);
+  const it = g3.combat.ground[0]; assert.equal(it.item, 'ak'); assert(Math.abs(it.z - (cz - 6)) < .01, 'lands ~1 m ahead');
+  assert.throws(() => arenaApply(g3, { type: 'pickup', id: it.id }, 'Bo', pl, t), /Too far/);
+  pl[1].pose.x = cx; pl[1].pose.z = cz - 5; assert.match(arenaApply(g3, { type: 'pickup', id: it.id }, 'Bo', pl, t), /Picked up AK-47/); assert.equal(g3.arena.loadout.bo.primary, 'ak'); assert.equal(g3.combat.ground.length, 0);
+  assert.throws(() => arenaApply(g3, { type: 'pickup', id: it.id }, 'Ann', pl, t), /Already taken/);
+  arenaApply(g3, { type: 'drop', slot: 'secondary' }, 'Ann', pl, t); assert.deepEqual(arenaArsenalOf(g3, 'Ann'), ['knife'], 'pistol dropped: knife only');
+  arenaApply(g3, { type: 'loadout', primary: 'm4' }, 'Ann', pl, t); const pistolOnGround = g3.combat.ground.find(x => x.item === 'pistol');
+  arenaApply(g3, { type: 'drop', slot: 'primary' }, 'Bo', pl, t); const ak = g3.combat.ground.find(x => x.item === 'ak');
+  pl[0].pose.z = ak.z; pl[0].pose.x = ak.x; assert.throws(() => arenaApply(g3, { type: 'pickup', id: ak.id }, 'Ann', pl, t), /E to swap/, 'slot taken without swap');
+  assert.match(arenaApply(g3, { type: 'pickup', id: ak.id, swap: true }, 'Ann', pl, t), /AK-47/); assert.equal(g3.arena.loadout.ann.primary, 'ak'); assert(g3.combat.ground.some(x => x.item === 'm4'), 'swap leaves the M4');
+  assert.match(arenaApply(g3, { type: 'pickup', id: pistolOnGround.id }, 'Ann', pl, t), /Glock-18/); assert.deepEqual(arenaArsenalOf(g3, 'Ann'), ['ak', 'pistol', 'knife']);
+  assert.throws(() => arenaApply(g3, { type: 'drop', slot: 'primary' }, 'Nobody', pl, t), /Nothing to drop/);
+  // Death drop (once per death), in deathmatch the loadout stays for the respawn.
+  const n0 = g3.combat.ground.length; g3.combat.down.ann = { until: t + 2500 }; arenaTick(g3, pl, .05, t + 10); arenaTick(g3, pl, .05, t + 60);
+  assert.equal(g3.combat.ground.length, n0 + 1); assert.equal(g3.combat.ground.at(-1).item, 'ak'); assert.equal(g3.arena.loadout.ann.primary, 'ak');
+  // Bots take a better gun they walk over.
+  arenaApply(g3, { type: 'add-bot' }, 'Ann', pl, t); const bot = g3.arena.bots[0]; bot.weapon = 'smg'; g3.combat.ground.push({ id: 'gx', item: 'sniper', x: bot.x, z: bot.z, y: 0, yaw: 0, at: t });
+  pl.length = 0; delete g3.combat.down.ann; arenaTick(g3, pl, .05, t + 100); assert.equal(bot.weapon, 'sniper'); assert(g3.combat.ground.some(x => x.item === 'smg'), 'bot left its SMG');
+  arenaTick(g3, pl, .05, t + 100 + 61000); assert.equal(g3.combat.ground.length, 0, 'items vanish after a minute'); }
+console.log('PASS: arena logic · drops + pickups · deathmatch, loadouts (' + PRIMARIES.length + ' primaries), knives + Darja karambit, bots (move without clipping, LOS, fight), CS2 damage on bots, respawn + spawn orders, match clock');

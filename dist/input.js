@@ -37,27 +37,28 @@ export const ACTIONS = [
   { id: 'chat', label: 'Chat', legacy: 't', def: ['KeyT'], ctx: ['infra', 'payday'] },
   { id: 'chat-enter', label: 'Chat (Enter)', legacy: 'enter', def: ['Enter'], ctx: ['infra', 'payday'] },
   // Payday only: guns (never in Campaign / Free Build / Challenges).
-  { id: 'guns', label: 'Draw / next gun', legacy: '4', def: ['Digit4'], ctx: ['payday'] },
-  { id: 'reload', label: 'Reload (gun drawn)', legacy: 'reload', def: ['KeyR'], ctx: ['payday'] },
   // Shooting arena (its own context: the same keys mean different things here).
   { id: 'a-forward', label: 'Move forward', legacy: 'w', def: ['KeyW'], ctx: ['arena'], hold: true },
   { id: 'a-left', label: 'Move left', legacy: 'a', def: ['KeyA'], ctx: ['arena'], hold: true },
   { id: 'a-back', label: 'Move back', legacy: 's', def: ['KeyS'], ctx: ['arena'], hold: true },
   { id: 'a-right', label: 'Move right', legacy: 'd', def: ['KeyD'], ctx: ['arena'], hold: true },
   { id: 'a-walk', label: 'Walk quietly (hold)', legacy: 'walk', def: ['ShiftLeft'], ctx: ['arena'], hold: true },
+  { id: 'a-jump', label: 'Jump', legacy: 'jump', def: ['Space', 'WheelDown'], ctx: ['arena'], hold: true },
   { id: 'a-crouch', label: 'Crouch / sit (hold)', legacy: 'c', def: ['ControlLeft', 'KeyC'], ctx: ['arena'], hold: true },
   { id: 'a-primary', label: 'Primary weapon (rifle, sniper, SMG, shotgun)', legacy: 'slot1', def: ['Digit1'], ctx: ['arena'] },
   { id: 'a-secondary', label: 'Pistol', legacy: 'slot2', def: ['Digit2'], ctx: ['arena'] },
   { id: 'a-knife', label: 'Knife', legacy: 'slot3', def: ['Digit3'], ctx: ['arena'] },
   { id: 'a-utility', label: 'Grenades (cycle)', legacy: 'slot4', def: ['Digit4'], ctx: ['arena'] },
   { id: 'a-objective', label: 'Bomb (defuse matches)', legacy: 'slot5', def: ['Digit5'], ctx: ['arena'] },
+  { id: 'a-drop', label: 'Drop weapon', legacy: 'adrop', def: ['KeyG'], ctx: ['arena'] },
+  { id: 'a-use', label: 'Pick up / swap weapon', legacy: 'ause', def: ['KeyE'], ctx: ['arena'] },
   { id: 'a-reload', label: 'Reload', legacy: 'reload', def: ['KeyR'], ctx: ['arena'] },
   { id: 'a-scores', label: 'Scoreboard (hold)', legacy: 'scores', def: ['Tab'], ctx: ['arena'], hold: true },
   { id: 'a-buy', label: 'Buy menu', legacy: 'buy', def: ['KeyB'], ctx: ['arena'] },
   { id: 'a-third', label: 'First / third person', legacy: 'p', def: ['KeyP'], ctx: ['arena'] },
   { id: 'a-chat', label: 'Chat', legacy: 't', def: ['KeyY'], ctx: ['arena'] },
 ];
-export const CONTEXTS = { infra: 'Infrastructure (Campaign, Free Build, Challenges)', payday: 'Payday', arena: 'Shooting arena' };
+export const CONTEXTS = { infra: 'Infrastructure (Campaign, Free Build, Challenges)', payday: 'Payday', arena: 'Global Defensive (arena)' };
 const STORE = 'infra-bindings-v1';
 const valid = c => typeof c === 'string' && /^(Key[A-Z]|Digit\d|Numpad\w+|F\d{1,2}|Arrow\w+|Shift(Left|Right)|Control(Left|Right)|Alt(Left|Right)|Space|Tab|Enter|Backquote|Minus|Equal|Bracket(Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|CapsLock|Mouse[0-4])$/.test(c);
 const RESERVED = ['Escape', 'MetaLeft', 'MetaRight'];
@@ -103,6 +104,6 @@ export function importBindings(text) { const d = JSON.parse(text); if (d?.kind !
 
 // Human-readable label for a code, using the keyboard layout where the browser exposes it.
 let layout = null; try { navigator.keyboard?.getLayoutMap?.().then(m => { layout = m; }).catch(() => {}); } catch {}
-const NAMES = { ShiftLeft: 'Shift', ShiftRight: 'Right Shift', ControlLeft: 'Ctrl', ControlRight: 'Right Ctrl', AltLeft: 'Alt', AltRight: 'Right Alt', Space: 'Space', Tab: 'Tab', Enter: 'Enter', CapsLock: 'Caps Lock', Mouse0: 'Left mouse', Mouse1: 'Middle mouse', Mouse2: 'Right mouse', Mouse3: 'Mouse 4', Mouse4: 'Mouse 5', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Backquote: '`' };
+const NAMES = { ShiftLeft: 'Shift', ShiftRight: 'Right Shift', ControlLeft: 'Ctrl', ControlRight: 'Right Ctrl', AltLeft: 'Alt', AltRight: 'Right Alt', Space: 'Space', Tab: 'Tab', Enter: 'Enter', CapsLock: 'Caps Lock', WheelUp: 'Wheel up', WheelDown: 'Wheel down', Mouse0: 'Left mouse', Mouse1: 'Middle mouse', Mouse2: 'Right mouse', Mouse3: 'Mouse 4', Mouse4: 'Mouse 5', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Backquote: '`' };
 export function keyLabel(code) { if (NAMES[code]) return NAMES[code]; const l = layout?.get?.(code); if (l) return l.toUpperCase(); return code.replace(/^Key|^Digit|^Numpad/, m => m === 'Numpad' ? 'Num ' : ''); }
 export const labelOf = (ctx, id) => bindingOf(ctx, id).map(keyLabel).join(' / ') || 'unbound';

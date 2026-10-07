@@ -3,7 +3,6 @@
 // of the shooter's position, both are standing) and only then takes HP. At 0 HP an engineer is knocked out,
 // drops for a few seconds and respawns with full HP at the entrance. Nothing else in the game is affected.
 import { weaponById, MAX_HP, RESPAWN_MS, damageFor, HIT_GROUPS } from './weapons-data.js';
-import { arsenalOf } from './casino-logic.js';
 
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const state = game => game.combat ??= { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [] };
@@ -12,22 +11,27 @@ export const isDown = (game, name, now = Date.now()) => (game.combat?.down?.[key
 
 // What a player may use: Payday = bought guns (+ Darja's cannon); Arena = the match loadout (primary, pistol, knife).
 const DARJA = n => /^darja$/.test(key(n));
-export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary || 'pistol', DARJA(name) ? 'karambit' : 'knife'].filter(Boolean); }
-export const ownedWeapons = (game, name) => game.mode === 'arena' ? arenaArsenalOf(game, name) : arsenalOf(game, name);
-export const combatOn = game => !!game.payday || game.mode === 'arena';
+export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary === undefined ? 'pistol' : l.secondary, DARJA(name) ? 'karambit' : 'knife', ...new Set(Array.isArray(l.nades) ? l.nades : [])].filter(Boolean); }
+export const ownedWeapons = (game, name) => game.mode === 'arena' ? arenaArsenalOf(game, name) : [];
+// Guns exist only in Global Defensive (the arena): never in Campaign, Free Build, Challenges or Payday.
+export const combatOn = game => game.mode === 'arena';
 const respawnMs = game => game.mode === 'arena' ? (game.arena?.respawnMs ?? 2500) : RESPAWN_MS;
 // Damage one engineer (or bot). Shared by player hits (checked in combatApply) and host-run bots.
 export function applyHit(game, shooter, targetName, wpn, zone, dist, pellets = 1, now = Date.now()) {
-  const c = state(game), me = key(shooter), tk = key(targetName); if (isDown(game, targetName, now)) return { message: 'Already down', dmg: 0, hp: 0 };
-  const dmg = damageFor(wpn, zone, dist, pellets), hp = Math.max(0, hpOf(game, targetName) - dmg); c.hp[tk] = hp; const nm = c.names ??= {}; nm[me] = String(shooter).slice(0, 40); nm[tk] = String(targetName).slice(0, 40);
+  return hurt(game, shooter, targetName, wpn, damageFor(wpn, zone, dist, pellets), zone, now);
+}
+// Take `dmg` HP (grenades and fire pass their own damage); knocks out at 0 with a kill-feed line.
+export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = Date.now()) {
+  const c = state(game), me = key(shooter), tk = key(targetName); if (isDown(game, targetName, now) || dmg <= 0) return { message: 'Already down', dmg: 0, hp: hpOf(game, targetName) };
+  const hp = Math.max(0, hpOf(game, targetName) - dmg); c.hp[tk] = hp; const nm = c.names ??= {}; nm[me] = String(shooter).slice(0, 40); nm[tk] = String(targetName).slice(0, 40);
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + dmg + ' HP', dmg, hp, zone };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name };
-  c.kills[me] = (c.kills[me] || 0) + 1; c.deaths[tk] = (c.deaths[tk] || 0) + 1;
+  if (me !== tk) c.kills[me] = (c.kills[me] || 0) + 1; c.deaths[tk] = (c.deaths[tk] || 0) + 1;
   c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head' }); c.feed.length = Math.min(c.feed.length, 6);
   return { message: 'Knocked out ' + targetName + (zone === 'head' ? ' · head shot' : ''), dmg, hp: 0, down: true, zone };
 }
 export function combatApply(game, a, name, players = [], actor = null, now = Date.now()) {
-  if (!combatOn(game)) throw Error('Weapons are part of Payday and the Arena');
+  if (!combatOn(game)) throw Error('Guns are only in Global Defensive');
   const c = state(game), me = key(name);
   if (a?.type !== 'hit') throw Error('Unknown combat action');
   const wpn = weaponById(a.weapon); if (!wpn || !ownedWeapons(game, name).includes(wpn.id)) throw Error('You do not own that weapon');

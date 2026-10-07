@@ -3,16 +3,24 @@
 // Arena state is never written into Campaign / Payday saves: the room only saves in Campaign mode.
 //  · Deathmatch: everyone against everyone, pick any primary + pistol (free), knife always; respawn after 2.5 s
 //    at the spawn point farthest from enemies; most kills when the 10-minute clock runs out wins.
+//  · Dropped items (CS2): G drops the gun in hand; walking over one whose slot is empty picks it up, E swaps;
+//    the dead drop their primary (or pistol). Anyone — players and bots — can pick them up. They lie on
+//    game.combat.ground (streamed with HP and kills) and vanish after a minute.
 //  · Bots: added and removed by any player; they walk between spawn points, need real line of sight (map walls),
 //    react after a short delay, miss more at range and reload. They hit through the same damage rules as players.
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE } from './weapons-data.js';
 import { applyHit, isDown, hpOf } from './combat-logic.js';
+import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView } from './arena-nades.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 export const PRIMARIES = WEAPONS.filter(w => w.kind !== 'pistol').map(w => w.id), SECONDARIES = WEAPONS.filter(w => w.kind === 'pistol').map(w => w.id);
-export const DM_MS = 10 * 60000, MAX_BOTS = 11;
+export const DM_MS = 10 * 60000, MAX_BOTS = 11, GROUND_MAX = 24, GROUND_MS = 60000, PICK_R = 5;
+// Loadout slot an item goes in (grenades and the bomb join this when they arrive).
+export const slotOf = id => SECONDARIES.includes(id) ? 'secondary' : PRIMARIES.includes(id) ? 'primary' : NADE_IDS.includes(id) ? 'nades' : null;
+const itemName = id => NADES[id]?.name || weaponById(id).name;
+const BOT_UPGRADE = ['ak', 'm4', 'sniper'];
 const BOT_NAMES = ['Bat', 'Tuya', 'Saraa', 'Temuulen', 'Oyun', 'Ganaa', 'Bold', 'Anu', 'Khulan', 'Erdene', 'Naraa'];
 const BOT_GUNS = ['ak', 'm4', 'ak', 'smg', 'm4', 'shotgun', 'ak', 'sniper'];
 
@@ -20,7 +28,7 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0 } = {}, n
   if (!ARENA_MAPS[map]) throw Error('Unknown arena map');
   game.mode = 'arena'; game.payday = false;
   game.arena = { kind, map, startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null };
-  game.combat = { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {} };
+  game.combat = { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: 0, nades: [], nadeSeq: 0 };
   for (let i = 0; i < bots; i++) addBot(game, now);
 }
 const geo = game => { const map = ARENA_MAPS[game.arena.map], [sw, sd] = map.size; return { map, boxes: mapBoxes(map, ARENA.cx, ARENA.cz), bounds: { minX: ARENA.cx - sw / 2, maxX: ARENA.cx + sw / 2, minZ: ARENA.cz - sd / 2, maxZ: ARENA.cz + sd / 2 } }; };
@@ -45,15 +53,46 @@ function alive(game, players, but) {
   for (const b of game.arena?.bots || []) if (key(b.name) !== key(but) && !isDown(game, b.name)) out.push({ name: b.name, x: b.x, z: b.z, y: EYE }); return out;
 }
 
+// Put an item on the ground at (x, z), resting at height y.
+function dropItem(game, item, x, z, y, by, now) {
+  const C = game.combat; C.ground ??= []; C.groundSeq = (C.groundSeq || 0) + 1;
+  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(40, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by });
+  while (C.ground.length > GROUND_MAX) C.ground.shift();
+}
+const poseOf = (players, name) => players.find(p => key(p.name) === key(name))?.pose || null;
 export function arenaApply(game, a, name, players = [], now = Date.now()) {
   if (game.mode !== 'arena' || !game.arena) throw Error('Start the arena first');
   const A = game.arena;
+  if (a.type === 'drop') {
+    if (isDown(game, name, now)) throw Error('You are dead');
+    const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, slot = a.slot === 'secondary' ? 'secondary' : a.slot === 'nades' ? 'nades' : 'primary', item = slot === 'nades' ? (nadesOf(l).includes(a.kind) ? a.kind : null) : l[slot];
+    if (!item) throw Error('Nothing to drop');
+    // About 1 m ahead of you (the camera looks along (−sin yaw, −cos yaw)); at your feet if a wall is in the way.
+    const p = poseOf(players, name) || { x: +a.x || 0, z: +a.z || 0, yaw: +a.yaw || 0 }, g = G(game); let x = p.x - Math.sin(p.yaw || 0) * 6, z = p.z - Math.cos(p.yaw || 0) * 6;
+    if (!walkable(g.boxes, g.bounds, x, z, .5)) { x = p.x; z = p.z; }
+    if (slot === 'nades') l.nades.splice(l.nades.indexOf(item), 1); else l[slot] = null; dropItem(game, item, x, z, a.y, name, now); return 'Dropped ' + itemName(item);
+  }
+  if (a.type === 'pickup') {
+    if (isDown(game, name, now)) throw Error('You are dead');
+    const C = game.combat, i = (C.ground || []).findIndex(it => it.id === a.id), it = C.ground?.[i]; if (!it) throw Error('Already taken');
+    const p = poseOf(players, name); if (p && Math.hypot(p.x - it.x, p.z - it.z) > PICK_R + 4) throw Error('Too far away');
+    const slot = slotOf(it.item); if (!slot) throw Error('Cannot pick that up');
+    const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' };
+    if (slot === 'nades') { if (!canCarry(l.nades ??= [], it.item)) throw Error('No room for more grenades'); C.ground.splice(i, 1); l.nades.push(it.item); return 'Picked up ' + itemName(it.item); }
+    const old = l[slot]; if (old && !a.swap) throw Error('Slot taken · E to swap');
+    C.ground.splice(i, 1); l[slot] = it.item; if (old) dropItem(game, old, it.x, it.z, it.y, name, now);
+    return 'Picked up ' + itemName(it.item);
+  }
   if (a.type === 'loadout') {
     const primary = a.primary === null ? null : PRIMARIES.includes(a.primary) ? a.primary : undefined, secondary = SECONDARIES.includes(a.secondary) ? a.secondary : undefined;
     if (primary === undefined && secondary === undefined) throw Error('Choose a weapon');
     const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }; if (primary !== undefined) l.primary = primary; if (secondary !== undefined) l.secondary = secondary;
-    return 'Loadout · ' + [l.primary && weaponById(l.primary).name, weaponById(l.secondary).name].filter(Boolean).join(' + ');
+    return 'Loadout · ' + [l.primary && weaponById(l.primary).name, l.secondary && weaponById(l.secondary).name].filter(Boolean).join(' + ');
   }
+  if (a.type === 'buy-nade') { const kind = a.kind; if (!NADES[kind]) throw Error('Unknown grenade'); const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, list = l.nades ??= [];
+    if (!canCarry(list, kind)) throw Error(list.length >= 4 ? 'You carry four grenades already' : kind === 'flash' ? 'Two flashbangs at most' : 'You already have a ' + NADES[kind].name);
+    list.push(kind); return 'Bought ' + NADES[kind].name; }
+  if (a.type === 'throw') { if (isDown(game, name, now)) throw Error('You are dead'); return throwNade(game, name, a.kind, a, now); }
   if (a.type === 'add-bot') { const n = Math.max(1, Math.min(MAX_BOTS, Math.floor(+a.count || 1))); let added = 0; for (let i = 0; i < n && A.bots.length < MAX_BOTS; i++, added++) addBot(game, now); return added ? 'Added ' + added + ' bot' + (added > 1 ? 's' : '') : 'The arena is full of bots'; }
   if (a.type === 'remove-bot') { const b = A.bots.pop(); if (!b) throw Error('No bots to remove'); delete game.combat.hp[key(b.name)]; delete game.combat.down[key(b.name)]; delete game.combat.kills[key(b.name)]; delete game.combat.deaths[key(b.name)]; return 'Removed ' + b.name; }
   if (a.type === 'restart') { startArena(game, { map: a.map && ARENA_MAPS[a.map] ? a.map : A.map, bots: A.bots.length }, now); return 'New match · ' + ARENA_MAPS[game.arena.map].name; }
@@ -66,17 +105,24 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
   if (game.mode !== 'arena' || !game.arena) return false; const A = game.arena, C = game.combat, g = G(game); let changed = false;
   // Spawn orders for players who just respawned (their client moves them there).
   for (const [k, at] of Object.entries(C.respawnedAt || {})) { if (C.spawnTo[k]?.at === at) continue; const p = players.find(x => key(x.name) === k); if (!p) continue; C.spawnTo[k] = { at, i: bestSpawn(game, alive(game, players, p.name)) }; changed = true; }
+  // The dead drop their primary (or pistol) where they fell; in deathmatch they still respawn with their loadout.
+  A.deathDrops ??= {};
+  for (const [k, d] of Object.entries(C.down || {})) { if (A.deathDrops[k] === d.until) continue; A.deathDrops[k] = d.until;
+    const bot = A.bots.find(b => key(b.name) === k), p = bot ? null : players.find(x => key(x.name) === k), l = A.loadout[k] || {}, item = bot ? bot.weapon : l.primary || (l.secondary === undefined ? 'pistol' : l.secondary);
+    const at = bot || p?.pose; if (item && at && slotOf(item)) { dropItem(game, item, at.x, at.z, bot ? 0 : Math.max(0, (at.y || 0) - EYE), bot ? bot.name : p.name, now); changed = true; } }
+  if (nadesTick(game, players, dt, now, g)) changed = true;
+  if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
   for (const bot of A.bots) {
     if (isDown(game, bot.name, now)) { bot.dead = true; continue; }
     if (bot.dead) { bot.dead = false; place(game, bot); bot.ammo = weaponById(bot.weapon).mag; changed = true; }
     const wpn = weaponById(bot.weapon), foes = alive(game, players, bot.name);
     // Nearest visible enemy within range.
-    let tgt = null, td = Infinity; for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && lineOfSight(g.boxes, bot.x, bot.z, f.x, f.z)) { tgt = f; td = d; } }
+    let tgt = null, td = Infinity; for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && clearView(game, g.boxes, bot.x, bot.z, f.x, f.z)) { tgt = f; td = d; } }   // walls and smoke block
     if (tgt) {
       if (bot.target !== tgt.name) { bot.target = tgt.name; bot.seenAt = now; }
       const want = Math.atan2(-(tgt.x - bot.x), -(tgt.z - bot.z)), diff = Math.atan2(Math.sin(want - bot.yaw), Math.cos(want - bot.yaw)); bot.yaw += Math.sign(diff) * Math.min(Math.abs(diff), dt * 6);
       const react = 380 + (1 - bot.skill) * 600;
-      if (now < bot.reloadUntil) continue;
+      if (now < bot.reloadUntil || now < (bot.blindUntil || 0)) continue;   // reloading, or blinded by a flashbang
       if (bot.ammo <= 0) { bot.reloadUntil = now + wpn.reloadMs; bot.ammo = wpn.mag; bot.reloadN = (bot.reloadN || 0) + 1; changed = true; continue; }
       if (Math.abs(diff) < .12 && now - bot.seenAt > react && now - bot.lastShot > wpn.rateMs * (wpn.auto ? 1.6 : 1.1)) {
         bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true;
@@ -86,6 +132,9 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
       continue;
     }
     bot.target = null;
+    // Bots pick up better guns they walk over (a rifle or the AWP instead of an SMG, shotgun or LMG).
+    if (C.ground?.length && !BOT_UPGRADE.includes(bot.weapon)) { const i = C.ground.findIndex(it => BOT_UPGRADE.includes(it.item) && Math.hypot(it.x - bot.x, it.z - bot.z) < 4);
+      if (i >= 0) { const it = C.ground.splice(i, 1)[0]; dropItem(game, bot.weapon, it.x, it.z, it.y, bot.name, now); bot.weapon = it.item; bot.ammo = weaponById(it.item).mag; changed = true; } }
     // Wander: walk towards a spawn point used as a waypoint; steer round obstacles; pick another when stuck.
     if (bot.wp < 0 || Math.hypot(...wp(g, bot.wp).map((v, i) => v - (i ? bot.z : bot.x))) < 6) bot.wp = Math.floor(Math.random() * g.map.spawns.length);
     const [wx, wz] = wp(g, bot.wp), head = Math.atan2(wx - bot.x, wz - bot.z), step = 13 * dt;
