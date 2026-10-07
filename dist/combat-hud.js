@@ -5,6 +5,12 @@ import { MAX_HP } from './weapons-data.js';
 
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 
+// Hit feedback sounds (synthesized): a short tick for a body hit, a bright ding for a head shot, two notes for a knock-out.
+let hctx = null;
+function hitSound(kind) { try { hctx ??= new AudioContext(); if (hctx.state === 'suspended') hctx.resume(); const t = hctx.currentTime;
+  const note = (f, at, len, vol, type = 'sine') => { const o = hctx.createOscillator(), g = hctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, t + at); g.gain.setValueAtTime(vol, t + at); g.gain.exponentialRampToValueAtTime(.001, t + at + len); o.connect(g).connect(hctx.destination); o.start(t + at); o.stop(t + at + len + .02); };
+  if (kind === 'body') note(1400, 0, .05, .22, 'triangle'); else if (kind === 'head') { note(2600, 0, .12, .25); note(3900, 0, .08, .1); } else { note(1800, 0, .1, .25); note(2700, .09, .18, .25); } } catch {} }
+export const warmHitSound = () => { try { hctx ??= new AudioContext(); } catch {} };
 export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
   const css = document.createElement('style'); css.textContent = `
 #cb-hp{position:fixed;left:16px;bottom:96px;z-index:36;width:220px;font:700 12px system-ui;color:#fff;text-shadow:0 1px 2px #000}#cb-hp[hidden]{display:none}
@@ -19,7 +25,7 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
   const $ = id => document.getElementById(id);
   let lastHp = MAX_HP, lastRespawn = null, markTimer = 0, feedKey = '';
   return {
-    hitMarker(kill) { const m = $('cb-mark'); m.className = kill ? 'kill' : ''; m.style.opacity = 1; clearTimeout(markTimer); markTimer = setTimeout(() => m.style.opacity = 0, kill ? 500 : 160); },
+    hitMarker(kill, head) { hitSound(kill ? 'kill' : head ? 'head' : 'body'); const m = $('cb-mark'); m.className = kill ? 'kill' : ''; m.style.opacity = 1; clearTimeout(markTimer); markTimer = setTimeout(() => m.style.opacity = 0, kill ? 500 : 160); },
     get down() { const g = world.operations.game; return !!g.payday && isDown(g, name()); },
     update() {
       const g = world.operations.game, on = !!g.payday && lan.connected; $('cb-hp').hidden = !on;

@@ -80,7 +80,21 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     ranked.sort((a, b) => b.w - a.w);
     pool.forEach((p, k) => { const r = ranked[k]; if (!r) { p.intensity = 0; return; } p.position.copy(r.p); p.color.copy(r.l.color); p.intensity = r.l.intensity; p.distance = r.l.distance; p.decay = r.l.decay; });
   }
+  // Warm-up: put objects (all guns, shot effects) into the scene for one asynchronous shader compile, with the
+  // same lights, reflections and shadow settings as play, then take them out. The first draw / shot is instant.
+  let warmed = false;
+  // reveal(): shows rooms that are hidden while far away (the casino) just for the compile; returns a restore().
+  async function prewarm(objs, reveal = () => () => {}) {
+    if (warmed || !objs?.length) return; warmed = true; apply();
+    const g = new THREE.Group(); g.position.set(0, -500, 0); objs.forEach(o => g.add(o)); scene.add(g); const restore = reveal(); metalShine(); if (fxOn) flagShadows();
+    let job; try { job = renderer.compileAsync ? renderer.compileAsync(scene, camera) : renderer.compile(scene, camera); } catch {}
+    // Upload every texture now (signs, felts, reels, cards…) instead of on first sight.
+    const seen = new Set(); scene.traverse(o => { const ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : []; for (const m of ms) for (const k of ['map', 'roughnessMap', 'normalMap', 'emissiveMap', 'alphaMap']) { const t = m[k]; if (t && !seen.has(t)) { seen.add(t); try { renderer.initTexture(t); } catch {} } } });
+    restore(); try { await job; } catch {}
+    scene.remove(g);
+  }
   return {
+    prewarm,
     get post() { return !!composer && fxOn; },
     setSize(w, h) { if (composer) { const s = renderer.getDrawingBufferSize(new THREE.Vector2()); composer.setSize(w, h); composer.setPixelRatio?.(renderer.getPixelRatio()); bloom?.resolution.set(s.x / 2, s.y / 2); } },
     render() {

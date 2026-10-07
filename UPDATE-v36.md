@@ -278,3 +278,29 @@ Reflections and Shadows & glow are also separate switches (Auto, On or Off). On 
 - **Rejoin in one click:** the last game and passcode are remembered, so it's just Join room.
 - **Test:** `tests/browser/lan-scan-join.mjs`.
 
+## v36.9: CS-style guns, no freezes when shooting
+
+- **Real guns:**
+
+  | Gun | Magazine | Price |
+  | --- | --- | --- |
+  | Glock-18 | 20 | 1,980,000₮ |
+  | Desert Eagle | 7 | 7,200,000₮ |
+  | MP5 | 30 | 10,080,000₮ |
+  | Nova (pump) | 8 | 1,620,000₮ |
+  | AK-47 | 30 | 3,960,000₮ |
+  | M4A1 | 30 | 4,320,000₮ |
+  | AWP | 10 | 23,400,000₮ |
+  | M249 | 100 | 32,400,000₮ |
+
+  The models are reshaped after the real guns: the AK's curved magazine and wood furniture, the M4's rail and triangle front sight, the AWP's green thumbhole stock and scope, the MP5's ring sight, the Nova's ribbed pump and the M249's box magazine and bipod.
+- **Handling:**
+  - **Magazines:** each gun has a magazine and an ammo counter.
+  - **Reloading:** **R** reloads while a gun is drawn (R still removes devices when no gun is out). An empty magazine dry-clicks and reloads by itself, and the gun dips while reloading.
+  - **Recoil:** each shot kicks the aim up, sprays widen the longer you hold, and the first shot stays accurate.
+  - **Hit sounds:** a tick for a body hit, a ding for a head shot, two notes for a knock-out.
+- **No freezes:**
+  - **First shot:** it froze the game for 280–330 ms on an M3, and for seconds on slower PCs, while shaders and the sound engine started. Guns, shot effects and the whole scene, casino included, are now prepared in the background a few seconds after loading. Textures are uploaded then, and sound starts on your first click.
+  - **Every shot in Quality mode:** each shot rebuilt the muzzle-flash shader. Flashes and bullet marks are now reused.
+  - **Measured:** a full session (hall, casino, stage, office, guns, reload, third person) has no frame over 17 ms in Balanced or Quality.
+

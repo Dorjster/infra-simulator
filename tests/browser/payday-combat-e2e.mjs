@@ -49,8 +49,8 @@ try {
   check('Bar: whisky costs 38,000₮ and gives luck (good or bad) shown on the wallet badge', /LUCKY|UNLUCKY/.test(dr) && /lucky/.test(badge) && (await cash(host, 'sam')) === 2e9 - 38000, dr + ' · ' + badge);
   await guest.evaluate(() => { __infra.lab.enter(); __infra.lab.casinoUI.show('bar'); }); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out, 'bar.png') }); await guest.evaluate(() => __infra.lab.casinoUI.hide());
   // 4. Weapon market.
-  check('Market: Darja buys the Assault Rifle (3,960,000₮)', /Bought the Assault Rifle/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
-  check('Market: Sam buys the 9mm Pistol (1,980,000₮)', /Bought the 9mm Pistol/.test(await casino(guest, { type: 'buy-weapon', weapon: 'pistol' })));
+  check('Market: Darja buys the AK-47 (3,960,000₮)', /Bought the AK-47/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
+  check('Market: Sam buys the Glock-18 (1,980,000₮)', /Bought the Glock-18/.test(await casino(guest, { type: 'buy-weapon', weapon: 'pistol' })));
   check('Market: buying a gun you own is refused', /already own/.test(await casino(host, { type: 'buy-weapon', weapon: 'ak' })));
   await host.evaluate(() => { __infra.lab.enter(); __infra.lab.casinoUI.show('guns'); }); await host.waitForTimeout(900); await host.screenshot({ path: path.join(out, 'weapon-market.png') }); await host.evaluate(() => __infra.lab.casinoUI.hide());
   // Darja's bank: only Darja sees it; giving through the screen reaches Sam; Sam can't use it.
@@ -73,20 +73,23 @@ try {
   await guest.evaluate(() => { __infra.lab.enter(); __infra.lab.look(14, 64, 14, 9.7, 40); }); await host.evaluate(() => { __infra.lab.enter(); __infra.lab.look(14, 90, 14, 6, 64); });
   await host.waitForTimeout(2000);
   const drew = await host.evaluate(() => { const L = __infra.lab; L.pistol.equip('ak'); return L.pistol.current?.name; });
-  check('Darja draws the Assault Rifle (key 4 cycles owned guns)', drew === 'Assault Rifle', drew);
+  check('Darja draws the AK-47 (key 4 cycles owned guns)', drew === 'AK-47', drew);
   await host.evaluate(() => __infra.lab.pistol.fire()); await guest.waitForTimeout(700);
   const hp1 = await guest.evaluate(() => document.getElementById('cb-hp-t')?.textContent);
   check('Combat: one aimed rifle shot takes Sam to 70 HP (or 25 on a head shot) on his own screen', /HP (70|25)$/.test(hp1), hp1);
   const fired = await host.evaluate(async () => { const L = __infra.lab, sleep = t => new Promise(r => setTimeout(r, t)); let n = 0; for (let i = 0; i < 8; i++) { if (L.pistol.fire()) n++; await sleep(160); } return n; });
   await guest.waitForTimeout(600);
   const down = await guest.evaluate(() => ({ down: !document.getElementById('cb-down').hidden, text: document.getElementById('cb-down').innerText.replace(/\s+/g, ' ') }));
-  check('Combat: Sam is knocked out and sees who did it', down.down && /Darja/.test(down.text) && /Assault Rifle/.test(down.text), JSON.stringify({ fired, ...down }));
+  check('Combat: Sam is knocked out and sees who did it', down.down && /Darja/.test(down.text) && /AK-47/.test(down.text), JSON.stringify({ fired, ...down }));
   await guest.screenshot({ path: path.join(out, 'knocked-out.png') });
   const feed = await host.evaluate(() => document.getElementById('cb-feed').innerText); check('Kill feed on the host: Darja ⟶ Sam', /Darja.*Sam/s.test(feed), feed);
   await until(guest, () => document.getElementById('cb-hp-t')?.textContent === 'HP 100' && document.getElementById('cb-down').hidden, null, 9000);
   check('Combat: Sam respawns at the entrance with 100 HP', await guest.evaluate(() => document.getElementById('cb-hp-t')?.textContent === 'HP 100' && __infra.lab.world.operations.game.combat.respawns.sam >= 1));
   // 6. Third person (key P) shows your own engineer.
   await host.evaluate(() => { __infra.lab.thirdPerson.toggle(); }); await host.waitForTimeout(1200); await host.screenshot({ path: path.join(out, 'third-person.png') });
+  // CS-style handling: magazine, reload, recoil moves the aim up.
+  const cs = await host.evaluate(async () => { const L = __infra.lab, W = L.pistol, cam = __infra.camera, e = new cam.rotation.constructor().setFromQuaternion(cam.quaternion, 'YXZ'); const pitch0 = e.x; W.equip('ak'); const a0 = W.ammo; let n = 0; for (let i = 0; i < 5; i++) { if (W.fire()) n++; await new Promise(r => setTimeout(r, 120)); } const pitch1 = new cam.rotation.constructor().setFromQuaternion(cam.quaternion, 'YXZ').x; const a1 = W.ammo; const started = W.reload(); await new Promise(r => setTimeout(r, 2700)); return { a0, a1, n, started, a2: W.ammo, rose: pitch1 > pitch0, hud: document.getElementById('wp-count')?.textContent }; });
+  check('AK-47: 30-round magazine, shots use ammo, recoil raises the aim, R reloads to 30', cs.a0 > 0 && cs.a1 === cs.a0 - cs.n && cs.rose && cs.started && cs.a2 === 30 && cs.hud === '30 / 30', JSON.stringify(cs));
   check('Third person: P switches the view', await host.evaluate(() => __infra.lab.thirdPerson.on));
   check('No page errors', !errors.length, errors.join(' | '));
 } catch (e) { check('Run completed', false, e.stack || e.message); }

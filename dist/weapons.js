@@ -24,24 +24,43 @@ function rayCapsule(o, d, feet) {
   return t;
 }
 
-export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire }) {
-  let current = null, view = null, lastShot = 0, shots = 0, kick = 0, held = false;
-  const dir = new THREE.Vector3(), muzzle = new THREE.Vector3();
+// Small synthesized sounds (no audio files): dry-fire click, magazine out / in, bolt.
+let actx = null;
+function tick(freq = 1800, len = .05, vol = .25, type = 'square') { try { actx ??= new AudioContext(); if (actx.state === 'suspended') actx.resume(); const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * .4, t + len); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + len + .02); } catch {} }
+export function warmTicks() { try { actx ??= new AudioContext(); if (actx.state === 'suspended') actx.resume(); } catch {} }
+export const sounds = { dry: () => tick(2400, .04, .18), magOut: () => tick(420, .09, .3, 'triangle'), magIn: () => tick(620, .07, .35, 'triangle'), bolt: () => { tick(900, .05, .3); setTimeout(() => tick(1300, .04, .25), 70); } };
+
+// recoil(up, side): called per shot so the game turns the camera (the aim really moves, like CS spray).
+export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, recoil = () => {} }) {
+  let current = null, view = null, lastShot = 0, shots = 0, kick = 0, held = false, reloadUntil = 0, burst = 0, lastDry = 0;
+  const ammo = new Map(), dir = new THREE.Vector3(), muzzle = new THREE.Vector3();
+  const hud = (() => { try { document.body.insertAdjacentHTML('beforeend', '<div id="wp-ammo" hidden><b id="wp-name"></b><span id="wp-count"></span><i id="wp-reload"></i></div>'); const st = document.createElement('style'); st.textContent = '#wp-ammo{position:fixed;right:24px;bottom:92px;z-index:36;color:#fff;font:700 13px system-ui;text-align:right;text-shadow:0 1px 3px #000}#wp-ammo[hidden]{display:none}#wp-ammo b{display:block;font-size:12px;letter-spacing:.06em;color:#ffd36b}#wp-ammo span{font:800 30px ui-monospace,Menlo,monospace}#wp-ammo span.low{color:#ff6b6b}#wp-ammo i{display:block;font-style:normal;font-size:12px;color:#9fd8ff}'; (document.head || document.body).append?.(st); return id => document.getElementById(id); } catch { return () => null; } })();
+  const left = () => current ? (ammo.has(current.id) ? ammo.get(current.id) : current.mag) : 0;
+  function drawHud() { const el = hud('wp-ammo'); if (!el) return; el.hidden = !current; if (!current) return; hud('wp-name').textContent = current.name; const n = left(), c = hud('wp-count'); c.textContent = n + ' / ' + current.mag; c.className = n <= Math.ceil(current.mag * .2) ? 'low' : ''; hud('wp-reload').textContent = reloading() ? 'Reloading…' : n === 0 ? 'R to reload' : ''; }
+  const reloading = () => performance.now() < reloadUntil;
   function setView(id) {
     if (view) { camera.remove(view); view = null; }
     if (!id) return; const [x, y, z, sc] = VIEW[id] || VIEW.pistol; view = weaponModel(id, sc); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; camera.add(view);
     if (!camera.parent) scene.add(camera);
   }
-  function equip(id) { current = id ? weaponById(id) : null; setView(current?.id); held = false; return current; }
-  // Key 4: holstered → first gun → next … → holstered.
+  function equip(id) { current = id ? weaponById(id) : null; setView(current?.id); held = false; reloadUntil = 0; burst = 0; drawHud(); return current; }
   function cycle() { const own = arsenal(); if (!own.length) return null; const i = current ? own.indexOf(current.id) : -1; return equip(i + 1 < own.length ? own[i + 1] : null); }
+  // R: swap the magazine (time depends on the gun); the rounds left in the old magazine are dropped, like CS.
+  function reload() {
+    if (!current || reloading() || left() === current.mag) return false;
+    const id = current.id; reloadUntil = performance.now() + current.reloadMs; held = false; sounds.magOut();
+    setTimeout(() => { if (current?.id !== id) return; ammo.set(id, current.mag); sounds.magIn(); setTimeout(() => current?.id === id && sounds.bolt(), 180); drawHud(); }, current.reloadMs);
+    drawHud(); return true;
+  }
   function fire() {
-    if (!current || !canFire() || performance.now() - lastShot < current.rateMs) return false;
-    lastShot = performance.now(); shots++; kick = 1;
+    if (!current || !canFire() || reloading() || performance.now() - lastShot < current.rateMs) return false;
+    if (left() <= 0) { if (performance.now() - lastDry > 250) { lastDry = performance.now(); sounds.dry(); } reload(); return false; }
+    lastShot = performance.now(); shots++; kick = 1; ammo.set(current.id, left() - 1);
     camera.getWorldDirection(dir); const origin = camera.getWorldPosition(new THREE.Vector3());
     view?.updateMatrixWorld(); muzzle.set(...(MUZZLE[current.id] || MUZZLE.pistol)); if (view) muzzle.applyMatrix4(view.matrixWorld); else muzzle.copy(origin);
-    const dirs = shotDirs(dir, current); effects.shoot(muzzle, dir.clone(), { ...shotFx(current), dirs });
-    // Hits: nearest engineer along each pellet, unless a wall is closer; pellets on the same engineer add up.
+    // First shot is accurate; spray widens the cone (and the kick climbs) the longer you hold, like CS.
+    const spread = { ...current, spread: current.spread * (1 + Math.min(burst, 8) * .35) };
+    const dirs = shotDirs(dir, spread); effects.shoot(muzzle, dir.clone(), { ...shotFx(current), dirs });
     const hits = new Map();
     for (const d of dirs) {
       const wall = effects.hitPoint(origin, d).point.distanceTo(origin); let best = null;
@@ -50,17 +69,20 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       h.pellets++; h.head ||= y > HEAD_Y; hits.set(best.tgt.id, h);
     }
     for (const [target, h] of hits) report({ type: 'hit', target, weapon: current.id, pellets: h.pellets, head: h.head });
-    return true;
+    const [up, side] = current.recoil || [.01, .004]; recoil(up * (1 + Math.min(burst, 10) * .08), (Math.random() - .5) * 2 * side * (burst > 3 ? 1.6 : 1)); burst++;
+    drawHud(); return true;
   }
   return {
-    get current() { return current; }, get shots() { return shots; }, get equipped() { return !!current; },
-    equip, cycle, fire, setView,
+    get current() { return current; }, get shots() { return shots; }, get equipped() { return !!current; }, get ammo() { return left(); }, get reloading() { return reloading(); },
+    equip, cycle, fire, reload, setView,
     press(on) { held = on; if (on) fire(); },
     hideView(hidden) { if (view) view.visible = !hidden; },
     update(dt) {
       if (!current) return; if (held && current.auto) fire();
+      if (performance.now() - lastShot > current.rateMs * 2.5) burst = Math.max(0, burst - dt * 20);
       kick = Math.max(0, kick - dt * (current.auto ? 14 : 7));
-      if (view) { const [x, y, z] = view.userData.base, k = current.kind === 'pistol' ? 1 : current.kind === 'sniper' || current.kind === 'shotgun' ? 1.4 : .5; view.position.set(x, y + kick * .05 * k, z + kick * .22 * k); view.rotation.x = kick * .35 * k; }
+      const r = reloading() ? Math.sin(Math.min(1, 1 - (reloadUntil - performance.now()) / current.reloadMs) * Math.PI) : 0;   // dip the gun while reloading
+      if (view) { const [x, y, z] = view.userData.base, k = current.kind === 'pistol' ? 1 : current.kind === 'sniper' || current.kind === 'shotgun' ? 1.4 : .5; view.position.set(x, y + kick * .05 * k - r * .35, z + kick * .22 * k); view.rotation.x = kick * .35 * k - r * .6; view.rotation.z = r * .4; }
     }
   };
 }
