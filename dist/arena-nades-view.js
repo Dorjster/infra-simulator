@@ -68,3 +68,10 @@ export function createNadeView({ scene, camera, world, boxes = () => [] }) {
     clear() { for (const v of live.values()) { v.model.removeFromParent(); v.fx?.fx.removeFromParent(); } live.clear(); white.style.opacity = '0'; flashUntil = 0; },
   };
 }
+// The planted bomb's beep (3D) and the bomb's explosion (a big fireball, a heavy blast heard far away).
+export function beep(at, pitch = 1) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 1700 * pitch; g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.001, t + .09); o.connect(g).connect(outAt(c, at)); o.start(t); o.stop(t + .1); } catch {} }
+export function explosion(parent, p, scale = 1) {
+  const b = new THREE.Mesh(BALL, MAT.boom.clone()), t0 = performance.now(); b.position.set(p.x, (p.y || 0) + 2, p.z); parent.add(b);
+  burst({ x: p.x, y: (p.y || 0) + 2, z: p.z }, { len: 3, decay: 1.8, freq: 500, vol: 2.5, thump: 1.5 });
+  const step = () => { const t = (performance.now() - t0) / 1000; b.scale.setScalar(1 + Math.min(1, t / .5) * 9 * scale); b.material.opacity = Math.max(0, 1 - t / .9); if (t < .9) requestAnimationFrame(step); else { b.removeFromParent(); b.material.dispose(); } }; requestAnimationFrame(step);
+}

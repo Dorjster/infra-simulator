@@ -8,7 +8,8 @@ import { arenaArsenalOf } from './combat-logic.js';
 import { slotOf, PICK_R } from './arena-logic.js';
 import { weaponModel } from './weapon-models.js';
 import { NADES } from './arena-nades.js';
-import { throwSound } from './arena-nades-view.js';
+import { throwSound, explosion, beep } from './arena-nades-view.js';
+import { PRICE, DEFUSE } from './arena-defuse.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -31,9 +32,13 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
 #ar-buy{position:fixed;inset:0;z-index:44;display:grid;place-items:center;background:#0008}#ar-buy[hidden]{display:none}#ar-buy>div{width:min(880px,94vw);background:#0b1118f2;border:1px solid #3d5566;border-radius:12px;color:#e8eef2;font:600 14px system-ui;padding:16px 20px}
 #ar-buy h2{margin:0 0 4px;font:800 20px system-ui;letter-spacing:.04em}#ar-buy .cats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}#ar-buy .cat h3{margin:0 0 6px;font:700 12px system-ui;letter-spacing:.14em;color:#8aa2b0;text-transform:uppercase}#ar-buy .item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;margin-bottom:6px;text-align:left}#ar-buy .item.on{border-color:#ffd36b;background:#2a2410}#ar-buy .item svg{color:#e8eef2}#ar-buy .item em{font-style:normal;color:#7fe3a0;font-size:12px}#ar-buy .item s{color:#8aa2b0;font-size:11px}#ar-buy .soon{color:#6f8796;font-size:12px}
 #ar-load{position:fixed;inset:0;z-index:60;display:grid;place-content:center;gap:8px;text-align:center;background:#0b1118;color:#fff;font:900 34px system-ui;letter-spacing:.18em}#ar-load[hidden]{display:none}#ar-load small{font:600 14px system-ui;letter-spacing:.1em;opacity:.7}
+#ar-top .t{color:#ffc36b}#ar-top .ct{color:#8fc4ff}#ar-alive{position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:37;display:flex;gap:22px;pointer-events:none}#ar-alive[hidden]{display:none}#ar-alive div{display:flex;gap:3px}#ar-alive i{display:block;width:26px;height:8px;border-radius:2px}#ar-alive .t i{background:#e8a53f}#ar-alive .ct i{background:#5b9be8}#ar-alive i.dead{opacity:.22}
+#ar-money{position:fixed;left:22px;bottom:142px;z-index:36;color:#7dff8e;font:800 22px ui-monospace,Menlo,monospace;text-shadow:0 2px 3px #000}#ar-money[hidden]{display:none}
+#ar-banner{position:fixed;top:22%;left:50%;transform:translateX(-50%);z-index:42;padding:10px 26px;border-radius:8px;background:#000b;color:#fff;font:900 26px system-ui;letter-spacing:.08em;text-align:center;pointer-events:none}#ar-banner[hidden]{display:none}#ar-banner.t{border:2px solid #e8a53f}#ar-banner.ct{border:2px solid #5b9be8}#ar-banner.bomb{border:2px solid #ff4040;color:#ff8080}#ar-banner small{display:block;font:600 14px system-ui;letter-spacing:.04em;opacity:.85;margin-top:4px}
+#ar-prog{position:fixed;left:50%;top:58%;transform:translateX(-50%);z-index:41;width:260px;background:#000b;border-radius:6px;padding:6px 10px;color:#fff;font:700 13px system-ui;text-align:center;pointer-events:none}#ar-prog[hidden]{display:none}#ar-prog b{display:block;height:6px;background:#ffd36b;border-radius:3px;margin-top:5px}
 #ar-over{position:fixed;top:30%;left:50%;transform:translateX(-50%);z-index:42;background:#000c;border:2px solid #ffd36b;border-radius:10px;padding:16px 30px;color:#fff;font:800 26px system-ui;text-align:center}#ar-over[hidden]{display:none}#ar-over small{display:block;font:600 14px system-ui;margin-top:6px;opacity:.8}`;
   (document.head || document.body).append?.(css);
-  document.body.insertAdjacentHTML('beforeend', '<div id="ar-top" hidden></div><div id="ar-feed"></div><div id="ar-board" hidden><div></div></div><div id="ar-buy" hidden><div></div></div><div id="ar-over" hidden></div><div id="ar-load" hidden><b>GLOBAL DEFENSIVE</b><small>Loading…</small></div>');
+  document.body.insertAdjacentHTML('beforeend', '<div id="ar-top" hidden></div><div id="ar-alive" hidden></div><div id="ar-money" hidden></div><div id="ar-banner" hidden></div><div id="ar-prog" hidden><span></span><b></b></div><div id="ar-feed"></div><div id="ar-board" hidden><div></div></div><div id="ar-buy" hidden><div></div></div><div id="ar-over" hidden></div><div id="ar-load" hidden><b>GLOBAL DEFENSIVE</b><small>Loading…</small></div>');
   const $ = id => document.getElementById(id);
   // Campaign objective + hotbar hidden in the arena — set on those two elements only (a class on <body> would
   // restyle the whole page: a 50 ms frame on entering).
@@ -42,7 +47,8 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
   const inArena = () => g().mode === 'arena' && !!g().arena;
   const names = () => { const A = g().arena, C = g().combat || {}, list = new Map(); for (const p of lan.players || []) if (p.pose?.z < -200 || p.bot) list.set(key(p.name), p.name); list.set(me(), name()); for (const b of A?.bots || []) list.set(key(b.name), b.name); for (const k of Object.keys(C.kills || {})) if (!list.has(k)) list.set(k, C.names?.[k] || k); return [...list.values()]; };
   const isDownNow = n => (g().combat?.down?.[key(n)]?.until || 0) > Date.now();
-  function spawnIndex() { const players = (lan.players || []).filter(p => !p.bot); const i = players.findIndex(p => p.id === lan.selfID); return i >= 0 ? i * 3 + 1 : Math.floor(Math.random() * 8); }
+  const D = () => g().combat?.d || null, myTeam = () => D()?.teams?.[me()] || null;
+  function spawnIndex() { const so = g().combat?.spawnTo?.[me()]; if (D()) return so ? so.i : myTeam() === 'ct' ? ARENA_MAPS[g().arena.map].t.length : 0; const players = (lan.players || []).filter(p => !p.bot); const i = players.findIndex(p => p.id === lan.selfID); return i >= 0 ? i * 3 + 1 : Math.floor(Math.random() * 8); }
   // Spawn, facing the middle of the map (camera looks along (−sin yaw, −cos yaw)).
   function goTo(i) { const s = scene.spawnFor(i); if (!s) return; teleport(s.x, s.z, Math.atan2(-(ARENA.cx - s.x), -(ARENA.cz - s.z))); }
   // Entering waits for the arena warm-up (shaders, textures) behind a short loading screen instead of a frozen frame.
@@ -50,15 +56,17 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
   function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; r.catch(() => {}).finally(() => { loading = false; $('ar-load').hidden = true; }); } return; } enterNow(); }
   function enterNow() { performance.mark?.('arena:enter'); const A = g().arena;
     // The map's first frames (GPU uploads, first shadow pass) are drawn behind the loading card; play starts warm.
-    $('ar-load').hidden = false; let frames = 0; const reveal = () => { if (++frames < 4) requestAnimationFrame(reveal); else if (!loading) $('ar-load').hidden = true; }; requestAnimationFrame(reveal); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); goTo(spawnIndex()); const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Arena · ' + ARENA_MAPS[A.map].name + ' · deathmatch · B buy menu · Tab scores'); }
-  function leave() { for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
+    $('ar-load').hidden = false; let frames = 0; const reveal = () => { if (++frames < 4) requestAnimationFrame(reveal); else if (!loading) $('ar-load').hidden = true; }; requestAnimationFrame(reveal); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); goTo(spawnIndex()); const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
+  function leave() { for (const id of ['ar-alive', 'ar-money', 'ar-banner', 'ar-prog']) $(id).hidden = true; bombView(null); for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
   function buy(open = !buyOpen) {
     buyOpen = !!open && inArena(); $('ar-buy').hidden = !buyOpen; if (!buyOpen) { return; } document.exitPointerLock?.();
     const l = g().arena.loadout?.[me()] || { primary: null, secondary: 'pistol' }, kn = /^darja$/.test(me()) ? KNIVES[1] : KNIVES[0];
-    $('ar-buy').firstElementChild.innerHTML = `<h2>BUY MENU · DEATHMATCH</h2><small style="color:#8aa2b0">Everything is free in deathmatch · CS2 prices shown for reference · your knife: ${esc(kn.name)}</small>
-      <div class="cats">${CATS.map(([cat, ids]) => `<div class="cat"><h3>${cat}</h3>${ids.length ? ids.map(id => { const w = weaponById(id), n = (l.nades || []).filter(k => k === id).length, on = l.primary === id || l.secondary === id || n > 0; return `<button class="item${on ? ' on' : ''}" data-pick="${id}">${icon(id)}<b>${esc(w.name)}${n > 1 ? ' ×' + n : ''}</b><em>Free</em><s>$${CS_PRICE[id].toLocaleString('en-US')}</s></button>`; }).join('') : '<p class="soon">Next update</p>'}</div>`).join('')}</div>
+    const d = D(), money = d ? (d.money?.[me()] ?? 800) : 0, r = d?.round, buyable = !d || (r && r.phase !== 'over' && (r.phase === 'freeze' || Date.now() < r.buyUntil)), cost = id => d ? (PRICE[id] ?? 0) : 0, kit = d && myTeam() === 'ct';
+    $('ar-buy').firstElementChild.innerHTML = (d ? `<h2>BUY MENU · <span style="color:#7dff8e">$${money.toLocaleString('en-US')}</span></h2><small style="color:#8aa2b0">${buyable ? 'Buy in your spawn until ' + Math.max(0, Math.ceil(((r.phase === 'freeze' ? r.freezeUntil : r.buyUntil) - Date.now()) / 1000)) + ' s' : 'Buy time is over'} · ${myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist'} · your knife: ${esc(kn.name)}</small>` : `<h2>BUY MENU · DEATHMATCH</h2><small style="color:#8aa2b0">Everything is free in deathmatch · CS2 prices shown for reference · your knife: ${esc(kn.name)}</small>`) + `
+      <div class="cats">${CATS.map(([cat, ids]) => `<div class="cat"><h3>${cat}</h3>${ids.length ? ids.map(id => { const w = weaponById(id), n = (l.nades || []).filter(k => k === id).length, on = l.primary === id || l.secondary === id || n > 0; const c = cost(id), no = d && (!buyable || c > money); return `<button class="item${on ? ' on' : ''}" data-pick="${id}" ${no ? 'disabled style="opacity:.45"' : ''}>${icon(id)}<b>${esc(w.name)}${n > 1 ? ' ×' + n : ''}</b>${d ? `<em>$${c.toLocaleString('en-US')}</em>` : `<em>Free</em><s>$${CS_PRICE[id].toLocaleString('en-US')}</s>`}</button>`; }).join('') : cat === 'Equipment' && kit ? `<button class="item${d.kits?.[me()] ? ' on' : ''}" data-kit="1" ${!buyable || money < PRICE.kit || d.kits?.[me()] ? 'disabled style="opacity:.45"' : ''}><b>Defuse kit</b><em>$${PRICE.kit}</em></button>` : `<p class="soon">${d ? '—' : 'Defuse mode'}</p>`}</div>`).join('')}</div>
       <div style="display:flex;gap:8px;margin-top:10px"><button data-act="close">Done (B)</button></div>`;
-    $('ar-buy').querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => { const id = b.dataset.pick, pistol = ['pistol', 'deagle'].includes(id); const r = await send(NADES[id] ? { type: 'buy-nade', kind: id } : pistol ? { type: 'loadout', secondary: id } : { type: 'loadout', primary: id }); notify(typeof r === 'string' ? r : r?.message || 'Loadout updated'); equip(id); buy(true); });
+    $('ar-buy').querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => { const id = b.dataset.pick, pistol = ['pistol', 'deagle'].includes(id); const r = await send(NADES[id] ? { type: 'buy-nade', kind: id } : pistol ? { type: 'loadout', secondary: id } : { type: 'loadout', primary: id }); if (r?.error) { notify(r.error); return; } notify(typeof r === 'string' ? r : r?.message || 'Loadout updated'); equip(id); buy(true); });
+    $('ar-buy').querySelector('[data-kit]')?.addEventListener('click', async () => { const r = await send({ type: 'buy-kit' }); notify(r?.error || (typeof r === 'string' ? r : r?.message) || 'Kit'); buy(true); });
     $('ar-buy').querySelector('[data-act=close]').onclick = () => buy(false);
   }
   function scoreboard(open) {
@@ -66,11 +74,12 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
     const C = g().combat || {}, A = g().arena, rows = names().map(n => ({ n, k: C.kills?.[key(n)] || 0, d: C.deaths?.[key(n)] || 0, bot: /^BOT /.test(n), dead: isDownNow(n) })).sort((a, b) => b.k - a.k || a.d - b.d);
     $('ar-board').firstElementChild.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:16px">DEATHMATCH · ${esc(ARENA_MAPS[A.map].name)}</b><small style="color:#8aa2b0">${rows.length} players · first to the most kills in 10:00</small></div>
       <table><tr><th>PLAYER</th><th>K</th><th>D</th><th>K/D</th></tr>${rows.map(r => `<tr class="${r.dead ? 'dead' : ''}${key(r.n) === me() ? ' me' : ''}"><td>${r.bot ? '🤖 ' : ''}${esc(r.n)}${r.dead ? ' <small>· dead</small>' : ''}</td><td>${r.k}</td><td>${r.d}</td><td>${(r.k / Math.max(1, r.d)).toFixed(2)}</td></tr>`).join('')}</table>
-      <div class="tools"><button data-bot="add">+ Add bot</button><button data-bot="remove">− Remove bot</button>${Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === 'dm').map(([id, m]) => `<button data-map="${id}">${id === A.map ? 'Restart' : 'Play'} ${esc(m.name)}</button>`).join('')}</div>`;
+      <div class="tools"><button data-bot="add">+ Add bot</button><button data-bot="remove">− Remove bot</button>${Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === A.kind).map(([id, m]) => `<button data-map="${id}">${id === A.map ? 'Restart' : 'Play'} ${esc(m.name)}</button>`).join('')}</div>`;
     $('ar-board').querySelectorAll('[data-bot]').forEach(b => b.onclick = async () => { const r = await send({ type: b.dataset.bot === 'add' ? 'add-bot' : 'remove-bot' }); notify(typeof r === 'string' ? r : r?.message || ''); scoreboard(true); });
     $('ar-board').querySelectorAll('[data-map]').forEach(b => b.onclick = async () => { const r = await send({ type: 'restart', map: b.dataset.map }); notify(typeof r === 'string' ? r : r?.message || ''); });
   }
   function hud() {
+    if (D()) return defuseHud();
     const A = g().arena, C = g().combat || {}, left = Math.max(0, A.endsAt - Date.now()), mm = Math.floor(left / 60000), ss = String(Math.floor(left / 1000) % 60).padStart(2, '0');
     const top = Object.entries(C.kills || {}).sort((a, b) => b[1] - a[1])[0], mine = C.kills?.[me()] || 0;
     $('ar-top').hidden = false; $('ar-top').innerHTML = `<span><small>KILLS</small> ${mine}</span><span>${mm}:${ss}</span><span><small>LEADER</small> ${top ? esc(C.names?.[top[0]] || top[0]) + ' ' + top[1] : '—'}</span>`;
@@ -106,9 +115,47 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
     const it = nearest(PICK_R, it => !!slotOf(it.item)); if (!it) return false;
     const r = await send({ type: 'pickup', id: it.id, swap: true }); if (r?.error) { notify(r.error); return true; } notify(typeof r === 'string' ? r : r?.message || 'Picked up'); equip(it.item); return true;
   }
-  let hudAt = 0;
+
+  // Defuse HUD: T score · clock · CT score, alive tiles (dead dimmed), money, banners, plant / defuse progress.
+  let banner = '', bannerUntil = 0, lastPhase = '', lastN = 0;
+  const show = (html, cls, ms) => { $('ar-banner').className = cls; $('ar-banner').innerHTML = html; $('ar-banner').hidden = false; bannerUntil = Date.now() + ms; };
+  function defuseHud() {
+    const d = D(), r = d.round, C = g().combat || {}, now = Date.now(); if (!r) return;
+    const clock = r.phase === 'freeze' ? r.freezeUntil - now : r.phase === 'live' ? r.endsAt - now : 0, t = Math.max(0, Math.ceil(clock / 1000));
+    const mid = r.phase === 'planted' ? '<span style="color:#ff6060">💣</span>' : r.phase === 'over' ? '<span>—</span>' : `<span>${r.phase === 'freeze' ? '<small>BUY</small> ' : ''}${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}</span>`;
+    $('ar-top').hidden = false; $('ar-top').innerHTML = `<span class="t"><small>T</small> ${d.score.t}</span>${mid}<span class="ct">${d.score.ct} <small>CT</small></span>`;
+    const tiles = team => names().filter(n => d.teams[key(n)] === team).map(n => `<i class="${isDownNow(n) ? 'dead' : ''}" title="${esc(n)}"></i>`).join('');
+    $('ar-alive').hidden = false; $('ar-alive').innerHTML = `<div class="t">${tiles('t')}</div><div class="ct">${tiles('ct')}</div>`;
+    $('ar-money').hidden = false; $('ar-money').textContent = '$ ' + (d.money?.[me()] ?? 800).toLocaleString('en-US');
+    // Banners when something happens.
+    if (d.n !== lastN) { lastN = d.n; if (r.phase === 'freeze') show(`ROUND ${d.n}<small>${myTeam() === 'ct' ? 'Counter-Terrorist · defend A and B' : 'Terrorist · plant the bomb on A or B'}${d.bomb?.carrier === me() ? ' · you have the bomb (5)' : ''}</small>`, myTeam() || '', 3500); }
+    if (r.phase !== lastPhase) { if (r.phase === 'planted') show('THE BOMB HAS BEEN PLANTED<small>site ' + r.planted.site + '</small>', 'bomb', 3500);
+      if (r.phase === 'over') show((r.winner === 't' ? 'TERRORISTS WIN' : 'COUNTER-TERRORISTS WIN') + `<small>${{ elim: 'eliminated', bomb: 'target bombed', defuse: 'bomb defused', time: 'time ran out' }[r.reason]} · ${d.score.t} – ${d.score.ct}</small>`, r.winner, DEFUSE.overMs);
+      if (r.phase === 'over' && r.reason === 'bomb' && r.planted) explosion(scene.group, r.planted, 4); lastPhase = r.phase; }
+    if (d.matchOver) show(`MATCH OVER · ${d.matchOver.winner === 't' ? 'TERRORISTS' : 'COUNTER-TERRORISTS'} WIN<small>${d.score.t} – ${d.score.ct} · new match soon</small>`, d.matchOver.winner, 2000);
+    if (now > bannerUntil) $('ar-banner').hidden = true;
+    const act = r.plant?.by === me() ? ['Planting…', (now - r.plant.start) / DEFUSE.plantMs] : r.defuse?.by === me() ? ['Defusing…', (now - r.defuse.start) / r.defuse.ms] : null;
+    $('ar-prog').hidden = !act; if (act) { $('ar-prog').firstElementChild.textContent = act[0]; $('ar-prog').lastElementChild.style.width = Math.min(100, act[1] * 100) + '%'; }
+    const feed = (C.feed || []).filter(f => now - f.at < 7000), fk = feed.map(f => f.at).join(), col = n => d.teams[key(n)] === 'ct' ? '#8fc4ff' : '#ffc36b';
+    if (fk !== feedKey) { feedKey = fk; $('ar-feed').innerHTML = feed.map(f => `<p class="${key(f.by) === me() || key(f.target) === me() ? 'mine' : ''}"><span style="color:${col(f.by)}">${esc(f.by)}</span>${icon(f.wid)}${f.head ? HS : ''}<span style="color:${col(f.target)}">${esc(f.target)}</span></p>`).join(''); }
+    $('ar-over').hidden = true; if (boardOpen) scoreboard(true);
+  }
+  // The planted bomb: its model, a blinking light and beeps that speed up (3D, everyone hears them).
+  let bombObj = null, beepAt = 0;
+  function bombView(p) {
+    if (!p) { if (bombObj) { bombObj.removeFromParent(); bombObj = null; } return; }
+    if (!bombObj) { bombObj = weaponModel('c4', 1.4); bombObj.userData.ground = true; bombObj.position.set(p.x, p.y + .2, p.z); scene.group.add(bombObj); }
+    const left = (p.explodeAt - Date.now()) / 1000, gap = Math.max(.12, Math.min(1, left / 40)) * 1000;
+    if (Date.now() - beepAt > gap) { beepAt = Date.now(); beep({ x: p.x, y: p.y + 1, z: p.z }, left < 10 ? 1.25 : 1); }
+  }
+  let hudAt = 0, hudPhase = '';
   return {
     get open() { return buyOpen; }, buy, scoreboard, drop, use,
+    get defuse() { return D(); }, get team() { return myTeam(); },
+    // Hold to plant (bomb in hand, on a site) / hold E to defuse (CT at the planted bomb); let go to stop.
+    plant(hold) { const at = where(); return send({ type: 'plant', hold, x: at?.x, y: at?.y, z: at?.z }).then(r => { if (hold && r?.error) notify(r.error); return r; }); },
+    defuseHold(hold) { const at = where(); return send({ type: 'defuse', hold, x: at?.x, y: at?.y, z: at?.z }).then(r => { if (hold && r?.error) notify(r.error); return r; }); },
+    nearBomb() { const p = D()?.round?.phase === 'planted' && D().round.planted, at = where(); return !!(p && at && myTeam() === 'ct' && Math.hypot(at.x - p.x, at.z - p.z) < 7); },
     // Throw the grenade in hand (left click); then the next one of that kind, or back to your best gun.
     async throwNade(id) { const at = where(), a = aim(); if (!at) return; throwSound(); const r = await send({ type: 'throw', kind: id, x: at.x, y: at.y, z: at.z, ...a }); if (r?.error) { notify(r.error); return; }
       const own = arenaArsenalOf(g(), name()); equip(own.includes(id) ? id : own[0]); },
@@ -120,7 +167,9 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
       const at = where(); if (at && !scene.inArena(at.z)) goTo(spawnIndex());
       const s = g().combat?.spawnTo?.[me()]; if (s && s.at !== spawnAt) { spawnAt = s.at; goTo(s.i); const own = arenaArsenalOf(g(), name()); equip(own[0]); notify('Respawned'); }   // back with your primary in hand (CS2)
       drawGround(); if (performance.now() - pickAt > 160) { pickAt = performance.now(); autoPick(); }
-      if (performance.now() - hudAt > 200) { hudAt = performance.now(); hud(); }
+      bombView(D()?.round?.phase === 'planted' ? D().round.planted : null);
+      const ph = D() ? D().n + ':' + D().round?.phase : '';   // round events (planted, round over…) show at once
+      if (performance.now() - hudAt > 200 || ph !== hudPhase) { hudAt = performance.now(); hudPhase = ph; hud(); }
     },
   };
 }

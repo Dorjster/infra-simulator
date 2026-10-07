@@ -9,7 +9,7 @@ import { loadSounds, reloadSound } from './sound-bank.js';
 import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT } from './weapon-models.js';
 
 // Draw (deploy) time per weapon, CS2-like: it swings up from below; no shooting until it's up.
-export const DRAW_MS = { he: 500, flash: 500, smoke: 500, molotov: 550, knife: 450, karambit: 500, pistol: 550, deagle: 700, cannon: 550, smg: 700, shotgun: 800, ak: 850, m4: 850, sniper: 1000, lmg: 1100 };
+export const DRAW_MS = { c4: 600, he: 500, flash: 500, smoke: 500, molotov: 550, knife: 450, karambit: 500, pistol: 550, deagle: 700, cannon: 550, smg: 700, shotgun: 800, ak: 850, m4: 850, sniper: 1000, lmg: 1100 };
 const AXES = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
 const SOUND = { pistol: [.5, 1], deagle: [.6, .8], cannon: [.55, .85], smg: [.32, 1.35], shotgun: [.75, .62], ak: [.5, .95], m4: [.45, 1.05], sniper: [.85, .7], lmg: [.45, .9] };
 export const shotFx = (wpn) => ({ id: wpn.id, volume: (SOUND[wpn.id] || SOUND.pistol)[0], pitch: (SOUND[wpn.id] || SOUND.pistol)[1], flashSize: wpn.kind === 'pistol' ? 1.1 : wpn.kind === 'shotgun' || wpn.kind === 'lmg' ? 1.8 : 1.5 });
@@ -79,6 +79,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   function fire() {
     if (!current || !canFire() || reloading() || performance.now() - lastShot < current.rateMs || performance.now() - drawAt < drawMs) return false;
     if (current.kind === 'knife') return swing();
+    if (current.kind === 'bomb') return false;   // planting is held (lab → arena-ui.plant)
     if (current.kind === 'nade') { lastShot = performance.now(); shots++; kick = 1; held = false; throwNade(current.id); return true; }
     if (left() <= 0) { if (performance.now() - lastDry > 250) { lastDry = performance.now(); sounds.dry(); } reload(); return false; }
     lastShot = performance.now(); shots++; kick = 1; ammo.set(current.id, left() - 1);

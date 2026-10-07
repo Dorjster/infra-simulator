@@ -16,7 +16,8 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [] }) 
   const g = () => world.operations.game;
   // Everyone alive you can watch: [{ id, name, pos, yaw, pitch, weapon }].
   function alive() {
-    const out = []; for (const [id, m] of lan.models || []) { if (!m?.g?.visible || isDown(g(), m.name)) continue; const p = lan.players?.find(x => x.id === id);
+    const dd = g().combat?.d, mine = dd?.teams?.[key(name())];   // defuse: only your own team (CS2)
+    const out = []; for (const [id, m] of lan.models || []) { if (!m?.g?.visible || isDown(g(), m.name) || (dd && dd.teams[key(m.name)] !== mine)) continue; const p = lan.players?.find(x => x.id === id);
       out.push({ id, name: m.name, pos: m.g.position, yaw: p?.pose?.yaw ?? m.g.rotation.y, pitch: +p?.pose?.shot?.pitch || 0, weapon: p?.pose?.weapon || null, crouched: !!p?.pose?.crouched }); }
     return out;
   }
@@ -40,9 +41,9 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [] }) 
         m4.lookAt(camera.position, lookNow, camera.up); q.setFromRotationMatrix(m4); camera.quaternion.copy(q);
       }
       if (performance.now() - barAt > 200) { barAt = performance.now();
-        const w = t?.weapon ? weaponById(t.weapon)?.name : null, left = Math.max(0, Math.ceil((d.until - Date.now()) / 1000));
-        bar.hidden = false; bar.innerHTML = t ? `<small>SPECTATING</small><b>${esc(t.name)}</b><span>✚ ${hpOf(G, t.name)}</span>${w ? `<span>${esc(w)}</span>` : ''}<small>click: next · Space: ${first ? 'chase cam' : 'their eyes'}</small><small class="k">killed by ${esc(d.by)} · respawn in ${left}</small>`
-          : `<small>killed by</small><b class="k">${esc(d.by)}</b><small>respawn in ${left}</small>`; }
+        const w = t?.weapon ? weaponById(t.weapon)?.name : null, left = Math.max(0, Math.ceil((d.until - Date.now()) / 1000)), next = G.combat?.d ? 'back next round' : 'respawn in ' + left;
+        bar.hidden = false; bar.innerHTML = t ? `<small>SPECTATING</small><b>${esc(t.name)}</b><span>✚ ${hpOf(G, t.name)}</span>${w ? `<span>${esc(w)}</span>` : ''}<small>click: next · Space: ${first ? 'chase cam' : 'their eyes'}</small><small class="k">killed by ${esc(d.by)} · ${next}</small>`
+          : `<small>killed by</small><b class="k">${esc(d.by)}</b><small>${next}</small>`; }
       return true;
     },
   };

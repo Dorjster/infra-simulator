@@ -25,7 +25,9 @@ export const KNIVES = [
 ];
 // Grenades (Global Defensive, slot 4): held and thrown; their effects are host-run (arena-nades.js).
 export const GRENADES = [['he', 'HE Grenade'], ['flash', 'Flashbang'], ['smoke', 'Smoke Grenade'], ['molotov', 'Molotov']].map(([id, name]) => ({ id, name, kind: 'nade', usd: 0, price: 0, dmg: 0, rangeMod: 1, rateMs: 900, auto: false, range: 0, spread: 0, mag: 0, reloadMs: 0, recoil: [0, 0] }));
-export const weaponById = id => id === 'cannon' ? DARJA_GUN : WEAPONS.find(w => w.id === id) || KNIVES.find(k => k.id === id) || GRENADES.find(g => g.id === id) || null;
+// The bomb (defuse, slot 5): held to plant, not fired.
+export const C4 = { id: 'c4', name: 'C4 bomb', kind: 'bomb', usd: 0, price: 0, dmg: 0, rangeMod: 1, rateMs: 500, auto: false, range: 0, spread: 0, mag: 0, reloadMs: 0, recoil: [0, 0] };
+export const weaponById = id => id === 'c4' ? C4 : id === 'cannon' ? DARJA_GUN : WEAPONS.find(w => w.id === id) || KNIVES.find(k => k.id === id) || GRENADES.find(g => g.id === id) || null;
 export const MAX_HP = 100, RESPAWN_MS = 5000;
 // CS2 damage model: base × hit-group multiplier × rangeMod^(distance / 500 CS units). One game unit ≈ 6.5 CS units.
 export const HIT_GROUPS = { head: 4, chest: 1, stomach: 1.25, legs: .75 };

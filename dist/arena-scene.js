@@ -44,23 +44,28 @@ function merge(geos) {
   const m = new THREE.BufferGeometry(); m.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); m.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); m.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); m.setIndex(I); m.computeBoundingSphere(); return m;
 }
 
+// Bomb-site markings (defuse maps): a painted circle with the letter, one shared material per letter.
+const SITE_MAT = {}; for (const L of ['A', 'B']) { let map = null; try { const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d'); if (typeof g?.arc === 'function') { g.strokeStyle = 'rgba(255,214,90,.85)'; g.lineWidth = 10; g.beginPath(); g.arc(128, 128, 118, 0, Math.PI * 2); g.stroke(); g.fillStyle = 'rgba(255,214,90,.9)'; g.font = '900 150px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(L, 128, 138); map = new THREE.CanvasTexture(c); map.colorSpace = THREE.SRGBColorSpace; } } catch {}
+  SITE_MAT[L] = new THREE.MeshBasicMaterial({ map, color: map ? 0xffffff : 0xffd65a, transparent: true, opacity: .8, depthWrite: false }); SITE_MAT[L].userData.shared = true; }
+const SITE_GEO = new THREE.PlaneGeometry(1, 1); SITE_GEO.userData.shared = true;
 // One small box per arena material (every map), for the graphics warm-up: compiles their shaders and uploads
 // their textures before anyone enters the arena.
 export function arenaWarmMeshes() {
   const names = new Set(); for (const m of Object.values(ARENA_MAPS)) { names.add(m.floor); for (const s of m.solids) names.add(s[5]); }
-  return [...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; });
+  return [...[...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; }), ...Object.values(SITE_MAT).map(m => new THREE.Mesh(SITE_GEO, m))];
 }
 export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.visible = false; scene.add(group);
   let current = null, boxes = [], bounds = null, savedBg = null, savedFog = null;
   function clearMap() { for (const o of [...group.children]) { if (o.userData.ground) continue;   // dropped guns: arena-ui owns them
-    group.remove(o); o.geometry?.dispose(); const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
+    group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
   function build(id) {
     if (current === id) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id;
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
     const byMat = new Map(); for (const b of boxes) { const [, tile] = LOOK[b.mat] || LOOK.concrete; (byMat.get(b.mat) || byMat.set(b.mat, []).get(b.mat)).push(boxGeometry(b, tile)); }
     const floor = { minX: bounds.minX, maxX: bounds.maxX, minZ: bounds.minZ, maxZ: bounds.maxZ, y0: -1, y1: 0 }; (byMat.get(map.floor) || byMat.set(map.floor, []).get(map.floor)).push(boxGeometry(floor, (LOOK[map.floor] || LOOK.concrete)[1]));
     for (const [mat, geos] of byMat) { const mesh = new THREE.Mesh(merge(geos), material(mat)); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.arena = true; group.add(mesh); pickables.push(mesh); }
+    for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; s.position.set(cx + x, .06, cz + z); s.scale.setScalar(r * 1.6); s.renderOrder = 1; group.add(s); }
   }
   return {
     group,

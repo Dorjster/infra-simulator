@@ -2,6 +2,7 @@
 // Laptop · Team · Settings). Everything shown here is read from the shared world through
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
+import { ARENA_MAPS } from './arena-maps.js';
 import * as THREE from './three.module.js';
 import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
 import {TICKETS} from './tickets.js';
@@ -158,14 +159,17 @@ export function createCampaignUI(ctx) {
   // Shooting arena: deathmatch on one of two maps, with bots (solo) or friends (LAN). Separate from every save.
   async function startArena() {
     const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
-    subPanel(`<h2>Global Defensive · Deathmatch</h2>
-     <div class="ss-form"><label>Map<select id="ss-ar-map"><option value="yard">Freight Yard</option><option value="town">Old Town</option></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div>
-     <p class="ss-note">Everyone against everyone. Pick any gun for free (B), knife on 3 — Darja carries her ruby karambit. Respawn in 2.5 s; most kills in 10 minutes wins. Add or remove bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
+    subPanel(`<h2>Global Defensive</h2>
+     <div class="ss-form"><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div>
+     <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B), respawn in 2.5 s, most kills in 10 minutes. <b>Defuse</b>: Terrorists vs Counter-Terrorists with CS2 money and rounds — plant the bomb on A or B (5, hold click) or defuse it (E); first to 13, friendly fire on. Knife on 3 — Darja carries her ruby karambit. Bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
       const go = async host => {
         if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); } catch (e) { notify(e.message); return; } }
         if (!(await joinLocalRoom())) { notify('The arena runs on this computer’s room · start the game from the desktop app or the room server'); return; }
-        run(send({ type: 'mode', mode: 'arena', map: el.querySelector('#ss-ar-map').value, bots: +el.querySelector('#ss-ar-bots').value }), () => { begin(); });
+        run(send({ type: 'mode', mode: 'arena', kind: el.querySelector('#ss-ar-kind').value, map: el.querySelector('#ss-ar-map').value, bots: +el.querySelector('#ss-ar-bots').value }), () => { begin(); });
       };
+      // Maps for the chosen mode (deathmatch: Freight Yard, Old Town · defuse: Dune, Plaza, Hamlet).
+      const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === k).map(([id, m]) => `<option value="${id}">${m.name}</option>`).join(''); };
+      el.querySelector('#ss-ar-kind').addEventListener('change', maps); maps();
       el.querySelector('#ss-ar-solo').addEventListener('click', () => go(false));
       el.querySelector('#ss-ar-host')?.addEventListener('click', () => go(true));
     });
