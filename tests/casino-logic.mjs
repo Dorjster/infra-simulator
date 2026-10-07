@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES, SALARY, START_CASH, DARJA_CASH, DRINKS, DRINK_PRICE, luckOf, arsenalOf, SALARY_LOAN, salaryPlan, payoffOf, goalsOf, goalsDoneOf, GOALS } from '../dist/casino-logic.js';
 import { combatApply, combatTick, hpOf, isDown } from '../dist/combat-logic.js';
-import { WEAPONS, MAX_HP, RESPAWN_MS } from '../dist/weapons-data.js';
+import { WEAPONS, MAX_HP, RESPAWN_MS, damageFor, weaponById } from '../dist/weapons-data.js';
 import { mnt, money } from '../dist/money.js';
 
 let seed = 7; const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -129,17 +129,25 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   // Combat: host-checked hits, HP, head shots, range, fire rate, knock-out and respawn.
   const players = [{ id: 'p1', name: 'Sam', pose: { x: 0, y: 9.7, z: 50 } }, { id: 'p2', name: 'Darja', pose: { x: 0, y: 9.7, z: 80 } }, { id: 'p3', name: 'Far', pose: { x: 0, y: 9.7, z: 1000 } }];
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'sniper' }, 'Sam', players, 'p1', 1000), /own/);
-  let r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1000); assert.equal(r.hp, MAX_HP - 30);
+  let r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1000); const AK = weaponById('ak'), d30 = damageFor(AK, 'chest', 30); assert.equal(r.hp, MAX_HP - d30); assert(d30 >= 35 && d30 <= 36, 'AK chest at 30 units ≈ 36 (CS2)');
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1010), /Too fast/);
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p3', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /range/);
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /target/);
-  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak', head: true }, 'Sam', players, 'p1', 4000); assert.equal(r.dmg, 75, 'head shot ×2.5'); assert(r.down && hpOf(g4, 'Darja') === 0 && isDown(g4, 'Darja', 4001), '70 HP − 75 → knocked out');
+  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak', head: true }, 'Sam', players, 'p1', 4000); assert.equal(r.dmg, damageFor(AK, 'head', 30)); assert(r.dmg > 130, 'AK head shot one-shots (×4, CS2)'); assert(r.down && hpOf(g4, 'Darja') === 0 && isDown(g4, 'Darja', 4001), '70 HP − 75 → knocked out');
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'cannon' }, 'Darja', players, 'p2', 4500), /knocked out/);
   assert.equal(g4.combat.kills.sam, 1); assert.equal(g4.combat.feed[0].target, 'Darja');
   assert(combatTick(g4, 4000 + RESPAWN_MS)); assert.equal(hpOf(g4, 'Darja'), MAX_HP); assert.equal(g4.combat.respawns.darja, 1);
-  r = combatApply(g4, { type: 'hit', target: 'p1', weapon: 'cannon' }, 'Darja', players, 'p2', 20000); assert.equal(r.hp, MAX_HP - 40, "Darja's own gun works");
+  r = combatApply(g4, { type: 'hit', target: 'p1', weapon: 'cannon' }, 'Darja', players, 'p2', 20000); assert.equal(r.hp, MAX_HP - damageFor(weaponById('cannon'), 'chest', 30), "Darja's own gun works");
   wallet(g4, 'Sam').cash = 1e9; casinoApply(g4, { type: 'buy-weapon', weapon: 'shotgun' }, 'Sam', rng);
-  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'shotgun', pellets: 5 }, 'Sam', [{ ...players[0], pose: { x: 0, y: 9.7, z: 70 } }, players[1]], 'p1', 30000); assert.equal(r.hp, MAX_HP - 65, 'shotgun: damage per pellet that hit'); }
+  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'shotgun', pellets: 2 }, 'Sam', [{ ...players[0], pose: { x: 0, y: 9.7, z: 70 } }, players[1]], 'p1', 30000); assert.equal(r.hp, MAX_HP - damageFor(weaponById('shotgun'), 'chest', 10, 2), 'shotgun: damage per pellet that hit'); }
+// CS2 damage model: falloff with range differs by gun; hit groups; the host uses the real distance.
+{ const ak = weaponById('ak'), dg = weaponById('deagle'), nv = weaponById('shotgun');
+  assert(damageFor(ak, 'chest', 300) / damageFor(ak, 'chest', 5) > .9, 'rifles keep their damage at range');
+  assert(damageFor(dg, 'chest', 300) / damageFor(dg, 'chest', 5) < .6, 'pistols lose damage at range');
+  assert(damageFor(nv, 'chest', 60, 9) < damageFor(nv, 'chest', 5, 9), 'shotgun falls off');
+  assert.equal(damageFor(ak, 'legs', 5), Math.round(36 * .75 * Math.pow(.98, 5 * 6.5 / 500)));
+  const gz = { levels: {} }; startPayday(gz); (gz.arsenal ??= {}).sam = ['ak']; const pl = [{ id: 'a', name: 'Sam', pose: { x: 0, y: 9.7, z: 0 } }, { id: 'b', name: 'Bo', pose: { x: 0, y: 9.7, z: 300 } }];
+  const far = combatApply(gz, { type: 'hit', target: 'b', weapon: 'ak', zone: 'chest' }, 'Sam', pl, 'a', 1000); assert.equal(far.dmg, damageFor(ak, 'chest', 300), 'host computes from real distance'); }
 // Roulette is pure chance: every pocket about 1/37, colours independent of the previous spin.
 { const g5 = { levels: {} }; startPayday(g5); wallet(g5, 'R').cash = 1e15; const counts = Array(37).fill(0), seq = []; let t = 1e7, rr = Math.random;
   for (let i = 0; i < 37000; i++) { casinoApply(g5, { type: 'rl-bet', table: 'rl-1', kind: 'red', amount: 50000 }, 'R', rr, t); casinoApply(g5, { type: 'rl-spin', table: 'rl-1' }, 'R', rr, t); t += 7001; casinoTick(g5, rr, t); const n = g5.casino.tables['rl-1'].history[0]; counts[n]++; seq.push(n === 0 ? 'g' : [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36].includes(n) ? 'r' : 'b'); }

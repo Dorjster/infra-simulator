@@ -3,7 +3,7 @@
 // other engineers' bodies (what you see is what you hit, walls block) and the hit is sent to the host, which
 // re-checks it and takes the HP (combat-logic.js). Effects (tracer, flash, sound) are shared with fun-pistol.js.
 import * as THREE from './three.module.js';
-import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y } from './weapons-data.js';
+import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, zoneAt, HIT_GROUPS } from './weapons-data.js';
 import { weaponModel, MUZZLE, VIEW } from './weapon-models.js';
 
 const SOUND = { pistol: [.5, 1], deagle: [.6, .8], cannon: [.55, .85], smg: [.32, 1.35], shotgun: [.75, .62], ak: [.5, .95], m4: [.45, 1.05], sniper: [.85, .7], lmg: [.45, .9] };
@@ -66,9 +66,9 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       const wall = effects.hitPoint(origin, d).point.distanceTo(origin); let best = null;
       for (const tgt of targets()) { const t = rayCapsule(origin, d, tgt.feet); if (t !== null && t < wall && t <= current.range && (!best || t < best.t)) best = { t, tgt }; }
       if (!best) continue; const y = origin.y + d.y * best.t - best.tgt.feet.y, h = hits.get(best.tgt.id) || { pellets: 0, head: false };
-      h.pellets++; h.head ||= y > HEAD_Y; hits.set(best.tgt.id, h);
+      const z = zoneAt(y); h.pellets++; if (!h.zone || HIT_GROUPS[z] > HIT_GROUPS[h.zone]) h.zone = z; h.head = h.zone === 'head'; hits.set(best.tgt.id, h);
     }
-    for (const [target, h] of hits) report({ type: 'hit', target, weapon: current.id, pellets: h.pellets, head: h.head });
+    for (const [target, h] of hits) report({ type: 'hit', target, weapon: current.id, pellets: h.pellets, zone: h.zone, head: h.head });
     const [up, side] = current.recoil || [.01, .004]; recoil(up * (1 + Math.min(burst, 10) * .08), (Math.random() - .5) * 2 * side * (burst > 3 ? 1.6 : 1)); burst++;
     drawHud(); return true;
   }

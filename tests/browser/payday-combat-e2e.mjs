@@ -76,7 +76,7 @@ try {
   check('Darja draws the AK-47 (key 4 cycles owned guns)', drew === 'AK-47', drew);
   await host.evaluate(() => __infra.lab.pistol.fire()); await guest.waitForTimeout(700);
   const hp1 = await guest.evaluate(() => document.getElementById('cb-hp-t')?.textContent);
-  check('Combat: one aimed rifle shot takes Sam to 70 HP (or 25 on a head shot) on his own screen', /HP (70|25)$/.test(hp1), hp1);
+  check('Combat: one aimed AK-47 shot takes Sam to 73/64/55 HP (CS2 legs/chest/stomach) or knocks him out with a head shot', /HP (55|56|64|65|72|73)$/.test(hp1) || await guest.evaluate(() => !document.getElementById('cb-down').hidden), hp1);
   const fired = await host.evaluate(async () => { const L = __infra.lab, sleep = t => new Promise(r => setTimeout(r, t)); let n = 0; for (let i = 0; i < 8; i++) { if (L.pistol.fire()) n++; await sleep(160); } return n; });
   await guest.waitForTimeout(600);
   const down = await guest.evaluate(() => ({ down: !document.getElementById('cb-down').hidden, text: document.getElementById('cb-down').innerText.replace(/\s+/g, ' ') }));

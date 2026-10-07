@@ -2,7 +2,7 @@
 // checks it (the gun is theirs, it isn't firing faster than the gun can, the target is within the gun's range
 // of the shooter's position, both are standing) and only then takes HP. At 0 HP an engineer is knocked out,
 // drops for a few seconds and respawns with full HP at the entrance. Nothing else in the game is affected.
-import { weaponById, MAX_HP, RESPAWN_MS } from './weapons-data.js';
+import { weaponById, MAX_HP, RESPAWN_MS, damageFor, HIT_GROUPS } from './weapons-data.js';
 import { arsenalOf } from './casino-logic.js';
 
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
@@ -24,9 +24,10 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
   if (from && to && Math.hypot(from.x - to.x, from.z - to.z) > wpn.range * 1.15 + 4) throw Error('Out of range');
   c.last[me] = now;
   const pellets = wpn.pellets ? Math.max(1, Math.min(wpn.pellets, Math.floor(Number(a.pellets) || 1))) : 1;
-  const dmg = Math.round(wpn.dmg * pellets * (a.head ? wpn.head : 1));
+  const zone = HIT_GROUPS[a.zone] ? a.zone : a.head ? 'head' : 'chest', dist = from && to ? Math.hypot(from.x - to.x, from.y - to.y, from.z - to.z) : 0;
+  const dmg = damageFor(wpn, zone, dist, pellets); a.head = zone === 'head';   // computed here from the real distance, never trusted from the shooter
   const hp = Math.max(0, hpOf(game, target.name) - dmg); c.hp[tk] = hp;
-  if (hp > 0) return { message: 'Hit ' + target.name + ' · −' + dmg + ' HP', dmg, hp };
+  if (hp > 0) return { message: 'Hit ' + target.name + ' · −' + dmg + ' HP', dmg, hp, zone };
   c.down[tk] = { until: now + RESPAWN_MS, by: name, weapon: wpn.name };
   c.kills[me] = (c.kills[me] || 0) + 1; c.deaths[tk] = (c.deaths[tk] || 0) + 1;
   c.feed.unshift({ at: now, by: name, target: target.name, weapon: wpn.name, head: !!a.head }); c.feed.length = Math.min(c.feed.length, 6);
