@@ -42,7 +42,11 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       const size = renderer.getDrawingBufferSize(new THREE.Vector2());
       const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: fx === 'Ultra' ? 4 : 0 });   // MSAA only on Ultra (it is the costliest part on Retina)
       composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera));
-      bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05); composer.addPass(bloom); composer.addPass(new OutputPass());
+      bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05);
+      // The composer sizes every pass to the full buffer; the glow is a blur, so its mips start at a quarter of
+      // the screen, not half (a third of High's cost on a Retina screen, the same look).
+      const fullSize = bloom.setSize.bind(bloom); bloom.setSize = (w, h) => fullSize(w / 2, h / 2);
+      composer.addPass(bloom); composer.addPass(new OutputPass());
     }
     scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });                              // shadow / no-shadow shaders
     glow(on); metalShine();
@@ -114,6 +118,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   return {
     prewarm,
     get post() { return !!composer && fxOn; },
+    get passes() { return composer?.passes || []; },
     setSize(w, h) { if (composer) { const s = renderer.getDrawingBufferSize(new THREE.Vector2()); composer.setSize(w, h); composer.setPixelRatio?.(renderer.getPixelRatio()); bloom?.resolution.set(s.x / 2, s.y / 2); } },
     render() {
       apply(); frame++; updatePool(performance.now());

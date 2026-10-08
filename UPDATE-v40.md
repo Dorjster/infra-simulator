@@ -4,6 +4,17 @@ Created by **Darja**.
 
 Global Defensive is a CS2-style shooter inside Infra Simulator. Play it solo with bots or with friends on your LAN. Pick it on the start screen. It never touches your Campaign or Payday saves.
 
+## 40.0.1: smooth on Retina screens
+
+Global Defensive (and the rest of the game) lagged on **High** and **Ultra** on a Retina laptop screen. On a MacBook Air M3 at full Retina resolution, a High frame took 19–22 ms (p95 31–36 ms), so the game dropped to about 45 fps and stuttered. After a few seconds it fell back to a blurry resolution to recover.
+
+- **The glow (bloom) now works at a quarter of the screen size, as intended.** Before, it worked at half the screen size, which did 4× the work for the same look. On High at full Retina resolution, a frame now takes 15.6 ms instead of 21.1 ms.
+- **High and Ultra have a pixel budget:** at most about 2.8 million pixels on High and 4 million on Ultra. A Retina laptop screen now renders at about 1.4× instead of 2× on High. That is sharper than the blurry fallback, and a frame takes 8–9 ms (p95 15 ms), so it holds 60 fps from the first frame.
+- Low and Medium are unchanged.
+- **Measured** on a MacBook Air M3, Defuse on Dune with 9 bots, 1470×956 window at Retina scale, preset High:
+  - before: the resolution fell from 2.0 to 1.13, after stuttering;
+  - after: it stays at 1.41, at 60 fps (p95 frame 17.6 ms).
+
 ## Two modes
 
 - **Deathmatch** (Freight Yard, Old Town): everyone against everyone, every gun free (B), respawn after 2.5 s. Most kills in 10 minutes wins.
