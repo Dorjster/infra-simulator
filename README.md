@@ -1,10 +1,10 @@
-# Infra Simulator v36
+# Infra Simulator v40
 
 Build a working enterprise from an empty room: receive equipment, rack it, power it, cable it, configure it on real-looking consoles and GUIs, and prove every service works. Play solo, or with up to 12 engineers on your LAN.
 
 Created by **Darja**.
 
-**What's new: [UPDATE-v35.md](UPDATE-v35.md)** (a real casino: tables that show the live game in 3D, poker, slots, lotto, centre stage). Before that: [UPDATE-v34.md](UPDATE-v34.md) (Payday mode with the casino, wallets, salaries and loans; tidy colour-coded cabling; no more flashing racks; a clearer field laptop; Darja's pistol). Earlier: [UPDATE-v33.md](UPDATE-v33.md). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
+**What's new: [UPDATE-v40.md](UPDATE-v40.md)** (Global Defensive: a CS2-style shooter with deathmatch and defuse, bots and LAN play). Before that: [UPDATE-v36.md](UPDATE-v36.md) (Payday in tögrög, the bar), [UPDATE-v35.md](UPDATE-v35.md) (a real casino: tables that show the live game in 3D, poker, slots, lotto, centre stage), [UPDATE-v34.md](UPDATE-v34.md) (Payday mode with the casino, wallets, salaries and loans; tidy colour-coded cabling; no more flashing racks; a clearer field laptop; Darja's pistol). Earlier: [UPDATE-v33.md](UPDATE-v33.md). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
 
 ## Play
 
@@ -31,8 +31,20 @@ Created by **Darja**.
 | Enter / T · middle mouse · Esc | Team chat · ping · menu |
 | Mouse wheel | Over the 3D view while walking: emote wheel · over any panel: scrolls the panel |
 | E at a casino table (Payday) | Blackjack · roulette · lotto · cashier (wallet & loans) |
-| 4 · left click | Draw and cycle your guns (Payday: bought at the casino's weapon market; Darja always has her own) · fire, hold for automatic guns |
 | P | Switch first / third person |
+
+**Global Defensive** (its own controls; rebind them in Settings → Controls):
+
+| Key | Action |
+| --- | --- |
+| W A S D · Shift · Ctrl · Space or mouse wheel | Run · walk quietly · crouch · jump (CS2 movement: counter-strafe to stop, steer in the air) |
+| Left click · R · right mouse | Fire (hold for automatic guns) · reload · AWP scope |
+| 1 · 2 · 3 · 4 · 5 | Primary · pistol · knife · grenades (cycles) · bomb (defuse) |
+| B · Tab | Buy menu · scoreboard (hold) |
+| G · E | Drop the item in hand · pick up / swap (defuse: hold E on the planted bomb to defuse) |
+| Left click (dead) · Space (dead) | Watch the next player · their eyes / chase camera |
+
+Guns exist only in Global Defensive — never in the Campaign, Free Build, Challenges or Payday.
 
 Field Engineer and Operations Engineer are cosmetic titles: both can do every task. Company credentials, physical reach and host-only controls are checked separately.
 

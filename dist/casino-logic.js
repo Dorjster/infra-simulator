@@ -12,11 +12,9 @@
 //      Slots ×3 — three reels; Lotto — 5 of 36, shared jackpot (draws queue on the one machine).
 //  · Bar: drinks at real Ulaanbaatar bar prices (5,000₮ airag … 45,000₮ champagne) give a few minutes of luck — good or bad, at random —
 //    that nudges your own slot spins and lotto draws. Roulette, blackjack and poker stay pure chance.
-//  · Weapon market: eight guns at real-life shop prices (1,620,000₮ shotgun … 32,400,000₮ machine gun); see combat-logic.js.
 //  · Darja's bank (creative mode): an engineer named Darja can give money to anyone, or take it back.
 //  · Timing fields (spinMs, dealtAt, drawnAt…) let every client animate the 3D tables in step with the result.
 import { mnt, money } from './money.js';
-import { WEAPONS } from './weapons-data.js';
 export const START_CASH = mnt(500), DARJA_CASH = mnt(10000), LEVEL_BONUS = mnt(1500);
 export const SALARY = Object.fromEntries(Object.entries({ rack: 150, mount: 120, 'rack-feed': 60, rails: 40, power: 35, patch: 30, optic: 25, boot: 40, unbox: 15, repair: 90, 'isp-order': 50 }).map(([k, v]) => [k, mnt(v)]));
 export const LOTTO = { price: 70000, numbers: 36, picks: 5, pays: { 2: 70000, 3: 500000, 4: 9000000 }, seed: 18000000, add: 35000, drawMs: 8000 };   // drawMs = SYNC.lottoDraw: one draw on the machine
@@ -30,8 +28,7 @@ export const TABLES = [
   { id: 'sl-3', game: 'slots', name: 'Slot · High Roller', min: 100000, max: 10000000 },
   { id: 'lotto', game: 'lotto', name: 'Lotto machine' },
   { id: 'stage', game: 'stage', name: 'Center stage', min: 70000, max: 20000000 },
-  { id: 'bar', game: 'bar', name: 'The Payday Bar' },
-  { id: 'guns', game: 'market', name: 'Weapon market' }
+  { id: 'bar', game: 'bar', name: 'The Payday Bar' }
 ];
 // Bar: real bar prices in tögrög (a casino bar in Ulaanbaatar, 2026); luck lasts `min` minutes, strength = chance a
 // result is nudged your way (or against you).
@@ -102,7 +99,6 @@ function freshTable(def) {
   if (def.game === 'slots') return { last: null, spins: 0 };
   if (def.game === 'lotto') return { jackpot: LOTTO.seed, last: [], tickets: 0 };
   if (def.game === 'bar') return { served: 0, last: null };
-  if (def.game === 'market') return { sold: 0, last: null };
   if (def.game === 'stage') return { dance: -1, by: null, round: 0, startedAt: 0, until: 0, queue: [], tips: 0, log: [] };
   return {};
 }
@@ -111,6 +107,7 @@ export function startPayday(game) { game.payday = true; game.wallets = {}; game.
 // v34 saves had one blackjack and one roulette table: return any chips still on them and move to v2 tables.
 export function migrateCasino(game) {
   const c = game.casino; if (!c) return;
+  if (c.tables) delete c.tables.guns;   // the weapon market is gone (guns: Global Defensive only)
   if (c.version === 2) { toTugrik(game); return; }
   if (c.version === 3) { for (const d of TABLES) c.tables[d.id] ??= freshTable(d); return; }
   for (const s of c.blackjack?.seats || []) if (c.blackjack.phase === 'betting' || c.blackjack.phase === 'playing') wallet(game, s.name).cash += s.bet;
@@ -429,7 +426,7 @@ export function casinoApply(game, a, name, rng = Math.random, now = Date.now()) 
   if (a?.type === 'drink') return drink(game, a, name, rng, now);
   if (a?.type === 'claim-goals') return claimGoals(game, name);
   if (a?.type === 'bank') return bank(game, a, name);
-  if (a?.type === 'buy-weapon') return buyWeapon(game, a, name);
+  if (a?.type === 'buy-weapon') throw Error('Guns are only in Global Defensive');
   const prefix = String(a?.type || '').split('-')[0], gameName = GAME_OF[prefix]; if (!gameName) throw Error('Unknown casino action');
   const id = a.table || TABLES.find(t => t.game === gameName).id, def = tableDef(id); if (def && !game.casino.tables[id]) game.casino.tables[id] = freshTable(def); const t = game.casino.tables[id];
   if (!def || def.game !== gameName || !t) throw Error('Unknown table');
@@ -452,7 +449,7 @@ function bank(game, a, name) {
   return (moved >= 0 ? 'Gave ' + money(moved) + ' to ' : 'Took ' + money(-moved) + ' from ') + w.name + ' · now ' + money(w.cash);
 }
 
-// ---- Bar & weapon market ---------------------------------------------------------------------------------
+// ---- Bar ---------------------------------------------------------------------------------------------------
 function drink(game, a, name, rng, now) {
   const d = DRINKS.find(x => x.id === a.drink); if (!d) throw Error('That is not on the menu');
   const w = wallet(game, name); take(w, d.price, d.name); note(w, 'Bar · ' + d.name, -d.price);
@@ -462,14 +459,8 @@ function drink(game, a, name, rng, now) {
   const bar = game.casino.tables.bar ??= freshTable(tableDef('bar')); bar.served++; bar.last = { name: w.name, drink: d.name, kind, at: now };
   return d.name + ' · you feel ' + (kind === 'lucky' ? 'LUCKY' : 'UNLUCKY') + ' for ' + d.min + ' min (slots and lotto)';
 }
-function buyWeapon(game, a, name) {
-  const wpn = WEAPONS.find(x => x.id === a.weapon); if (!wpn) throw Error('Unknown weapon');
-  game.arsenal ??= {}; const own = game.arsenal[key(name)] ??= []; if (own.includes(wpn.id)) throw Error('You already own the ' + wpn.name);
-  const w = wallet(game, name); take(w, wpn.price, wpn.name); note(w, 'Weapon market · ' + wpn.name, -wpn.price); own.push(wpn.id);
-  const m = game.casino.tables.guns ??= freshTable(tableDef('guns')); m.sold++; m.last = { name: w.name, weapon: wpn.name };
-  return 'Bought the ' + wpn.name + ' · press 4 to draw it';
-}
-export const arsenalOf = (game, name) => [...(/^darja$/.test(key(name)) ? ['cannon'] : []), ...(game.arsenal?.[key(name)] || [])];
+// No guns in Payday (they are only in Global Defensive); guns bought in older saves are ignored.
+export const arsenalOf = () => [];
 
 // Timers and level bonuses. Returns true when state changed (the host then broadcasts it).
 // Hold'em winners advance their goals once per hand (results are written where the game state isn't at hand).

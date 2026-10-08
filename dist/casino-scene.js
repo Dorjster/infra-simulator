@@ -11,8 +11,6 @@ import { startedAt, SYNC, bjReveal, lottoPlan, boardLandsAt, hitLandsAt } from '
 import { createStage } from './casino-stage.js';
 import { drawSymbol } from './slot-symbols.js';
 import { money, short } from './money.js';
-import { WEAPONS, weaponById } from './weapons-data.js';
-import { weaponModel } from './weapon-models.js';
 import { createAvatar } from './avatar.js';
 
 const TABLE_H = 4.8, CARD_W = .38, CARD_H = .53, CHIP_R = .12, CHIP_T = .022;
@@ -27,7 +25,6 @@ export function seatPose(id, seat = 0) {
   if (def?.game === 'slots') return { px: L.x - 5.2, pz: L.z, tx: L.x, ty: 6.8, tz: L.z };
   if (id === 'lotto') { const dx = (seat % 5 - 2) * 1.6; return { px: L.x - 1 + dx, pz: L.z - 11, tx: L.x + 1.5 + dx * .3, ty: 7, tz: L.z }; }   // watchers stand side by side
   if (id === 'bar') { const x = L.x + (seat % 5 - 2) * 6; return { px: x, pz: L.z - 13, tx: x, ty: 6, tz: L.z + 4 }; }
-  if (id === 'guns') return { px: L.x + 10, pz: L.z, tx: L.x - 3, ty: 6.5, tz: L.z };
   if (id === 'stage') { const a = -Math.PI / 2 + (seat % 5 - 2) * .35; return { px: L.x + Math.cos(a) * 12, pz: L.z + Math.sin(a) * 12, tx: L.x, ty: 7, tz: L.z }; }
   return { px: L.x, pz: L.z - 6, tx: L.x, ty: 4, tz: L.z };
 }
@@ -328,11 +325,6 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   const CA = LAYOUT.wallet; box(13, 4.6, 2.6, CA.x, 2.3, CA.z, M.wood); box(13.4, .3, 3, CA.x, 4.75, CA.z, M.gold); box(13, 9, .3, CA.x, 9.5, CA.z + 3.5, M.panel);
   for (let i = 0; i < 3; i++) box(.15, 4, .15, CA.x - 4 + i * 4, 7, CA.z - 1.1, M.gold);
   const cashSign = screen(9, 3, CA.x, 11, CA.z + 3.2); hit(14, 6, 3.6, CA.x, CA.z, { casino: 'wallet' });
-  { const GL = LAYOUT.guns; box(3, 4.6, 14, GL.x + 2, 2.3, GL.z, M.black); box(3.4, .3, 14.4, GL.x + 2, 4.75, GL.z, M.chrome);
-    box(.4, 12, 18, minX + .5, 7, GL.z, M.panel); box(.2, 9, 16, minX + .8, 8, GL.z, new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: .9 }));
-    WEAPONS.forEach((w, i) => { const m = weaponModel(w.id, w.kind === 'pistol' ? 2.6 : 1.3); m.rotation.y = 0; /* side-on along the wall */ m.position.set(minX + 1.2, 12 - (i % 4) * 2.3, GL.z - 3.8 + Math.floor(i / 4) * 7.6); group.add(m); });
-    sign(screen(10, 2.4, GL.x + 3.6, 13.5, GL.z, -Math.PI / 2, 500), 'WEAPON MARKET', ['Eight guns from ' + money(Math.min(...WEAPONS.map(w => w.price))), 'Payday shoot-outs · 100 HP · press E']);
-    hit(6, 7, 15, GL.x + 2, GL.z, { casino: 'table', table: 'guns' }); }
   const rich = screen(16, 7.5, minX + .4, 11, cz - 10, Math.PI / 2, 800); let richKey = '';
   const BOTTLE_GEO = new THREE.CylinderGeometry(.18, .22, 1.4, 8), BOTTLES = [0x2f6b2a, 0x7a3b12, 0xc9b06a, 0x5a1426, 0x2a4f7a, 0xd9e4e8].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: .15, metalness: .1 }));
   hit(50, 7, 7, 5, maxZ - 8, { casino: 'table', table: 'bar' });
@@ -362,7 +354,6 @@ export function createCasinoScene(scene, { pickables = [], localName = () => '' 
   function clear(x, z) {
     if (z < ROOM.maxZ + 1.2) return open && x > d0 + .4 && x < d1 - .4;
     if (!open || x < minX + 1 || x > maxX - 1 || z > maxZ - 1) return false;
-    if (x < LAYOUT.guns.x + 4 && Math.abs(z - LAYOUT.guns.z) < 7.6) return false;   // weapon market counter
     for (const id of ['bj-1', 'bj-2']) { const L = LAYOUT[id]; if (Math.abs(x - L.x) < 7.2 && z > L.z - 3.4 && z < L.z + 1.2) return false; if (z >= L.z && Math.hypot(x - L.x, z - L.z) < 7.2) return false; }
     for (const id of ['rl-1', 'rl-2']) { const L = LAYOUT[id]; if (Math.abs(x - L.x - 1) < 9 && Math.abs(z - L.z) < 4.4 || Math.abs(x - L.x + 4.4) < 1.6 && Math.abs(z - L.z + 5.2) < 1.2) return false; }
     { const L = LAYOUT['pk-1']; if (((x - L.x) / (PK_A + 1)) ** 2 + ((z - L.z) / (PK_B + 1)) ** 2 < 1 || Math.abs(x - L.x) < 1.6 && Math.abs(z - L.z + PK_B + 2.2) < 1.2) return false; }

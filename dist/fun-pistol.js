@@ -4,6 +4,8 @@
 // In Payday, engineers can also buy guns (weapons.js) and shots at other engineers take HP (combat-logic.js).
 // The model is an original chrome "hand cannon" (long slide, black grip), not a copy of any real product.
 import * as THREE from './three.module.js';
+import { shotSound } from './sound-bank.js';
+import { audioCtx, outAt } from './spatial-audio.js';
 
 export const isDarja = name => /^\s*darja\s*$/i.test(String(name || ''));
 
@@ -35,10 +37,10 @@ export function pistolModel(scale = 1) {
 
 let audio = null;
 // Start the sound engine on the first click / key press, so the first shot doesn't pay for it.
-export function warmAudio() { try { audio ??= new AudioContext(); if (audio.state === 'suspended') audio.resume(); } catch {} }
-function bang(volume = .5, pitch = 1) {
+export function warmAudio() { try { audio = audioCtx(); } catch {} }
+function bang(volume = .5, pitch = 1, at = null) {
   try {
-    audio ??= new AudioContext(); if (audio.state === 'suspended') audio.resume();
+    audio = audioCtx(); const out = outAt(audio, at);
     const t = audio.currentTime, len = .35, buf = audio.createBuffer(1, audio.sampleRate * len, audio.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3.2);
     const noise = audio.createBufferSource(); noise.buffer = buf;
@@ -46,7 +48,7 @@ function bang(volume = .5, pitch = 1) {
     const gain = audio.createGain(); gain.gain.setValueAtTime(volume, t); gain.gain.exponentialRampToValueAtTime(.001, t + len);
     const thump = audio.createOscillator(); thump.frequency.setValueAtTime(140 * pitch, t); thump.frequency.exponentialRampToValueAtTime(42 * pitch, t + .18);
     const tg = audio.createGain(); tg.gain.setValueAtTime(volume * .9, t); tg.gain.exponentialRampToValueAtTime(.001, t + .22);
-    noise.connect(lp).connect(gain).connect(audio.destination); thump.connect(tg).connect(audio.destination);
+    noise.connect(lp).connect(gain).connect(out); thump.connect(tg).connect(out);
     noise.start(t); thump.start(t); thump.stop(t + .25);
   } catch {}
 }
@@ -78,8 +80,8 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
     flashes.push({ s, t: 0 });
   }
   // One shot: `count` pellets in a small cone from `origin` along `dir`.
-  function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null } = {}) {
-    flash(origin, dir, flashSize); bang(volume, pitch);
+  function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null, at = null, id = null } = {}) {
+    flash(origin, dir, flashSize); if (!(id && shotSound(id, { at, volume: .8 }))) bang(volume, pitch, at);   // recorded shot (sound-bank.js), else synthesized
     if (dirs) { for (const d of dirs) { const hit = hitPoint(origin, d), mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(origin.clone().add(d)); scene.add(mesh); pellets.push({ mesh, from: origin.clone(), dir: d, dist: hit.point.distanceTo(origin), travelled: 0, hit }); } return; }
     for (let i = 0; i < count; i++) {
       const d = dir.clone().add(new THREE.Vector3((Math.random() - .5) * 2, (Math.random() - .5) * 2, (Math.random() - .5) * 2).multiplyScalar(spread)).normalize();

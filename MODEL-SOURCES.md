@@ -35,3 +35,16 @@ The new managers follow product setup concepts without copying vendor screenshot
 - [Aruba AOS-CX access control](https://arubanetworking.hpe.com/techdocs/AOS-CX/10.14/HTML/hardening/Content/Chp_hard-mgmt/access-ctrl.htm): administrator access and management configuration concepts.
 
 Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and procurement models. Supported configurations are bounded subsets, not verified physical installation recipes. Their dimensions, costs and common data-port geometry are game values. Use the linked product reference in each in-game overview for physical equipment documentation.
+
+## Arena weapon models
+
+- Guns, grenades and C4: ["Guns & Explosives" by 3dmodelscc0](https://3dmodelscc0.itch.io/) — CC0 (public domain). Converted by `tools/pack-weapons.mjs` to `dist/models/weapons/`.
+- Karambit: ["Karambit" by Diamonddogkz](https://sketchfab.com/3d-models/karambit-dfd7606f189a413681305a39b8841ce8) — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changed: converted to the game's format, metal parts repainted in an original ruby finish, textures resized.
+- First-person arms: "FPS Character Animation Pack Ak-47", "…Pistol" and "…Saps-12" by [Cristian David Duque Camacho (DuqueCD7)](https://sketchfab.com/DuqueCD7) — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ([AK-47](https://sketchfab.com/3d-models/fps-character-animation-pack-ak-47-b95778a564094fc3a49d1d6a3b6a30ab), [Pistol](https://sketchfab.com/3d-models/e2815a5bea3a4e3895b3c29a2586e671), [Saps-12](https://sketchfab.com/3d-models/3e5ebbd4ace24f2e92eadb7252927b31)). Changed: textures reduced to 1024 px JPEG; other guns, knives, grenades and the bomb held in these arms; fingers curled for knives; left arm posed for one-handed items. In `dist/models/fp/`.
+- Default knife, Desert Eagle, MP5 and M249: original procedural models (`dist/weapon-models.js`).
+
+## Arena sounds (`dist/sounds/`, built by `tools/pack-sounds.mjs`)
+
+- Gunshots: ["The Free Firearm Sound Library"](https://opengameart.org/content/the-free-firearm-sound-library) — CC0. AK-47, AR-15 (M4, M249), Nova, Walther PPQ (pistol, MP5), 1911 (Desert Eagle), Savage 10 (AWP); one shot cut from each recording.
+- Reloads: ["Gun Reload Sounds" by SpringySpringo](https://opengameart.org/content/gun-reload-sounds) — CC0.
+- Footsteps: [Kenney "Impact Sounds"](https://kenney.nl/assets/impact-sounds) — CC0.

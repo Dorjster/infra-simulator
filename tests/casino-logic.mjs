@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { startPayday, wallet, paySalary, casinoApply, casinoTick, handValue, bestHand, compareHands, slotPay, redactCasino, migrateCasino, LEVEL_BONUS, LOTTO, TABLES, SALARY, START_CASH, DARJA_CASH, DRINKS, DRINK_PRICE, luckOf, arsenalOf, SALARY_LOAN, salaryPlan, payoffOf, goalsOf, goalsDoneOf, GOALS } from '../dist/casino-logic.js';
 import { combatApply, combatTick, hpOf, isDown } from '../dist/combat-logic.js';
-import { WEAPONS, MAX_HP, RESPAWN_MS } from '../dist/weapons-data.js';
+import { startArena, arenaApply } from '../dist/arena-logic.js';
+import { WEAPONS, MAX_HP, RESPAWN_MS, damageFor, weaponById } from '../dist/weapons-data.js';
 import { mnt, money } from '../dist/money.js';
 
 let seed = 7; const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -119,27 +120,37 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
     for (let i = 0; i < n; i++) { const c = wallet(g, 'L').cash; casinoApply(g, { type: 'sl-spin', table: 'sl-1', amount: 5000 }, 'L', rng, 1e6 + i * 3000); paid += wallet(g, 'L').cash - c + 5000; } return paid / n / 5000; };
   const lucky = rtpWith('lucky'), unlucky = rtpWith('unlucky'); assert(lucky > rtp + .05 && unlucky < rtp - .05, `luck moves slots: lucky ${lucky.toFixed(3)} · plain ${rtp.toFixed(3)} · unlucky ${unlucky.toFixed(3)}`);
   globalThis.__luck = [lucky, unlucky]; }
-// Weapon market: eight guns from US$25,000 (90,000,000₮); bought once; Darja has her own.
-{ assert.equal(WEAPONS.length, 8); assert.equal(Math.min(...WEAPONS.map(w => w.price)), 1620000, 'real-life prices'); assert.equal(Math.max(...WEAPONS.map(w => w.price)), 32400000);
-  const g4 = { levels: {} }; startPayday(g4);
-  wallet(g4, 'Sam').cash = 1e6; assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'pistol' }, 'Sam', rng), /Not enough cash/);
-  wallet(g4, 'Sam').cash = 1e9; assert.match(casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /Bought/); assert.equal(wallet(g4, 'Sam').cash, 1e9 - mnt(1100));
-  assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /already own/);
-  assert.deepEqual(arsenalOf(g4, 'Sam'), ['ak']); assert.deepEqual(arsenalOf(g4, 'Darja'), ['cannon']);
-  // Combat: host-checked hits, HP, head shots, range, fire rate, knock-out and respawn.
+// No guns in Payday: the weapon market is gone, nobody owns a gun, the host refuses shots; old saves load.
+{ const g4 = { levels: {} }; startPayday(g4); wallet(g4, 'Sam').cash = 1e9;
+  assert.throws(() => casinoApply(g4, { type: 'buy-weapon', weapon: 'ak' }, 'Sam', rng), /only in Global Defensive/);
+  assert.deepEqual(arsenalOf(g4, 'Sam'), []); assert.deepEqual(arsenalOf(g4, 'Darja'), [], 'no cannon either');
+  assert(!TABLES.some(t => t.id === 'guns'), 'no weapon market station');
+  const players = [{ id: 'p1', name: 'Sam', pose: { x: 0, y: 9.7, z: 50 } }, { id: 'p2', name: 'Darja', pose: { x: 0, y: 9.7, z: 80 } }];
+  g4.arsenal = { sam: ['ak'] }; assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1000), /only in Global Defensive/, 'an old save with guns still cannot shoot');
+  const old = { levels: {} }; startPayday(old); old.casino.tables.guns = { sold: 3, last: null }; migrateCasino(old); assert(!old.casino.tables.guns, 'old weapon-market table dropped on load'); }
+// Combat (Global Defensive): host-checked hits, HP, head shots, range, fire rate, knock-out and respawn.
+{ const g4 = { levels: {} }; startArena(g4, { map: 'yard', bots: 0 }, 1000); arenaApply(g4, { type: 'loadout', primary: 'ak' }, 'Sam');
   const players = [{ id: 'p1', name: 'Sam', pose: { x: 0, y: 9.7, z: 50 } }, { id: 'p2', name: 'Darja', pose: { x: 0, y: 9.7, z: 80 } }, { id: 'p3', name: 'Far', pose: { x: 0, y: 9.7, z: 1000 } }];
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'sniper' }, 'Sam', players, 'p1', 1000), /own/);
-  let r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1000); assert.equal(r.hp, MAX_HP - 30);
+  let r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1000); const AK = weaponById('ak'), d30 = damageFor(AK, 'chest', 30); assert.equal(r.hp, MAX_HP - d30); assert(d30 >= 35 && d30 <= 36, 'AK chest ≈ 36');
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1010), /Too fast/);
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p3', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /range/);
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /target/);
-  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak', head: true }, 'Sam', players, 'p1', 4000); assert.equal(r.dmg, 75, 'head shot ×2.5'); assert(r.down && hpOf(g4, 'Darja') === 0 && isDown(g4, 'Darja', 4001), '70 HP − 75 → knocked out');
-  assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'cannon' }, 'Darja', players, 'p2', 4500), /knocked out/);
+  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak', head: true }, 'Sam', players, 'p1', 4000); assert.equal(r.dmg, damageFor(AK, 'head', 30)); assert(r.dmg > 130, 'AK head shot one-shots (×4, CS2)'); assert(r.down);
+  assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'pistol' }, 'Darja', players, 'p2', 4500), /knocked out/);
   assert.equal(g4.combat.kills.sam, 1); assert.equal(g4.combat.feed[0].target, 'Darja');
-  assert(combatTick(g4, 4000 + RESPAWN_MS)); assert.equal(hpOf(g4, 'Darja'), MAX_HP); assert.equal(g4.combat.respawns.darja, 1);
-  r = combatApply(g4, { type: 'hit', target: 'p1', weapon: 'cannon' }, 'Darja', players, 'p2', 20000); assert.equal(r.hp, MAX_HP - 40, "Darja's own gun works");
-  wallet(g4, 'Sam').cash = 1e9; casinoApply(g4, { type: 'buy-weapon', weapon: 'shotgun' }, 'Sam', rng);
-  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'shotgun', pellets: 5 }, 'Sam', [{ ...players[0], pose: { x: 0, y: 9.7, z: 70 } }, players[1]], 'p1', 30000); assert.equal(r.hp, MAX_HP - 65, 'shotgun: damage per pellet that hit'); }
+  assert(combatTick(g4, 4000 + g4.arena.respawnMs)); assert.equal(hpOf(g4, 'Darja'), MAX_HP); assert.equal(g4.combat.respawns.darja, 1);
+  r = combatApply(g4, { type: 'hit', target: 'p1', weapon: 'pistol' }, 'Darja', players, 'p2', 20000); assert.equal(r.hp, MAX_HP - damageFor(weaponById('pistol'), 'chest', 30), "Darja's pistol works");
+  arenaApply(g4, { type: 'loadout', primary: 'shotgun' }, 'Sam');
+  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'shotgun', pellets: 2 }, 'Sam', [{ ...players[0], pose: { x: 0, y: 9.7, z: 70 } }, players[1]], 'p1', 30000); assert.equal(r.hp, MAX_HP - damageFor(weaponById('shotgun'), 'chest', 10) * 2, 'two pellets'); }
+// CS2 damage model: falloff with range differs by gun; hit groups; the host uses the real distance.
+{ const ak = weaponById('ak'), dg = weaponById('deagle'), nv = weaponById('shotgun');
+  assert(damageFor(ak, 'chest', 300) / damageFor(ak, 'chest', 5) > .9, 'rifles keep their damage at range');
+  assert(damageFor(dg, 'chest', 300) / damageFor(dg, 'chest', 5) < .6, 'pistols lose damage at range');
+  assert(damageFor(nv, 'chest', 60, 9) < damageFor(nv, 'chest', 5, 9), 'shotgun falls off');
+  assert.equal(damageFor(ak, 'legs', 5), Math.round(36 * .75 * Math.pow(.98, 5 * 6.5 / 500)));
+  const gz = { levels: {} }; startArena(gz, { map: 'yard', bots: 0 }, 1); arenaApply(gz, { type: 'loadout', primary: 'ak' }, 'Sam'); const pl = [{ id: 'a', name: 'Sam', pose: { x: 0, y: 9.7, z: 0 } }, { id: 'b', name: 'Bo', pose: { x: 0, y: 9.7, z: 300 } }];
+  const far = combatApply(gz, { type: 'hit', target: 'b', weapon: 'ak', zone: 'chest' }, 'Sam', pl, 'a', 1000); assert.equal(far.dmg, damageFor(ak, 'chest', 300), 'host computes from real distance'); }
 // Roulette is pure chance: every pocket about 1/37, colours independent of the previous spin.
 { const g5 = { levels: {} }; startPayday(g5); wallet(g5, 'R').cash = 1e15; const counts = Array(37).fill(0), seq = []; let t = 1e7, rr = Math.random;
   for (let i = 0; i < 37000; i++) { casinoApply(g5, { type: 'rl-bet', table: 'rl-1', kind: 'red', amount: 50000 }, 'R', rr, t); casinoApply(g5, { type: 'rl-spin', table: 'rl-1' }, 'R', rr, t); t += 7001; casinoTick(g5, rr, t); const n = g5.casino.tables['rl-1'].history[0]; counts[n]++; seq.push(n === 0 ? 'g' : [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36].includes(n) ? 'r' : 'b'); }
@@ -197,4 +208,4 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   assert.throws(() => casinoApply(gb, { type: 'bank', to: 'Sam', amount: 1e6 }, 'Sam', rng), /Only Darja/);
   assert.throws(() => casinoApply(gb, { type: 'bank', to: 'Sam', amount: 1e6 }, 'Darja Jr', rng), /Only Darja/);
   assert.match(wallet(gb, 'Sam').log[1].text, /Darja's bank/); }
-console.log('PASS: casino logic · salary loan 20M₮ in 2–10 installments with хүү, Darja bank, Payday goals (events, claim, refill), fairness (' + globalThis.__fair + '), tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), weapon market, combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');
+console.log('PASS: casino logic · salary loan 20M₮ in 2–10 installments with хүү, Darja bank, Payday goals (events, claim, refill), fairness (' + globalThis.__fair + '), tögrög economy, bar luck (slots RTP lucky ' + globalThis.__luck[0].toFixed(2) + ' / unlucky ' + globalThis.__luck[1].toFixed(2) + '), no guns in Payday (market gone, shots refused, old saves load), arena combat HP/head/range/rate/respawn, roulette randomness (χ² ' + globalThis.__chi.toFixed(0) + '/36 dof),  lotto queue + busy slot guard, wallets, salary, loans, 2 blackjack + 2 roulette tables with limits, roulette timing, poker hand ranking, 3-player Hold\'em with all-in side pot and hidden hole cards, timer, cash-out, slots RTP ' + rtp.toFixed(3) + ', lotto, stage tips and dance queue, v34 migration.');

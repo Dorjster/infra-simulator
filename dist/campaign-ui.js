@@ -2,7 +2,9 @@
 // Laptop · Team · Settings). Everything shown here is read from the shared world through
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
+import { ARENA_MAPS } from './arena-maps.js';
 import * as THREE from './three.module.js';
+import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
 import {TICKETS} from './tickets.js';
 import {usdMoney, short} from './money.js';
 import {goalsView, goalsDoneOf} from './casino-logic.js';
@@ -108,7 +110,7 @@ export function createCampaignUI(ctx) {
     $('ss-grid').innerHTML = (saved ? card('continue', 'Continue Campaign', esc(saved.name) + ' · ' + esc(levelText(saved)) + ' · ' + usdMoney(saved.budget || 0), 'ss-primary', 'Continue') + card('new', 'New Campaign', 'Start again at Level 0 on an empty site') : card('new', 'New Campaign', 'Levels 0–10 · from an empty site to a commissioned enterprise', 'ss-primary', 'Recommended'))
       + card('host', 'LAN Host Campaign', 'Host the campaign for up to 12 engineers on your network') + card('join', 'Join LAN', 'Join a room hosted on your network')
       + card('payday', 'Payday · Work & Casino', paydaySaved ? 'Continue ' + esc(paydaySaved.name) + ' · ' + esc(levelText(paydaySaved)) + ' · do jobs, earn salary, gamble' : 'Do the jobs, get paid, then hit the casino · solo or LAN', '', 'New mode')
-      + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
+      + card('free', 'Free Build', 'A separate, fully built sandbox facility · never touches your campaign') + card('arena', 'Global Defensive', 'Deathmatch with bots or friends on LAN · CS-style guns · never touches your saves') + card('challenges', 'Challenges', CHALLENGES.length + ' fault-repair exercises');
   }
   // True only when other engineers share this room; otherwise sandbox modes run locally and leave the save alone.
   const sharedRoom = () => lan.connected && (lan.players?.length || 1) > 1;
@@ -152,6 +154,24 @@ export function createCampaignUI(ctx) {
       el.querySelector('#ss-pass-btn')?.addEventListener('click', async () => { try { const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', code: el.querySelector('#ss-pass').value }); el.querySelector('#ss-cur-pass').textContent = h.roomCode; await setInvite(h); notify('Passcode set · friends type ' + h.roomCode); } catch (e) { notify(e.message.replace(/^Error invoking remote method [^:]*: (Error: )?/, '')); } });
       el.querySelector('#ss-host-continue')?.addEventListener('click', async () => { if (g().mode !== 'campaign' || g().payday) { const m = await send({ type: 'mode', mode: 'campaign', resume: true }); if (!/resumed/i.test(String(m))) { notify(m); return; } } begin(); });
       el.querySelector('#ss-host-new').addEventListener('click', () => { if (summary && !confirm('Replace the hosted campaign with a new one? The previous save is overwritten.')) return; engineering.setRole(el.querySelector('#ss-title').value); run(send({ type: 'mode', mode: 'campaign', track: 'levels', name: el.querySelector('#ss-name').value || 'LAN HQ' }), () => { hintTier = {}; begin(); }); });
+    });
+  }
+  // Shooting arena: deathmatch on one of two maps, with bots (solo) or friends (LAN). Separate from every save.
+  async function startArena() {
+    const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
+    subPanel(`<h2>Global Defensive</h2>
+     <div class="ss-form"><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div>
+     <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B), respawn in 2.5 s, most kills in 10 minutes. <b>Defuse</b>: Terrorists vs Counter-Terrorists with CS2 money and rounds — plant the bomb on A or B (5, hold click) or defuse it (E); first to 13, friendly fire on. Knife on 3 — Darja carries her ruby karambit. Bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
+      const go = async host => {
+        if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); } catch (e) { notify(e.message); return; } }
+        if (!(await joinLocalRoom())) { notify('The arena runs on this computer’s room · start the game from the desktop app or the room server'); return; }
+        run(send({ type: 'mode', mode: 'arena', kind: el.querySelector('#ss-ar-kind').value, map: el.querySelector('#ss-ar-map').value, bots: +el.querySelector('#ss-ar-bots').value }), () => { begin(); });
+      };
+      // Maps for the chosen mode (deathmatch: Freight Yard, Old Town · defuse: Dune, Plaza, Hamlet).
+      const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === k).map(([id, m]) => `<option value="${id}">${m.name}</option>`).join(''); };
+      el.querySelector('#ss-ar-kind').addEventListener('change', maps); maps();
+      el.querySelector('#ss-ar-solo').addEventListener('click', () => go(false));
+      el.querySelector('#ss-ar-host')?.addEventListener('click', () => go(true));
     });
   }
   async function startPayday() {
@@ -222,7 +242,7 @@ export function createCampaignUI(ctx) {
     const b = e.target.closest('[data-start]'); if (!b) return;
     const k = b.dataset.start; $('start-screen').querySelectorAll('.ss-card').forEach(x => x.classList.toggle('active', x === b));
     if (k === 'continue') continueCampaign(); else if (k === 'new') newCampaign(); else if (k === 'solo') startSolo();
-    else if (k === 'host') startHost(); else if (k === 'join') startJoin(); else if (k === 'challenges') startChallenges(); else if (k === 'payday') startPayday();
+    else if (k === 'host') startHost(); else if (k === 'join') startJoin(); else if (k === 'challenges') startChallenges(); else if (k === 'payday') startPayday(); else if (k === 'arena') startArena();
     else if (k === 'free') { if (await sandbox({ type: 'mode', mode: 'free' })) begin(); }
     else if (k === 'settings') { showStart(false); panel('settings'); }
     else if (k === 'inspect') { showStart(false); document.body.classList.remove('in-game'); exit(); }
@@ -325,6 +345,18 @@ export function createCampaignUI(ctx) {
      ${(!lan.connected || host) ? `<h3>Save</h3><div class="cp-row"><button data-adv="saves">Export / import / checkpoints</button></div><p class="cp-muted">${lan.connected ? 'The host autosaves after every change.' : 'Solo campaigns autosave in this browser (desktop app: in your user folder).'}</p>` : ''}
      <h3>Session</h3><div class="cp-row"><button data-go="start">Start screen</button></div>`;
   }
+  // Controls screen state: which context is shown, the search text, and the action waiting for a key.
+  let ctlCtx = 'infra', ctlFilter = '', capturing = null;
+  function finishCapture(code) {
+    const id = capturing; capturing = null; if (!id || !code) { render(); return; }
+    let r = rebind(ctlCtx, id, code);
+    if (r.conflict && confirm(`That key is already used for "${r.conflict.label}". Swap the two?`)) r = rebind(ctlCtx, id, code, { swap: true });
+    if (r.error) notify(r.error); render();
+  }
+  // Key capture runs before the game's own handlers and swallows the key.
+  addEventListener('keydown', e => { if (!capturing) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture(e.code === 'Escape' ? null : e.code); }, true);
+  addEventListener('mousedown', e => { if (!capturing || e.target.closest?.('[data-rebind]')) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture('Mouse' + e.button); }, true);
+  addEventListener('wheel', e => { if (!capturing || Math.abs(e.deltaY) < 1) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture(e.deltaY > 0 ? 'WheelDown' : 'WheelUp'); }, { capture: true, passive: false });
   function settingsView() {
     const p = settings;
     return `<h2>Settings</h2><div class="set-grid">
@@ -339,7 +371,10 @@ export function createCampaignUI(ctx) {
      <label>Frame rate limit<select data-set="fpsCap">${[[0, 'Auto · 60, 30 in menus'], [120, '120 FPS'], [60, '60 FPS'], [30, '30 FPS (battery)']].map(([v, t]) => `<option value="${v}" ${+(p.fpsCap || 0) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
      <label>Guidance<select data-set="assistance">${['Off', 'Minimal hints', 'Guided'].map(v => `<option ${p.assistance === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
      ${['toggleSprint', 'toggleCrouch', 'headBob', 'invertY', 'showFPS', 'showControls'].map(k => `<label class="chk"><input type="checkbox" data-set="${k}" ${p[k] ? 'checked' : ''}> ${({ toggleSprint: 'Toggle run', toggleCrouch: 'Toggle crouch', headBob: 'Head bob', invertY: 'Invert mouse Y', showFPS: 'Show FPS', showControls: 'Show control hints' })[k]}</label>`).join('')}</div>
-     <h3>Controls</h3><table class="ctl"><tbody>${[['W A S D', 'Walk'], ['Shift', 'Run'], ['C / Ctrl', 'Crouch (low ports)'], ['Q', 'Raise view (top of rack)'], ['Mouse', 'Look'], ['E', 'The action shown under the crosshair'], ['G', 'Put down what you carry'], ['X', 'Cancel: return a loose cable end / unplug the laptop'], ['R', 'Remove a device or optic (hands empty)'], ['F', 'Inspect what you aim at'], ['V', 'Service action (clean fibre, provider ticket, re-mount)'], ['L', 'Service laptop'], ['1 / 2', 'Console cable / service Ethernet'], ['J', 'Objective'], ['I', 'Inventory & orders'], ['M', 'Map'], ['H', 'Next hint'], ['Enter / T', 'Team chat'], ['Esc', 'Menu']].map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</tbody></table>
+     <h3>Controls</h3><div class="cp-row ctl-tabs">${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
+     <input id="ctl-search" class="ctl-search" placeholder="Search controls…" value="${esc(ctlFilter)}"><table class="ctl"><tbody><tr><td><kbd>Mouse</kbd></td><td>Look</td><td></td></tr>${actionsIn(ctlCtx).filter(a => !ctlFilter || a.label.toLowerCase().includes(ctlFilter.toLowerCase())).map(a => `<tr><td><button class="ctl-key${capturing === a.id ? ' wait' : ''}" data-rebind="${a.id}">${capturing === a.id ? 'Press a key… (Esc cancels)' : esc(labelOf(ctlCtx, a.id))}</button></td><td>${esc(a.label)}</td><td><button class="ctl-x" data-unbind="${a.id}" title="Unbind">×</button></td></tr>`).join('')}<tr><td><kbd>Esc</kbd></td><td>Menu (fixed)</td><td></td></tr></tbody></table>
+     <div class="cp-row"><button data-ctl="reset">Reset ${esc(CONTEXTS[ctlCtx].split(' (')[0])}</button><button data-ctl="reset-all">Reset all</button><button data-ctl="export">Export controls</button><button data-ctl="import">Import controls</button></div><p class="cp-muted">Controls are saved on this computer only. Joining a LAN room never changes them.</p>
+     <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. Without them the arena uses the engineer avatars.</p>
      <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
   }
 
@@ -378,7 +413,24 @@ export function createCampaignUI(ctx) {
     else if (go === 'diagnostics') { const text = JSON.stringify(globalThis.__infraDiagnostics?.() || {}, null, 2); navigator.clipboard?.writeText(text).then(() => notify('Diagnostics copied · paste them into your message'), () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = 'infra-diagnostics.json'; a.click(); notify('Diagnostics saved as infra-diagnostics.json'); }); }
     else if (go === 'inspect') { close(); document.body.classList.remove('in-game'); exit(); }
   });
-  $('campaign-panel').addEventListener('input', e => { const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
+  $('campaign-panel').addEventListener('click', e => {
+    const imp = e.target.closest?.('[data-csimp]');
+    if (imp) { const team = imp.dataset.csimp, chars = ctx.characters; if (!chars) return;
+      if (team === 'clear') { if (confirm('Remove the imported arena character models from this computer?')) chars.clear().then(() => { notify('Imported characters removed'); render(); }); return; }
+      const f = document.createElement('input'); f.type = 'file'; f.multiple = true; f.accept = '.mdl,.zip';
+      f.onchange = () => chars.import(team, [...f.files]).then(n => { notify('Imported ' + n + (team === 't' ? ' Terrorist' : ' Counter-Terrorist') + ' model' + (n > 1 ? 's' : '')); render(); }, err => notify(err.message)); f.click(); return; }
+    const t = e.target.closest?.('[data-ctlctx],[data-rebind],[data-unbind],[data-ctl]'); if (!t) return;
+    if (t.dataset.ctlctx) { ctlCtx = t.dataset.ctlctx; capturing = null; render(); return; }
+    if (t.dataset.rebind) { capturing = capturing === t.dataset.rebind ? null : t.dataset.rebind; render(); return; }
+    if (t.dataset.unbind) { unbind(ctlCtx, t.dataset.unbind); render(); return; }
+    const a = t.dataset.ctl;
+    if (a === 'reset' && confirm('Restore the default keys for ' + CONTEXTS[ctlCtx] + '?')) resetContext(ctlCtx);
+    if (a === 'reset-all' && confirm('Restore the default keys everywhere?')) resetAll();
+    if (a === 'export') { const url = URL.createObjectURL(new Blob([exportBindings()], { type: 'application/json' })), l = document.createElement('a'); l.href = url; l.download = 'infra-controls.json'; l.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    if (a === 'import') { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,application/json'; f.onchange = async () => { try { importBindings(await f.files[0].text()); notify('Controls imported'); } catch (err) { notify('Could not import: ' + err.message + ' · your current controls are kept'); } render(); }; f.click(); }
+    render();
+  });
+  $('campaign-panel').addEventListener('input', e => { if (e.target.id === 'ctl-search') { ctlFilter = e.target.value; const pos = e.target.selectionStart; render(); const el = $('ctl-search'); el?.focus(); el?.setSelectionRange(pos, pos); return; } const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
   $('site-map') || 0;
   document.addEventListener('click', e => { const place = e.target.closest?.('#site-map [data-place]'); if (!place) return; const p = PLACES[place.dataset.place]; if (p?.x !== null && p) { focus = { x: p.x, z: p.z, label: p.label, until: Date.now() + 60000 }; notify('Marker · ' + p.label); render(); } });
 

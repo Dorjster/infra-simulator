@@ -17,3 +17,8 @@ These drive the real client in Chrome through Playwright. They need `playwright-
 | `clipboard-mac.mjs <app-binary>` | Packaged macOS app: text from `pbcopy`, Cmd+V/C/X/A, laptop CLI single-line and multi-line paste preview/cancel/confirm, masking |
 | `lan-characters-video.mjs <root> <out>` | Records the 1 → 4 → 12 player LAN clip with varied characters, carrying, crouching, pointing and emotes |
 | `desktop-smoke.mjs <app-binary> <report.json>` | CI smoke test for the packaged Windows/macOS app (start screen, Level 0, Free Build racks, Continue, OS clipboard paste, frame times, clean quit) |
+| `arena-e2e.mjs <root> <out>` | Global Defensive deathmatch solo: buy menu, slots 1/2/3, shoot a bot down, kill feed, scoreboard, leave cleanly |
+| `arena-nades-e2e.mjs <root> <out>` | Grenades: buy all four, key 4 cycles, throw each, effects drawn, flashbang white-out and recovery, no frame over 50 ms |
+| `arena-lan-e2e.mjs <root> <out>` | Deathmatch over LAN in two separate browsers: join through the start screen, see each other, drop / pick up, shots hurt and are heard in 3D, spectating, no hitches in play |
+| `arena-defuse-e2e.mjs <root> <out>` | Defuse solo: teams, $800, freeze, buy with money, plant on A, explosion → T win, a bot joins CT, win money |
+| `arena-defuse-lan-e2e.mjs <root> <out>` | Defuse over LAN: host T plants, guest CT defuses with E → CT win on both screens, no hitches |

@@ -1,0 +1,133 @@
+// Global Defensive · Defuse (CS2 rules), run by the host. State on game.combat.d (streamed with HP and kills):
+//  · Teams T and CT, balanced as people join (bots fill); friendly fire on (⅓ bullet, 85 % grenade damage).
+//  · Rounds: 15 s freeze (buy), 1:55 to play; buy time ends 20 s after the freeze, only in your spawn.
+//    The dead watch their team until the next round. First to 13; sides swap after 12 (money back to $800).
+//  · Economy: $800 start, $16,000 cap, kill rewards by weapon, win $3,250 / $3,500 (bomb, defuse), loss bonus
+//    $1,400 … $3,400 with the loss streak, +$800 to the Terrorists for a plant they still lose.
+//  · Bomb: one Terrorist carries it (slot 5); hold to plant on site A or B (3.2 s); it goes off 40 s later
+//    (everyone near dies). A CT holds E on it for 10 s (5 s with a $400 kit) to defuse. It drops when the carrier
+//    dies; only Terrorists can pick it up.
+//  · Win: eliminate the other team, the bomb explodes (T), it's defused or the clock runs out unplanted (CT).
+import { ARENA } from './facility-layout.js';
+import { ARENA_MAPS } from './arena-maps.js';
+import { weaponById, EYE, MAX_HP } from './weapons-data.js';
+
+export const DEFUSE = { freezeMs: 15000, roundMs: 115000, buyMs: 20000, bombMs: 40000, plantMs: 3200, defuseMs: 10000, kitMs: 5000, overMs: 6000, matchOverMs: 12000, half: 12, win: 13, start: 800, max: 16000, buyRadius: 45, bombRadius: 1750 * 2.54 / 16.5 };
+export const PRICE = { pistol: 200, deagle: 700, smg: 1500, shotgun: 1050, lmg: 5200, ak: 2700, m4: 2900, sniper: 4750, he: 300, flash: 200, smoke: 300, molotov: 400, kit: 400 };
+const KILL = { knife: 1500, smg: 600, shotgun: 900, sniper: 100, he: 300, molotov: 300 }, WIN = { elim: 3250, time: 3250, bomb: 3500, defuse: 3500 }, LOSS = [1400, 1900, 2400, 2900, 3400];
+const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
+export const isDefuse = game => game?.mode === 'arena' && game.arena?.kind === 'defuse';
+export const teamOf = (game, name) => game?.combat?.d?.teams?.[key(name)] || null;
+const map = game => ARENA_MAPS[game.arena.map];
+const other = t => t === 't' ? 'ct' : 't';
+const gain = (d, k, n) => { d.money[k] = Math.max(0, Math.min(DEFUSE.max, (d.money[k] ?? DEFUSE.start) + n)); };
+
+// Friendly fire and kill money (called by combat-logic for every hit in defuse).
+export function defuseDamage(game, shooter, target, wpn, dmg) {
+  const d = game.combat?.d; if (!d) return dmg; const a = d.teams[key(shooter)], b = d.teams[key(target)];
+  return a && a === b && key(shooter) !== key(target) && wpn.id !== 'c4' ? Math.round(dmg * (['he', 'molotov'].includes(wpn.id) ? .85 : .33)) : dmg;
+}
+export function defuseKill(game, shooter, target, wpn) {
+  const d = game.combat?.d; if (!d) return; const k = key(shooter), a = d.teams[k], b = d.teams[key(target)]; if (!a || k === key(target)) return;
+  gain(d, k, a === b ? -300 : KILL[wpn.id] ?? KILL[weaponById(wpn.id)?.kind] ?? 300);
+}
+
+export function startDefuse(game, now) {
+  game.combat.d = { teams: {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null };
+  for (const [i, b] of (game.arena.bots || []).entries()) { game.combat.d.teams[key(b.name)] = i % 2 ? 'ct' : 't'; }
+  newRound(game, [], now);
+}
+// Everyone in the match: players present in the arena and bots.
+function members(game, players) {
+  const out = []; for (const p of players) if (p.pose && p.pose.z < ARENA.maxZ) out.push({ k: key(p.name), name: p.name, pose: p.pose });
+  for (const b of game.arena.bots || []) out.push({ k: key(b.name), name: b.name, bot: b }); return out;
+}
+export function teamCounts(game, players = []) { const d = game.combat.d, c = { t: 0, ct: 0 }; for (const m of members(game, players)) if (d.teams[m.k]) c[d.teams[m.k]]++; return c; }
+export function assignTeam(game, name, players = []) { const d = game.combat.d, k = key(name); if (d.teams[k]) return d.teams[k]; const c = teamCounts(game, players); d.teams[k] = c.t <= c.ct ? 't' : 'ct'; d.money[k] ??= DEFUSE.start; return d.teams[k]; }
+
+// A new round: everyone alive at their team's spawn; the dead lost their gear; the bomb to a random Terrorist.
+export function newRound(game, players, now) {
+  const C = game.combat, d = C.d, A = game.arena, m = map(game);
+  if (d.n === DEFUSE.half) { // halftime: swap sides, money and gear back to the start
+    for (const k of Object.keys(d.teams)) { d.teams[k] = other(d.teams[k]); d.money[k] = DEFUSE.start; delete A.loadout[k]; } d.score = { t: d.score.ct, ct: d.score.t }; d.loss = { t: 0, ct: 0 }; d.kits = {};
+    for (const b of A.bots) b.weapon = 'pistol';
+  }
+  d.n++; const firstOfHalf = d.n === 1 || d.n === DEFUSE.half + 1;
+  for (const k of Object.keys(C.down || {})) { if (!A.bots.some(b => key(b.name) === k)) { A.loadout[k] = { primary: null, secondary: 'pistol', nades: [] }; delete d.kits[k]; } else { const b = A.bots.find(b => key(b.name) === k); b.weapon = 'pistol'; } }
+  C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {};
+  for (const mem of members(game, players)) { if (!d.teams[mem.k]) assignTeam(game, mem.name, players); if (firstOfHalf) d.money[mem.k] ??= DEFUSE.start; }
+  const idx = { t: 0, ct: 0 };
+  for (const mem of members(game, players)) { const t = d.teams[mem.k], i = idx[t]++ % 5, at = (t === 't' ? m.t : m.ct)[i];
+    if (mem.bot) { mem.bot.x = ARENA.cx + at[0]; mem.bot.z = ARENA.cz + at[1]; mem.bot.path = null; mem.bot.retake = false; mem.bot.dead = false; mem.bot.ammo = weaponById(mem.bot.weapon).mag; botBuy(game, mem.bot); }
+    else C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + i }; }
+  const ts = members(game, players).filter(x => d.teams[x.k] === 't'); d.bomb = { carrier: ts.length ? ts[Math.floor(Math.random() * ts.length)].k : null };
+  d.round = { phase: 'freeze', at: now, freezeUntil: now + DEFUSE.freezeMs, buyUntil: now + DEFUSE.freezeMs + DEFUSE.buyMs, endsAt: now + DEFUSE.freezeMs + DEFUSE.roundMs, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: Math.random() < .5 ? 'A' : 'B' };
+  A.dirty = true;   // loadouts changed: the room sends the whole world
+}
+function botBuy(game, b) {
+  const d = game.combat.d, k = key(b.name), t = d.teams[k], money = d.money[k] ?? DEFUSE.start; if (b.weapon !== 'pistol') return;
+  const want = money >= 4750 + 1000 && Math.random() < .2 ? 'sniper' : money >= 2900 ? (t === 't' ? 'ak' : 'm4') : money >= 1500 ? 'smg' : null;
+  if (want) { gain(d, k, -PRICE[want]); b.weapon = want; b.ammo = weaponById(want).mag; }
+}
+// May this player buy now (buy time, in their spawn, alive)? Returns an error message or null.
+export function buyError(game, name, pose, now) {
+  const d = game.combat.d, r = d.round, t = d.teams[key(name)]; if (!t) return 'Join a team first';
+  if (!r || (r.phase !== 'freeze' && now > r.buyUntil) || r.phase === 'over') return 'Buy time is over';
+  if ((game.combat.down || {})[key(name)]) return 'You are dead';
+  if (pose) { const m = map(game), sp = t === 't' ? m.t : m.ct, cx = sp.reduce((a, s) => a + s[0], 0) / sp.length, cz = sp.reduce((a, s) => a + s[1], 0) / sp.length; if (Math.hypot(pose.x - ARENA.cx - cx, pose.z - ARENA.cz - cz) > DEFUSE.buyRadius) return 'Buy only in your spawn'; }
+  return null;
+}
+export function pay(game, name, item) { const d = game.combat.d, k = key(name), p = PRICE[item] ?? 0; if ((d.money[k] ?? DEFUSE.start) < p) throw Error('Not enough money ($' + p + ')'); gain(d, k, -p); }
+
+// Plant / defuse: the client holds (hold: true) and lets go (hold: false); the host times it and checks you stay put.
+export function defuseApply(game, a, name, pose, now) {
+  const d = game.combat.d, r = d.round, k = key(name), t = d.teams[k]; if (!r) throw Error('No round');
+  if ((game.combat.down || {})[k]) throw Error('You are dead');
+  if (a.type === 'buy-kit') { const e = buyError(game, name, pose, now); if (e) throw Error(e); if (t !== 'ct') throw Error('Only CTs use a defuse kit'); if (d.kits[k]) throw Error('You have a kit'); pay(game, name, 'kit'); d.kits[k] = true; return 'Bought a defuse kit'; }
+  if (a.type === 'plant') {
+    if (!a.hold) { if (r.plant?.by === k) r.plant = null; return 'Stopped planting'; }
+    if (r.phase !== 'live') throw Error('Not now'); if (d.bomb.carrier !== k) throw Error('You don’t have the bomb');
+    const site = siteAt(game, pose); if (!site) throw Error('Plant on site A or B'); r.plant = { by: k, start: now, x: pose.x, z: pose.z, y: Math.max(0, (pose.y ?? EYE) - EYE), site }; return 'Planting…';
+  }
+  if (a.type === 'defuse') {
+    if (!a.hold) { if (r.defuse?.by === k) r.defuse = null; return 'Stopped defusing'; }
+    if (r.phase !== 'planted' || t !== 'ct') throw Error('Nothing to defuse'); const b = r.planted; if (!pose || Math.hypot(pose.x - b.x, pose.z - b.z) > 7) throw Error('Get closer to the bomb');
+    if (r.defuse && r.defuse.by !== k) throw Error('Someone is already defusing'); r.defuse = { by: k, start: now, ms: d.kits[k] ? DEFUSE.kitMs : DEFUSE.defuseMs, x: pose.x, z: pose.z }; return d.kits[k] ? 'Defusing with kit…' : 'Defusing…';
+  }
+  throw Error('Unknown defuse action');
+}
+export function siteAt(game, pose) { if (!pose) return null; const m = map(game); for (const [s, [x, z, r]] of Object.entries(m.sites)) if (Math.hypot(pose.x - ARENA.cx - x, pose.z - ARENA.cz - z) < r) return s; return null; }
+
+// Host tick: round clock, plant / defuse timers, the explosion, win checks, round changes. `hurtAll(x, z, y, dmg, radius)`
+// applies the explosion; `posOf(k)` gives where someone is (player pose or bot). Returns true when anything changed.
+export function defuseTick(game, players, now, { hurtAll, posOf }) {
+  const C = game.combat, d = C.d; if (!d?.round) return false; const r = d.round; let changed = false;
+  for (const mem of members(game, players)) if (!d.teams[mem.k]) { const t = assignTeam(game, mem.name, players); changed = true;
+    if (r.phase !== 'freeze') C.down[mem.k] = { until: 4e15, by: '', weapon: 'joined mid-round' };   // watch until the next round
+    else if (!mem.bot) { const m = map(game), n = members(game, players).filter(x => d.teams[x.k] === t).length - 1; (C.spawnTo ??= {})[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + n % 5 }; } }
+  // Someone on the Terrorist side always has the bomb during the freeze (e.g. the first players just joined).
+  if (r.phase === 'freeze' && !d.bomb.carrier) { const ts = members(game, players).filter(x => d.teams[x.k] === 't'); if (ts.length) { d.bomb.carrier = ts[Math.floor(Math.random() * ts.length)].k; changed = true; } }
+  if (d.matchOver) { if (now - d.matchOver.at > DEFUSE.matchOverMs) { startDefuse(game, now); return true; } return false; }
+  if (r.phase === 'freeze' && now >= r.freezeUntil) { r.phase = 'live'; changed = true; }
+  const alive = t => members(game, players).filter(m => d.teams[m.k] === t && !(C.down || {})[m.k]).length;
+  // Planting: stand still on the site with the bomb.
+  if (r.plant) { const p = posOf(r.plant.by); if (!p || (C.down || {})[r.plant.by] || Math.hypot(p.x - r.plant.x, p.z - r.plant.z) > 2.5 || d.bomb.carrier !== r.plant.by) { r.plant = null; changed = true; }
+    else if (now - r.plant.start >= DEFUSE.plantMs && r.phase === 'live') { r.planted = { x: r.plant.x, z: r.plant.z, y: r.plant.y, site: r.plant.site, at: now, explodeAt: now + DEFUSE.bombMs, by: r.plant.by }; r.phase = 'planted'; d.bomb.carrier = null; gain(d, r.plant.by, 300); r.plant = null; r.defuse = null; changed = true; } }
+  if (r.defuse) { const p = posOf(r.defuse.by); if (!p || (C.down || {})[r.defuse.by] || Math.hypot(p.x - r.defuse.x, p.z - r.defuse.z) > 2.5) { r.defuse = null; changed = true; }
+    else if (now - r.defuse.start >= r.defuse.ms) { end(game, 'ct', 'defuse', now); return true; } }
+  if (r.phase === 'live' || r.phase === 'planted') {
+    if (r.phase === 'planted' && now >= r.planted.explodeAt) { hurtAll(r.planted.x, r.planted.z, r.planted.y, 500, DEFUSE.bombRadius); end(game, 't', 'bomb', now); return true; }
+    if (alive('ct') === 0 && members(game, players).some(m => d.teams[m.k] === 'ct')) { end(game, 't', 'elim', now); return true; }
+    if (r.phase === 'live' && alive('t') === 0 && members(game, players).some(m => d.teams[m.k] === 't')) { end(game, 'ct', 'elim', now); return true; }
+    if (r.phase === 'live' && now >= r.endsAt) { end(game, 'ct', 'time', now); return true; }
+  }
+  if (r.phase === 'over' && now - r.overAt >= DEFUSE.overMs) { newRound(game, players, now); return true; }
+  return changed;
+}
+function end(game, winner, reason, now) {
+  const C = game.combat, d = C.d, r = d.round; r.phase = 'over'; r.winner = winner; r.reason = reason; r.overAt = now; r.plant = null; r.defuse = null;
+  d.score[winner]++; const loser = other(winner);
+  for (const [k, t] of Object.entries(d.teams)) { if (t === winner) gain(d, k, WIN[reason]); else gain(d, k, LOSS[Math.min(4, d.loss[loser])] + (loser === 't' && r.planted ? 800 : 0)); }
+  d.loss[loser]++; d.loss[winner] = Math.max(0, d.loss[winner] - 1);
+  if (d.score[winner] >= DEFUSE.win) d.matchOver = { at: now, winner };
+}

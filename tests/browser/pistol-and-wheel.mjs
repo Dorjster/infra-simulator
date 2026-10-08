@@ -24,12 +24,11 @@ async function player(name) {
   return page;
 }
 try {
-  // Host: Darja, Free Build, LAN room.
+  // Host: Darja hosts Payday on LAN (guns exist only in Payday and the Arena).
   const host = await player('Darja');
-  await host.click('[data-start=free]').catch(() => {}); await host.waitForTimeout(2000);
-  await host.evaluate(async () => { const d = await (await fetch('/api/room')).json(); await __infra.lab.lan.join({ name: 'Darja', code: d.roomCode, hostKey: d.hostKey }, true); }); await host.waitForTimeout(1500);
+  await host.click('[data-start=payday]'); await host.waitForTimeout(700); await host.click('#ss-pay-host'); await host.waitForTimeout(2500);
   await host.evaluate(() => { document.getElementById('lan-close')?.click(); __infra.lab.enter(); __infra.lab.look(-3, 9, -3, 6, 0); });
-  check('Darja sees slot 4 · Pistol', await host.evaluate(() => !document.getElementById('slot-pistol').hidden));
+  check('Darja sees slot 4 · her gun in Payday', await host.evaluate(() => !document.getElementById('slot-pistol').hidden));
   await host.keyboard.press('4'); await host.waitForTimeout(300);
   check('Key 4 draws the pistol', await host.evaluate(() => __infra.lab.pistol.equipped));
   const fired = await host.evaluate(async () => { const ok = __infra.lab.pistol.fire(); await new Promise(r => setTimeout(r, 60)); return { ok, shots: __infra.lab.pistol.shots }; });
@@ -54,7 +53,8 @@ try {
 
   // Key 4 for someone else does nothing.
   const other = await player('Sam');
-  await other.click('[data-start=free]').catch(() => {}); await other.waitForTimeout(1500); await other.evaluate(() => __infra.lab.enter());
+  const code = await host.evaluate(() => __infra.lab.lan.roomCode);   // Sam joins Darja's Payday room
+  await other.click('[data-start=join]'); await other.fill('#ss-code', code); await other.click('#ss-join'); await other.waitForTimeout(2500); await other.evaluate(() => __infra.lab.enter());
   await other.keyboard.press('4'); await other.waitForTimeout(200);
   check('Players not named Darja have no pistol', await other.evaluate(() => document.getElementById('slot-pistol').hidden && !__infra.lab.pistol.equipped));
 
