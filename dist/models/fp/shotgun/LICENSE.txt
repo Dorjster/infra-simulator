@@ -1,0 +1,11 @@
+Model Information:
+* title:	FPS Character Animation Pack Saps-12
+* source:	https://sketchfab.com/3d-models/fps-character-animation-pack-saps-12-3e5ebbd4ace24f2e92eadb7252927b31
+* author:	Cristian David Duque Camacho (https://sketchfab.com/DuqueCD7)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "FPS Character Animation Pack Saps-12" (https://sketchfab.com/3d-models/fps-character-animation-pack-saps-12-3e5ebbd4ace24f2e92eadb7252927b31) by Cristian David Duque Camacho (https://sketchfab.com/DuqueCD7) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

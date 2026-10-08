@@ -6,6 +6,7 @@ import * as THREE from './three.module.js';
 import { audioCtx, outAt } from './spatial-audio.js';
 import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, zoneAt, HIT_GROUPS } from './weapons-data.js';
 import { loadSounds, reloadSound } from './sound-bank.js';
+import { loadFP, fpFor } from './fp-view.js';
 import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT } from './weapon-models.js';
 
 // Draw (deploy) time per weapon, CS2-like: it swings up from below; no shooting until it's up.
@@ -40,7 +41,8 @@ export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kin
 // recoil(up, side): called per shot so the game turns the camera (the aim really moves, like CS spray).
 // inaccuracy(id): extra spread factor from moving / jumping (arena: CS2 rules, arena-move.js).
 // throwNade(id): a grenade in hand is thrown instead of fired (the arena sends it to the host).
-export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, recoil = () => {}, inaccuracy = () => 1, throwNade = () => {} }) {
+// moveSpeed(): the player's horizontal speed (first-person arms walk / run with it).
+export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, recoil = () => {}, inaccuracy = () => 1, throwNade = () => {}, moveSpeed = () => 0 }) {
   // equip by id also accepts a knife id (arena slot 3).
   let current = null, view = null, lastShot = 0, shots = 0, kick = 0, held = false, reloadUntil = 0, burst = 0, lastDry = 0, reloads = 0;
   const ammo = new Map(), dir = new THREE.Vector3(), muzzle = new THREE.Vector3();
@@ -50,12 +52,17 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   const reloading = () => performance.now() < reloadUntil;
   // The realistic models arrive a moment after start: swap the gun in hand once they do.
   loadSounds();
+  let fp = null;
+  // Guns: arms animated on the gun (fp-view.js) — draw, fire, reload, walk; until they load, the plain gun.
+  loadFP().then(() => { if (current && fpFor(current.id)) setView(current.id); });
   loadRealWeapons().then(n => { if (n && current) setView(current.id); });
   let drawAt = 0, drawMs = 1;
   function setView(id, draw = false) {
     if (view) { camera.remove(view); view = null; }
     if (draw && id) { drawAt = performance.now(); drawMs = DRAW_MS[id] || 600; sounds.draw(null, id); }
-    if (!id) return; const [x, y, z, sc] = VIEW[id] || VIEW.pistol; const m = weaponModel(id, sc); for (const [ax, r] of VIEW_ROT[id] || []) m.rotateOnWorldAxis(AXES[ax], r);   // how it's held
+    fp = null; if (!id) return;
+    const f = fpFor(id); if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); f.hold(id, { draw, drawMs: DRAW_MS[id] || 800 }); camera.add(view); if (!camera.parent) scene.add(camera); return; }
+    const [x, y, z, sc] = VIEW[id] || VIEW.pistol; const m = weaponModel(id, sc); for (const [ax, r] of VIEW_ROT[id] || []) m.rotateOnWorldAxis(AXES[ax], r);   // how it's held
     view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; camera.add(view);   // kick / sway move `view`
     if (!camera.parent) scene.add(camera);
   }
@@ -64,13 +71,13 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // R: swap the magazine (time depends on the gun); the rounds left in the old magazine are dropped, like CS.
   function reload() {
     if (!current || current.kind === 'knife' || current.kind === 'nade' || reloading() || left() === current.mag) return false;
-    const id = current.id; reloadUntil = performance.now() + current.reloadMs; held = false; reloads++; sounds.magOut(null, id);
+    const id = current.id; reloadUntil = performance.now() + current.reloadMs; held = false; reloads++; sounds.magOut(null, id); fp?.reload(current.reloadMs);
     setTimeout(() => { if (current?.id !== id) return; ammo.set(id, current.mag); sounds.magIn(null, id); setTimeout(() => current?.id === id && sounds.bolt(null, id), 180); drawHud(); }, current.reloadMs);
     drawHud(); return true;
   }
   // Knife: a short-range swing (no ammo, no tracer); hits the engineer in front of you within reach.
   function swing() {
-    lastShot = performance.now(); shots++; kick = 1; sounds.slash();
+    lastShot = performance.now(); shots++; kick = 1; sounds.slash(); fp?.fire();
     camera.getWorldDirection(dir); const origin = camera.getWorldPosition(new THREE.Vector3()); let best = null;
     for (const tgt of targets()) { const t = rayCapsule(origin, dir, tgt.feet); if (t !== null && t <= current.range && (!best || t < best.t)) best = { t, tgt }; }
     if (best) report({ type: 'hit', target: best.tgt.id, weapon: current.id, pellets: 1, zone: zoneAt(origin.y + dir.y * best.t - best.tgt.feet.y), head: false });
@@ -80,11 +87,11 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     if (!current || !canFire() || reloading() || performance.now() - lastShot < current.rateMs || performance.now() - drawAt < drawMs) return false;
     if (current.kind === 'knife') return swing();
     if (current.kind === 'bomb') return false;   // planting is held (lab → arena-ui.plant)
-    if (current.kind === 'nade') { lastShot = performance.now(); shots++; kick = 1; held = false; throwNade(current.id); return true; }
+    if (current.kind === 'nade') { lastShot = performance.now(); shots++; kick = 1; held = false; fp?.fire(); throwNade(current.id); return true; }
     if (left() <= 0) { if (performance.now() - lastDry > 250) { lastDry = performance.now(); sounds.dry(); } reload(); return false; }
-    lastShot = performance.now(); shots++; kick = 1; ammo.set(current.id, left() - 1);
+    lastShot = performance.now(); shots++; kick = 1; ammo.set(current.id, left() - 1); fp?.fire();
     camera.getWorldDirection(dir); const origin = camera.getWorldPosition(new THREE.Vector3());
-    view?.updateMatrixWorld(); muzzle.set(...(MUZZLE[current.id] || MUZZLE.pistol)); if (view) muzzle.applyMatrix4(view.matrixWorld); else muzzle.copy(origin);
+    view?.updateMatrixWorld(); muzzle.set(...(MUZZLE[current.id] || MUZZLE.pistol)); if (fp && view) fp.muzzle(muzzle); else if (view) muzzle.applyMatrix4(view.matrixWorld); else muzzle.copy(origin);   // from the real barrel
     // First shot is accurate; spray widens the cone (and the kick climbs) the longer you hold, like CS.
     const spread = { ...current, spread: current.spread * (1 + Math.min(burst, 8) * .35) * inaccuracy(current.id) };
     const dirs = shotDirs(dir, spread); effects.shoot(muzzle, dir.clone(), { ...shotFx(current), dirs });
@@ -105,7 +112,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     press(on) { held = on; if (on) fire(); },
     hideView(hidden) { if (view) view.visible = !hidden; },
     update(dt) {
-      if (!current) return; if (held && current.auto) fire();
+      if (!current) return; if (held && current.auto) fire(); if (fp && view?.visible) fp.update(dt, moveSpeed());
       if (performance.now() - lastShot > current.rateMs * 2.5) burst = Math.max(0, burst - dt * 20);
       kick = Math.max(0, kick - dt * (current.auto ? 14 : 7));
       const r = reloading() ? Math.sin(Math.min(1, 1 - (reloadUntil - performance.now()) / current.reloadMs) * Math.PI) : 0;   // dip the gun while reloading

@@ -34,6 +34,10 @@ Global Defensive is a CS2-style shooter inside Infra Simulator. Play it solo wit
   - **Flashbang:** whites out your screen, depending on how directly you look at it.
   - **Smoke:** an 18 s cloud nobody can see through, bots included.
   - **Molotov:** 7 s of fire that burns anyone standing in it.
+- **Real hands:** gloved first-person arms animated on the guns:
+  - **Draw, fire, reload, walk and run:** the AK-47, M4A1, AWP, MP5 and M249 are held two-handed on the rifle arms. The pistol and Desert Eagle have a two-hand grip. The shotgun has its own pump and reload.
+  - **Knives:** the ★ Karambit | Ruby sits in a closed fist like CS2: ring on the index finger, blade curling up, left hand relaxed at the bottom left.
+  - **Grenades and the bomb:** held in the right hand.
 - **Drop and pick up:** **G** drops the gun or grenade in hand. Walking over an item picks it up if that slot is empty, and **E** swaps. Anyone can pick up dropped items, bots too, and the dead drop their best gun.
 - **Spectating:** when you die, the camera follows your killer. Left click switches to the next player, and Space switches between their eyes and a chase camera.
 - **Sounds:** recorded gunshots per weapon, magazine and bolt reloads, and footsteps that change with the surface: concrete, sand, wood crates, metal containers. Other players' and bots' sounds come from where they happen. Walking with Shift is silent.
@@ -74,6 +78,7 @@ Every Global Defensive key can be rebound in **Settings → Controls**, separate
 
 - **Guns, grenades and C4:** "Guns & Explosives" by 3dmodelscc0 (CC0).
 - **Karambit:** "Karambit" by Diamonddogkz, Sketchfab, CC BY 4.0. Its metal parts were repainted in an original ruby finish.
+- **First-person arms:** "FPS Character Animation Pack" (Ak-47, Pistol, Saps-12) by Cristian David Duque Camacho (DuqueCD7), Sketchfab, CC BY 4.0.
 - **Gunshots:** "The Free Firearm Sound Library" (CC0).
 - **Reloads:** "Gun Reload Sounds" by SpringySpringo (CC0).
 - **Footsteps:** Kenney "Impact Sounds" (CC0).
