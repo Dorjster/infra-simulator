@@ -187,10 +187,10 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       // Knife swings: light = a fast sweep right→left; heavy = draw back, then a stab forward.
       let kx = 0, ky = 0, kz = 0, rx = 0, ry = 0, rz = 0;
       if (knife) { const K = KNIFE[knife.kind], t = Math.min(1, (now() - knife.start) / K.rateMs);
-        if (knife.kind === 'light') { const s = Math.sin(Math.min(1, t * 2.2) * Math.PI); kx = -s * .5; ky = s * .12; rz = s * .9; ry = s * .5; }
+        if (knife.kind === 'light') { const s = Math.sin(Math.min(1, t * 2.2) * Math.PI); kx = -s * .22; ky = s * .06; kz = -s * .08; rz = s * .45; ry = s * .28; }   // a quick diagonal swipe that stays in the lower right
         else { const back = Math.min(1, t / .26), stab = Math.max(0, Math.min(1, (t - .26) / .16)), rec = Math.max(0, (t - .55) / .45), amt = (back - stab * 1.6 + 0) * (1 - rec); kz = amt * .35 - stab * (1 - rec) * .3; rx = -stab * (1 - rec) * .5 + back * (1 - stab) * .25; ky = back * (1 - stab) * .1; } }
       // Grenade held: raised back over the shoulder (long) or low (short) while the pin is out.
-      let ny = 0, nz = 0, nr = 0; const N = nade.state; if (current.kind === 'nade' && (N === 'priming' || N === 'held')) { const s = this.nade?.strength; ny = s === 'short' ? -.25 : .12; nz = s === 'short' ? -.1 : .25; nr = s === 'short' ? .2 : -.35; }
+      let ny = 0, nz = 0, nr = 0; const N = nade.state; if (current.kind === 'nade' && (N === 'priming' || N === 'held')) { const s = this.nade?.strength; ny = s === 'short' ? -.12 : .05; nz = s === 'short' ? -.04 : .1; nr = s === 'short' ? .12 : -.18; }
       view.position.set(x + kx, y0 + kick * .05 * k - rl * .35 - dr * .55 + ky + ny, z + kick * .22 * k + dr * .15 + kz + nz);
       view.rotation.set(kick * .35 * k - rl * .6 - dr * .9 + rx + nr, .04 + ry, rl * .4 + dr * .35 + spin + rz);
       if (scope && view) view.visible = false;

@@ -31,7 +31,7 @@ const attachInfo = id => ATTACH[id] || ATTACH[VARIANTS[id]?.base] || ATTACH[{ lu
 const BASE = { rifle: new THREE.Quaternion(), pistol: new THREE.Quaternion(), shotgun: new THREE.Quaternion() };
 // Knives are gripped in a closed fist: each finger segment curls by these angles (after the animation).
 // One-handed items: the left arm hangs relaxed (CS2 shows it open at the bottom left) — upper arm / forearm turns.
-export const LEFT = { relaxed: true, upper: [0, 0, .9], fore: [0, .6, 0] };   // palm down, open, at the bottom left
+export const LEFT = { relaxed: true, upper: [-.5, 0, 1.2], fore: [0, .3, 0] };   // palm down, open, at the bottom left
 export const FIST = { axis: 'x', sign: 1, angles: [1.0, 1.3, .9], thumb: [.3, .5, .4] };
 const loaded = new Map(), ready = new Map();   // pack name → promise · → built arms
 function load(name) {
