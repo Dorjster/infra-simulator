@@ -73,6 +73,9 @@ await guest.waitForTimeout(900); const panners0 = await host.evaluate(() => __pa
 await guest.keyboard.press('Digit1'); await guest.waitForTimeout(300);
 await host.waitForFunction(() => !__infra.lab.world.operations.game.combat.down?.host, null, { timeout: 6000 }).catch(() => {});
 const place = () => Promise.all([host.evaluate(l => { __infra.camera.position.x = l.x - 18; __infra.camera.position.z = l.z; }, lane), guest.evaluate(l => { __infra.camera.position.x = l.x + 17; __infra.camera.position.z = l.z; }, lane)]);
+// (bots are deadly since one head shot kills: take the bot out so this checks player vs player only)
+await host.evaluate(async () => { while ((__infra.lab.world.operations.game.arena?.bots || []).length) await __infra.lab.lan.act({ type: 'arena', action: { type: 'remove-bot' } }); }); await host.evaluate(() => __infra.lab.lan.act({ type: 'arena', action: { type: 'start-match' } })); await host.waitForTimeout(3000);   // hosting opens a lobby: start the match (fresh loadouts: the guest takes an AK again)
+await guest.evaluate(async () => { await __infra.lab.lan.act({ type: 'arena', action: { type: 'loadout', primary: 'ak' } }); __infra.lab.pistol.equip('ak'); }); await guest.waitForTimeout(1200);
 let hit = false; for (let i = 0; i < 25 && !hit; i++) {
   await place(); await guest.waitForTimeout(120);
   await guest.evaluate(() => { const L = __infra.lab, m = [...L.lan.models.values()].find(m => /Host/.test(m.name)); if (!m) return; const t = m.g.position, c = __infra.camera; L.look(c.position.x, c.position.z, t.x, t.y + 7.5, t.z, c.position.y); });   // aim through the game's own look (as the mouse does)

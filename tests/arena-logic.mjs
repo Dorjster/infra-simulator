@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { startArena, arenaApply, arenaTick, botRoster, PRIMARIES, MAX_BOTS } from '../dist/arena-logic.js';
 import { combatApply, combatTick, hpOf, isDown, arenaArsenalOf } from '../dist/combat-logic.js';
-import { ARENA_MAPS, mapBoxes, walkable, lineOfSight } from '../dist/arena-maps.js';
+import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
 import { MAX_HP } from '../dist/weapons-data.js';
 // Deterministic: bots, spawns and hits use Math.random — seed it so the test never flakes.
@@ -33,15 +33,18 @@ assert.equal(lineOfSight(boxes, ARENA.cx - 110, ARENA.cz - 110, ARENA.cx - 110, 
 // A player hits a bot: CS2 damage, host-checked.
 const g2 = { levels: {} }; now += 1000; startArena(g2, { map: 'yard', bots: 1 }, now); const bot = g2.arena.bots[0];
 arenaApply(g2, { type: 'loadout', primary: 'ak' }, 'Sam');
-const players = [{ id: 'p1', name: 'Sam', pose: { x: bot.x + 20, y: 9.7, z: bot.z } }, ...botRoster(g2)];
+// A spot 20 units from the bot with a clear line of fire (the host refuses hits through walls).
+const clearSpot = (() => { for (let a = 0; a < 6.3; a += .2) { const x = bot.x + Math.cos(a) * 20, z = bot.z + Math.sin(a) * 20; if (walkable(boxes, bounds, x, z) && segmentClear(boxes, x, 9.7, z, bot.x, 7, bot.z)) return { x, z }; } throw Error('no clear spot'); })();
+const players = [{ id: 'p1', name: 'Sam', pose: { x: clearSpot.x, y: 9.7, z: clearSpot.z } }, ...botRoster(g2)];
 const r = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'ak', zone: 'chest' }, 'Sam', players, 'p1', now + 10); assert.equal(r.hp, MAX_HP - 36);
 assert.throws(() => combatApply(g2, { type: 'hit', target: bot.id, weapon: 'sniper' }, 'Sam', players, 'p1', now + 2000), /own/);
-const k = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'knife', zone: 'chest' }, 'Sam', [{ ...players[0], pose: { x: bot.x + 3, y: 9.7, z: bot.z } }, players[1]], 'p1', now + 3000); assert.equal(k.dmg, 40, 'knife');
-assert.throws(() => combatApply(g2, { type: 'hit', target: bot.id, weapon: 'knife' }, 'Sam', players, 'p1', now + 4000), /range/);
+const kpos = { x: bot.x + (clearSpot.x - bot.x) * .15, y: 9.7, z: bot.z + (clearSpot.z - bot.z) * .15, yaw: Math.atan2(-(bot.x - clearSpot.x), -(bot.z - clearSpot.z)) }, bp = players.find(p => p.id === bot.id);
+const k = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'knife', zone: 'chest' }, 'Sam', [{ ...players[0], pose: kpos }, { ...bp, pose: { ...bp.pose, yaw: kpos.yaw + Math.PI } }], 'p1', now + 3000); assert.equal(k.dmg, 40, 'knife: light slash from the front');
+assert.throws(() => combatApply(g2, { type: 'hit', target: bot.id, weapon: 'knife' }, 'Sam', players, 'p1', now + 4000), /reach/);
 // Kill → respawn after 2.5 s with full HP; a dead player gets a spawn order.
 const kill = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'ak', zone: 'head' }, 'Sam', players, 'p1', now + 5000); assert(kill.down); assert.equal(g2.combat.kills.sam, 1);
 combatTick(g2, now + 5000 + 2600); assert.equal(hpOf(g2, bot.name), MAX_HP); arenaTick(g2, players, .05, now + 7700); assert(!isDown(g2, bot.name, now + 7700));
-g2.combat.down.sam = { until: now + 8000 }; combatTick(g2, now + 8100); arenaTick(g2, players, .05, now + 8150); assert(Number.isInteger(g2.combat.spawnTo.sam?.i), 'spawn order for the player');
+g2.combat.down.sam = { until: now + 8000 }; combatTick(g2, now + 8100); arenaTick(g2, players, .05, now + 8150); assert(Number.isFinite(g2.combat.spawnTo.sam?.x) && g2.combat.spawnTo.sam.at === now + 8100, 'spawn order (an exact spot) for the respawned player');
 // Match clock: over after 10 minutes, then a new match on the same map.
 arenaTick(g2, players, .05, g2.arena.endsAt + 1); assert(g2.arena.over); arenaTick(g2, players, .05, g2.arena.endsAt + 13000); assert(!g2.arena.over);
 // Dropped weapons: G drops, auto pickup into an empty slot, E swaps, the dead drop their gun, bots upgrade, expiry.
@@ -60,9 +63,9 @@ arenaTick(g2, players, .05, g2.arena.endsAt + 1); assert(g2.arena.over); arenaTi
   assert.match(arenaApply(g3, { type: 'pickup', id: ak.id, swap: true }, 'Ann', pl, t), /AK-47/); assert.equal(g3.arena.loadout.ann.primary, 'ak'); assert(g3.combat.ground.some(x => x.item === 'm4'), 'swap leaves the M4');
   assert.match(arenaApply(g3, { type: 'pickup', id: pistolOnGround.id }, 'Ann', pl, t), /Glock-18/); assert.deepEqual(arenaArsenalOf(g3, 'Ann'), ['ak', 'pistol', 'knife']);
   assert.throws(() => arenaApply(g3, { type: 'drop', slot: 'primary' }, 'Nobody', pl, t), /Nothing to drop/);
-  // Death drop (once per death), in deathmatch the loadout stays for the respawn.
+  // Deathmatch: you respawn with your loadout, so nothing drops (no copies of guns). Defuse drops: arena-defuse test.
   const n0 = g3.combat.ground.length; g3.combat.down.ann = { until: t + 2500 }; arenaTick(g3, pl, .05, t + 10); arenaTick(g3, pl, .05, t + 60);
-  assert.equal(g3.combat.ground.length, n0 + 1); assert.equal(g3.combat.ground.at(-1).item, 'ak'); assert.equal(g3.arena.loadout.ann.primary, 'ak');
+  assert.equal(g3.combat.ground.length, n0, 'no duplicate gun on a deathmatch death'); assert.equal(g3.arena.loadout.ann.primary, 'ak');
   // Bots take a better gun they walk over.
   arenaApply(g3, { type: 'add-bot' }, 'Ann', pl, t); const bot = g3.arena.bots[0]; bot.weapon = 'smg'; g3.combat.ground.push({ id: 'gx', item: 'sniper', x: bot.x, z: bot.z, y: 0, yaw: 0, at: t });
   pl.length = 0; delete g3.combat.down.ann; arenaTick(g3, pl, .05, t + 100); assert.equal(bot.weapon, 'sniper'); assert(g3.combat.ground.some(x => x.item === 'smg'), 'bot left its SMG');

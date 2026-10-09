@@ -20,6 +20,8 @@ await host.waitForFunction(() => document.getElementById('ar-load')?.hidden !== 
 const code = await host.evaluate(() => __infra.lab.lan.roomCode);
 await guest.evaluate(() => document.querySelector('[data-start=join]').click()); await guest.waitForSelector('#ss-code'); await guest.fill('#ss-jname', 'Guest'); await guest.fill('#ss-code', code); await guest.evaluate(() => document.getElementById('ss-join').click());
 await guest.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.world.operations.game.combat?.d?.teams?.guest && __infra.lab.arenaScene?.inArena(__infra.camera.position.z), null, { timeout: 30000 });
+// Hosting opens a 2-minute lobby; the host starts the match once the guest is in.
+await host.evaluate(() => __infra.lab.lan.act({ type: 'arena', action: { type: 'start-match' } })); await host.waitForFunction(() => __infra.lab.world.operations.game.arena.lobby?.started && __infra.lab.world.operations.game.combat.d.round.phase === 'freeze', null, { timeout: 10000 });
 let s = await D(host); check('Host is T, the guest CT', s.teams.host === 't' && s.teams.guest === 'ct', JSON.stringify(s.teams));
 check('The host carries the bomb', s.carrier === 'host');
 const sg = await D(guest); check('The guest sees the same teams', sg.teams.host === 't' && sg.teams.guest === 'ct');

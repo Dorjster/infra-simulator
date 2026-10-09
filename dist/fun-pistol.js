@@ -90,14 +90,23 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
       pellets.push({ mesh, from: origin.clone(), dir: d, dist: hit.point.distanceTo(origin), travelled: 0, hit });
     }
   }
-  function impact({ point, normal }) {
+  // Global Defensive: the impact points are already known (the eye ray); tracers fly from the muzzle to them.
+  // ends: [{ point, normal (wall) | null, flesh }].
+  const fleshMat = new THREE.MeshBasicMaterial({ color: 0x9a1010 });
+  function shootAt(origin, ends, { volume = .5, pitch = 1, flashSize = 1.1, at = null, id = null } = {}) {
+    flash(origin, ends.at(-1) ? ends.at(-1).point.clone().sub(origin).normalize() : new THREE.Vector3(0, 0, -1), flashSize); if (!(id && shotSound(id, { at, volume: volume / .5 * .8 }))) bang(volume, pitch, at);
+    for (const e of ends) { if (e.mark) { impact({ point: e.point, normal: e.normal }); continue; } const d = e.point.clone().sub(origin), dist = d.length(); if (dist < 1e-3) continue; d.divideScalar(dist); const mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(e.point); scene.add(mesh);
+      pellets.push({ mesh, from: origin.clone(), dir: d, dist, travelled: 0, hit: e.flesh ? { point: e.point, normal: null, flesh: true } : { point: e.point, normal: e.normal } }); }
+  }
+  function impact({ point, normal, flesh }) {
+    if (flesh) { for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(sparkGeo, fleshMat); m.position.copy(point); scene.add(m); sparks.push({ m, v: new THREE.Vector3((Math.random() - .5) * 8, Math.random() * 6, (Math.random() - .5) * 8), t: 0 }); } return; }
     if (!normal) return;
     for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(sparkGeo, sparkMat); m.position.copy(point); scene.add(m); sparks.push({ m, v: normal.clone().multiplyScalar(4 + Math.random() * 4).add(new THREE.Vector3((Math.random() - .5) * 6, Math.random() * 4, (Math.random() - .5) * 6)), t: 0 }); }
     const mark = markPool[markAt++ % markPool.length]; marks.splice(marks.findIndex(k => k.m === mark) >>> 0, marks.some(k => k.m === mark) ? 1 : 0); mark.material.opacity = .8; mark.visible = true; if (!mark.parent) scene.add(mark); mark.position.copy(point).addScaledVector(normal, .012); mark.lookAt(point.clone().add(normal)); marks.push({ m: mark, t: 0 });
 
   }
   function update(dt) {
-    for (let i = pellets.length - 1; i >= 0; i--) { const p = pellets[i]; p.travelled += dt * 180; if (p.travelled >= p.dist) { impact(p.hit); scene.remove(p.mesh); pellets.splice(i, 1); continue; } p.mesh.position.copy(p.from).addScaledVector(p.dir, p.travelled); }
+    for (let i = pellets.length - 1; i >= 0; i--) { const p = pellets[i]; p.travelled += dt * 900; if (p.travelled >= p.dist) { impact(p.hit); scene.remove(p.mesh); pellets.splice(i, 1); continue; } p.mesh.position.copy(p.from).addScaledVector(p.dir, p.travelled); }
     for (let i = sparks.length - 1; i >= 0; i--) { const s = sparks[i]; s.t += dt; s.v.y -= 30 * dt; s.m.position.addScaledVector(s.v, dt); s.m.scale.setScalar(Math.max(.01, 1 - s.t * 2.5)); if (s.t > .4) { scene.remove(s.m); sparks.splice(i, 1); } }
     for (let i = marks.length - 1; i >= 0; i--) { const k = marks[i]; k.t += dt; if (k.t > 6) k.m.material.opacity = Math.max(0, .8 - (k.t - 6) * .4); if (k.t > 8) { k.m.visible = false; marks.splice(i, 1); } }
     for (let i = flashes.length - 1; i >= 0; i--) { const f = flashes[i]; f.t += dt; f.s.material.opacity = Math.max(0, 1 - f.t * 14); if (f.t > .08) { f.s.visible = false; flashes.splice(i, 1); } }
@@ -105,7 +114,7 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
   }
   // One of each effect object, for warming up the GPU before the first shot (see graphics.prewarm).
   function samples() { const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); return [new THREE.Mesh(pelletGeo, pelletMat), new THREE.Mesh(sparkGeo, sparkMat), new THREE.Mesh(markGeo, markMat.clone()), fl]; }
-  return { shoot, update, hitPoint, samples, get active() { return pellets.length + sparks.length + marks.length; } };
+  return { shoot, shootAt, update, hitPoint, samples, get active() { return pellets.length + sparks.length + marks.length; } };
 }
 
 // The local player's pistol: a first-person view model on the camera, recoil and a fire-rate limit.

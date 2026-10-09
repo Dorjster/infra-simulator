@@ -28,7 +28,8 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
     hitMarker(kill, head) { hitSound(kill ? 'kill' : head ? 'head' : 'body'); const m = $('cb-mark'); m.className = kill ? 'kill' : ''; m.style.opacity = 1; clearTimeout(markTimer); markTimer = setTimeout(() => m.style.opacity = 0, kill ? 500 : 160); },
     get down() { const g = world.operations.game; return g.mode === 'arena' && isDown(g, name()); },
     update() {
-      const g = world.operations.game, arena = g.mode === 'arena', on = arena && lan.connected;   // HP only in Global Defensive (no guns elsewhere) $('cb-hp').hidden = !on;
+      const g = world.operations.game, arena = g.mode === 'arena', on = arena && lan.connected;   // HP only in Global Defensive (no guns elsewhere); shown by gd-hud.js there
+      $('cb-hp').hidden = true;
       if (!on) { $('cb-down').hidden = true; return; }
       const hp = hpOf(g, name()); $('cb-hp-t').textContent = 'HP ' + hp; $('cb-hp-n').textContent = hp; $('cb-hp').classList.toggle('low', hp <= 25);
       if (hp < lastHp) { const f = $('cb-flash'); f.style.opacity = .85; setTimeout(() => f.style.opacity = 0, 120); } lastHp = hp;
@@ -38,7 +39,7 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
       const feed = (g.combat?.feed || []).filter(f => Date.now() - f.at < 8000), fk = feed.map(f => f.at).join();
       if (arena) { $('cb-feed').innerHTML = ''; feedKey = ''; } else if (fk !== feedKey) { feedKey = fk; $('cb-feed').innerHTML = feed.map(f => `<p>${String(f.by).replace(/[<>&]/g, '')} <b style="color:#ffb347">⟶</b> ${String(f.target).replace(/[<>&]/g, '')} <small>${f.weapon}${f.head ? ' · head' : ''}</small></p>`).join(''); }
       // Engineers who are down fall over on everyone's screen.
-      for (const [id, m] of lan.models || []) { const p = lan.players?.find(x => x.id === id); const dn = !!p && isDown(g, p.name); if (dn && !m.cbDown) m.play?.('dead'); m.cbDown = dn; }
+      for (const [id, m] of lan.models || []) { const p = lan.players?.find(x => x.id === id); const dn = !!p && isDown(g, p.name); if (dn && !m.cbDown) m.play?.('dead'); else if (!dn && m.cbDown) m.play?.(null); m.cbDown = dn; }   // alive again (respawn, new round): stand up at once
     }
   };
 }

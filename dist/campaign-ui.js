@@ -78,6 +78,8 @@ export function createCampaignUI(ctx) {
     const i = await roomInfo().catch(() => null), code = hosted?.roomCode || i?.roomCode || lan.roomCode || '', addrs = hosted?.addresses || i?.addresses || [];
     invite = code ? { code, addrs } : null; renderInvite();
   }
+  // (the arena shows these in its lobby and scoreboard: the bar would sit on the round clock)
+  const inviteText = () => invite && lan.connected && lan.canManageWorld ? { addrs: invite.addrs, code: invite.code } : null;
   function renderInvite() {
     const on = !!invite && lan.connected && lan.canManageWorld; inviteBar.hidden = !on; if (!on) return;
     inviteBar.innerHTML = `<span style="color:#7fe3f2;font-size:11px;letter-spacing:.12em">HOSTING · FRIENDS JOIN WITH</span><span>${invite.addrs.length ? invite.addrs.map(a => `<code style="font-size:15px">${esc(a)}</code>`).join(' or ') : '<em>this computer\'s address</em>'}</span><span>passcode <code style="font-size:15px">${esc(invite.code)}</code></span>`;
@@ -160,12 +162,27 @@ export function createCampaignUI(ctx) {
   async function startArena() {
     const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
     subPanel(`<h2>Global Defensive</h2>
-     <div class="ss-form"><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div>
+     <div class="ss-form"><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div><p id="ss-ar-status" class="ss-note" hidden role="status"></p>
      <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B), respawn in 2.5 s, most kills in 10 minutes. <b>Defuse</b>: Terrorists vs Counter-Terrorists with CS2 money and rounds — plant the bomb on A or B (5, hold click) or defuse it (E); first to 13, friendly fire on. Knife on 3 — Darja carries her ruby karambit. Bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
+      // Start: the chosen mode and map are sent once and confirmed from the room's own state before anyone enters.
+      // Opening the room to the LAN restarts its listener; we wait for the reconnect instead of sending into the gap
+      // (that gap used to drop the Defuse request and drop you into whatever arena the room still had).
+      const status = el.querySelector('#ss-ar-status');
+      const fail = msg => { status.textContent = msg; status.hidden = false; notify(msg); busy = false; el.querySelectorAll('#ss-ar-solo,#ss-ar-host').forEach(b => b.disabled = false); };
+      let busy = false;
       const go = async host => {
-        if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); } catch (e) { notify(e.message); return; } }
-        if (!(await joinLocalRoom())) { notify('The arena runs on this computer’s room · start the game from the desktop app or the room server'); return; }
-        run(send({ type: 'mode', mode: 'arena', kind: el.querySelector('#ss-ar-kind').value, map: el.querySelector('#ss-ar-map').value, bots: +el.querySelector('#ss-ar-bots').value }), () => { begin(); });
+        if (busy) return; busy = true; el.querySelectorAll('#ss-ar-solo,#ss-ar-host').forEach(b => b.disabled = true); status.hidden = false; status.textContent = 'Starting…';
+        const kind = el.querySelector('#ss-ar-kind').value, map = el.querySelector('#ss-ar-map').value, bots = +el.querySelector('#ss-ar-bots').value;
+        if (!ARENA_MAPS[map] || ARENA_MAPS[map].kind !== kind) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
+        const before = lan.epoch;
+        if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); if (h?.rebound && lan.connected) { status.textContent = 'Opening the room to your network…'; if (!(await lan.whenReady(12000, before))) return fail('The room did not come back after opening it to the LAN. Check the firewall and try Host again.'); } } catch (e) { return fail(e.message); } }
+        if (!(await joinLocalRoom())) return fail('The arena runs on this computer’s room · start the game from the desktop app or the room server');
+        if (!(await lan.whenReady(8000))) return fail('Not connected to the room yet');
+        let out; try { out = await send({ type: 'mode', mode: 'arena', kind, map, bots, difficulty: el.querySelector('#ss-ar-diff')?.value || 'normal', lobby: !!host }); /* hosting: a 2-minute lobby for friends to join */ } catch (e) { return fail(e.message); }
+        // Confirmed by the room's own state (the reply carries the new world): mode, kind and map must all match.
+        const t0 = performance.now(); while (performance.now() - t0 < 4000 && !(g().mode === 'arena' && g().arena?.kind === kind && g().arena?.map === map && (kind !== 'defuse' || g().combat?.d))) await new Promise(r => setTimeout(r, 50));
+        if (!(g().mode === 'arena' && g().arena?.kind === kind && g().arena?.map === map && (kind !== 'defuse' || g().combat?.d))) return fail('The room did not start ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' on ' + ARENA_MAPS[map].name + (typeof out === 'string' ? ' (' + out + ')' : '') + '. Nothing was started; try again.');
+        busy = false; notify('Global Defensive · ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + ARENA_MAPS[map].name + (host ? ' · hosting on your network' : '')); begin();
       };
       // Maps for the chosen mode (deathmatch: Freight Yard, Old Town · defuse: Dune, Plaza, Hamlet).
       const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === k).map(([id, m]) => `<option value="${id}">${m.name}</option>`).join(''); };
@@ -480,5 +497,5 @@ export function createCampaignUI(ctx) {
   }
   // First load: the start screen. A ?join= link goes straight to the join form.
   showStart(true); if (new URLSearchParams(globalThis.location?.search || '').get('join')) startJoin();
-  return { update, key, panel, close, showStart, get isOpen() { return open || startOpen; }, get onStartScreen() { return startOpen; }, get startOpen() { return startOpen; }, render, targetOf };
+  return { get invite() { return inviteText(); }, update, key, panel, close, showStart, get isOpen() { return open || startOpen; }, get onStartScreen() { return startOpen; }, get startOpen() { return startOpen; }, render, targetOf };
 }

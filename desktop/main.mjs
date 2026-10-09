@@ -31,7 +31,7 @@ app.commandLine.appendSwitch('force_high_performance_gpu');
 // No usable GPU driver: keep WebGL on Chromium's software renderer instead of failing (newer Chromium drops the automatic fallback).
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch
-let win = null, room = null, hosting = false;
+let win = null, room = null, hosting = false, inMatch = false, quitting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');
 const origin = () => 'http://127.0.0.1:' + room.port;
 // Private LAN hosts a player may join (http only, RFC 1918 + link-local + loopback).
@@ -53,6 +53,8 @@ function createWindow() {
     webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, backgroundThrottling: false }
   });
   win.once('ready-to-show', () => win.show());
+  // In a Global Defensive match, closing the window (Alt+F4, the title bar ×) asks first.
+  win.on('close', e => { if (!inMatch || quitting) return; const r = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Keep playing', 'Quit'], defaultId: 0, cancelId: 0, message: 'Leave the match and quit Infra Simulator?' }); if (r === 0) e.preventDefault(); else quitting = true; });
   // A host that can't be reached (wrong address or port, firewall, different network) must not leave a
   // black window: come back to this computer's start screen and say what happened.
   win.webContents.on('did-fail-load', (_e, code, desc, url, isMain) => {
@@ -129,24 +131,31 @@ ipcMain.handle('desktop:discover', () => { listen(); scanSubnets(); const now = 
 ipcMain.handle('desktop:host', async (_e, opts = {}) => {
   beaconName = String(opts?.name || '').slice(0, 40);
   if (opts?.code) await room.setCode(opts.code);
-  if (!hosting) { const port = room.port; try { await room.rebind('0.0.0.0', port); } catch { await room.rebind('0.0.0.0', 0); } hosting = true; }
+  // Opening to the LAN restarts the listener: connected pages reconnect (`rebound` tells the page to wait for that).
+  let rebound = false; if (!hosting) { const port = room.port; try { await room.rebind('0.0.0.0', port); } catch { await room.rebind('0.0.0.0', 0); } hosting = true; rebound = true; }
   startBeacon();
-  return { port: room.port, roomCode: room.roomCode, addresses: room.addresses(), hosting };
+  return { port: room.port, roomCode: room.roomCode, addresses: room.addresses(), hosting, rebound };
 });
 ipcMain.handle('desktop:stop-hosting', async () => { stopBeacon(); if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } return { hosting }; });
+ipcMain.handle('desktop:in-match', (_e, on) => { inMatch = !!on; return inMatch; });
 ipcMain.handle('desktop:info', () => ({ version: app.getVersion(), platform: process.platform, hosting, port: room.port, savePath: savePath() }));
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(async () => {
   app.setAboutPanelOptions({ applicationName: 'Infra Simulator', applicationVersion: app.getVersion(), credits: 'Created by Darja', copyright: '© Darja' });
   await openRoom(); listen();
+  // Windows / Linux: menu shortcuts are Ctrl+letter (Ctrl+W close, Ctrl+R reload, Ctrl+A select all, Ctrl+± zoom…).
+  // In Global Defensive Ctrl is crouch, so crouch-walking (Ctrl+W) closed the game and crouch-reloading (Ctrl+R)
+  // reloaded it. There the menu keeps its items but does not register their shortcuts: the keys go to the game
+  // (text fields still copy / paste natively). F11 (full screen) stays. macOS uses Cmd, which never collides.
+  const mac = process.platform === 'darwin', key = item => mac ? item : { ...item, registerAccelerator: false };
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
-    { label: 'File', submenu: [{ label: 'Import campaign save…', click: importSave }, { label: 'Export hosted campaign save…', click: exportSave }, { label: 'Show saves folder', click: () => shell.openPath(app.getPath('userData')) }, { type: 'separator' }, process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }] },
+    ...(mac ? [{ role: 'appMenu' }] : []),
+    { label: 'File', submenu: [{ label: 'Import campaign save…', click: importSave }, { label: 'Export hosted campaign save…', click: exportSave }, { label: 'Show saves folder', click: () => shell.openPath(app.getPath('userData')) }, { type: 'separator' }, mac ? { role: 'close' } : key({ role: 'quit' })] },
     // Edit roles give text fields the platform clipboard shortcuts (Cmd+C/V/X/A on macOS need them).
-    { role: 'editMenu' },
-    { label: 'View', submenu: [{ role: 'togglefullscreen' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' }] },
-    { role: 'windowMenu' }
+    mac ? { role: 'editMenu' } : { label: 'Edit', submenu: ['undo', 'redo', null, 'cut', 'copy', 'paste', 'selectAll'].map(r => r ? key({ role: r }) : { type: 'separator' }) },
+    { label: 'View', submenu: [{ role: 'togglefullscreen' }, key({ role: 'resetZoom' }), key({ role: 'zoomIn' }), key({ role: 'zoomOut' }), { type: 'separator' }, key({ role: 'reload' }), key({ role: 'toggleDevTools' })] },
+    mac ? { role: 'windowMenu' } : { label: 'Window', submenu: [key({ role: 'minimize' }), key({ role: 'close' })] }
   ]));
   createWindow();
 });

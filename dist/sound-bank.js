@@ -17,11 +17,18 @@ export function play(name, { at = null, volume = 1, rate = 1 } = {}) {
   const buf = buffers.get(name); if (!buf) { loadSounds(); return false; }
   try { const c = audioCtx(), src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = volume; src.connect(g).connect(outAt(c, at)); src.start(); return true; } catch { return false; }
 }
-// Gunshot for a weapon id (the cannon sounds like the pistol), slightly varied every shot.
-export const shotSound = (id, { at = null, volume = 1 } = {}) => play('shot-' + (id === 'cannon' ? 'pistol' : id), { at, volume, rate: .97 + Math.random() * .06 });
+// Gunshot per weapon: [recording, playback rate, suppressed]. Guns without their own recording use the closest one,
+// pitched so each still sounds different; suppressed guns are muffled (low-pass) and quieter.
+const SHOT = { ak: ['ak', 1], galil: ['ak', 1.07], sg553: ['ak', .94], m4: ['m4', 1], famas: ['m4', 1.09], aug: ['m4', .93], m4s: ['m4', 1.05, true], ssg08: ['sniper', 1.22], sniper: ['sniper', 1], mac10: ['smg', 1.14], mp9: ['smg', 1.08], mp7: ['smg', .95], smg: ['smg', 1, true], ump45: ['smg', .84], p90: ['smg', 1.18], shotgun: ['shotgun', 1], xm1014: ['shotgun', 1.12], pistol: ['pistol', 1], cannon: ['pistol', .9], usps: ['pistol', 1.04, true], p250: ['pistol', .9], fiveseven: ['pistol', 1.1], deagle: ['deagle', 1], lmg: ['lmg', 1] };
+export function shotSound(id, { at = null, volume = 1 } = {}) {
+  const [file, rate, quiet] = SHOT[id] || ['pistol', 1], buf = buffers.get('shot-' + file); if (!buf) { loadSounds(); return false; }
+  try { const c = audioCtx(), src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate * (.97 + Math.random() * .06); g.gain.value = volume * (quiet ? .4 : 1);
+    if (quiet) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1300; src.connect(f).connect(g); } else src.connect(g); g.connect(outAt(c, at)); src.start(); return true; } catch { return false; }
+}
+export const isQuiet = id => !!SHOT[id]?.[2];
 // Reload parts per weapon: magazine out, magazine in, bolt / slide / pump.
 const RELOAD = { rifle: ['reload-rifle-0', 'reload-rifle-1', 'reload-pistol-1'], pistol: ['reload-pistol-0', 'reload-pistol-1', 'reload-rifle-0'], shotgun: [null, 'reload-pistol-0', 'reload-pump-0'] };
-const kindOf = id => ['pistol', 'deagle', 'cannon'].includes(id) ? 'pistol' : id === 'shotgun' ? 'shotgun' : 'rifle';
+const kindOf = id => ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'shotgun' : 'rifle';
 export function reloadSound(part, id, at = null) { const name = RELOAD[kindOf(id)][part]; return name === null ? true : play(name, { at, volume: .9, rate: .96 + Math.random() * .08 }); }
 // Footstep on a surface (concrete, wood, grass, carpet, metal); a random take each step.
 export const stepSound = (surface, at = null, volume = .6) => play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12 });
