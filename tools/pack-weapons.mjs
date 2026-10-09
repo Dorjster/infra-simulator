@@ -8,10 +8,11 @@ const src = process.argv[2], out = path.join(path.dirname(fileURLToPath(import.m
 // game id → pack folder, texture prefix, texture size
 const JOBS = {
   ak: ['AK-47', 'AK47', 1024], m4: ['M4A1', 'M4A1', 1024], sniper: ['Sniper', 'Sniper', 1024], shotgun: ['Shotgun', 'Shotgun', 1024], pistol: ['Pistol_MK', null, 1024], karambit: ['Karambit', 'Karambit', 1024],
+  greasegun: ['GreaseGun', 'Grease_Gun', 1024], luger: ['Luger', 'Luger', 1024], suomi: ['Suomi_KP', 'Suomi_KP', 1024],
   he: ['FragGrenade', 'FragGrenade', 512], flash: ['Flashbang', 'Flashbang', 512], smoke: ['Smoke_Grenade', 'Smoke_Grenade', 512], molotov: ['Molotv_Cocktail', null, 512], c4: ['C4', 'C4', 1024],
 };
 // Loose parts left out (spare magazines lying next to the gun).
-const DROP = { sniper: ['Magazine'], pistol: ['Magazine'] };
+const DROP = { sniper: ['Magazine'], pistol: ['Magazine'], luger: ['Clip'] };
 const b = await chromium.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
 const p = await b.newPage(); p.on('pageerror', e => console.error(e.message));
 await p.route('http://assets.local/**', r => { try { r.fulfill({ body: readFileSync(path.join(src, decodeURIComponent(new URL(r.request().url()).pathname))) }); } catch { r.fulfill({ status: 404 }); } });

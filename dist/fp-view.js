@@ -5,7 +5,8 @@
 // pistol arms). The rig looks along +z from just in front of its shoulders.
 import * as THREE from './three.module.js';
 import { GLTFLoader } from './post/GLTFLoader.js';
-import { weaponModel, MUZZLE } from './weapon-models.js';
+import { weaponModel, MUZZLE, VARIANTS } from './weapon-models.js';
+import { weaponById } from './weapons-data.js';
 
 const U = 1 / .165;   // metres → game units
 // Per pack: model scale (the rifle pack is in metres, the others bigger), eye (rig units: height, forward, pitch),
@@ -20,6 +21,11 @@ export const FP = { knife: { pack: 'pistol', onehand: true, fist: true, view: [0
 // Our guns on the rifle / pistol weapon bone: offset (game units, in the weapon's own frame) and turn.
 export const ATTACH = { knife: { at: [0, -.45, .1], rot: [1.2, 0, 0] }, karambit: { at: [0, -.4, .1], rot: [0, -1.57, 3.14], scale: 1.3 },   // karambit like CS2: ring on the index finger, blade curling up
    he: { at: [0, 0, 0], rot: [0, 0, 0] }, flash: { at: [0, 0, 0], rot: [0, 0, 0] }, smoke: { at: [0, 0, 0], rot: [0, 0, 0] }, molotov: { at: [0, 0, 0], rot: [0, 0, 0] }, c4: { at: [0, 0, 0], rot: [0, 0, 0] }, ak: { at: [0, 0, -1.5] }, m4: { at: [0, 0, -1.5], rot: [0, 0, 0] }, sniper: { at: [0, 0, -1.5], rot: [0, 0, 0] }, smg: { at: [0, 0, -1.2], rot: [0, 0, 0] }, lmg: { at: [0, 0, -1.5], rot: [0, 0, 0] }, deagle: { at: [0, 0, 0], rot: [0, 0, 0] } };   // ak: only for its muzzle (the pack's AK lines up with ours there)
+// Every gun gets arms: its own entry, else by kind (rifles, SMGs, snipers, the M249 on the rifle arms; pistols on the
+// pistol arms; shotguns on the shotgun arms); grips follow the base model of a variant.
+const KIND_FP = { rifle: { pack: 'rifle' }, smg: { pack: 'rifle' }, sniper: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol' }, shotgun: { pack: 'shotgun' } };
+export const fpInfo = id => FP[id] || KIND_FP[weaponById(id)?.kind] || null;
+const attachInfo = id => ATTACH[id] || ATTACH[VARIANTS[id]?.base] || ATTACH[{ greasegun: 'smg', suomi: 'smg', luger: 'deagle' }[VARIANTS[id]?.base]] || {};
 
 // The weapon bone's frame → a gun pointing along −z (set from the packs' own guns, see calibrate()).
 const BASE = { rifle: new THREE.Quaternion(), pistol: new THREE.Quaternion(), shotgun: new THREE.Quaternion() };
@@ -77,10 +83,10 @@ function build(name, gltf) {
     root,
     // Hold this weapon id (draw: play the draw animation over `drawMs`).
     hold(id, { draw = true, drawMs = 800 } = {}) {
-      onehand = !!FP[id]?.onehand; fist = !!FP[id]?.fist; root.position.set(...(FP[id]?.view || [0, 0, 0])); root.rotation.set(...(FP[id]?.viewRot || [0, 0, 0]));   // per weapon: how close / where the arms sit if (leftArm && !onehand) leftArm.scale.setScalar(1);
-      if (ours) { ours.removeFromParent(); ours = null; } oursId = FP[id]?.own ? null : id;
-      const own = FP[id]?.own; for (const m of gunMeshes) m.visible = !!own;
-      if (!own) { const a = ATTACH[id] || {}, g = weaponModel(id, a.scale || 1); ours = new THREE.Group(); ours.add(g); root.add(ours); g.position.set(...(a.at || [0, 0, 0])); g.rotation.set(...(a.rot || [0, 0, 0])); follow(); }
+      const F = fpInfo(id) || {}; onehand = !!F.onehand; fist = !!F.fist; root.position.set(...(F.view || [0, 0, 0])); root.rotation.set(...(F.viewRot || [0, 0, 0]));   // per weapon: how close / where the arms sit if (leftArm && !onehand) leftArm.scale.setScalar(1);
+      if (ours) { ours.removeFromParent(); ours = null; } oursId = F.own ? null : id;
+      const own = F.own; for (const m of gunMeshes) m.visible = !!own;
+      if (!own) { const a = attachInfo(id), g = weaponModel(id, a.scale || 1); ours = new THREE.Group(); ours.add(g); root.add(ours); g.position.set(...(a.at || [0, 0, 0])); g.rotation.set(...(a.rot || [0, 0, 0])); follow(); }
       reloadPlan = null; base = 'idle';
       if (draw && A.equip) { to('equip', 0, { once: true, ms: drawMs }); oneShotUntil = performance.now() + drawMs; } else to('idle', 0);
     },
@@ -104,4 +110,4 @@ function build(name, gltf) {
   };
 }
 // The arms for a weapon id, if its pack has loaded (else null: the caller shows the plain gun meanwhile).
-export function fpFor(id) { const f = FP[id]; return f ? ready.get(f.pack) || null : null; }
+export function fpFor(id) { const f = fpInfo(id); return f ? ready.get(f.pack) || null : null; }

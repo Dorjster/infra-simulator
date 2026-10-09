@@ -246,6 +246,7 @@ const REAL_DIR = new URL('./models/weapons/', import.meta.url).href;
 export const REAL_FIT = {
   ak: { at: [0, -5.5, 24] }, m4: { at: [0, -4, 2.5] }, sniper: { at: [0, -7.5, 23.5], rot: [-.19, 0, 0] }, shotgun: { at: [0, -4.5, 39] }, pistol: { at: [0, 1.5, -4.5] },
   karambit: { at: [0, 15, -37], scale: .055 },
+  greasegun: { at: [0, -6.5, 12] }, luger: { at: [-2.8, 1.5, 5.5], flip: true }, suomi: { at: [-.4, -3.5, 7] },
   he: { at: [0, 5, 0] }, flash: { at: [0, -2, 0] }, smoke: { at: [0, -4, 0] }, molotov: { at: [0, 0, 0], maps: { bottle: ['base', 'orm'], fabric: ['base', 'normal'], liquid: ['base'] } }, c4: { at: [0, 2, 0] },
 };
 const real = new Map(); let realLoading = null;
@@ -257,9 +258,9 @@ async function loadReal(id) {
     if (!bmp) return null; const t = new THREE.Texture(bmp); t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 4; t.needsUpdate = true; return t; }).catch(() => null);
   const g = new THREE.Group(), fit = REAL_FIT[id] || {}, inner = new THREE.Group(); g.add(inner);
   // Muzzle: centre of the vertices within 1 cm of the front end (file cm), for flashes and tracers.
-  const zMin = head.box[0][2]; let my = 0, mx = 0, mn = 0;
+  const zMin = fit.flip ? head.box[1][2] : head.box[0][2], front = z => fit.flip ? z > zMin - 1 : z < zMin + 1; let my = 0, mx = 0, mn = 0;   // the muzzle end (−z, or +z for models authored the other way round)
   for (const pt of head.parts) {
-    const P = f32(pt.count * 3); o -= pt.count * 12; for (let i = 0; i < P.length; i += 3) if (P[i + 2] < zMin + 1) { mx += P[i]; my += P[i + 1]; mn++; }
+    const P = f32(pt.count * 3); o -= pt.count * 12; for (let i = 0; i < P.length; i += 3) if (front(P[i + 2])) { mx += P[i]; my += P[i + 1]; mn++; }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(f32(pt.count * 3), 3)); geo.setAttribute('normal', new THREE.BufferAttribute(f32(pt.count * 3), 3)); geo.setAttribute('uv', new THREE.BufferAttribute(f32(pt.count * 2), 2));
     const [map, normalMap, orm] = await Promise.all([tex(pt.name, 'base', true), tex(pt.name, 'normal'), tex(pt.name, 'orm')]);
     const glass = id === 'molotov' && pt.name === 'bottle', mat = new THREE.MeshStandardMaterial({ map, normalMap, roughnessMap: orm, metalnessMap: orm, metalness: orm ? 1 : 0, roughness: 1, transparent: glass, opacity: glass ? .55 : 1, envMapIntensity: .9 });
@@ -278,15 +279,39 @@ export function loadRealWeapons() {
 }
 export const hasReal = id => real.has(id);
 const cache = new Map();
+// Guns without a model of their own: a real model of the same family, made recognisable (and different from the
+// base gun) by parts — suppressor, scope, box magazine — size and finish. All original geometry; CC0 base models.
+// look: base model · scale · tint (multiplies the texture colour) · suppressor [length, radius] (game units) · scope · box.
+export const VARIANTS = {
+  usps: { base: 'pistol', tint: 0x9aa3ad, suppressor: [.75, .055] }, fiveseven: { base: 'pistol', scale: 1.05, tint: 0xd8c9a8 }, p250: { base: 'luger', tint: 0x8c8f96 }, deagle: { base: 'pistol', scale: 1.28, tint: 0xd0d4da, chrome: true },
+  mac10: { base: 'greasegun', scale: .78, tint: 0x5a5d62 }, mp9: { base: 'greasegun', scale: .85, tint: 0x3a3c40 }, mp7: { base: 'greasegun', scale: .92, tint: 0x6b6e66 }, smg: { base: 'greasegun', tint: 0x2e3034, suppressor: [1.1, .08] },
+  ump45: { base: 'suomi', scale: .9, tint: 0x55575c }, p90: { base: 'suomi', scale: .85, tint: 0x4f5a45 },
+  xm1014: { base: 'shotgun', tint: 0x4a4a4e }, galil: { base: 'ak', tint: 0xc9b48a }, famas: { base: 'm4', tint: 0xcbb48a }, m4s: { base: 'm4', suppressor: [1.15, .085] },
+  sg553: { base: 'ak', tint: 0x55595e, scope: true }, aug: { base: 'm4', tint: 0x7d8a5c, scope: true }, ssg08: { base: 'sniper', scale: .92, tint: 0x8aa0b4 }, lmg: { base: 'm4', scale: 1.22, tint: 0x5c5f55, box: true },
+};
+const MUZZLE_SET = new Set(), variantMats = new Map(), decoMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: .45, metalness: .8 }); decoMat.userData.shared = true;
+function tintMaterial(m, hex, chrome) { const k = m.uuid + ':' + hex + (chrome ? 'c' : ''); if (!variantMats.has(k)) { const c = m.clone(); c.color = new THREE.Color(hex); if (chrome) { c.metalness = 1; c.roughness = .25; c.metalnessMap = null; c.roughnessMap = null; } c.userData.shared = true; variantMats.set(k, c); } return variantMats.get(k); }
+function variantModel(id, scale) {
+  const V = VARIANTS[id], src = real.get(V.base); if (!src) return null; const g = src.clone(), s = V.scale || 1;
+  if (V.tint) g.traverse(o => { if (o.isMesh) o.material = tintMaterial(o.material, V.tint, V.chrome); });
+  const mz = new THREE.Vector3(...(MUZZLE[V.base] || [0, 0, -1])), box = new THREE.Box3().setFromObject(src), len = box.max.z - box.min.z;
+  const cyl = (r, l) => new THREE.Mesh(new THREE.CylinderGeometry(r, r, l, 18).rotateX(Math.PI / 2), decoMat);
+  if (V.suppressor) { const [l, r] = V.suppressor, c = cyl(r, l); c.position.copy(mz).add(new THREE.Vector3(0, 0, -l / 2 + .02)); g.add(c); }
+  if (V.scope) { const t = cyl(.075, len * .32); t.position.set(mz.x, box.max.y + .07, mz.z + len * .62); g.add(t); for (const dz of [-.12, .12]) { const m = new THREE.Mesh(new THREE.BoxGeometry(.05, .1, .05), decoMat); m.position.set(mz.x, box.max.y + .01, mz.z + len * .62 + dz); g.add(m); } }
+  if (V.box) { const b = new THREE.Mesh(new THREE.BoxGeometry(.32, .38, .42), decoMat); b.position.set(mz.x, box.min.y + .12, mz.z + len * .62); g.add(b); }
+  g.traverse(o => { if (o.geometry && o.material === decoMat) o.geometry.userData.shared = true; });
+  const wrap = new THREE.Group(); g.scale.multiplyScalar(s); wrap.add(g); wrap.userData.muzzle = mz.clone().multiplyScalar(s).add(new THREE.Vector3(0, 0, V.suppressor ? -V.suppressor[0] * s : 0)).toArray(); wrap.scale.setScalar(scale); return wrap;
+}
 export function weaponModel(id, scale = 1) {
   if (real.has(id)) { const g = real.get(id).clone(); g.scale.setScalar(scale); return g; }
+  if (VARIANTS[id] && real.has(VARIANTS[id].base)) { const v = variantModel(id, scale); if (v) { if (!MUZZLE_SET.has(id)) { MUZZLE[id] = v.userData.muzzle; MUZZLE_SET.add(id); } return v; } }
   if (['he', 'flash', 'smoke', 'molotov'].includes(id)) { if (!cache.has(id)) { const t = new THREE.Group(); t.add(new THREE.Mesh(new THREE.SphereGeometry(.28, 12, 10), M.black)); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, t); } const g = cache.get(id).clone(); g.scale.setScalar(scale); return g; }   // until the real grenade models are in
   if (id === 'cannon' || !['pistol', 'deagle', 'smg', 'shotgun', 'ak', 'm4', 'sniper', 'lmg', 'knife', 'karambit'].includes(id)) return pistolModel(scale);
   if (!cache.has(id)) { const t = id === 'karambit' ? karambit() : id === 'knife' ? knife() : build(id); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, t); }
   const g = cache.get(id).clone(); g.scale.setScalar(scale); return g;
 }
 // Where the muzzle is in model space (for flashes and tracers), per weapon.
-export const MUZZLE = { knife: [0, .1, -1.3], karambit: [0, 0, -.6], pistol: [0, 2.6 * CM, -16.8 * CM], deagle: [0, 2.6 * CM, -23 * CM], cannon: [0, .17, -.65], smg: [0, 2.4 * CM, -47.5 * CM], shotgun: [0, 4 * CM, -66.5 * CM], ak: [0, 1.6 * CM, -58.5 * CM], m4: [0, 2.6 * CM, -50.5 * CM], sniper: [0, 4.2 * CM, -85.5 * CM], lmg: [0, 2.6 * CM, -67.5 * CM] };
+export const MUZZLE = { greasegun: [0, 0, -.5], luger: [0, 0, -.2], suomi: [0, 0, -.7], knife: [0, .1, -1.3], karambit: [0, 0, -.6], pistol: [0, 2.6 * CM, -16.8 * CM], deagle: [0, 2.6 * CM, -23 * CM], cannon: [0, .17, -.65], smg: [0, 2.4 * CM, -47.5 * CM], shotgun: [0, 4 * CM, -66.5 * CM], ak: [0, 1.6 * CM, -58.5 * CM], m4: [0, 2.6 * CM, -50.5 * CM], sniper: [0, 4.2 * CM, -85.5 * CM], lmg: [0, 2.6 * CM, -67.5 * CM] };
 // How the view model sits in front of the camera (pistols close and small, long guns lower and further back).
 // Extra view-model turns, applied in order about the camera's axes ([axis, radians]). The karambit is held like
 // CS2: handle across the fist, ring on the index finger, blade out to the right curling up and forward.

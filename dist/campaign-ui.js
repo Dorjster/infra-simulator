@@ -78,6 +78,8 @@ export function createCampaignUI(ctx) {
     const i = await roomInfo().catch(() => null), code = hosted?.roomCode || i?.roomCode || lan.roomCode || '', addrs = hosted?.addresses || i?.addresses || [];
     invite = code ? { code, addrs } : null; renderInvite();
   }
+  // (the arena shows these in its lobby and scoreboard: the bar would sit on the round clock)
+  const inviteText = () => invite && lan.connected && lan.canManageWorld ? { addrs: invite.addrs, code: invite.code } : null;
   function renderInvite() {
     const on = !!invite && lan.connected && lan.canManageWorld; inviteBar.hidden = !on; if (!on) return;
     inviteBar.innerHTML = `<span style="color:#7fe3f2;font-size:11px;letter-spacing:.12em">HOSTING · FRIENDS JOIN WITH</span><span>${invite.addrs.length ? invite.addrs.map(a => `<code style="font-size:15px">${esc(a)}</code>`).join(' or ') : '<em>this computer\'s address</em>'}</span><span>passcode <code style="font-size:15px">${esc(invite.code)}</code></span>`;
@@ -495,5 +497,5 @@ export function createCampaignUI(ctx) {
   }
   // First load: the start screen. A ?join= link goes straight to the join form.
   showStart(true); if (new URLSearchParams(globalThis.location?.search || '').get('join')) startJoin();
-  return { update, key, panel, close, showStart, get isOpen() { return open || startOpen; }, get onStartScreen() { return startOpen; }, get startOpen() { return startOpen; }, render, targetOf };
+  return { get invite() { return inviteText(); }, update, key, panel, close, showStart, get isOpen() { return open || startOpen; }, get onStartScreen() { return startOpen; }, get startOpen() { return startOpen; }, render, targetOf };
 }

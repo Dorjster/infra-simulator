@@ -23,7 +23,7 @@ Object.assign(ICON, NADE_ICON);
 const icon = id => `<svg viewBox="0 0 30 16" width="44" height="20" fill="currentColor"><path d="${ICON[id] || ICON.pistol}"/></svg>`;
 const HS = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><circle cx="8" cy="7" r="5"/><rect x="6" y="11" width="4" height="4"/><circle cx="6" cy="7" r="1.2" fill="#000"/><circle cx="10" cy="7" r="1.2" fill="#000"/></svg>';
 
-export function createArenaUI({ world, lan, name, notify, scene, send, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null }) {
+export function createArenaUI({ world, lan, name, notify, scene, send, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null, invite = () => null }) {
   const g = () => world.operations.game, me = () => key(name());
   const css = document.createElement('style'); css.textContent = `
 #ar-top{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:37;display:flex;gap:10px;align-items:center;font:800 18px ui-monospace,Menlo,monospace;color:#fff;text-shadow:0 2px 4px #000}#ar-top[hidden]{display:none}#ar-top span{background:#000a;border-radius:6px;padding:4px 12px}#ar-top small{font:600 11px system-ui;opacity:.75;letter-spacing:.1em}
@@ -37,14 +37,17 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
 #ar-money{position:fixed;left:22px;bottom:142px;z-index:36;color:#7dff8e;font:800 22px ui-monospace,Menlo,monospace;text-shadow:0 2px 3px #000}#ar-money[hidden]{display:none}
 #ar-banner{position:fixed;top:22%;left:50%;transform:translateX(-50%);z-index:42;padding:10px 26px;border-radius:8px;background:#000b;color:#fff;font:900 26px system-ui;letter-spacing:.08em;text-align:center;pointer-events:none}#ar-banner[hidden]{display:none}#ar-banner.t{border:2px solid #e8a53f}#ar-banner.ct{border:2px solid #5b9be8}#ar-banner.bomb{border:2px solid #ff4040;color:#ff8080}#ar-banner small{display:block;font:600 14px system-ui;letter-spacing:.04em;opacity:.85;margin-top:4px}
 #ar-prog{position:fixed;left:50%;top:58%;transform:translateX(-50%);z-index:41;width:260px;background:#000b;border-radius:6px;padding:6px 10px;color:#fff;font:700 13px system-ui;text-align:center;pointer-events:none}#ar-prog[hidden]{display:none}#ar-prog b{display:block;height:6px;background:#ffd36b;border-radius:3px;margin-top:5px}
+#ar-board>div{width:min(1040px,96vw);max-height:88vh;overflow:auto}#ar-board .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}#ar-board .top small{color:#8aa2b0}#ar-board .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media (max-width:820px){#ar-board .cols{grid-template-columns:1fr}}#ar-board .th{display:flex;align-items:baseline;gap:8px;padding:6px 8px;border-radius:6px 6px 0 0}#ar-board .t .th{background:#4a3410;color:#ffc36b}#ar-board .ct .th{background:#123050;color:#8fc4ff}#ar-board .th b{margin-left:auto;font:900 26px ui-monospace,Menlo,monospace}#ar-board .th small{opacity:.8}#ar-board td.n,#ar-board th.n{text-align:right;font-variant-numeric:tabular-nums}#ar-board tr.me td{color:#ffd36b;font-weight:800;background:#ffd36b14}#ar-board .join,#ar-lobby .join{margin-top:8px;padding:6px 10px;border:1px solid #3fb5c9;border-radius:6px;color:#bfeef7;font:600 12px system-ui}#ar-board .spec{margin-top:6px;color:#8aa2b0;font-size:12px}
+#ar-team{position:fixed;inset:0;z-index:45;display:grid;place-items:center;background:#0008}#ar-team[hidden]{display:none}#ar-team>div{width:min(640px,94vw);background:#0b1118f4;border:1px solid #3d5566;border-radius:12px;color:#e8eef2;font:600 14px system-ui;padding:16px 20px}#ar-team h2{margin:0 0 10px;font:800 20px system-ui}#ar-team h3{margin:14px 0 6px;font:700 12px system-ui;letter-spacing:.14em;color:#8aa2b0}#ar-team .teams{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}#ar-team button{background:#16222c;color:#e8eef2;border:1px solid #3d5566;border-radius:8px;padding:8px 12px;cursor:pointer;font:600 13px system-ui}#ar-team button:hover{border-color:#ffd36b}#ar-team .teams button{display:flex;flex-direction:column;gap:2px;padding:12px}#ar-team .teams .t{border-color:#e8a53f}#ar-team .teams .ct{border-color:#5b9be8}#ar-team .on{background:#2a2410;border-color:#ffd36b!important}#ar-team .note{color:#8aa2b0;font-size:12px;margin:8px 0 0}#ar-team .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}#ar-team select{background:#101a22;color:#e8eef2;border:1px solid #3d5566;border-radius:6px;padding:4px}#ar-team .primary{background:#1f5130;border-color:#7fe3a0}
+#ar-lobby{position:fixed;left:16px;top:50%;transform:translateY(-50%);z-index:38;width:min(300px,40vw);background:#0b1118e6;border:1px solid #3fb5c9;border-radius:10px;padding:10px 12px;color:#e8eef2;font:600 13px system-ui;pointer-events:none}#ar-lobby[hidden]{display:none}#ar-lobby .clock{font:800 22px ui-monospace,Menlo,monospace;margin:4px 0;color:#7fe3f2}#ar-lobby .warn{color:#ffb070;font-size:12px;margin:4px 0}#ar-lobby ul{list-style:none;margin:6px 0;padding:0}#ar-lobby li{display:flex;justify-content:space-between;gap:6px;padding:3px 0;border-top:1px solid #ffffff12}#ar-lobby li.t span{color:#ffc36b}#ar-lobby li.ct span{color:#8fc4ff}#ar-lobby small{color:#8aa2b0}
 #ar-look{position:fixed;left:50%;top:calc(50% + 46px);transform:translateX(-50%);z-index:38;background:#000a;border-radius:6px;padding:4px 12px;color:#fff;font:700 13px system-ui;pointer-events:none}#ar-look[hidden]{display:none}
 #ar-over{position:fixed;top:30%;left:50%;transform:translateX(-50%);z-index:42;background:#000c;border:2px solid #ffd36b;border-radius:10px;padding:16px 30px;color:#fff;font:800 26px system-ui;text-align:center}#ar-over[hidden]{display:none}#ar-over small{display:block;font:600 14px system-ui;margin-top:6px;opacity:.8}`;
   (document.head || document.body).append?.(css);
-  document.body.insertAdjacentHTML('beforeend', '<div id="ar-top" hidden></div><div id="ar-alive" hidden></div><div id="ar-money" hidden></div><div id="ar-banner" hidden></div><div id="ar-prog" hidden><span></span><b></b></div><div id="ar-feed"></div><div id="ar-board" hidden><div></div></div><div id="ar-buy" hidden><div></div></div><div id="ar-over" hidden></div><div id="ar-look" hidden></div><div id="ar-load" hidden><b>GLOBAL DEFENSIVE</b><small>Loading…</small></div>');
+  document.body.insertAdjacentHTML('beforeend', '<div id="ar-top" hidden></div><div id="ar-alive" hidden></div><div id="ar-money" hidden></div><div id="ar-banner" hidden></div><div id="ar-prog" hidden><span></span><b></b></div><div id="ar-feed"></div><div id="ar-board" hidden><div></div></div><div id="ar-buy" hidden><div></div></div><div id="ar-over" hidden></div><div id="ar-look" hidden></div><div id="ar-team" hidden><div></div></div><div id="ar-lobby" hidden></div><div id="ar-load" hidden><b>GLOBAL DEFENSIVE</b><small>Loading…</small></div>');
   const $ = id => document.getElementById(id);
   // Campaign objective + hotbar hidden in the arena — set on those two elements only (a class on <body> would
   // restyle the whole page: a 50 ms frame on entering).
-  const campaignHud = show => { for (const id of ['eng-objective', 'inventory']) { const el = $(id); if (!el) continue; if (show) el.style.removeProperty('display'); else el.style.setProperty('display', 'none', 'important'); } };
+  const campaignHud = show => { for (const id of ['eng-objective', 'inventory', 'game-bar', 'lan-invite']) { const el = $(id); if (!el) continue; if (show) el.style.removeProperty('display'); else el.style.setProperty('display', 'none', 'important'); } };
   let entered = null, spawnAt = null, buyOpen = false, boardOpen = false, feedKey = '';
   const inArena = () => g().mode === 'arena' && !!g().arena;
   const names = () => { const A = g().arena, C = g().combat || {}, list = new Map(); for (const p of lan.players || []) if (p.pose?.z < -200 || p.bot) list.set(key(p.name), p.name); list.set(me(), name()); for (const b of A?.bots || []) list.set(key(b.name), b.name); for (const k of Object.keys(C.kills || {})) if (!list.has(k)) list.set(k, C.names?.[k] || k); return [...list.values()]; };
@@ -61,7 +64,7 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
   function enterNow() { performance.mark?.('arena:enter'); const A = g().arena;
     // The map's first frames (GPU uploads, first shadow pass) are drawn behind the loading card; play starts warm.
     $('ar-load').hidden = false; let frames = 0; const reveal = () => { if (++frames < 4) requestAnimationFrame(reveal); else if (!loading) $('ar-load').hidden = true; }; requestAnimationFrame(reveal); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
-  function leave() { for (const id of ['ar-alive', 'ar-money', 'ar-banner', 'ar-prog']) $(id).hidden = true; bombView(null); for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
+  function leave() { for (const id of ['ar-alive', 'ar-money', 'ar-banner', 'ar-prog', 'ar-lobby', 'ar-team', 'ar-look']) $(id).hidden = true; teamOpen = false; bombView(null); for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
   // Buy menu (B opens and closes it, Escape closes it). Guns by category with an info card; equipment (armor, kit);
   // grenades; and, apart from the shop, the guns lying near you (free to pick up, E or click).
   const CATS2 = [['Pistols', w => w.kind === 'pistol'], ['SMGs', w => w.kind === 'smg'], ['Heavy', w => w.kind === 'shotgun' || w.kind === 'lmg'], ['Rifles', w => w.kind === 'rifle'], ['Snipers', w => w.kind === 'sniper']];
@@ -94,14 +97,54 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
   }
   // In your team's spawn (Defuse buy zone)?
   function inBuyZone() { const d = D(), at = where(); if (!d || !at) return true; const m = ARENA_MAPS[g().arena.map], sp = myTeam() === 'ct' ? m.ct : m.t, cx = sp.reduce((a, s) => a + s[0], 0) / sp.length, cz = sp.reduce((a, s) => a + s[1], 0) / sp.length; return Math.hypot(at.x - ARENA.cx - cx, at.z - ARENA.cz - cz) <= DEFUSE.buyRadius; }
+  // Scoreboard (hold Tab): deathmatch = one table; Defuse = two team columns (attackers / defenders) with each
+  // team's score. Name, ping, K / D / A, money (your team only), dead / alive, bomb and kit. You are highlighted.
+  // Display only (no buttons): it never covers controls once Tab is released. Host settings live in the M menu.
+  const ping = n => { const p = (lan.players || []).find(x => key(x.name) === key(n)); return p?.bot || /^BOT /.test(n) ? 'BOT' : p?.pose?.ping != null ? p.pose.ping + ' ms' : p ? '—' : 'left'; };
+  const row = (n, team, d) => { const C = g().combat || {}, k = key(n), dead = isDownNow(n), mine = myTeam() === team || !d, bomb = d && d.bomb?.carrier === k && mine, kit = d && d.kits?.[k];
+    return `<tr class="${dead ? 'dead' : ''}${k === me() ? ' me' : ''}"><td>${/^BOT /.test(n) ? '<small>🤖</small> ' : ''}${esc(n)}${bomb ? ' <span title="bomb">💣</span>' : ''}${kit ? ' <span title="defuse kit">🔧</span>' : ''}${dead ? ' <small>☠</small>' : ''}</td><td class="n">${ping(n)}</td><td class="n">${C.kills?.[k] || 0}</td><td class="n">${C.deaths?.[k] || 0}</td><td class="n">${C.assists?.[k] || 0}</td>${d ? `<td class="n">${mine ? '$' + (d.money?.[k] ?? 800).toLocaleString('en-US') : ''}</td>` : ''}</tr>`; };
+  const head = d => `<tr><th>PLAYER</th><th class="n">PING</th><th class="n">K</th><th class="n">D</th><th class="n">A</th>${d ? '<th class="n">$</th>' : ''}</tr>`;
   function scoreboard(open) {
     boardOpen = !!open && inArena(); $('ar-board').hidden = !boardOpen; if (!boardOpen) return;
-    const C = g().combat || {}, A = g().arena, rows = names().map(n => ({ n, k: C.kills?.[key(n)] || 0, d: C.deaths?.[key(n)] || 0, bot: /^BOT /.test(n), dead: isDownNow(n) })).sort((a, b) => b.k - a.k || a.d - b.d);
-    $('ar-board').firstElementChild.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:16px">DEATHMATCH · ${esc(ARENA_MAPS[A.map].name)}</b><small style="color:#8aa2b0">${rows.length} players · first to the most kills in 10:00</small></div>
-      <table><tr><th>PLAYER</th><th>K</th><th>D</th><th>K/D</th></tr>${rows.map(r => `<tr class="${r.dead ? 'dead' : ''}${key(r.n) === me() ? ' me' : ''}"><td>${r.bot ? '🤖 ' : ''}${esc(r.n)}${r.dead ? ' <small>· dead</small>' : ''}</td><td>${r.k}</td><td>${r.d}</td><td>${(r.k / Math.max(1, r.d)).toFixed(2)}</td></tr>`).join('')}</table>
-      <div class="tools"><button data-bot="add">+ Add bot</button><button data-bot="remove">− Remove bot</button>${Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === A.kind).map(([id, m]) => `<button data-map="${id}">${id === A.map ? 'Restart' : 'Play'} ${esc(m.name)}</button>`).join('')}</div>`;
-    $('ar-board').querySelectorAll('[data-bot]').forEach(b => b.onclick = async () => { const r = await send({ type: b.dataset.bot === 'add' ? 'add-bot' : 'remove-bot' }); notify(typeof r === 'string' ? r : r?.message || ''); scoreboard(true); });
-    $('ar-board').querySelectorAll('[data-map]').forEach(b => b.onclick = async () => { const r = await send({ type: 'restart', map: b.dataset.map }); notify(typeof r === 'string' ? r : r?.message || ''); });
+    const C = g().combat || {}, A = g().arena, d = D(), all = names(), sortK = (a, b) => (C.kills?.[key(b)] || 0) - (C.kills?.[key(a)] || 0) || (C.deaths?.[key(a)] || 0) - (C.deaths?.[key(b)] || 0);
+    const inv = invite?.(), joinLine = inv ? `<div class="join">Friends join: ${inv.addrs.map(esc).join(' or ') || 'this computer\u2019s address'} · passcode <b>${esc(inv.code)}</b></div>` : '';
+    const top = `<div class="top"><b>${d ? 'DEFUSE' : 'DEATHMATCH'} · ${esc(ARENA_MAPS[A.map].name)}</b><small>${d ? (d.round?.phase === 'warmup' ? 'Warmup' : 'Round ' + d.n + ' · first to ' + DEFUSE.win) : all.length + ' players · most kills in 10:00'}${A.lobby && !A.lobby.started ? ' · lobby' : ''}</small></div>`;
+    if (!d) { $('ar-board').firstElementChild.innerHTML = top + `<table>${head(null)}${all.sort(sortK).map(n => row(n, null, null)).join('')}</table>` + joinLine; return; }
+    const col = (team, label, sub) => { const list = all.filter(n => d.teams[key(n)] === team).sort(sortK); return `<div class="col ${team}"><div class="th"><span>${label}</span><small>${sub}</small><b>${d.score[team]}</b></div><table>${head(d)}${list.map(n => row(n, team, d)).join('') || '<tr><td colspan="6"><small>nobody</small></td></tr>'}</table></div>`; };
+    const spec = all.filter(n => d.teams[key(n)] === 'spec');
+    $('ar-board').firstElementChild.innerHTML = top + `<div class="cols">${col('t', 'TERRORISTS', 'attackers')}${col('ct', 'COUNTER-TERRORISTS', 'defenders')}</div>${spec.length ? `<div class="spec">Spectating: ${spec.map(esc).join(', ')}</div>` : ''}` + joinLine;
+  }
+  // M: team menu (Terrorists / Counter-Terrorists / Spectator) and, for the host, match settings: map, bots, difficulty.
+  // In the lobby: ready, and the host's Start now. Opens with M, closes with M or Escape.
+  let teamOpen = false;
+  function teamMenu(open = !teamOpen) {
+    teamOpen = !!open && inArena(); $('ar-team').hidden = !teamOpen; if (!teamOpen) { onBuyClose(); return; } document.exitPointerLock?.(); buy(false); drawTeam();
+  }
+  function drawTeam() {
+    const A = g().arena, d = D(), host = !!lan.canManageWorld, L = A.lobby && !A.lobby.started ? A.lobby : null, cnt = t => names().filter(n => d?.teams[key(n)] === t).length, pend = d?.pending?.[me()];
+    $('ar-team').firstElementChild.innerHTML = `<h2>${d ? 'CHOOSE TEAM' : 'MATCH'}</h2>${d ? `<div class="teams"><button data-team="t" class="t${myTeam() === 't' ? ' on' : ''}"><b>TERRORISTS</b><small>attackers · ${cnt('t')} players</small></button><button data-team="ct" class="ct${myTeam() === 'ct' ? ' on' : ''}"><b>COUNTER-TERRORISTS</b><small>defenders · ${cnt('ct')} players</small></button><button data-team="spec"${myTeam() === 'spec' ? ' class="on"' : ''}><b>SPECTATOR</b><small>watch</small></button></div><p class="note">${pend ? 'You join the ' + (pend === 't' ? 'Terrorists' : pend === 'ct' ? 'Counter-Terrorists' : 'spectators') + ' at the next round.' : L || d?.round?.phase === 'warmup' ? 'In the lobby a change is immediate.' : 'During a match you change side at the next round.'}</p>` : '<p class="note">Deathmatch: everyone against everyone.</p>'}
+      ${L ? `<div class="row"><button data-ready="${L.ready[me()] ? 0 : 1}">${L.ready[me()] ? '✓ Ready (click to undo)' : 'Ready'}</button>${host ? '<button data-start-now class="primary">Start now</button>' : ''}</div>` : ''}
+      ${host ? `<h3>HOST · MATCH SETTINGS</h3><div class="row"><label>Map <select id="ar-mapsel">${Object.entries(ARENA_MAPS).map(([id, m]) => `<option value="${id}"${id === A.map ? ' selected' : ''}>${esc(m.name)} · ${m.kind === 'defuse' ? 'Defuse' : 'Deathmatch'}</option>`).join('')}</select></label><button data-map-go>Change map</button></div>
+        <div class="row"><label>Bots <select id="ar-botn">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(n => `<option${n === A.bots.length ? ' selected' : ''}>${n}</option>`).join('')}</select></label><label>Difficulty <select id="ar-botd">${['easy', 'normal', 'hard'].map(x => `<option value="${x}"${x === A.difficulty ? ' selected' : ''}>${x[0].toUpperCase() + x.slice(1)}</option>`).join('')}</select></label><button data-bots-go>Apply</button></div>` : '<p class="note">The host chooses the map, bots and difficulty.</p>'}
+      <div class="row"><button data-close>Close (M / Esc)</button></div>`;
+    const R = $('ar-team'), act = async (a, after) => { const r = await send(a); if (r?.error) notify(r.error); else notify(typeof r === 'string' ? r : r?.message || 'Done'); after?.(r); if (teamOpen) drawTeam(); };
+    R.querySelectorAll('[data-team]').forEach(b => b.onclick = () => act({ type: 'team', team: b.dataset.team }));
+    R.querySelector('[data-ready]')?.addEventListener('click', e => act({ type: 'ready', ready: e.currentTarget.dataset.ready === '1' }));
+    R.querySelector('[data-start-now]')?.addEventListener('click', () => act({ type: 'start-match' }, r => { if (!r?.error) teamMenu(false); }));
+    R.querySelector('[data-map-go]')?.addEventListener('click', () => { const id = R.querySelector('#ar-mapsel').value; if (id === A.map && !confirm('Restart ' + ARENA_MAPS[id].name + '?')) return; act({ type: 'change-map', map: id }, r => { if (!r?.error) teamMenu(false); }); });
+    R.querySelector('[data-bots-go]')?.addEventListener('click', () => act({ type: 'settings', bots: +R.querySelector('#ar-botn').value, difficulty: R.querySelector('#ar-botd').value }));
+    R.querySelector('[data-close]').onclick = () => teamMenu(false);
+  }
+  // Lobby panel (LAN, before the match): mode + map confirmed by the room, countdown, who joined (team, ready,
+  // connection), why it is waiting, and how friends join. Left side, clear of the top bar and the crosshair.
+  let lobbyKey = '';
+  function lobbyPanel() {
+    const A = g().arena, L = A?.lobby && !A.lobby.started ? A.lobby : null; if (!L) { if (!$('ar-lobby').hidden) $('ar-lobby').hidden = true; lobbyKey = ''; return; }
+    const d = D(), left = Math.max(0, Math.ceil((L.until - Date.now()) / 1000)), inv = invite?.(), people = names().filter(n => !/^BOT /.test(n)), bots = A.bots.length;
+    const k = [left, L.note, JSON.stringify(L.ready), people.join(), bots, d ? JSON.stringify(d.teams) : '', (lan.players || []).map(p => p.pose?.ping).join(), !!inv].join('|'); if (k === lobbyKey) return; lobbyKey = k;
+    $('ar-lobby').hidden = false; $('ar-lobby').innerHTML = `<b>LOBBY · ${A.kind === 'defuse' ? 'DEFUSE' : 'DEATHMATCH'} · ${esc(ARENA_MAPS[A.map].name)}</b><div class="clock">Match starts in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</div>${L.note ? `<div class="warn">${esc(L.note)}</div>` : ''}
+      <ul>${people.map(n => { const t = d?.teams[key(n)], p = ping(n); return `<li class="${t || ''}"><span>${esc(n)}${key(n) === me() ? ' (you)' : ''}</span><small>${t === 't' ? 'T' : t === 'ct' ? 'CT' : t === 'spec' ? 'SPEC' : ''} · ${L.ready[key(n)] ? '✓ ready' : 'not ready'} · ${p === 'left' ? 'disconnected' : p}</small></li>`; }).join('')}${bots ? `<li><span>🤖 ${bots} bot${bots > 1 ? 's' : ''}</span><small>${A.difficulty}</small></li>` : ''}</ul>
+      ${inv ? `<div class="join">Friends join: ${inv.addrs.map(esc).join(' or ') || 'this computer\u2019s address'}<br>passcode <b>${esc(inv.code)}</b></div>` : ''}<small>M: team · ready${lan.canManageWorld ? ' · start now · map · bots' : ''} · warmup: no damage</small>`;
   }
   function hud() {
     if (D()) return defuseHud();
@@ -178,9 +221,9 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
     const left = (p.explodeAt - Date.now()) / 1000, gap = Math.max(.12, Math.min(1, left / 40)) * 1000;
     if (Date.now() - beepAt > gap) { beepAt = Date.now(); beep({ x: p.x, y: p.y + 1, z: p.z }, left < 10 ? 1.25 : 1); }
   }
-  let hudAt = 0, hudPhase = '', lastNear = '';
+  let hudAt = 0, hudPhase = '', lastNear = '', teamAt = 0;
   return {
-    get open() { return buyOpen; }, buy, scoreboard, drop, use,
+    get open() { return buyOpen || teamOpen; }, get teamOpen() { return teamOpen; }, teamMenu, buy, scoreboard, drop, use,
     get defuse() { return D(); }, get team() { return myTeam(); },
     // Hold to plant (bomb in hand, on a site) / hold E to defuse (CT at the planted bomb); let go to stop.
     plant(hold) { const at = where(); return send({ type: 'plant', hold, x: at?.x, y: at?.y, z: at?.z }).then(r => { if (hold && r?.error) notify(r.error); return r; }); },
@@ -199,7 +242,7 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
       drawGround(); if (performance.now() - pickAt > 160) { pickAt = performance.now(); autoPick(); lookPrompt(); if (buyOpen && nearby().map(n => n.it.id).join() !== lastNear) { lastNear = nearby().map(n => n.it.id).join(); buy(true); } }
       bombView(D()?.round?.phase === 'planted' ? D().round.planted : null);
       const ph = D() ? D().n + ':' + D().round?.phase : '';   // round events (planted, round over…) show at once
-      if (performance.now() - hudAt > 200 || ph !== hudPhase) { hudAt = performance.now(); hudPhase = ph; hud(); }
+      if (performance.now() - hudAt > 200 || ph !== hudPhase) { hudAt = performance.now(); hudPhase = ph; hud(); lobbyPanel(); if (teamOpen && performance.now() - (teamAt || 0) > 1000) { teamAt = performance.now(); } }
     },
   };
 }
