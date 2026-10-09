@@ -162,3 +162,14 @@ export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0
   const factor = t => { if (t >= stop) return 0; let s = 0; for (const c of crossed) if (c.t1 <= t + 1e-6) s = c.spent; return s ? Math.max(.15, 1 - s / (budget * 1.25)) : 1; };
   return { stop, crossed, factor };
 }
+// Spawn spots for a side ('t', 'ct', or 'dm' for every spawn): the map's points plus walkable spots around each
+// (6 units apart), so a full team never stands inside each other. Coordinates relative to the arena centre.
+const slotCache = new Map();
+export function spawnSlots(map, side) {
+  const k = (map.name || '') + ':' + side; if (slotCache.has(k)) return slotCache.get(k);
+  const base = side === 't' ? map.t : side === 'ct' ? map.ct : map.spawns, boxes = mapBoxes(map, 0, 0), [sw, sd] = map.size, bounds = { minX: -sw / 2, maxX: sw / 2, minZ: -sd / 2, maxZ: sd / 2 }, out = [];
+  const free = (x, z) => walkable(boxes, bounds, x, z, 1.8) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
+  for (const [x, z] of base) if (free(x, z)) out.push([x, z]);
+  for (const r of [6.5, 13]) for (const [x, z] of base) for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz)) out.push([+px.toFixed(2), +pz.toFixed(2)]); }
+  slotCache.set(k, out); return out;
+}

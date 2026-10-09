@@ -71,7 +71,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     group,
     get map() { return current; }, get boxes() { return boxes; }, get bounds() { return bounds; },
     // Show / hide the arena (and swap the dark indoor background for a sky while inside it).
-    show(id) { build(id); group.visible = true; if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id]; scene.background = new THREE.Color(map?.sky || 0x9fb8cc); scene.fog = new THREE.FogExp2(map?.sky || 0x9fb8cc, .0029); },   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
+    show(id) { build(id); group.visible = true; if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id]; scene.background = new THREE.Color(map?.sky || 0x9fb8cc); scene.fog = new THREE.FogExp2(map?.sky || 0x9fb8cc, .0011); },   // light haze: the far side of the map stays visible   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
     hide() { group.visible = false; if (savedBg !== null) { scene.background = savedBg; scene.fog = savedFog; savedBg = null; } },
     inArena: z => z < ARENA.maxZ,
     clear(x, z) { return !!bounds && walkable(boxes, bounds, x, z); },

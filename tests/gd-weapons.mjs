@@ -73,7 +73,7 @@ msg = arenaApply(g, { type: 'pickup', id: dg.id, swap: true }, 'Bo', P, t + 5200
   ok('nothing goes through a shipping container', thr(box, 'sniper') === 0); ok('nothing goes through stone', thr(stone, 'sniper') === 0); ok('shotgun pellets stop in a crate', thr(crate, 'shotgun') === 0);
   // Host: a hit through a crate lands with less damage; through a container it is refused.
   const dboxes = mapBoxes(ARENA_MAPS.dune, ARENA.cx, ARENA.cz), cr = dboxes.find(b => b.mat === 'crate' && b.maxX - b.minX <= 8 && b.y1 - b.y0 >= 11); assert(cr, 'a tall crate on Dune'); { const z = (cr.minZ + cr.maxZ) / 2, a2 = { x: cr.minX - 4, y: 7, z, yaw: 0 }, b2 = { x: cr.maxX + 4, y: 9.7, z, yaw: 0, crouched: false };
-    const gw = { levels: {} }; startArena(gw, { map: 'dune', bots: 0 }, 1e10); arenaApply(gw, { type: 'loadout', primary: 'ak' }, 'Ann', [], 1e10);
+    const gw = { levels: {} }; startArena(gw, { map: 'yard', bots: 0 }, 1e10); gw.arena.map = 'dune'; /* deathmatch rules, Dune's crates */ arenaApply(gw, { type: 'loadout', primary: 'ak' }, 'Ann', [], 1e10);
     const rr = combatApply(gw, { type: 'hit', target: 'b', weapon: 'ak', zone: 'stomach', n: 5 }, 'Ann', [{ id: 'a', name: 'Ann', pose: { ...a2, y: 9.7 } }, { id: 'b', name: 'Bo', pose: b2 }], 'a', 1e10 + 10);
     ok('host: a wallbang through a crate does less than an open shot', rr.dmg > 0 && rr.dmg < Math.round(36 * 1.25), JSON.stringify(rr)); } }
 

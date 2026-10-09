@@ -112,7 +112,7 @@ const BODY_REACH = 3.5;   // capsule radius + position lag on the host
 export function combatApply(game, a, name, players = [], actor = null, now = Date.now()) {
   if (!combatOn(game)) throw Error('Guns are only in Global Defensive');
   const r = game.combat?.d?.round; if (r && (r.phase === 'freeze' || r.phase === 'over' && game.combat.d.matchOver)) throw Error('The round hasn’t started');   // defuse freeze time
-  if (game.arena?.lobby && !game.arena.lobby.started && game.arena.lobby.noFight) throw Error('Waiting for players');
+  if (game.arena?.lobby && !game.arena.lobby.started) throw Error('Warmup · the match has not started');
   const c = state(game), me = key(name);
   if (a?.type !== 'hit') throw Error('Unknown combat action');
   const wpn = weaponById(a.weapon); if (!wpn || !ownedWeapons(game, name).includes(wpn.id)) throw Error('You do not own that weapon');

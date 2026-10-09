@@ -44,7 +44,7 @@ assert.throws(() => combatApply(g2, { type: 'hit', target: bot.id, weapon: 'knif
 // Kill → respawn after 2.5 s with full HP; a dead player gets a spawn order.
 const kill = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'ak', zone: 'head' }, 'Sam', players, 'p1', now + 5000); assert(kill.down); assert.equal(g2.combat.kills.sam, 1);
 combatTick(g2, now + 5000 + 2600); assert.equal(hpOf(g2, bot.name), MAX_HP); arenaTick(g2, players, .05, now + 7700); assert(!isDown(g2, bot.name, now + 7700));
-g2.combat.down.sam = { until: now + 8000 }; combatTick(g2, now + 8100); arenaTick(g2, players, .05, now + 8150); assert(Number.isInteger(g2.combat.spawnTo.sam?.i), 'spawn order for the player');
+g2.combat.down.sam = { until: now + 8000 }; combatTick(g2, now + 8100); arenaTick(g2, players, .05, now + 8150); assert(Number.isFinite(g2.combat.spawnTo.sam?.x) && g2.combat.spawnTo.sam.at === now + 8100, 'spawn order (an exact spot) for the respawned player');
 // Match clock: over after 10 minutes, then a new match on the same map.
 arenaTick(g2, players, .05, g2.arena.endsAt + 1); assert(g2.arena.over); arenaTick(g2, players, .05, g2.arena.endsAt + 13000); assert(!g2.arena.over);
 // Dropped weapons: G drops, auto pickup into an empty slot, E swaps, the dead drop their gun, bots upgrade, expiry.

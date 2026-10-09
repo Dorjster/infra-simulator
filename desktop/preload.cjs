@@ -5,5 +5,6 @@ contextBridge.exposeInMainWorld('infraDesktop', {
   hostLan: opts => ipcRenderer.invoke('desktop:host', opts || {}),
   discover: () => ipcRenderer.invoke('desktop:discover'),
   stopHosting: () => ipcRenderer.invoke('desktop:stop-hosting'),
+  inMatch: on => ipcRenderer.invoke('desktop:in-match', !!on),
   info: () => ipcRenderer.invoke('desktop:info')
 });

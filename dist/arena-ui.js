@@ -53,12 +53,14 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
   function spawnIndex() { const so = g().combat?.spawnTo?.[me()]; if (D()) return so ? so.i : myTeam() === 'ct' ? ARENA_MAPS[g().arena.map].t.length : 0; const players = (lan.players || []).filter(p => !p.bot); const i = players.findIndex(p => p.id === lan.selfID); return i >= 0 ? i * 3 + 1 : Math.floor(Math.random() * 8); }
   // Spawn, facing the middle of the map (camera looks along (−sin yaw, −cos yaw)).
   function goTo(i) { const s = scene.spawnFor(i); if (!s) return; teleport(s.x, s.z, Math.atan2(-(ARENA.cx - s.x), -(ARENA.cz - s.z))); }
+  // A spawn order from the host: exact spot (x, z) when given, else the map spawn index.
+  function goSpawn(so) { if (Number.isFinite(so?.x)) teleport(so.x, so.z, Math.atan2(-(ARENA.cx - so.x), -(ARENA.cz - so.z))); else goTo(so?.i ?? spawnIndex()); }
   // Entering waits for the arena warm-up (shaders, textures) behind a short loading screen instead of a frozen frame.
   let loading = false;
   function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; r.catch(() => {}).finally(() => { loading = false; $('ar-load').hidden = true; }); } return; } enterNow(); }
   function enterNow() { performance.mark?.('arena:enter'); const A = g().arena;
     // The map's first frames (GPU uploads, first shadow pass) are drawn behind the loading card; play starts warm.
-    $('ar-load').hidden = false; let frames = 0; const reveal = () => { if (++frames < 4) requestAnimationFrame(reveal); else if (!loading) $('ar-load').hidden = true; }; requestAnimationFrame(reveal); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); goTo(spawnIndex()); const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
+    $('ar-load').hidden = false; let frames = 0; const reveal = () => { if (++frames < 4) requestAnimationFrame(reveal); else if (!loading) $('ar-load').hidden = true; }; requestAnimationFrame(reveal); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
   function leave() { for (const id of ['ar-alive', 'ar-money', 'ar-banner', 'ar-prog']) $(id).hidden = true; bombView(null); for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
   // Buy menu (B opens and closes it, Escape closes it). Guns by category with an info card; equipment (armor, kit);
   // grenades; and, apart from the shop, the guns lying near you (free to pick up, E or click).
@@ -192,8 +194,8 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
       const A = g().arena; if (entered !== A.map + ':' + A.startedAt) { enter(); if (entered !== A.map + ':' + A.startedAt) return; }
       // Respawn: the host picks the spawn farthest from enemies.
       // Something outside the arena moved us back to the hall (joining, a menu): return to a spawn point.
-      const at = where(); if (at && !scene.inArena(at.z)) goTo(spawnIndex());
-      const s = g().combat?.spawnTo?.[me()]; if (s && s.at !== spawnAt) { spawnAt = s.at; goTo(s.i); const own = arenaArsenalOf(g(), name()); equip(own[0]); notify('Respawned'); }   // back with your primary in hand (CS2)
+      const at = where(); if (at && !scene.inArena(at.z)) { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); }
+      const s = g().combat?.spawnTo?.[me()]; if (s && s.at !== spawnAt) { spawnAt = s.at; goSpawn(s); const own = arenaArsenalOf(g(), name()); equip(own[0]); notify('Respawned'); }   // back with your primary in hand (CS2)
       drawGround(); if (performance.now() - pickAt > 160) { pickAt = performance.now(); autoPick(); lookPrompt(); if (buyOpen && nearby().map(n => n.it.id).join() !== lastNear) { lastNear = nearby().map(n => n.it.id).join(); buy(true); } }
       bombView(D()?.round?.phase === 'planted' ? D().round.planted : null);
       const ph = D() ? D().n + ':' + D().round?.phase : '';   // round events (planted, round over…) show at once
