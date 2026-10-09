@@ -12,7 +12,7 @@ import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol } from './combat-logic.js';
-import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView } from './arena-nades.js';
+import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire } from './arena-nades.js';
 import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE, newRound, freeSpot } from './arena-defuse.js';
 import { hurt } from './combat-logic.js';
 
@@ -41,6 +41,15 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs 
 const geo = game => { const map = ARENA_MAPS[game.arena.map], [sw, sd] = map.size; return { map, boxes: mapBoxes(map, ARENA.cx, ARENA.cz), bounds: { minX: ARENA.cx - sw / 2, maxX: ARENA.cx + sw / 2, minZ: ARENA.cz - sd / 2, maxZ: ARENA.cz + sd / 2 } }; };
 let cache = { map: null, g: null }; const G = game => cache.map === game.arena.map ? cache.g : (cache = { map: game.arena.map, g: geo(game) }).g;
 
+// One bot step towards heading h (steering round obstacles); true when it moved.
+function botStep(g, bot, h, step) { for (const turn of [0, .5, -.5, 1, -1, 1.5, -1.5]) { const hh = h + turn, nx = bot.x + Math.sin(hh) * step, nz = bot.z + Math.cos(hh) * step; if (walkable(g.boxes, g.bounds, nx, nz)) { bot.x = nx; bot.z = nz; return true; } } return false; }
+// The nearest walkable spot (within 20 units, reachable in a straight line) that a wall or crate hides from `from`.
+function findCover(g, bot, from) {
+  let best = null, bd = Infinity;
+  for (let a = 0; a < 12; a++) for (const r of [5, 10, 15, 20]) { const h = a / 12 * Math.PI * 2, x = bot.x + Math.sin(h) * r, z = bot.z + Math.cos(h) * r; if (r >= bd || !walkable(g.boxes, g.bounds, x, z)) continue;
+    if (lineOfSight(g.boxes, from.x, from.z, x, z, 9)) continue; let clear = true; for (let t = .25; t < 1; t += .25) if (!walkable(g.boxes, g.bounds, bot.x + (x - bot.x) * t, bot.z + (z - bot.z) * t)) { clear = false; break; } if (clear) { best = { x, z }; bd = r; } }
+  return best;
+}
 // A bot's gun with its rounds (finite like everyone's): full unless `ammo` [magazine, reserve] is given.
 export function botArm(bot, id, ammo = null) { const w = weaponById(id) || weaponById('pistol'); bot.weapon = w.id; bot.ammo = ammo ? ammo[0] : w.mag; bot.reserve = ammo ? ammo[1] : w.reserve; bot.reloadUntil = 0; }
 // Reload from the reserve; empty reserve: fall back to the team pistol. Returns true when a reload started.
@@ -225,7 +234,10 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     const team = C.d ? C.d.teams[key(bot.name)] : null;
     // Defuse: the bomb carrier on a site plants straight away (even under fire) and keeps at it.
     if (C.d && team === 't' && C.d.bomb.carrier === key(bot.name) && C.d.round.phase === 'live') { if (C.d.round.plant?.by === key(bot.name)) continue; if (!C.d.round.plant) { const site = siteAt(game, bot); if (site) { C.d.round.plant = { by: key(bot.name), start: now, x: bot.x, z: bot.z, y: 0, site }; changed = true; continue; } } }
-    const wpn = weaponById(bot.weapon), foes = alive(game, players, bot.name).filter(f => !team || C.d.teams[key(f.name)] !== team);
+    const wpn = weaponById(bot.weapon), foes = alive(game, players, bot.name).filter(f => !team || C.d.teams[key(f.name)] !== team), DF = DIFFICULTY[A.difficulty] || DIFFICULTY.normal;
+    // Grenades: run from a live HE close by; never stand in fire.
+    { const danger = (C.nades || []).find(n => (n.phase === 'air' && n.kind === 'he' && Math.hypot(n.x - bot.x, n.z - bot.z) < 40) || (n.phase === 'fire' && Math.hypot(n.x - bot.x, n.z - bot.z) < NADES.molotov.radius + 2 && inFire(fireCells(g.boxes, n.x, n.z, n.y), bot.x, bot.z)));
+      if (danger && botStep(g, bot, Math.atan2(bot.x - danger.x, bot.z - danger.z), 34 * dt)) { changed = true; continue; } }
     // Nearest visible enemy within range.
     let tgt = null, td = Infinity; for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && clearView(game, g.boxes, bot.x, bot.z, f.x, f.z)) { tgt = f; td = d; } }   // walls and smoke block
     if (tgt) {
@@ -233,13 +245,16 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
       const want = Math.atan2(-(tgt.x - bot.x), -(tgt.z - bot.z)), diff = Math.atan2(Math.sin(want - bot.yaw), Math.cos(want - bot.yaw)); bot.yaw += Math.sign(diff) * Math.min(Math.abs(diff), dt * 6);
       // Strafe while fighting (side to side, changing direction every ~0.7 s), never into walls.
       { const side = Math.floor(now / 700 + bot.shotN * .37 + (+bot.id.slice(4) || 0)) % 2 ? 1 : -1, sx = Math.cos(bot.yaw) * side, sz = -Math.sin(bot.yaw) * side, st = 14 * dt, nx = bot.x + sx * st, nz = bot.z + sz * st; if (walkable(g.boxes, g.bounds, nx, nz)) { bot.x = nx; bot.z = nz; changed = true; } }
-      const react = 380 + (1 - bot.skill) * 600;
+      const react = DF.react + (1 - bot.skill) * 300;
+      // Cover: while reloading, or hurt, step behind the nearest wall or crate that hides you from the target.
+      if ((now < bot.reloadUntil || hpOf(game, bot.name) < 40) && !bot.noCover) { if (!bot.cover || now > bot.cover.until) bot.cover = { at: findCover(g, bot, tgt), until: now + 1500 }; const cv = bot.cover.at; if (cv && Math.hypot(cv.x - bot.x, cv.z - bot.z) > 1.5 && botStep(g, bot, Math.atan2(cv.x - bot.x, cv.z - bot.z), 30 * dt)) changed = true; }
       if (now < bot.reloadUntil || now < (bot.blindUntil || 0)) continue;   // reloading, or blinded by a flashbang
       if (bot.ammo <= 0) { if (botReload(game, bot)) { bot.reloadUntil = now + wpn.reloadMs; bot.reloadN = (bot.reloadN || 0) + 1; } changed = true; continue; }
       if (Math.abs(diff) < .12 && now - bot.seenAt > react && now - bot.lastShot > wpn.rateMs * (wpn.auto ? 1.6 : 1.1)) {
         bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true;
-        const pHit = Math.max(.08, Math.min(.85, bot.skill * (1 - td / (wpn.range * 1.3)) * (wpn.kind === 'shotgun' && td > 40 ? .3 : 1)));
-        if (Math.random() < pHit) { const r = Math.random(), zone = r < .12 ? 'head' : r < .62 ? 'chest' : r < .82 ? 'stomach' : 'legs'; applyHit(game, bot.name, tgt.name, wpn, zone, td, wpn.pellets ? 1 + Math.floor(Math.random() * wpn.pellets * .6) : 1, now); }
+        // Difficulty: accuracy, head-shot share and reaction time (easy · normal · hard, host setting).
+        const pHit = Math.max(.05, Math.min(.9, bot.skill * DF.aim * (1 - td / (wpn.range * 1.3)) * (wpn.kind === 'shotgun' && td > 40 ? .3 : 1)));
+        if (Math.random() < pHit) { const r = Math.random(), zone = r < DF.head ? 'head' : r < .55 ? 'chest' : r < .8 ? 'stomach' : 'legs'; applyHit(game, bot.name, tgt.name, wpn, zone, td, wpn.pellets ? 1 + Math.floor(Math.random() * wpn.pellets * .6) : 1, now); }
       }
       continue;
     }
