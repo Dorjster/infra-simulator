@@ -119,3 +119,46 @@ export function lineOfSight(boxes, ax, az, bx, bz, y = 9) {
     if (t0 <= t1 && t0 < 1 && t1 > 0) return false; }
   return true;
 }
+// Is the 3D segment a→b clear of every box? (slab test; used for bullets, knife, grenades and pickups)
+export function segmentClear(boxes, ax, ay, az, bx, by, bz) {
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  for (const b of boxes) { let t0 = 0, t1 = 1, out = false;
+    for (const [p, d, lo, hi] of [[ax, dx, b.minX, b.maxX], [ay, dy, b.y0, b.y1], [az, dz, b.minZ, b.maxZ]]) {
+      if (Math.abs(d) < 1e-9) { if (p <= lo || p >= hi) { out = true; break; } continue; }
+      let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 >= t1) { out = true; break; } }
+    if (!out && t0 < 1 && t1 > 0) return false; }
+  return true;
+}
+// Distance along a ray (origin o, unit direction d) to the first box it enters, or Infinity.
+export function rayBoxes(boxes, ox, oy, oz, dx, dy, dz, far = 2000) {
+  let best = far;
+  for (const b of boxes) { let t0 = 0, t1 = best, out = false;
+    for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
+      if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
+      let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }
+    if (!out && t0 > 0 && t0 < best) best = t0; }
+  return best;
+}
+// Bullet penetration (wallbangs): each material costs this much per unit of thickness crossed; Infinity = solid.
+// Crates, wooden doors and thin plaster walls can be shot through; brick and concrete only when thin; stone,
+// shipping containers (steel boxes full of cargo) and the floor never. A gun's `pen` budget (weapons-data.js) is
+// what it can cross in total; damage falls with what it crossed.
+export const PEN_COST = { crate: .8, wood: 1, door: .7, plaster: 1.6, roof: 1.2, glass: .3, 'metal-red': 1.6, 'metal-blue': 1.6, 'metal-green': 1.6, metal: 1.6, brick: 3, concrete: 3.2, sand: 3, stone: Infinity };
+const SOLID_THICK = 4;   // thicker than this, only crates and wood are crossed (a 15-unit container is not)
+export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0) {
+  const hits = [];
+  for (const b of boxes) { let t0 = 0, t1 = far, out = false;
+    for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
+      if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
+      let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }
+    if (!out && t1 > 0 && t0 < far) hits.push({ t0, t1, mat: b.mat, b }); }
+  hits.sort((a, b) => a.t0 - b.t0);
+  let spent = 0, stop = Infinity; const crossed = [];
+  for (const h of hits) {
+    const thick = h.t1 - h.t0, unit = PEN_COST[h.mat] ?? 3, soft = h.mat === 'crate' || h.mat === 'wood' || h.mat === 'door' || h.mat === 'glass', cost = (!soft && thick > SOLID_THICK) ? Infinity : thick * unit;
+    if (spent + cost > budget) { stop = h.t0; break; } spent += cost; crossed.push({ t0: h.t0, t1: h.t1, mat: h.mat, spent });
+  }
+  // Damage multiplier for a target at distance t: 1 in the open; less behind each thing the bullet went through.
+  const factor = t => { if (t >= stop) return 0; let s = 0; for (const c of crossed) if (c.t1 <= t + 1e-6) s = c.spent; return s ? Math.max(.15, 1 - s / (budget * 1.25)) : 1; };
+  return { stop, crossed, factor };
+}

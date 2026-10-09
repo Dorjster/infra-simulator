@@ -10,11 +10,13 @@
 //  · Win: eliminate the other team, the bomb explodes (T), it's defused or the clock runs out unplanted (CT).
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS } from './arena-maps.js';
-import { weaponById, EYE, MAX_HP } from './weapons-data.js';
+import { weaponById, EYE, MAX_HP, defaultPistol } from './weapons-data.js';
+import { refillAll } from './combat-logic.js';
 
 export const DEFUSE = { freezeMs: 15000, roundMs: 115000, buyMs: 20000, bombMs: 40000, plantMs: 3200, defuseMs: 10000, kitMs: 5000, overMs: 6000, matchOverMs: 12000, half: 12, win: 13, start: 800, max: 16000, buyRadius: 45, bombRadius: 1750 * 2.54 / 16.5 };
-export const PRICE = { pistol: 200, deagle: 700, smg: 1500, shotgun: 1050, lmg: 5200, ak: 2700, m4: 2900, sniper: 4750, he: 300, flash: 200, smoke: 300, molotov: 400, kit: 400 };
-const KILL = { knife: 1500, smg: 600, shotgun: 900, sniper: 100, he: 300, molotov: 300 }, WIN = { elim: 3250, time: 3250, bomb: 3500, defuse: 3500 }, LOSS = [1400, 1900, 2400, 2900, 3400];
+// Prices come from the weapon table (weapons-data.js); grenades and the kit here.
+export const PRICE = new Proxy({ he: 300, flash: 200, smoke: 300, molotov: 400, kit: 400 }, { get: (o, id) => o[id] ?? weaponById(id)?.price });
+const WIN = { elim: 3250, time: 3250, bomb: 3500, defuse: 3500 }, LOSS = [1400, 1900, 2400, 2900, 3400];
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 export const isDefuse = game => game?.mode === 'arena' && game.arena?.kind === 'defuse';
 export const teamOf = (game, name) => game?.combat?.d?.teams?.[key(name)] || null;
@@ -29,7 +31,7 @@ export function defuseDamage(game, shooter, target, wpn, dmg) {
 }
 export function defuseKill(game, shooter, target, wpn) {
   const d = game.combat?.d; if (!d) return; const k = key(shooter), a = d.teams[k], b = d.teams[key(target)]; if (!a || k === key(target)) return;
-  gain(d, k, a === b ? -300 : KILL[wpn.id] ?? KILL[weaponById(wpn.id)?.kind] ?? 300);
+  gain(d, k, a === b ? -300 : ({ he: 300, molotov: 300, c4: 0 })[wpn.id] ?? weaponById(wpn.id)?.reward ?? 300);
 }
 
 export function startDefuse(game, now) {
@@ -49,25 +51,28 @@ export function assignTeam(game, name, players = []) { const d = game.combat.d, 
 export function newRound(game, players, now) {
   const C = game.combat, d = C.d, A = game.arena, m = map(game);
   if (d.n === DEFUSE.half) { // halftime: swap sides, money and gear back to the start
-    for (const k of Object.keys(d.teams)) { d.teams[k] = other(d.teams[k]); d.money[k] = DEFUSE.start; delete A.loadout[k]; } d.score = { t: d.score.ct, ct: d.score.t }; d.loss = { t: 0, ct: 0 }; d.kits = {};
-    for (const b of A.bots) b.weapon = 'pistol';
+    for (const k of Object.keys(d.teams)) { d.teams[k] = other(d.teams[k]); d.money[k] = DEFUSE.start; delete A.loadout[k]; } d.score = { t: d.score.ct, ct: d.score.t }; d.loss = { t: 0, ct: 0 }; d.kits = {}; C.armor = {};
+    for (const b of A.bots) b.weapon = null;
   }
   d.n++; const firstOfHalf = d.n === 1 || d.n === DEFUSE.half + 1;
-  for (const k of Object.keys(C.down || {})) { if (!A.bots.some(b => key(b.name) === k)) { A.loadout[k] = { primary: null, secondary: 'pistol', nades: [] }; delete d.kits[k]; } else { const b = A.bots.find(b => key(b.name) === k); b.weapon = 'pistol'; } }
+  // The dead lose everything (gun, grenades, armor, kit) and start again with their team's pistol.
+  for (const k of Object.keys(C.down || {})) { delete (C.armor ??= {})[k]; if (!A.bots.some(b => key(b.name) === k)) { A.loadout[k] = { primary: null, secondary: defaultPistol(d.teams[k]), nades: [] }; delete d.kits[k]; } else { const b = A.bots.find(b => key(b.name) === k); b.weapon = null; } }
   C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {};
   for (const mem of members(game, players)) { if (!d.teams[mem.k]) assignTeam(game, mem.name, players); if (firstOfHalf) d.money[mem.k] ??= DEFUSE.start; }
   const idx = { t: 0, ct: 0 };
   for (const mem of members(game, players)) { const t = d.teams[mem.k], i = idx[t]++ % 5, at = (t === 't' ? m.t : m.ct)[i];
-    if (mem.bot) { mem.bot.x = ARENA.cx + at[0]; mem.bot.z = ARENA.cz + at[1]; mem.bot.path = null; mem.bot.retake = false; mem.bot.dead = false; mem.bot.ammo = weaponById(mem.bot.weapon).mag; botBuy(game, mem.bot); }
-    else C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + i }; }
+    if (mem.bot) { const b = mem.bot; b.x = ARENA.cx + at[0]; b.z = ARENA.cz + at[1]; b.path = null; b.retake = false; b.dead = false; arm(b, b.weapon || defaultPistol(t)); botBuy(game, b); }
+    else { C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + i }; if (A.loadout[mem.k] && A.loadout[mem.k].secondary === undefined) A.loadout[mem.k].secondary = defaultPistol(t); refillAll(game, mem.name); } }   // every gun full for the new round (survivors keep theirs)
   const ts = members(game, players).filter(x => d.teams[x.k] === 't'); d.bomb = { carrier: ts.length ? ts[Math.floor(Math.random() * ts.length)].k : null };
   d.round = { phase: 'freeze', at: now, freezeUntil: now + DEFUSE.freezeMs, buyUntil: now + DEFUSE.freezeMs + DEFUSE.buyMs, endsAt: now + DEFUSE.freezeMs + DEFUSE.roundMs, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: Math.random() < .5 ? 'A' : 'B' };
   A.dirty = true;   // loadouts changed: the room sends the whole world
 }
+// A bot's gun, full: magazine and reserve.
+const arm = (b, id) => { const w = weaponById(id); b.weapon = w.id; b.ammo = w.mag; b.reserve = w.reserve; b.reloadUntil = 0; };
 function botBuy(game, b) {
-  const d = game.combat.d, k = key(b.name), t = d.teams[k], money = d.money[k] ?? DEFUSE.start; if (b.weapon !== 'pistol') return;
-  const want = money >= 4750 + 1000 && Math.random() < .2 ? 'sniper' : money >= 2900 ? (t === 't' ? 'ak' : 'm4') : money >= 1500 ? 'smg' : null;
-  if (want) { gain(d, k, -PRICE[want]); b.weapon = want; b.ammo = weaponById(want).mag; }
+  const d = game.combat.d, k = key(b.name), t = d.teams[k], money = d.money[k] ?? DEFUSE.start; if (b.weapon !== defaultPistol(t)) return;
+  const want = money >= 4750 + 1000 && Math.random() < .2 ? 'sniper' : money >= 3100 ? (t === 't' ? 'ak' : 'm4') : money >= 2050 ? (t === 't' ? 'galil' : 'famas') : money >= 1250 ? (t === 't' ? 'mac10' : 'mp9') : null;
+  if (want) { gain(d, k, -PRICE[want]); arm(b, want); }
 }
 // May this player buy now (buy time, in their spawn, alive)? Returns an error message or null.
 export function buyError(game, name, pose, now) {
@@ -77,6 +82,8 @@ export function buyError(game, name, pose, now) {
   if (pose) { const m = map(game), sp = t === 't' ? m.t : m.ct, cx = sp.reduce((a, s) => a + s[0], 0) / sp.length, cz = sp.reduce((a, s) => a + s[1], 0) / sp.length; if (Math.hypot(pose.x - ARENA.cx - cx, pose.z - ARENA.cz - cz) > DEFUSE.buyRadius) return 'Buy only in your spawn'; }
   return null;
 }
+// Charge a sum (armor, upgrades): throws when the player can't afford it; nothing is taken then.
+export function charge(game, name, amount) { const d = game.combat.d, k = key(name); if ((d.money[k] ?? DEFUSE.start) < amount) throw Error('Not enough money ($' + amount + ')'); gain(d, k, -amount); }
 export function pay(game, name, item) { const d = game.combat.d, k = key(name), p = PRICE[item] ?? 0; if ((d.money[k] ?? DEFUSE.start) < p) throw Error('Not enough money ($' + p + ')'); gain(d, k, -p); }
 
 // Plant / defuse: the client holds (hold: true) and lets go (hold: false); the host times it and checks you stay put.

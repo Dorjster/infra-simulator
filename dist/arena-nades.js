@@ -20,6 +20,8 @@ export const NADES = {
 };
 export const NADE_IDS = Object.keys(NADES), MAX_NADES = 4, MAX_FLASH = 2;
 const GRAVITY = 800 * HU * .4, THROW = 750 * HU * .9, BOUNCE = .45, R = .35;
+// Throw strength (CS2): left click alone = full throw, right click alone = short underhand, both = medium.
+export const STRENGTH = { long: 1, medium: .62, short: .3 };
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 export const nadesOf = l => Array.isArray(l?.nades) ? l.nades : [];
 // Room for one more of this kind? (four in all, two flashbangs)
@@ -29,9 +31,9 @@ export const canCarry = (list, kind) => list.length < MAX_NADES && (kind !== 'fl
 export function throwNade(game, name, kind, a, now = Date.now()) {
   const l = game.arena.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, list = l.nades ??= [], i = list.indexOf(kind);
   if (!NADES[kind]) throw Error('Unknown grenade'); if (i < 0) throw Error('You have no ' + NADES[kind].name);
-  const n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n + .1, dz = (+a.dz || 0) / n;
+  const n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n + .1, dz = (+a.dz || 0) / n, k = STRENGTH[a.strength] ?? 1;
   list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1;
-  C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), x: +a.x || 0, y: +a.y || EYE, z: +a.z || 0, vx: dx * THROW + (+a.vx || 0), vy: dy * THROW, vz: dz * THROW + (+a.vz || 0), at: now, phase: 'air', still: 0 });
+  C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), x: +a.x || 0, y: +a.y || EYE, z: +a.z || 0, vx: dx * THROW * k + (+a.vx || 0), vy: dy * THROW * k, vz: dz * THROW * k + (+a.vz || 0), at: now, phase: 'air', still: 0 });
   return 'Threw a ' + NADES[kind].name;
 }
 // Solid at (x, y, z)? (map boxes, the floor, the map edge)

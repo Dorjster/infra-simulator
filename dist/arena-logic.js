@@ -9,11 +9,11 @@
 //  · Bots: added and removed by any player; they walk between spawn points, need real line of sight (map walls),
 //    react after a short delay, miss more at range and reload. They hit through the same damage rules as players.
 import { ARENA } from './facility-layout.js';
-import { ARENA_MAPS, mapBoxes, walkable, lineOfSight } from './arena-maps.js';
-import { WEAPONS, weaponById, MAX_HP, EYE } from './weapons-data.js';
-import { applyHit, isDown, hpOf } from './combat-logic.js';
+import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear } from './arena-maps.js';
+import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
+import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol } from './combat-logic.js';
 import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView } from './arena-nades.js';
-import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, teamOf, siteAt, assignTeam, DEFUSE } from './arena-defuse.js';
+import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE } from './arena-defuse.js';
 import { hurt } from './combat-logic.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
@@ -37,11 +37,15 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0 } = {}, n
 const geo = game => { const map = ARENA_MAPS[game.arena.map], [sw, sd] = map.size; return { map, boxes: mapBoxes(map, ARENA.cx, ARENA.cz), bounds: { minX: ARENA.cx - sw / 2, maxX: ARENA.cx + sw / 2, minZ: ARENA.cz - sd / 2, maxZ: ARENA.cz + sd / 2 } }; };
 let cache = { map: null, g: null }; const G = game => cache.map === game.arena.map ? cache.g : (cache = { map: game.arena.map, g: geo(game) }).g;
 
+// A bot's gun with its rounds (finite like everyone's): full unless `ammo` [magazine, reserve] is given.
+export function botArm(bot, id, ammo = null) { const w = weaponById(id) || weaponById('pistol'); bot.weapon = w.id; bot.ammo = ammo ? ammo[0] : w.mag; bot.reserve = ammo ? ammo[1] : w.reserve; bot.reloadUntil = 0; }
+// Reload from the reserve; empty reserve: fall back to the team pistol. Returns true when a reload started.
+function botReload(game, bot) { const w = weaponById(bot.weapon), move = Math.min(w.mag - bot.ammo, bot.reserve || 0); if (move > 0) { bot.ammo += move; bot.reserve -= move; return true; } botArm(bot, defaultPistol(game.combat?.d?.teams?.[key(bot.name)])); return false; }
 function addBot(game, now = Date.now(), players = []) {
   const A = game.arena; if (A.bots.length >= MAX_BOTS) throw Error('The arena is full of bots (' + MAX_BOTS + ')');
   const n = A.botSeq++, name = 'BOT ' + BOT_NAMES[n % BOT_NAMES.length] + (n >= BOT_NAMES.length ? ' ' + (Math.floor(n / BOT_NAMES.length) + 1) : '');
   const bot = { id: 'bot-' + n, name, weapon: BOT_GUNS[n % BOT_GUNS.length], x: 0, z: 0, yaw: 0, pitch: 0, wp: -1, shotN: 0, lastShot: 0, ammo: 0, reloadUntil: 0, target: null, seenAt: 0, skill: .55 + (n % 4) * .08 };
-  bot.ammo = weaponById(bot.weapon).mag; place(game, bot); A.bots.push(bot); if (game.combat?.d) { assignTeam(game, bot.name, players); bot.weapon = 'pistol'; bot.ammo = weaponById('pistol').mag; } return bot;
+  botArm(bot, bot.weapon); place(game, bot); A.bots.push(bot); if (game.combat?.d) { const t = assignTeam(game, bot.name, players); botArm(bot, defaultPistol(t)); } return bot;
 }
 // Spawn point farthest from everyone else who is alive.
 function bestSpawn(game, others) {
@@ -57,46 +61,72 @@ function alive(game, players, but) {
 }
 
 // Put an item on the ground at (x, z), resting at height y.
-function dropItem(game, item, x, z, y, by, now) {
+// A gun keeps its rounds on the ground ([magazine, reserve]); `by` and their team are shown to whoever finds it.
+function dropItem(game, item, x, z, y, by, now, ammo = null) {
   const C = game.combat; C.ground ??= []; C.groundSeq = (C.groundSeq || 0) + 1;
-  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(40, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by });
-  while (C.ground.length > GROUND_MAX) C.ground.shift();
+  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(40, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null });
+  while (C.ground.length > GROUND_MAX) { const i = C.ground.findIndex(it => it.item !== 'c4'); C.ground.splice(i < 0 ? 0 : i, 1); }
 }
+// Take a gun out of a player's hands onto the ground (with its rounds); forgets their ammo for it.
+function dropFrom(game, name, item, x, z, y, now) { const k = key(name), a = ammoOf(game, name, item); if (game.combat.ammo?.[k]) delete game.combat.ammo[k][item]; dropItem(game, item, x, z, y, name, now, a); }
+// Can a player at pose reach an item on the ground (close enough, no wall between)?
+function reachable(game, p, it) { if (!p) return true; const g = G(game), d = Math.hypot(p.x - it.x, p.z - it.z); if (d > PICK_R + 4) return 'Too far away'; const eye = p.y ?? EYE; return segmentClear(g.boxes, p.x, eye, p.z, it.x, (it.y || 0) + .6, it.z) || segmentClear(g.boxes, p.x, eye - 6, p.z, it.x, (it.y || 0) + .6, it.z) ? true : 'Behind a wall'; }
 const poseOf = (players, name) => players.find(p => key(p.name) === key(name))?.pose || null;
+// A player's loadout (created with the team's starting pistol).
+export const loadoutOf = (game, name) => game.arena.loadout[key(name)] ??= { primary: null, secondary: teamPistol(game, name), nades: [] };
 export function arenaApply(game, a, name, players = [], now = Date.now()) {
   if (game.mode !== 'arena' || !game.arena) throw Error('Start the arena first');
   const A = game.arena;
   if (a.type === 'drop') {
     if (isDown(game, name, now)) throw Error('You are dead');
     if (a.slot === 'bomb') { const k = key(name); if (game.combat.d?.bomb?.carrier !== k) throw Error('You don\u2019t have the bomb'); const p = poseOf(players, name) || { x: +a.x || 0, z: +a.z || 0, yaw: +a.yaw || 0 }; game.combat.d.bomb.carrier = null; dropItem(game, 'c4', p.x - Math.sin(p.yaw || 0) * 6, p.z - Math.cos(p.yaw || 0) * 6, a.y, name, now); return 'Dropped the bomb'; }
-    const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, slot = a.slot === 'secondary' ? 'secondary' : a.slot === 'nades' ? 'nades' : 'primary', item = slot === 'nades' ? (nadesOf(l).includes(a.kind) ? a.kind : null) : l[slot];
+    const l = loadoutOf(game, name), slot = a.slot === 'secondary' ? 'secondary' : a.slot === 'nades' ? 'nades' : 'primary', item = slot === 'nades' ? (nadesOf(l).includes(a.kind) ? a.kind : null) : l[slot];
     if (!item) throw Error('Nothing to drop');
     // About 1 m ahead of you (the camera looks along (−sin yaw, −cos yaw)); at your feet if a wall is in the way.
     const p = poseOf(players, name) || { x: +a.x || 0, z: +a.z || 0, yaw: +a.yaw || 0 }, g = G(game); let x = p.x - Math.sin(p.yaw || 0) * 6, z = p.z - Math.cos(p.yaw || 0) * 6;
     if (!walkable(g.boxes, g.bounds, x, z, .5)) { x = p.x; z = p.z; }
-    if (slot === 'nades') l.nades.splice(l.nades.indexOf(item), 1); else l[slot] = null; dropItem(game, item, x, z, a.y, name, now); return 'Dropped ' + itemName(item);
+    if (slot === 'nades') { l.nades.splice(l.nades.indexOf(item), 1); dropItem(game, item, x, z, a.y, name, now); } else { l[slot] = null; dropFrom(game, name, item, x, z, a.y, now); } return 'Dropped ' + itemName(item);
   }
   if (a.type === 'pickup') {
     if (isDown(game, name, now)) throw Error('You are dead');
     const C = game.combat, i = (C.ground || []).findIndex(it => it.id === a.id), it = C.ground?.[i]; if (!it) throw Error('Already taken');
-    const p = poseOf(players, name); if (p && Math.hypot(p.x - it.x, p.z - it.z) > PICK_R + 4) throw Error('Too far away');
+    const p = poseOf(players, name), ok = reachable(game, p, it); if (ok !== true) throw Error(ok);
     const slot = slotOf(it.item); if (!slot) throw Error('Cannot pick that up');
     if (slot === 'bomb') { if (teamOf(game, name) !== 't') throw Error('Only Terrorists carry the bomb'); C.ground.splice(i, 1); game.combat.d.bomb.carrier = key(name); return 'You have the bomb'; }
-    const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' };
+    const l = loadoutOf(game, name);
     if (slot === 'nades') { if (!canCarry(l.nades ??= [], it.item)) throw Error('No room for more grenades'); C.ground.splice(i, 1); l.nades.push(it.item); return 'Picked up ' + itemName(it.item); }
     const old = l[slot]; if (old && !a.swap) throw Error('Slot taken · E to swap');
-    C.ground.splice(i, 1); l[slot] = it.item; if (old) dropItem(game, old, it.x, it.z, it.y, name, now);
-    return 'Picked up ' + itemName(it.item);
+    // Claimed: off the ground first (a second claim finds it gone), then the old gun drops where you stand.
+    C.ground.splice(i, 1); if (old) dropFrom(game, name, old, p ? p.x : it.x, p ? p.z : it.z, p ? Math.max(0, (p.y ?? EYE) - EYE) : it.y, now);
+    l[slot] = it.item; setAmmo(game, name, it.item, it.ammo || fullAmmo(it.item));
+    const am = it.ammo || fullAmmo(it.item); return 'Picked up ' + itemName(it.item) + (am ? ' · ' + am[0] + ' / ' + am[1] : '');
   }
   if (isDefuse(game) && ['buy-kit', 'plant', 'defuse'].includes(a.type)) return defuseApply(game, a, name, poseOf(players, name) || (a.x !== undefined ? { x: +a.x, y: +a.y, z: +a.z } : null), now);
-  if (isDefuse(game) && ['loadout', 'buy-nade'].includes(a.type)) { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); const item = a.type === 'buy-nade' ? a.kind : a.primary ?? a.secondary; if (!(a.type === 'loadout' && item === null)) pay(game, name, item); }
-  if (a.type === 'loadout') {
+  if (['loadout', 'buy-nade', 'buy-armor'].includes(a.type) && isDown(game, name, now)) throw Error('You are dead');
+  if (a.type === 'loadout' || a.type === 'buy') {
+    // Buying a gun: one primary and one pistol at most; the one you had drops at your feet with its rounds.
     const primary = a.primary === null ? null : PRIMARIES.includes(a.primary) ? a.primary : undefined, secondary = SECONDARIES.includes(a.secondary) ? a.secondary : undefined;
     if (primary === undefined && secondary === undefined) throw Error('Choose a weapon');
-    const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }; if (primary !== undefined) l.primary = primary; if (secondary !== undefined) l.secondary = secondary;
-    return 'Loadout · ' + [l.primary && weaponById(l.primary).name, l.secondary && weaponById(l.secondary).name].filter(Boolean).join(' + ');
+    const team = teamOf(game, name), buys = [['primary', primary], ['secondary', secondary]].filter(([, it]) => it !== undefined), l = loadoutOf(game, name), dropped = [];
+    if (isDefuse(game)) { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); let cost = 0;
+      for (const [, it] of buys) { const w = it && weaponById(it); if (w?.team && team && w.team !== team) throw Error(w.name + ' is a ' + (w.team === 't' ? 'Terrorist' : 'Counter-Terrorist') + ' weapon'); cost += it ? PRICE[it] : 0; }
+      if ((game.combat.d.money[key(name)] ?? DEFUSE.start) < cost) throw Error('Not enough money ($' + cost + ')'); for (const [, it] of buys) if (it) pay(game, name, it); }   // all or nothing: never charged without the gun
+    const p = poseOf(players, name) || (a.x !== undefined ? { x: +a.x, z: +a.z, y: +a.y } : null);
+    for (const [slot, item] of buys) { const old = l[slot];
+      if (old && item) { if (p) dropFrom(game, name, old, p.x, p.z, Math.max(0, (p.y ?? EYE) - EYE), now); else if (game.combat.ammo?.[key(name)]) delete game.combat.ammo[key(name)][old]; dropped.push(weaponById(old).name); }
+      l[slot] = item; if (item) setAmmo(game, name, item, fullAmmo(item)); }
+    return (isDefuse(game) ? 'Bought ' : 'Loadout · ') + [l.primary && weaponById(l.primary).name, l.secondary && weaponById(l.secondary).name].filter(Boolean).join(' + ') + (dropped.length ? ' · dropped your ' + dropped.join(' and ') : '');
   }
-  if (a.type === 'buy-nade') { const kind = a.kind; if (!NADES[kind]) throw Error('Unknown grenade'); const l = A.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, list = l.nades ??= [];
+  if (a.type === 'buy-armor') {
+    const kind = a.kind === 'helmet' ? 'helmet' : 'kevlar', C = game.combat, k = key(name), arm = (C.armor ??= {})[k] ??= { kevlar: 0, helmet: false };
+    if (kind === 'kevlar' && arm.kevlar >= 100) throw Error('Your vest is full');
+    if (kind === 'helmet' && arm.kevlar >= 100 && arm.helmet) throw Error('You have full armor');
+    const cost = kind === 'helmet' && arm.kevlar >= 100 ? ARMOR.helmet.upgrade : ARMOR[kind].price;
+    if (isDefuse(game)) { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); charge(game, name, cost); }
+    arm.kevlar = 100; if (kind === 'helmet') arm.helmet = true; return 'Bought ' + ARMOR[kind].name;
+  }
+  if (isDefuse(game) && a.type === 'buy-nade') { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); if (!NADES[a.kind]) throw Error('Unknown grenade'); const list = loadoutOf(game, name).nades ??= []; if (!canCarry(list, a.kind)) throw Error(list.length >= 4 ? 'You carry four grenades already' : a.kind === 'flash' ? 'Two flashbangs at most' : 'You already have a ' + NADES[a.kind].name); pay(game, name, a.kind); }
+  if (a.type === 'buy-nade') { const kind = a.kind; if (!NADES[kind]) throw Error('Unknown grenade'); const l = loadoutOf(game, name), list = l.nades ??= [];
     if (!canCarry(list, kind)) throw Error(list.length >= 4 ? 'You carry four grenades already' : kind === 'flash' ? 'Two flashbangs at most' : 'You already have a ' + NADES[kind].name);
     list.push(kind); return 'Bought ' + NADES[kind].name; }
   if (a.type === 'throw') { if (isDown(game, name, now)) throw Error('You are dead'); return throwNade(game, name, a.kind, a, now); }
@@ -112,17 +142,22 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
   if (game.mode !== 'arena' || !game.arena) return false; const A = game.arena, C = game.combat, g = G(game); let changed = false;
   // Spawn orders for players who just respawned (their client moves them there).
   for (const [k, at] of Object.entries(C.respawnedAt || {})) { if (C.spawnTo[k]?.at === at) continue; const p = players.find(x => key(x.name) === k); if (!p) continue; C.spawnTo[k] = { at, i: bestSpawn(game, alive(game, players, p.name)) }; changed = true; }
-  // The dead drop their primary (or pistol) where they fell; in deathmatch they still respawn with their loadout.
+  // Defuse: the dead drop their best gun (with its rounds) and the bomb where they fell; it leaves their hands, so
+  // nothing is duplicated. Deathmatch: you respawn with your loadout, nothing drops.
   A.deathDrops ??= {};
   for (const [k, d] of Object.entries(C.down || {})) { const tag = (C.deaths?.[k] || 0) + ':' + d.until; if (A.deathDrops[k] === tag) continue; A.deathDrops[k] = tag;
     if (C.d?.bomb?.carrier === k) { const bt = A.bots.find(b => key(b.name) === k) || players.find(x => key(x.name) === k)?.pose; if (bt) dropItem(game, 'c4', bt.x, bt.z, 0, k, now); C.d.bomb.carrier = null; changed = true; }
-    const bot = A.bots.find(b => key(b.name) === k), p = bot ? null : players.find(x => key(x.name) === k), l = A.loadout[k] || {}, item = bot ? bot.weapon : l.primary || (l.secondary === undefined ? 'pistol' : l.secondary);
-    const at = bot || p?.pose; if (item && at && slotOf(item)) { dropItem(game, item, at.x, at.z, bot ? 0 : Math.max(0, (at.y || 0) - EYE), bot ? bot.name : p.name, now); changed = true; } }
+    if (!C.d) continue;
+    const bot = A.bots.find(b => key(b.name) === k), p = bot ? null : players.find(x => key(x.name) === k), at = bot || p?.pose; if (!at) continue;
+    if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, 0, bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve]); bot.weapon = null; changed = true; } continue; }
+    const l = A.loadout[k] || {}, slot = l.primary ? 'primary' : l.secondary ? 'secondary' : null; if (!slot) continue;
+    dropFrom(game, p.name, l[slot], at.x, at.z, Math.max(0, (at.y || 0) - EYE), now); l[slot] = null; changed = true; }
   if (nadesTick(game, players, dt, now, g)) changed = true;
   if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => it.item === 'c4' || now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
   for (const bot of A.bots) {
     if (isDown(game, bot.name, now)) { bot.dead = true; continue; }
-    if (bot.dead && !C.d) { bot.dead = false; place(game, bot); bot.ammo = weaponById(bot.weapon).mag; changed = true; }
+    if (bot.dead && !C.d) { bot.dead = false; place(game, bot); botArm(bot, bot.weapon || 'pistol'); changed = true; }
+    if (!bot.weapon) botArm(bot, defaultPistol(C.d?.teams?.[key(bot.name)]));
     if (C.d && (C.d.round?.phase === 'freeze' || C.d.round?.phase === 'over' || C.d.matchOver)) continue;   // defuse: frozen while buying, between rounds
     const team = C.d ? C.d.teams[key(bot.name)] : null;
     // Defuse: the bomb carrier on a site plants straight away (even under fire) and keeps at it.
@@ -133,9 +168,11 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     if (tgt) {
       if (bot.target !== tgt.name) { bot.target = tgt.name; bot.seenAt = now; }
       const want = Math.atan2(-(tgt.x - bot.x), -(tgt.z - bot.z)), diff = Math.atan2(Math.sin(want - bot.yaw), Math.cos(want - bot.yaw)); bot.yaw += Math.sign(diff) * Math.min(Math.abs(diff), dt * 6);
+      // Strafe while fighting (side to side, changing direction every ~0.7 s), never into walls.
+      { const side = Math.floor(now / 700 + bot.shotN * .37 + (+bot.id.slice(4) || 0)) % 2 ? 1 : -1, sx = Math.cos(bot.yaw) * side, sz = -Math.sin(bot.yaw) * side, st = 14 * dt, nx = bot.x + sx * st, nz = bot.z + sz * st; if (walkable(g.boxes, g.bounds, nx, nz)) { bot.x = nx; bot.z = nz; changed = true; } }
       const react = 380 + (1 - bot.skill) * 600;
       if (now < bot.reloadUntil || now < (bot.blindUntil || 0)) continue;   // reloading, or blinded by a flashbang
-      if (bot.ammo <= 0) { bot.reloadUntil = now + wpn.reloadMs; bot.ammo = wpn.mag; bot.reloadN = (bot.reloadN || 0) + 1; changed = true; continue; }
+      if (bot.ammo <= 0) { if (botReload(game, bot)) { bot.reloadUntil = now + wpn.reloadMs; bot.reloadN = (bot.reloadN || 0) + 1; } changed = true; continue; }
       if (Math.abs(diff) < .12 && now - bot.seenAt > react && now - bot.lastShot > wpn.rateMs * (wpn.auto ? 1.6 : 1.1)) {
         bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true;
         const pHit = Math.max(.08, Math.min(.85, bot.skill * (1 - td / (wpn.range * 1.3)) * (wpn.kind === 'shotgun' && td > 40 ? .3 : 1)));
@@ -146,7 +183,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     bot.target = null;
     // Bots pick up better guns they walk over (a rifle or the AWP instead of an SMG, shotgun or LMG).
     if (C.ground?.length && !BOT_UPGRADE.includes(bot.weapon)) { const i = C.ground.findIndex(it => BOT_UPGRADE.includes(it.item) && Math.hypot(it.x - bot.x, it.z - bot.z) < 4);
-      if (i >= 0) { const it = C.ground.splice(i, 1)[0]; dropItem(game, bot.weapon, it.x, it.z, it.y, bot.name, now); bot.weapon = it.item; bot.ammo = weaponById(it.item).mag; changed = true; } }
+      if (i >= 0) { const it = C.ground.splice(i, 1)[0]; if (bot.weapon) dropItem(game, bot.weapon, it.x, it.z, it.y, bot.name, now, [bot.ammo, bot.reserve]); botArm(bot, it.item, it.ammo); changed = true; } }
     if (C.d) { if (defuseBot(game, bot, team, g, dt, now)) changed = true; continue; }
     // Wander: walk towards a spawn point used as a waypoint; steer round obstacles; pick another when stuck.
     if (bot.wp < 0 || Math.hypot(...wp(g, bot.wp).map((v, i) => v - (i ? bot.z : bot.x))) < 6) bot.wp = Math.floor(Math.random() * g.map.spawns.length);

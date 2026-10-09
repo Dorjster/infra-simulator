@@ -136,7 +136,7 @@ wallet(old, 'Sam').cash = 100; migrateCasino(old); assert.equal(old.wallets.sam.
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak' }, 'Sam', players, 'p1', 1010), /Too fast/);
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p3', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /range/);
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'ak' }, 'Sam', players, 'p1', 2000), /target/);
-  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak', head: true }, 'Sam', players, 'p1', 4000); assert.equal(r.dmg, damageFor(AK, 'head', 30)); assert(r.dmg > 130, 'AK head shot one-shots (×4, CS2)'); assert(r.down);
+  r = combatApply(g4, { type: 'hit', target: 'p2', weapon: 'ak', head: true }, 'Sam', players, 'p1', 4000); assert(r.down, 'a confirmed head shot from any gun kills'); assert.equal(r.dmg, MAX_HP - d30, 'the HP that was left');
   assert.throws(() => combatApply(g4, { type: 'hit', target: 'p1', weapon: 'pistol' }, 'Darja', players, 'p2', 4500), /knocked out/);
   assert.equal(g4.combat.kills.sam, 1); assert.equal(g4.combat.feed[0].target, 'Darja');
   assert(combatTick(g4, 4000 + g4.arena.respawnMs)); assert.equal(hpOf(g4, 'Darja'), MAX_HP); assert.equal(g4.combat.respawns.darja, 1);
