@@ -70,6 +70,8 @@ const PROP = {
   bollard: { size: [1.2, 1.2, 3.4], mat: 'metal' }, forklift: { size: [6, 11, 9], mat: 'metal-red', solidMat: 'metal' }, container: { size: [15, 40, 15], mat: 'metal-red' },
 };
 export const PROP_TYPES = Object.keys(PROP);
+// Props with their own shape (the rest — crates, pallets, dumpsters, containers, pillars — are textured boxes).
+export const DRAWN = new Set(['barrel', 'barrels', 'car', 'truck', 'stall', 'cart', 'hay', 'fountain', 'well', 'lamp', 'palm', 'tree', 'bollard', 'sandbags', 'bench', 'planter', 'forklift']);
 export function prop(type, x, z, rot = 0, extra = {}) {
   const P = PROP[type]; if (!P) throw Error('Unknown prop ' + type); let [w, d, h] = P.size; if (extra.size) [w, d, h] = extra.size; if (rot) [w, d] = [d, w];
   const y0 = extra.y || 0, mat = extra.mat || P.solidMat || P.mat, solids = [];
@@ -77,6 +79,7 @@ export function prop(type, x, z, rot = 0, extra = {}) {
   else if (type === 'fountain') solids.push(B(x, z, w, d, h, 'stone', y0), B(x, z, 2.4, 2.4, 9, 'stone', y0));
   else if (type === 'stall') solids.push(B(x, z, w, d, 3.6, 'wood', y0));   // the counter; the awning is high above
   else solids.push(B(x, z, w, d, h, mat, y0));
+  if (DRAWN.has(type)) for (const b of solids) b.prop = type;   // drawn as its own shape by arena-scene (not as a plain box)
   return { solids, visual: { type, x, z, y: y0, rot, w, d, h, color: extra.color, text: extra.text, light: extra.light } };
 }
 // Signs and callouts (painted on walls; visual only): [text, x, y, z, facing ('n'|'s'|'e'|'w'), size].

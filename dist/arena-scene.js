@@ -4,6 +4,7 @@
 import * as THREE from './three.module.js';
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable } from './arena-maps.js';
+import { buildProps, propWarmMeshes } from './arena-props.js';
 
 function tex(draw, size = 256) {
   try { const c = document.createElement('canvas'); c.width = c.height = size; const g = c.getContext('2d'); if (typeof g?.fillRect !== 'function') return null; draw(g, size);
@@ -23,6 +24,8 @@ const LOOK = {
   'metal-red': [g => { g.fillStyle = '#8f2a22'; g.fillRect(0, 0, 256, 256); for (let x = 0; x < 256; x += 16) { g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x, 0, 5, 256); g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(x + 6, 0, 3, 256); } speckle(g, 256, 'rgba(0,0,0,0)', .1, 1500); }, 10],
   'metal-blue': [g => { g.fillStyle = '#244f7a'; g.fillRect(0, 0, 256, 256); for (let x = 0; x < 256; x += 16) { g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x, 0, 5, 256); g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(x + 6, 0, 3, 256); } }, 10],
   'metal-green': [g => { g.fillStyle = '#3d6236'; g.fillRect(0, 0, 256, 256); for (let x = 0; x < 256; x += 16) { g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x, 0, 5, 256); g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(x + 6, 0, 3, 256); } }, 10],
+  adobe: [g => { speckle(g, 256, '#c9a97c', .18, 5000); for (let i = 0; i < 18; i++) { g.strokeStyle = `rgba(90,60,30,${.1 + rnd() * .15})`; g.lineWidth = 1; g.beginPath(); let x = rnd() * 256, y = rnd() * 256; g.moveTo(x, y); for (let k = 0; k < 4; k++) { x += (rnd() - .5) * 40; y += rnd() * 30; g.lineTo(x, y); } g.stroke(); } g.fillStyle = 'rgba(70,45,20,.12)'; g.fillRect(0, 230, 256, 26); }, 26],
+  metal: [g => { speckle(g, 256, '#5a6168', .1, 1500); }, 10],
   roof: [g => { speckle(g, 256, '#6d5f52', .15); for (let y = 0; y < 256; y += 20) { g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(0, y, 256, 3); } }, 14],
 };
 const mats = new Map();
@@ -52,7 +55,7 @@ const SITE_GEO = new THREE.PlaneGeometry(1, 1); SITE_GEO.userData.shared = true;
 // their textures before anyone enters the arena.
 export function arenaWarmMeshes() {
   const names = new Set(); for (const m of Object.values(ARENA_MAPS)) { names.add(m.floor); for (const s of m.solids) names.add(s[5]); }
-  return [...[...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; }), ...Object.values(SITE_MAT).map(m => new THREE.Mesh(SITE_GEO, m))];
+  return [...propWarmMeshes(), ...[...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; }), ...Object.values(SITE_MAT).map(m => new THREE.Mesh(SITE_GEO, m))];
 }
 export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.visible = false; scene.add(group);
@@ -62,9 +65,10 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   function build(id) {
     if (current === id) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id;
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
-    const byMat = new Map(); for (const b of boxes) { const [, tile] = LOOK[b.mat] || LOOK.concrete; (byMat.get(b.mat) || byMat.set(b.mat, []).get(b.mat)).push(boxGeometry(b, tile)); }
+    const byMat = new Map(); for (const b of boxes) { if (b.prop) continue; const [, tile] = LOOK[b.mat] || LOOK.concrete; (byMat.get(b.mat) || byMat.set(b.mat, []).get(b.mat)).push(boxGeometry(b, tile)); }
     const floor = { minX: bounds.minX, maxX: bounds.maxX, minZ: bounds.minZ, maxZ: bounds.maxZ, y0: -1, y1: 0 }; (byMat.get(map.floor) || byMat.set(map.floor, []).get(map.floor)).push(boxGeometry(floor, (LOOK[map.floor] || LOOK.concrete)[1]));
     for (const [mat, geos] of byMat) { const mesh = new THREE.Mesh(merge(geos), material(mat)); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.arena = true; group.add(mesh); pickables.push(mesh); }
+    { const P = buildProps(map, cx, cz); for (const m of P.meshes) { m.userData.arena = true; group.add(m); } for (const l of P.lights) { const pl = new THREE.PointLight(0xffd9a0, 6, 45, 2); pl.position.set(l.x, l.y, l.z); group.add(pl); } }   // props as their own shapes, lamps lit
     for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; s.position.set(cx + x, .06, cz + z); s.scale.setScalar(r * 1.6); s.renderOrder = 1; group.add(s); }
   }
   return {

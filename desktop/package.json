@@ -1,7 +1,7 @@
 {
   "name": "infra-simulator",
   "productName": "Infra Simulator",
-  "version": "40.0.1",
+  "version": "41.0.0",
   "description": "Build and operate an enterprise data center, solo or with up to 12 engineers on your LAN.",
   "author": "Darja",
   "license": "UNLICENSED",
