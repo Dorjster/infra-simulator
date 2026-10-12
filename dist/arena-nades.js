@@ -22,26 +22,33 @@ export const NADES = {
   molotov: { id: 'molotov', name: 'Molotov', kind: 'nade', price: 400, fuse: 2200, radius: 37, lasts: 7000, dps: 40 },
 };
 export const NADE_IDS = Object.keys(NADES), MAX_NADES = 4, MAX_FLASH = 2;
-// Flight: a full throw leaves at 230 units/s under 98 units/s² gravity (a 45° throw would carry ~540 units if nothing
-// stopped it; the fuse and the map's walls do). Bounces keep 45 %.
-export const GRAVITY = 98, THROW = 230, BOUNCE = .45, R = .35;
-// Throw strength (CS2): left click alone = full throw, right click alone = short underhand, both = medium.
-export const STRENGTH = { long: 1, medium: .5, short: .25 };
+// Flight, exactly CS2's (Source) grenade physics in our units (1 hammer unit = HU): a throw leaves at 675 u/s × the
+// strength's power (long 1.0, medium 0.65, short 0.3), under 0.4 × 800 u/s² gravity; bounces keep 45 %.
+export const GRAVITY = 320 * HU, THROW = 675 * HU, BOUNCE = .45, R = .35;
+export const STRENGTH = { long: 1, medium: .5, short: .25 };   // (kept for old saves / validation)
+// CS2's throw strength per mode (m_flThrowStrength): long = 1, medium (both buttons) = 0.5, short (right) = 0.
+export const POWER = { long: 1, medium: .5, short: 0 };
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 export const nadesOf = l => Array.isArray(l?.nades) ? l.nades : [];
 // Room for one more of this kind? (four in all, two flashbangs)
 export const canCarry = (list, kind) => list.length < MAX_NADES && (kind !== 'flash' || list.filter(k => k === 'flash').length < MAX_FLASH) && !(kind !== 'flash' && list.includes(kind));
-// The launch velocity for an aim (dx, dy, dz), a strength and the thrower's run velocity.
-export function launch(a) { const n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, k = STRENGTH[a.strength] ?? 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n + .1, dz = (+a.dz || 0) / n;
-  return { vx: dx * THROW * k + (+a.vx || 0), vy: dy * THROW * k, vz: dz * THROW * k + (+a.vz || 0) }; }
-
+// The launch velocity for an aim (dx, dy, dz), a strength and the thrower's run velocity (vx, vz), as CS2 does it:
+// the aim pitch is remapped so a level aim throws 10° up (straight down stays down, straight up stays up), speed is
+// 675 × (power × 0.7 + 0.3), and 1.25 × the thrower's velocity is added (running throws go further).
+export function launch(a) {
+  const n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n, dz = (+a.dz || 0) / n, P = POWER[a.strength] ?? 1;
+  const down = -Math.asin(Math.max(-1, Math.min(1, dy))) * 180 / Math.PI, pitch = down >= 0 ? -10 + down * 100 / 90 : -10 + down * 80 / 90, up = -pitch * Math.PI / 180;
+  const h = Math.hypot(dx, dz) || 1, cu = Math.cos(up), speed = THROW * (P * .7 + .3); const cl = v => Math.max(-60, Math.min(60, +v || 0));   /* run / jump speed only (never a launcher) */
+  return { vx: dx / h * cu * speed + cl(a.vx) * 1.25, vy: Math.sin(up) * speed + cl(a.vy) * 1.25, vz: dz / h * cu * speed + cl(a.vz) * 1.25 }; }
+// Where a throw starts: the eye, lower for weaker throws (CS2: power × 12 − 12 units).
+export const throwStart = a => ({ x: +a.x || 0, y: (+a.y || EYE) + ((POWER[a.strength] ?? 1) * 12 - 12) * HU, z: +a.z || 0 });
 // Throw from the eye along (dx, dy, dz): one grenade leaves the loadout (never two for one throw).
 export function throwNade(game, name, kind, a, now = Date.now()) {
   const l = game.arena.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, list = l.nades ??= [], i = list.indexOf(kind);
   if (!NADES[kind]) throw Error('Unknown grenade'); if (i < 0) throw Error('You have no ' + NADES[kind].name);
   const r = game.combat?.d?.round; if (r && ['freeze', 'over', 'warmup'].includes(r.phase) || game.arena?.lobby && !game.arena.lobby.started) throw Error('You can’t throw now');
   list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1; const v = launch(a);
-  C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), x: +a.x || 0, y: +a.y || EYE, z: +a.z || 0, ...v, at: now, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long' });
+  C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), ...throwStart(a), ...v, at: now, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long' });
   return 'Threw a ' + NADES[kind].name;
 }
 // Solid at (x, y, z)? (map boxes, the floor, the map edge)
@@ -62,7 +69,7 @@ export function stepNade(g, boxes, bounds, dt) {
 const goesOff = (g, hitFloor, age) => { const N = NADES[g.kind]; return g.kind === 'molotov' ? hitFloor || age > N.fuse : g.kind === 'smoke' ? (g.still > .25 && age > 900) || age > N.fuse : age > N.fuse; };
 // The path a throw will take (client preview): points every 50 ms until it goes off (≤ 4 s).
 export function predictThrow(kind, a, boxes = [], bounds = null) {
-  const g = { kind, x: +a.x, y: +a.y, z: +a.z, ...launch(a), still: 0 }, pts = [[g.x, g.y, g.z]];
+  const g = { kind, ...throwStart(a), ...launch(a), still: 0 }, pts = [[g.x, g.y, g.z]];
   for (let t = 50; t <= 4000; t += 50) { const hit = stepNade(g, boxes, bounds, .05); pts.push([g.x, g.y, g.z]); if (goesOff(g, hit, t)) break; }
   return pts;
 }

@@ -72,6 +72,10 @@ export const C4 = { id: 'c4', name: 'C4 bomb', kind: 'bomb', price: 0, reward: 0
 // Grenade throwing (one place for the input timing; flight is arena-nades.js): the pin takes primeMs to come out; a
 // release before that throws nothing.
 export const THROW = { primeMs: 350 };
+// Recoil, CS:GO style: the camera follows `view` of the recoil (view_recoil_tracking 0.45); bullets land at the full
+// recoil, so a spray climbs above the fixed crosshair and you pull down to hold it. `kick`: a quick visual view punch
+// per shot (degrees, by gun class), recovering at `kickBack` per second; it never moves the bullets.
+export const RECOIL = { view: .45, kick: { pistol: .9, smg: .45, rifle: .7, lmg: .55, sniper: 2.2, shotgun: 2.0 }, kickBack: 18 };
 // Body armor (buy menu · Equipment).
 export const ARMOR = { kevlar: { name: 'Kevlar Vest', price: 650 }, helmet: { name: 'Kevlar + Helmet', price: 1000, upgrade: 350 } };
 const BY_ID = new Map([...WEAPONS, ...KNIVES, ...GRENADES, C4, DARJA_GUN].map(w => [w.id, w]));
