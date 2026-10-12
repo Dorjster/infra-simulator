@@ -73,10 +73,12 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   loadFP().then(() => { if (current && fpFor(current.id)) setView(current.id); });
   loadRealWeapons().then(n => { if (n && current) setView(current.id); });
   let drawAt = 0, drawMs = 1;
-  // The view model is drawn on top of the world, like CS2: it renders after every other opaque object and clears the
-  // depth buffer first (once per frame), so a wall you stand against never cuts into or swallows the gun.
-  let vmFrame = -1; const vmClear = r => { const f = r.info.render.frame; if (f !== vmFrame) { vmFrame = f; r.clearDepth(); } };
-  const onTop = g => g.traverse(o => { if (o.isMesh || o.isSkinnedMesh) { o.renderOrder = 1e6; o.onBeforeRender = vmClear; o.frustumCulled = false; o.castShadow = false; } });
+  // The view model is drawn on top of the world, like CS2: while its meshes draw, their depth goes into the nearest
+  // 1 % of the depth range (gl.depthRange), so the gun is always in front of every wall (a wall you stand against
+  // never cuts into it) while the world's own depth stays intact (walls still hide smoke, fire, decals and glows behind
+  // them). Same materials and shaders as everywhere else: nothing new to compile when a weapon first appears.
+  const vmNear = r => r.getContext().depthRange(0, .01), vmFar = r => r.getContext().depthRange(0, 1);
+  const onTop = g => g.traverse(o => { if (o.isMesh || o.isSkinnedMesh) { o.onBeforeRender = vmNear; o.onAfterRender = vmFar; o.frustumCulled = false; o.castShadow = false; } });
   function setView(id, draw = false) {
     if (view) { camera.remove(view); view = null; }
     if (draw && id) { drawAt = now(); drawMs = DRAW_MS[id]; sounds.draw(null, id); }
@@ -86,18 +88,22 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; onTop(view); camera.add(view);
     if (!camera.parent) scene.add(camera);
   }
-  function stopReload() { reloadUntil = 0; reloadId = null; }
+  // Reloads, as CS2: the rounds count only once the new magazine is seated (MAG_IN of the way through); switching
+  // weapons before that cancels the reload and the gun keeps the magazine it had. After it, the reload stands.
+  const MAG_IN = .75; let magInAt = 0, magIn = false;
+  function stopReload() { reloadUntil = 0; reloadId = null; magIn = false; }
+  function seatMag() { const id = reloadId, wpn = weaponById(id); if (!wpn || magIn) return; magIn = true; const [mag, res] = left(id), move = Math.min(wpn.mag - mag, res); ammo.set(id, [mag + move, res - move]); reloads++; }
   let prevWeapon = null;
   function equip(id) { const was = current?.id; { const k = weaponById(id)?.kind, wk = weaponById(was)?.kind; if ((k === 'nade' || k === 'bomb') && wk && wk !== 'nade' && wk !== 'bomb') prevWeapon = was; } current = id ? weaponById(id) : null; if (current?.id !== was) { setView(current?.id, true); inspecting = null; fp?.twirl?.(0); scope = 0; ri = 0; rescope = null; stopReload(); knife = null; nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }; } heldLeft = false; return current; }
   function cycle() { const own = arsenal(); if (!own.length) return null; const i = current ? own.indexOf(current.id) : -1; return equip(i + 1 < own.length ? own[i + 1] : null); }
   // R: reload (time per gun). Rounds move from the reserve at the end; never more than the reserve has.
   function reload() { inspecting = null;
     if (!fire_() || reloading()) return false; const id = current.id, [mag, res] = left(id); if (mag >= current.mag || res <= 0) return false;
-    reloadUntil = now() + current.reloadMs; reloadId = id; heldLeft = false; scope = 0; reloads++; sounds.magOut(null, id); fp?.reload(current.reloadMs);
-    setTimeout(() => sounds.magIn(null, id), current.reloadMs * .7);
+    reloadUntil = now() + current.reloadMs; reloadId = id; magIn = false; magInAt = now() + current.reloadMs * MAG_IN; heldLeft = false; scope = 0; sounds.magOut(null, id); fp?.reload(current.reloadMs);
+    setTimeout(() => { if (reloadId === id && current?.id === id) sounds.magIn(null, id); }, current.reloadMs * (MAG_IN - .03));
     return true;
   }
-  function finishReload() { const id = reloadId, wpn = weaponById(id); reloadId = null; reloadUntil = 0; if (!wpn) return; const [mag, res] = left(id), move = Math.min(wpn.mag - mag, res); ammo.set(id, [mag + move, res - move]); setTimeout(() => current?.id === id && sounds.bolt(null, id), 120); }
+  function finishReload() { const id = reloadId; if (!weaponById(id)) { stopReload(); return; } seatMag(); reloadId = null; reloadUntil = 0; magIn = false; setTimeout(() => current?.id === id && sounds.bolt(null, id), 120); }
   // Knife: left = quick slash, right = slow heavy stab. The hit is decided at the moment the blade arrives (hitMs),
   // along your aim, within reach, not through walls.
   function attack(kind) {
@@ -196,8 +202,9 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     update(dt) {
       { const k = Math.exp(-dt * RECOIL.kickBack); shake.pitch *= k; shake.yaw *= k; }
       if (!current) { punch.pitch = punch.yaw = 0; return; }
+      if (reloadId && current.id !== reloadId) stopReload();   // switched away: before the magazine is seated nothing changed
+      if (reloadId && !magIn && now() >= magInAt) seatMag();
       if (reloadId && !reloading()) finishReload();
-      if (reloadId && current.id !== reloadId) stopReload();
       if (heldLeft && current.auto) fire();
       if (fp && view?.visible) fp.update(dt, moveSpeed());
       // Spray recovery once the trigger rests a moment.

@@ -104,6 +104,9 @@ ok('nobody is down at the new round', !isDown(d, 'Cal', td) && hpOf(d, 'Cal') ==
 // ── Aim: first shot exact, spray learnable ──
 for (const w of WEAPONS) { const [p, y] = sprayAt(w, 0); ok(w.name + ': first bullet exactly at the crosshair', p === 0 && y === 0); ok(w.name + ': standing still is exact', moveInaccuracy(w, { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: !!w.zoom }) === 0 || !!w.unscoped); }
 ok('the AK climbs, then pulls sideways', sprayAt(weaponById('ak'), 9)[0] > 4 && Math.abs(sprayAt(weaponById('ak'), 15)[1]) > 1.5);
+{ const autos = WEAPONS.filter(w => w.mode === 'auto' && !w.pellets), shape = w => Array.from({ length: 12 }, (_, i) => sprayAt(w, Math.round(i * (w.mag - 1) / 11))), diff = (a, b) => { const A = shape(a), B = shape(b); return Math.max(...A.map((p, i) => Math.hypot(p[0] - B[i][0], p[1] - B[i][1]))); };
+  let worst = 9, pair = ''; for (let i = 0; i < autos.length; i++) for (let j = i + 1; j < autos.length; j++) { const d = diff(autos[i], autos[j]); if (d < worst) { worst = d; pair = autos[i].name + ' / ' + autos[j].name; } }
+  ok('every automatic gun has its own spray (no two within 0.8° all the way)', worst > .8, pair + ' ' + worst.toFixed(2)); }
 ok('patterns differ between guns', JSON.stringify(weaponById('ak').pattern) !== JSON.stringify(weaponById('m4').pattern) && JSON.stringify(weaponById('m4').pattern) !== JSON.stringify(weaponById('famas').pattern));
 ok('running and jumping cost accuracy', moveInaccuracy(weaponById('ak'), { speed: 200, max: 200, onGround: true, landedAgo: 9 }) > .03 && moveInaccuracy(weaponById('ak'), { speed: 0, max: 200, onGround: false, landedAgo: 9 }) > .15);
 ok('counter-strafed (slow) is exact again', moveInaccuracy(weaponById('ak'), { speed: 60, max: 200, onGround: true, landedAgo: 9 }) === 0);

@@ -22,7 +22,7 @@ const awnCache = new Map(), awnMat = (a, b) => { const k = a + ':' + b; if (!awn
 const shutterCache = new Map(), shutterMat = hex => { if (!shutterCache.has(hex)) shutterCache.set(hex, M({ color: hex, roughness: .8 })); return shutterCache.get(hex); };
 const signCache = new Map();
 function signMat(text, color) { const k = text + color; if (signCache.has(k)) return signCache.get(k);
-  const map = canvasTex(256, 128, (g, w, h) => { g.clearRect(0, 0, w, h); g.font = '900 86px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(0,0,0,.25)'; g.fillText(text, w / 2 + 3, h / 2 + 4); g.fillStyle = color; g.fillText(text, w / 2, h / 2); });
+  const map = canvasTex(256, 128, (g, w, h) => { g.clearRect(0, 0, w, h); g.font = '900 86px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(0,0,0,.25)'; g.fillText(text, w / 2 + 3, h / 2 + 4, w - 14); g.fillStyle = color; g.fillText(text, w / 2, h / 2, w - 14); });   // long words shrink to fit (never cropped)
   const m = new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }); m.userData.shared = true; signCache.set(k, m); return m; }
 // Geometries (shared).
 const G = {

@@ -3,7 +3,7 @@
 // rebound to the LAN only while the player hosts. Saves live in the per-user app-data folder.
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readFile, writeFile, rename, copyFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, rename, copyFile, stat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
@@ -138,6 +138,26 @@ ipcMain.handle('desktop:host', async (_e, opts = {}) => {
 });
 ipcMain.handle('desktop:stop-hosting', async () => { stopBeacon(); if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } return { hosting }; });
 ipcMain.handle('desktop:in-match', (_e, on) => { inMatch = !!on; return inMatch; });
+// Counter-Strike 1.6 player models from the player's own Steam install (never shipped with the game): the standard
+// Steam library and any extra library folders, on Windows, macOS and Linux. Returns the player .mdl files by side.
+const CS_T = ['terror', 'leet', 'arctic', 'guerilla', 'militia'], CS_CT = ['urban', 'gsg9', 'sas', 'gign', 'spetsnaz'];
+async function steamLibraries() {
+  const home = os.homedir(), roots = process.platform === 'win32' ? [process.env['ProgramFiles(x86)'] && path.join(process.env['ProgramFiles(x86)'], 'Steam'), process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Steam'), 'C:\\Steam', 'D:\\Steam', 'D:\\SteamLibrary', 'E:\\SteamLibrary']
+    : process.platform === 'darwin' ? [path.join(home, 'Library/Application Support/Steam')] : [path.join(home, '.steam/steam'), path.join(home, '.local/share/Steam'), path.join(home, '.var/app/com.valvesoftware.Steam/.local/share/Steam')];
+  const libs = new Set(roots.filter(Boolean));
+  for (const r of [...libs]) { try { const vdf = await readFile(path.join(r, 'steamapps', 'libraryfolders.vdf'), 'utf8'); for (const m of vdf.matchAll(/"path"\s+"([^"]+)"/g)) libs.add(m[1].replace(/\\\\/g, '\\')); } catch {} }
+  return [...libs];
+}
+ipcMain.handle('desktop:find-cs-models', async () => {
+  for (const lib of await steamLibraries()) {
+    const dir = path.join(lib, 'steamapps', 'common', 'Half-Life', 'cstrike', 'models', 'player'); let names; try { names = await readdir(dir); } catch { continue; }
+    const out = [];
+    for (const n of names) { const side = CS_T.includes(n.toLowerCase()) ? 't' : CS_CT.includes(n.toLowerCase()) ? 'ct' : null; if (!side) continue;
+      try { const f = path.join(dir, n, n + '.mdl'); const data = await readFile(f); out.push({ team: side, name: n + '.mdl', data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) }); } catch {} }
+    if (out.length) return { dir, models: out };
+  }
+  return { dir: null, models: [] };
+});
 ipcMain.handle('desktop:info', () => ({ version: app.getVersion(), platform: process.platform, hosting, port: room.port, savePath: savePath() }));
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
