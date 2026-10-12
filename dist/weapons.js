@@ -71,13 +71,17 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   loadFP().then(() => { if (current && fpFor(current.id)) setView(current.id); });
   loadRealWeapons().then(n => { if (n && current) setView(current.id); });
   let drawAt = 0, drawMs = 1;
+  // The view model is drawn on top of the world, like CS2: it renders after every other opaque object and clears the
+  // depth buffer first (once per frame), so a wall you stand against never cuts into or swallows the gun.
+  let vmFrame = -1; const vmClear = r => { const f = r.info.render.frame; if (f !== vmFrame) { vmFrame = f; r.clearDepth(); } };
+  const onTop = g => g.traverse(o => { if (o.isMesh || o.isSkinnedMesh) { o.renderOrder = 1e6; o.onBeforeRender = vmClear; o.frustumCulled = false; o.castShadow = false; } });
   function setView(id, draw = false) {
     if (view) { camera.remove(view); view = null; }
     if (draw && id) { drawAt = now(); drawMs = DRAW_MS[id]; sounds.draw(null, id); }
     fp = null; if (!id) return;
-    const f = fpFor(id); if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); f.hold(id, { draw, drawMs: DRAW_MS[id] }); camera.add(view); if (!camera.parent) scene.add(camera); return; }
+    const f = fpFor(id); if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); f.hold(id, { draw, drawMs: DRAW_MS[id] }); onTop(view); camera.add(view); if (!camera.parent) scene.add(camera); return; }
     const [x, y, z, sc] = VIEW[id] || VIEW.pistol; const m = weaponModel(id, sc); for (const [ax, r] of VIEW_ROT[id] || VIEW_ROT[weaponById(id)?.model] || []) m.rotateOnWorldAxis(AXES[ax], r);
-    view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; camera.add(view);
+    view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; onTop(view); camera.add(view);
     if (!camera.parent) scene.add(camera);
   }
   function stopReload() { reloadUntil = 0; reloadId = null; }
