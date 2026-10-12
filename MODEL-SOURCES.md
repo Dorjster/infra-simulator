@@ -41,7 +41,9 @@ Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and p
 - Guns, grenades and C4: ["Guns & Explosives" by 3dmodelscc0](https://3dmodelscc0.itch.io/) — CC0 (public domain). Converted by `tools/pack-weapons.mjs` to `dist/models/weapons/`.
 - Karambit: ["Karambit" by Diamonddogkz](https://sketchfab.com/3d-models/karambit-dfd7606f189a413681305a39b8841ce8) — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changed: converted to the game's format, metal parts repainted in an original ruby finish, textures resized.
 - First-person arms: "FPS Character Animation Pack Ak-47", "…Pistol" and "…Saps-12" by [Cristian David Duque Camacho (DuqueCD7)](https://sketchfab.com/DuqueCD7) — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ([AK-47](https://sketchfab.com/3d-models/fps-character-animation-pack-ak-47-b95778a564094fc3a49d1d6a3b6a30ab), [Pistol](https://sketchfab.com/3d-models/e2815a5bea3a4e3895b3c29a2586e671), [Saps-12](https://sketchfab.com/3d-models/3e5ebbd4ace24f2e92eadb7252927b31)). Changed: textures reduced to 1024 px JPEG; other guns, knives, grenades and the bomb held in these arms; fingers curled for knives; left arm posed for one-handed items. In `dist/models/fp/`.
-- Default knife, Desert Eagle, MP5 and M249: original procedural models (`dist/weapon-models.js`).
+- 18 more guns (P250, USP-S, Five-SeveN, Desert Eagle, MP9, MP7, MAC-10, UMP-45, MP5, P90, AUG, FAMAS, SG 553, Galil AR, M4A1-S, M249, XM1014, SSG 08): ["Ultimate Gun Pack" by Quaternius](https://quaternius.com/) — CC0 (public domain). OBJ/MTL in `dist/models/qguns/`; suppressors, scopes and the box magazine are added in `dist/weapon-models.js`.
+- Default knife and fallbacks: original procedural models (`dist/weapon-models.js`).
+- Player models: original (the game's own character in T / CT gear, `dist/gd-soldiers.js`). Counter-Strike 1.6 characters are never shipped: they are Valve's, and only load from a copy the player imports on their own computer.
 
 ## Arena sounds (`dist/sounds/`, built by `tools/pack-sounds.mjs`)
 
