@@ -45,7 +45,7 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
       // The crosshair: the player's own look, fixed at the screen centre (never moved by recoil); none for a sniper
       // rifle unless scoped (then the scope's reticle), as in CS2. Dynamic: the gap opens with movement inaccuracy.
       const showX = !!w && !sniper; if (els.x.hidden === showX) els.x.hidden = !showX; if (!showX) return;
-      const inacc = moveInaccuracy(w, { ...move(), scoped: sc > 0 }), gap = Math.round(Math.min(40, px(inacc, f))), xk = gap + '|' + xhVer;
+      const inacc = moveInaccuracy(w, { ...move(), scoped: sc > 0 }), gap = Math.round(Math.min(40, px(inacc, f) + Math.min(10, (weapons.spray || 0) * 1.1))),   /* dynamic: opens while moving and while spraying */ xk = gap + '|' + xhVer;
       if (last.xk !== xk) { last.xk = xk; els.x.innerHTML = crosshairHTML(xh, gap); }
     },
   };
