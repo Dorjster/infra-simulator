@@ -17,10 +17,10 @@ const PACKS = {
   shotgun: { url: 'shotgun', k: 2.38, eye: [3.86 - .14, .24, 0], gun: /^SKM_Saps/, bone: /^DEF-Weapon/ },
 };
 // Which pack holds which weapon; `own`: the pack's gun is that weapon (else ours is attached).
-export const FP = { knife: { pack: 'pistol', onehand: true, fist: true, view: [0, -.05, .1] }, karambit: { pack: 'pistol', onehand: true, fist: true, view: [0, -.05, .1] }, he: { pack: 'pistol', onehand: true }, flash: { pack: 'pistol', onehand: true }, smoke: { pack: 'pistol', onehand: true }, molotov: { pack: 'pistol', onehand: true }, c4: { pack: 'pistol', onehand: true }, ak: { pack: 'rifle', own: true }, m4: { pack: 'rifle' }, sniper: { pack: 'rifle' }, smg: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol', own: true }, deagle: { pack: 'pistol' }, shotgun: { pack: 'shotgun', own: true }, xm1014: { pack: 'shotgun', own: true } };   /* both shotguns use the shotgun arms' own gun in first person: its reload animation is made for it */
+export const FP = { knife: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, karambit: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, he: { pack: 'pistol', onehand: true }, flash: { pack: 'pistol', onehand: true }, smoke: { pack: 'pistol', onehand: true }, molotov: { pack: 'pistol', onehand: true }, c4: { pack: 'pistol', onehand: true, view: [-.05, -.1, .12] }, ak: { pack: 'rifle', own: true }, m4: { pack: 'rifle' }, sniper: { pack: 'rifle' }, smg: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol', own: true }, deagle: { pack: 'pistol' }, shotgun: { pack: 'shotgun', own: true }, xm1014: { pack: 'shotgun', own: true } };   /* both shotguns use the shotgun arms' own gun in first person: its reload animation is made for it */
 // Our guns on the rifle / pistol weapon bone: offset (game units, in the weapon's own frame) and turn.
 export const ATTACH = { knife: { at: [0, -.45, .1], rot: [1.2, 0, 0] }, karambit: { at: [0, -.4, .1], rot: [0, -1.57, 3.14], scale: 1.3 },   // karambit like CS2: ring on the index finger, blade curling up
-   he: { at: [0, 0, 0], rot: [0, 0, 0] }, flash: { at: [0, 0, 0], rot: [0, 0, 0] }, smoke: { at: [0, 0, 0], rot: [0, 0, 0] }, molotov: { at: [0, 0, 0], rot: [0, 0, 0] }, c4: { at: [0, 0, 0], rot: [0, 0, 0] }, ak: { at: [0, 0, -1.5] }, m4: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 }, sniper: { at: [0, -.15, -.7], rot: [0, 0, 0], scale: .7 }, smg: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, greasegun: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, suomi: { at: [0, -.15, -.55], rot: [0, 0, 0], scale: .7 }, lmg: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 },   /* our guns are real size; the pack's AK is ~0.7 of that: same scale, grip in the hand */ deagle: { at: [0, 0, 0], rot: [0, 0, 0] } };   // ak: only for its muzzle (the pack's AK lines up with ours there)
+   he: { at: [0, 0, 0], rot: [0, 0, 0] }, flash: { at: [0, 0, 0], rot: [0, 0, 0] }, smoke: { at: [0, 0, 0], rot: [0, 0, 0] }, molotov: { at: [0, 0, 0], rot: [0, 0, 0] }, c4: { at: [0, 0, 0], rot: [0, .6, 0] }   /* the bomb lies on the palm, turned to show its face, low right: never over the crosshair */, ak: { at: [0, 0, -1.5] }, m4: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 }, sniper: { at: [0, -.15, -.7], rot: [0, 0, 0], scale: .7 }, smg: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, greasegun: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, suomi: { at: [0, -.15, -.55], rot: [0, 0, 0], scale: .7 }, lmg: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 },   /* our guns are real size; the pack's AK is ~0.7 of that: same scale, grip in the hand */ deagle: { at: [0, 0, 0], rot: [0, 0, 0] } };   // ak: only for its muzzle (the pack's AK lines up with ours there)
 // Every gun gets arms: its own entry, else by kind (rifles, SMGs, snipers, the M249 on the rifle arms; pistols on the
 // pistol arms; shotguns on the shotgun arms); grips follow the base model of a variant.
 const KIND_FP = { rifle: { pack: 'rifle' }, smg: { pack: 'rifle' }, sniper: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol' }, shotgun: { pack: 'shotgun' } };
@@ -28,6 +28,9 @@ export const fpInfo = id => FP[id] || KIND_FP[weaponById(id)?.kind] || null;
 const attachInfo = id => ATTACH[id] || (VARIANTS[id]?.base === 'ak' ? ATTACH.m4 : ATTACH[VARIANTS[id]?.base]) || ATTACH[{ luger: 'deagle', pistol: 'deagle' }[VARIANTS[id]?.base]] || {};
 
 // The weapon bone's frame → a gun pointing along −z (set from the packs' own guns, see calibrate()).
+// Knife twirl: the axis (in the hand's frame) and the pivot (the ring) the knife spins around while inspecting.
+export const TWIRL = { axis: 'z', pivot: new THREE.Vector3(0, 0, 0) };
+const twq = new THREE.Quaternion(), twq2 = new THREE.Quaternion(), twp = new THREE.Vector3(), twp2 = new THREE.Vector3(); let twirlA = 0; const handM = new THREE.Matrix4();
 const BASE = { rifle: new THREE.Quaternion(), pistol: new THREE.Quaternion(), shotgun: new THREE.Quaternion() };
 // Knives are gripped in a closed fist: each finger segment curls by these angles (after the animation).
 // One-handed items: the left arm hangs relaxed (CS2 shows it open at the bottom left) — upper arm / forearm turns.
@@ -71,7 +74,7 @@ function build(name, gltf) {
     mixer.stopAllAction(); }
   // Our gun follows the weapon bone: its position and rotation in camera space, at real size.
   const bp = new THREE.Vector3(), bq = new THREE.Quaternion(), bs = new THREE.Vector3(), rootInv = new THREE.Matrix4(), rel = new THREE.Matrix4();
-  const follow = () => { if (!ours) return; root.updateMatrixWorld(true); rel.copy(rootInv.copy(root.matrixWorld).invert()).multiply(bone.matrixWorld); rel.decompose(bp, bq, bs); ours.position.copy(bp); ours.quaternion.copy(bq).multiply(BASE[name]); };
+  const follow = () => { if (!ours) return; root.updateMatrixWorld(true); rel.copy(rootInv.copy(root.matrixWorld).invert()).multiply(bone.matrixWorld); rel.decompose(bp, bq, bs); ours.position.copy(bp); ours.quaternion.copy(bq).multiply(BASE[name]); if (twirlA) { ours.quaternion.multiply(twq.setFromAxisAngle(AX[TWIRL.axis], twirlA)); ours.position.add(twp.copy(TWIRL.pivot).applyQuaternion(ours.quaternion).negate().add(twp2.copy(TWIRL.pivot).applyQuaternion(twq2.copy(bq).multiply(BASE[name])))); } };   /* a knife twirl (inspect) turns the knife around the ring finger, not the hand */
   const fingers = []; sc.traverse(o => { const m = o.isBone && /^DEF-(f_(index|middle|ring|pinky)|thumb)0([123])R_/.exec(o.name); if (m) fingers.push({ b: o, seg: +m[3] - 1, thumb: m[1] === 'thumb' }); }); let fist = false;
   const AX = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) }, fq = new THREE.Quaternion();
   // One-handed items (knife, grenades, bomb): the left arm folds away out of view.
@@ -80,7 +83,7 @@ function build(name, gltf) {
   // The head bone in the space the correction works in (the rig's parent): rig.matrix × (rig → head).
   const headIn = () => { sc.updateMatrixWorld(true); return new THREE.Matrix4().copy(rig.matrix).multiply(rigInv.copy(rig.matrixWorld).invert().multiply(head.matrixWorld)); };
   if (head) { mixer.clipAction(A.idle).play(); mixer.update(0); root.updateMatrixWorld(true); headRest.copy(headIn()); mixer.stopAllAction(); }   // the head at rest (idle)
-  const leftArm = boneOf(/^DEF-upper_armL/), leftFore = boneOf(/^DEF-forearmL_/), eu = new THREE.Euler(); let onehand = false;
+  const leftArm = boneOf(/^DEF-upper_armL/), leftFore = boneOf(/^DEF-forearmL_/), eu = new THREE.Euler(); let onehand = false, noLeft = false, bobT = 0, bobA = 0;
   let ours = null, oursId = null, cur = null, base = 'idle', oneShotUntil = 0, reloadPlan = null;
   // Reloads: the packs' reload clips lift and tilt the gun toward the face; at our field of view that left the screen.
   // While reloading the arms ease back (and a little down and left) so the whole reload stays in view (like CS2's
@@ -94,13 +97,16 @@ function build(name, gltf) {
     root,
     // Hold this weapon id (draw: play the draw animation over `drawMs`).
     hold(id, { draw = true, drawMs = 800 } = {}) {
-      const F = fpInfo(id) || {}; onehand = !!F.onehand; fist = !!F.fist; root.position.set(...(F.view || [0, 0, 0])); viewBase.copy(root.position); root.rotation.set(...(F.viewRot || [0, 0, 0]));   // per weapon: how close / where the arms sit if (leftArm && !onehand) leftArm.scale.setScalar(1);
+      const F = fpInfo(id) || {}; onehand = !!F.onehand; fist = !!F.fist; noLeft = !!F.noLeft; root.position.set(...(F.view || [0, 0, 0])); viewBase.copy(root.position); root.rotation.set(...(F.viewRot || [0, 0, 0]));   /* per weapon: how close / where the arms sit */ if (leftArm) leftArm.scale.setScalar(1);
       if (ours) { ours.removeFromParent(); ours = null; } oursId = F.own ? null : id;
       const own = F.own; for (const m of gunMeshes) m.visible = !!own;
       if (!own) { const a = attachInfo(id), g = weaponModel(id, a.scale || 1); ours = new THREE.Group(); ours.add(g); root.add(ours); g.position.set(...(a.at || [0, 0, 0])); g.rotation.set(...(a.rot || [0, 0, 0])); follow(); }
       reloadPlan = null; base = 'idle';
       if (draw && A.equip) { to('equip', 0, { once: true, ms: drawMs }); oneShotUntil = performance.now() + drawMs; } else to('idle', 0);
     },
+    twirl(a) { twirlA = a; },
+    // The right hand's position in `space`'s local frame (the pivot for swings and inspect).
+    handIn(space, out) { space.updateMatrixWorld(true); return out.setFromMatrixPosition(handM.copy(space.matrixWorld).invert().multiply(bone.matrixWorld)); },
     fire() { if (!A.fire || reloadPlan) return; to('fire', .04, { once: true }); oneShotUntil = performance.now() + Math.min(A.fire.duration * 1000, 450); },
     // Reload over `ms` (the shotgun: into reload, shells, out of reload).
     reload(ms) { const now = performance.now(); if (A.toReload && A.fromReload) { const i = ms * .25, o = ms * .2; reloadPlan = [[now, 'toReload', i], [now + i, 'reload', ms - i - o], [now + ms - o, 'fromReload', o]]; } else reloadPlan = [[now, 'reload', ms]]; reloadPlan.end = now + ms; },
@@ -108,8 +114,8 @@ function build(name, gltf) {
     update(dt, speed = 0) {
       const now = performance.now();
       if (reloadPlan) { if (now >= reloadPlan.end) reloadPlan = null; else { const step = [...reloadPlan].reverse().find(s => now >= s[0]); if (step && cur !== act(step[1])) to(step[1], .1, { once: step[1] !== 'reload' || !A.toReload, ms: step[2] }); } }
-      if (!reloadPlan && now >= oneShotUntil) { const want = speed > 20 ? 'run' : speed > 3 ? 'walk' : 'idle'; if (want !== base || (cur && cur.loop === THREE.LoopOnce)) { base = want; to(A[want] ? want : 'idle', .2); } }
-      mixer.update(dt); fixHead(); { let e = 0; if (reloadPlan) { const t = (now - reloadPlan[0][0]) / (reloadPlan.end - reloadPlan[0][0]), ss = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); e = ss(t / .14) * (1 - ss((t - .86) / .14)); } root.position.copy(viewBase).addScaledVector(roff, e); } if (onehand && leftArm) { if (LEFT.relaxed) { leftArm.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.upper))); if (leftFore) leftFore.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.fore))); } else leftArm.scale.setScalar(.001); leftArm.updateMatrixWorld(true); }
+      if (!reloadPlan && now >= oneShotUntil) { const want = 'idle';   /* CS2: no run / lowered-gun clip while moving, only a small bob (below) */ if (want !== base || (cur && cur.loop === THREE.LoopOnce)) { base = want; to(A[want] ? want : 'idle', .2); } }
+      mixer.update(dt); fixHead(); { let e = 0; if (reloadPlan) { const t = (now - reloadPlan[0][0]) / (reloadPlan.end - reloadPlan[0][0]), ss = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); e = ss(t / .14) * (1 - ss((t - .86) / .14)); } root.position.copy(viewBase).addScaledVector(roff, e); bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); root.position.x += Math.sin(bobT) * .012 * bobA; root.position.y += -Math.abs(Math.cos(bobT)) * .01 * bobA; } if (onehand && leftArm) { if (LEFT.relaxed && !noLeft) { leftArm.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.upper))); if (leftFore) leftFore.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.fore))); } else leftArm.scale.setScalar(.001); leftArm.updateMatrixWorld(true); }
       if (fist) { for (const f of fingers) f.b.quaternion.multiply(fq.setFromAxisAngle(AX[FIST.axis], FIST.sign * (f.thumb ? FIST.thumb : FIST.angles)[f.seg])); sc.updateMatrixWorld(true); } follow();
     },
     // Calibration info: the pack gun's muzzle in the bone frame (its forward axis).

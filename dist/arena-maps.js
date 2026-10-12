@@ -3,11 +3,11 @@
 // so a wall 24 high is ~4 m, a crate 6 high is waist-high cover, eye height is 9.7.
 // Each solid: [x, z, w, d, h, material, y0?]. Materials: sand, plaster, concrete, brick, wood, crate, metal-red,
 // metal-blue, metal-green, roof, stone. kind: 'dm' (deathmatch) or 'defuse' (bomb sites A / B, T / CT spawns, bot routes).
-import { wall, house, stairs, platform, prop, sign, awning, assemble } from './arena-mapkit.js';
+import { oldCity, depot, DRESS } from './arena-maps-more.js';
+import { wall, house, stairs, platform, prop, sign, awning, assemble, windows } from './arena-mapkit.js';
 const B = (x, z, w, d, h, m, y0 = 0) => [x, z, w, d, h, m, y0];
 // Windows painted on the face of a solid block (decoration: shutters and frames on a wall you can't enter).
-// faces: [x, z, face, length] — the face's centre, which way it looks, how long it is; y = sill height, h = window height.
-function windows(faces, y = 15, h = 6, every = 13) { const out = []; for (const [x, z, face, len] of faces) { const n = Math.max(1, Math.floor(len / every)); for (let i = 0; i < n; i++) { const off = (i - (n - 1) / 2) * every, horiz = face === 'n' || face === 's'; out.push({ kind: 'window', x: horiz ? x + off : x, z: horiz ? z : z + off, face, y, w: 4.2, h, shutters: [0x2f6d7a, 0x7a3b2a, 0x5b6b3a][(i + Math.round(x)) % 3] }); } } return out; }
+// (windows() — painted windows on solid blocks — lives in arena-mapkit.js.)
 // A building shell: four walls with a doorway gap on each listed side ('n','s','e','w'), optional roof.
 function building(x, z, w, d, h, m, doors = 'ns', door = 12, roof = true) {
   const t = 2, out = [], half = (span, gapped) => gapped ? (span - door) / 2 : span;
@@ -135,6 +135,9 @@ export const ARENA_MAPS = {
       ct: { A: [[40, -110], [70, -80], [85, -62]], B: [[-40, -110], [-70, -80], [-85, -64]] } },
   },
 };
+ARENA_MAPS.oldcity = oldCity(); ARENA_MAPS.depot = depot();
+// The older maps get their props, windows and callouts (arena-maps-more.js).
+for (const [id, dress] of Object.entries(DRESS)) { const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
 for (const m of Object.values(ARENA_MAPS)) if (m.kind === 'defuse') m.spawns = [...m.t, ...m.ct];
 // Solids as world-space boxes: { minX, maxX, minZ, maxZ, y0, y1, mat }.
 export function mapBoxes(map, cx, cz) { return map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null }; }); }

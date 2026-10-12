@@ -25,9 +25,15 @@ const stand = () => p.evaluate(l => { __infra.lab.look(l.x, l.z, l.x + l.dx * 50
 check('found an open lane to throw along', lane && lane.L >= 150, JSON.stringify(lane));
 // Flashbang in front of you, looking at it: white-out, then it wears off.
 await buy('flash'); await p.evaluate(() => __infra.lab.enter()); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150);
-await p.evaluate(() => __infra.lab.pistol.button(2, true)); await p.waitForTimeout(300); await p.evaluate(() => __infra.lab.pistol.button(2, false)); await p.waitForTimeout(2300);
+await p.evaluate(() => __infra.lab.pistol.button(2, true)); await p.waitForTimeout(450); await p.evaluate(() => __infra.lab.pistol.button(2, false)); await p.waitForTimeout(2300);   // held past the pin pull (350 ms): a click alone never throws
 const wo = await p.evaluate(() => +document.getElementById('gd-flash').style.opacity); check('flashbang you face whites out the screen', wo > .5, wo);
 await p.screenshot({ path: path.join(out, 'flashed.png') }); await p.waitForTimeout(5000); check('the flash wears off', await p.evaluate(() => +document.getElementById('gd-flash').style.opacity) < .05);
+// A quick click, switching away, or losing focus while holding never throws.
+await buy('smoke'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150);
+const n0 = (await nades()).length; await p.evaluate(() => { __infra.lab.pistol.button(0, true); __infra.lab.pistol.button(0, false); }); await p.waitForTimeout(900);
+check('a quick click does not throw', (await nades()).length === n0 && await p.evaluate(() => __infra.lab.pistol.nade?.state === 'idle'));
+await p.evaluate(() => __infra.lab.pistol.button(0, true)); await p.waitForTimeout(600); await p.evaluate(() => dispatchEvent(new Event('blur'))); await p.waitForTimeout(100); await p.evaluate(() => __infra.lab.pistol.button(0, false)); await p.waitForTimeout(900);
+check('losing focus while holding cancels (no throw on release)', (await nades()).length === n0);
 // Hold: no throw, the preview shows; release: one throw.
 await buy('smoke'); await p.evaluate(() => __infra.lab.enter()); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(200);
 await p.evaluate(() => __infra.lab.pistol.button(0, true)); await p.waitForTimeout(1200);
@@ -56,7 +62,7 @@ await p.evaluate(() => { __infra.lab.pistol.button(0, true); __infra.lab.pistol.
 const cells = await p.evaluate(() => { let c = 0; __infra.scene.getObjectByName('nades').traverse(o => { if (o.isInstancedMesh && o.material.blending === 2 && o.count > c) c = o.count; }); return c; });
 check('molotov: fire drawn over its whole area (cells)', cells > 60, cells); await p.screenshot({ path: path.join(out, 'fire.png') });
 // HE.
-await buy('he'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.evaluate(() => __infra.lab.pistol.button(0, true)); await p.waitForTimeout(300); await p.evaluate(() => __infra.lab.pistol.button(0, false));
+await buy('he'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.evaluate(() => __infra.lab.pistol.button(0, true)); await p.waitForTimeout(450); await p.evaluate(() => __infra.lab.pistol.button(0, false));
 let boom = false; for (let i = 0; i < 40 && !boom; i++) { await p.waitForTimeout(100); boom = (await nades()).some(x => x.kind === 'he' && x.phase === 'boom'); } check('HE explodes', boom);
 check('no frame over 50 ms in play', (await p.evaluate(() => __lf)).length === 0, JSON.stringify(await p.evaluate(() => __lf)) + ' ' + JSON.stringify(await p.evaluate(() => __loaf.slice(-4))));
 check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));

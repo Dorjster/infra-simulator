@@ -3,7 +3,7 @@
 // bot controls. Reads the shared world (game.arena, game.combat); every change is an arena action to the host.
 import { ARENA_MAPS } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
-import { WEAPONS, KNIVES, weaponById, ARMOR } from './weapons-data.js';
+import { WEAPONS, KNIVES, weaponById, ARMOR, hitDamage } from './weapons-data.js';
 import { arenaArsenalOf } from './combat-logic.js';
 import { slotOf, PICK_R } from './arena-logic.js';
 import { weaponModel } from './weapon-models.js';
@@ -68,8 +68,11 @@ export function createArenaUI({ world, lan, name, notify, scene, send, teleport,
   // Buy menu (B opens and closes it, Escape closes it). Guns by category with an info card; equipment (armor, kit);
   // grenades; and, apart from the shop, the guns lying near you (free to pick up, E or click).
   const CATS2 = [['Pistols', w => w.kind === 'pistol'], ['SMGs', w => w.kind === 'smg'], ['Heavy', w => w.kind === 'shotgun' || w.kind === 'lmg'], ['Rifles', w => w.kind === 'rifle'], ['Snipers', w => w.kind === 'sniper']];
+  // Damage the host would deal (weapons-data.js hitDamage), at `m` metres; armor: a full vest.
+  const dmgAt = (w, m, armor = false) => hitDamage(w, 'chest', m * 6.06, w.pellets || 1, armor ? { kevlar: 100, helmet: true } : null).hp;
+  const effRange = w => { const full = hitDamage(w, 'chest', 0, w.pellets || 1).hp; for (let m = 5; m <= 200; m += 5) if (hitDamage(w, 'chest', m * 6.06, w.pellets || 1).hp < full * .8) return 'up to ~' + m + ' m'; return 'the whole map'; };
   const MODE = { auto: 'Automatic', semi: 'Semi-automatic', pump: 'Pump-action', bolt: 'Bolt-action' };
-  const info = w => `<b>${esc(w.name)}</b> <small>${w.cat}${w.team ? ' · ' + (w.team === 't' ? 'Terrorist' : 'Counter-Terrorist') + ' only' : ''}</small><p>${esc(w.desc || '')}</p><dl><dt>Price</dt><dd>$${w.price.toLocaleString('en-US')}</dd><dt>Magazine</dt><dd>${w.mag} / ${w.reserve}</dd><dt>Fire</dt><dd>${MODE[w.mode]}${w.zoom ? ' · scope (right click)' : ''}${w.suppressed ? ' · suppressed' : ''}</dd><dt>Damage</dt><dd>${w.dmg}${w.pellets ? ' × ' + w.pellets + ' pellets' : ''} · head shot kills</dd><dt>Armor</dt><dd>${Math.round(w.ap * 100)} % through armor</dd><dt>Wallbang</dt><dd>${w.pen >= 7 ? 'crates and thin walls' : w.pen >= 3 ? 'thin soft cover' : 'barely'}</dd><dt>Fire rate</dt><dd>${Math.round(60000 / w.rateMs)} rpm</dd><dt>Speed</dt><dd>${w.speed}${w.scopedSpeed ? ' (' + w.scopedSpeed + ' scoped)' : ''}</dd><dt>Kill reward</dt><dd>$${w.reward}</dd></dl>`;
+  const info = w => `<b>${esc(w.name)}</b> <small>${w.cat}${w.team ? ' · ' + (w.team === 't' ? 'Terrorist' : 'Counter-Terrorist') + ' only' : ''}</small><p>${esc(w.desc || '')}</p><dl><dt>Price</dt><dd>$${w.price.toLocaleString('en-US')}</dd><dt>Magazine</dt><dd>${w.mag} / ${w.reserve}</dd><dt>Fire</dt><dd>${MODE[w.mode]}${w.zoom ? ' · scope (right click)' : ''}${w.suppressed ? ' · suppressed' : ''}</dd><dt>Body damage</dt><dd>${dmgAt(w, 3)}${w.pellets ? ' (all pellets)' : ''} close · ${dmgAt(w, 30)} at 30 m · ${dmgAt(w, 3, true)} on armor</dd><dt>Head shot</dt><dd>kills, even with a helmet</dd><dt>Effective</dt><dd>${effRange(w)}</dd><dt>Armor</dt><dd>${Math.round(w.ap * 100)} % through armor</dd><dt>Wallbang</dt><dd>${w.pen >= 7 ? 'crates and thin walls' : w.pen >= 3 ? 'thin soft cover' : 'barely'}</dd><dt>Fire rate</dt><dd>${Math.round(60000 / w.rateMs)} rpm</dd><dt>Speed</dt><dd>${w.speed}${w.scopedSpeed ? ' (' + w.scopedSpeed + ' scoped)' : ''}</dd><dt>Kill reward</dt><dd>$${w.reward}</dd></dl>`;
   function nearby() { const at = where(); if (!at) return []; return (g().combat?.ground || []).filter(it => slotOf(it.item) && slotOf(it.item) !== 'bomb' && Math.hypot(it.x - at.x, it.z - at.z) <= PICK_R + 3).map(it => ({ it, d: Math.hypot(it.x - at.x, it.z - at.z) })).sort((a, b) => a.d - b.d); }
   async function pickUp(it) { const r = await send({ type: 'pickup', id: it.id, swap: true }); if (r?.error) { notify(r.error); return false; } notify(typeof r === 'string' ? r : r?.message || 'Picked up'); setAmmo?.(it.item, it.ammo); equip(it.item); return true; }
   let infoId = null;

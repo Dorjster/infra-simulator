@@ -85,12 +85,13 @@ assert.throws(() => arenaApply(d, { type: 'loadout', primary: 'm4' }, 'Tess', DP
 const money0 = d.combat.d.money.tess; assert.throws(() => arenaApply(d, { type: 'loadout', primary: 'ak', secondary: 'deagle' }, 'Tess', DP, td), /Not enough money/); n++;
 ok('a refused purchase charges nothing and changes nothing', d.combat.d.money.tess === money0 && !loadoutOf(d, 'Tess').primary && loadoutOf(d, 'Tess').secondary === 'pistol');
 d.combat.d.money.tess = 5000; d.combat.d.money.cal = 5000;
-arenaApply(d, { type: 'loadout', primary: 'ak' }, 'Tess', DP, td); arenaApply(d, { type: 'buy-armor', kind: 'helmet' }, 'Tess', DP, td); arenaApply(d, { type: 'loadout', primary: 'm4s' }, 'Cal', DP, td);
+arenaApply(d, { type: 'loadout', primary: 'ak' }, 'Tess', DP, td); arenaApply(d, { type: 'buy-armor', kind: 'helmet' }, 'Tess', DP, td); arenaApply(d, { type: 'loadout', primary: 'm4s' }, 'Cal', DP, td); arenaApply(d, { type: 'buy-armor', kind: 'vest' }, 'Cal', DP, td); arenaApply(d, { type: 'buy-nade', kind: 'flash' }, 'Cal', DP, td);
 ok('money paid once per item: AK 2700 + helmet 1000', d.combat.d.money.tess === 5000 - 2700 - 1000); ok('armor bought', armorOf(d, 'Tess').kevlar === 100 && armorOf(d, 'Tess').helmet);
 // Live: Tess sprays, Cal dies; the round ends (CT eliminated): Tess won with a half-empty AK → refilled; Cal dead → USP-S only, full.
 td += DEFUSE.freezeMs + 100; arenaTick(d, DP, .05, td); poseAmmo(d, 'Tess', { n: 0, r: 0 }, 'ak'); poseAmmo(d, 'Tess', { n: 17, r: 0 }, 'ak'); ok('Tess fired 17', ammoOf(d, 'Tess', 'ak')[0] === 13);
 applyHit(d, 'Tess', 'Cal', weaponById('ak'), 'head', 20, 1, td); ok('Cal is down', isDown(d, 'Cal', td)); arenaTick(d, DP, .05, td += 50);
 ok('Cal dropped his M4A1-S with its rounds', d.combat.ground.some(it => it.item === 'm4s' && it.ammo?.[0] === 20));
+ok('dead at once: nothing old left (no rifle, grenades, armor; starting pistol only)', !loadoutOf(d, 'Cal').primary && loadoutOf(d, 'Cal').secondary === 'usps' && !loadoutOf(d, 'Cal').nades.length && !armorOf(d, 'Cal').kevlar, JSON.stringify(loadoutOf(d, 'Cal')));
 for (let i = 0; i < (DEFUSE.overMs + 500) / 50; i++) arenaTick(d, DP, .05, td += 50);
 ok('new round', d.combat.d.n === 2 && d.combat.d.round.phase === 'freeze');
 ok('winner keeps the AK, refilled to 30 / 90', loadoutOf(d, 'Tess').primary === 'ak' && JSON.stringify(ammoOf(d, 'Tess', 'ak')) === '[30,90]', JSON.stringify(ammoOf(d, 'Tess', 'ak')));

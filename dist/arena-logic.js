@@ -221,8 +221,11 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     if (!C.d) continue;
     const bot = A.bots.find(b => key(b.name) === k), p = bot ? null : players.find(x => key(x.name) === k), at = bot || p?.pose; if (!at) continue;
     if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, 0, bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve]); bot.weapon = null; changed = true; } continue; }
-    const l = A.loadout[k] || {}, slot = l.primary ? 'primary' : l.secondary ? 'secondary' : null; if (!slot) continue;
-    dropFrom(game, p.name, l[slot], at.x, at.z, Math.max(0, (at.y || 0) - EYE), now); l[slot] = null; changed = true; }
+    const l = A.loadout[k] || {}, slot = l.primary ? 'primary' : l.secondary ? 'secondary' : null;
+    if (slot) dropFrom(game, p.name, l[slot], at.x, at.z, Math.max(0, (at.y || 0) - EYE), now);
+    // Everything else is gone with them right away (pistol, grenades, armor, kit), so nothing old shows while dead or
+    // at the next round: they come back with the team's starting pistol only (CS2).
+    A.loadout[k] = { primary: null, secondary: defaultPistol(C.d.teams[k]), nades: [] }; delete (C.armor ??= {})[k]; if (C.d.kits) delete C.d.kits[k]; A.dirty = true; changed = true; }
   if (nadesTick(game, players, dt, now, g)) changed = true;
   if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => it.item === 'c4' || now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
   for (const bot of A.bots) {

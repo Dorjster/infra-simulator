@@ -53,6 +53,7 @@ export const ACTIONS = [
   { id: 'a-drop', label: 'Drop weapon', legacy: 'adrop', def: ['KeyG'], ctx: ['arena'] },
   { id: 'a-use', label: 'Pick up / swap weapon', legacy: 'ause', def: ['KeyE'], ctx: ['arena'] },
   { id: 'a-reload', label: 'Reload', legacy: 'reload', def: ['KeyR'], ctx: ['arena'] },
+  { id: 'a-inspect', label: 'Inspect weapon', legacy: 'inspect', def: ['KeyF'], ctx: ['arena'] },
   { id: 'a-scores', label: 'Scoreboard (hold)', legacy: 'scores', def: ['Tab'], ctx: ['arena'], hold: true },
   { id: 'a-buy', label: 'Buy menu', legacy: 'buy', def: ['KeyB'], ctx: ['arena'] },
   { id: 'a-third', label: 'First / third person', legacy: 'p', def: ['KeyP'], ctx: ['arena'] },

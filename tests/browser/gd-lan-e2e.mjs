@@ -67,6 +67,18 @@ const gl = await guest.evaluate(() => ({ sec: __infra.lab.world.operations.game.
 check('the guest has the P250 with its rounds; it left the ground', gl.sec === 'p250' && gl.ammo[0] === 13 && gl.ground === 0, JSON.stringify(gl));
 const twice = await act(host, { type: 'pickup', id: g1.id }); check('nobody else can claim it again', /Already taken/.test(twice?.error || ''), JSON.stringify(twice));
 await guest.keyboard.press('Escape');
+// A death clears the victim's loadout on their own screen at once (no old guns / grenades until the next round).
+{ const tm = await host.evaluate(() => __infra.lab.world.operations.game.combat.d.teams); if (tm.host !== tm.guest) {
+    await guest.evaluate(() => { const s = __infra.lab.world.operations.game.combat.spawnTo.guest; __infra.lab.look(s.x, s.z, s.x, 9, s.z - 30); }); await guest.waitForTimeout(600);
+    const bn = await act(guest, { type: 'buy-nade', kind: 'flash' }); await guest.waitForTimeout(500); const had = await guest.evaluate(() => (__infra.lab.world.operations.game.arena.loadout.guest?.nades || []).length);
+    await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 30000 }).catch(() => {});
+    const hw = await host.evaluate(() => __infra.lab.world.operations.game.arena.loadout.host?.secondary || (__infra.lab.world.operations.game.combat.d.teams.host === 'ct' ? 'usps' : 'pistol'));
+    await host.evaluate(() => { const s = __infra.lab.world.operations.game.combat.spawnTo.guest; __infra.lab.look(s.x + 8, s.z, s.x, 9, s.z); }); await host.waitForTimeout(700);
+    await host.evaluate(w => __infra.lab.pistol.equip(w), hw); await host.waitForTimeout(800); await host.evaluate(() => { __infra.lab.pistol.button(0, true); __infra.lab.pistol.button(0, false); }); await host.waitForTimeout(150);
+    const k = await host.evaluate(([id, w]) => __infra.lab.world.operations.game.combat.down?.guest ? 'already down' : __infra.lab.lan.combat({ type: 'hit', target: id, weapon: w, zone: 'head', n: 1 }), [gid, hw]); await guest.waitForTimeout(700);
+    const after = await guest.evaluate(() => { const g = __infra.lab.world.operations.game, l = g.arena.loadout.guest || {}; return { down: !!g.combat.down?.guest, nades: (l.nades || []).length, primary: l.primary, util: document.getElementById('gd-hud').hidden ? '(hud hidden while dead)' : document.querySelector('#gd-wp .util')?.textContent || '' }; });
+    check('a death clears the victim\'s loadout on their screen at once (grenade gone, no rifle)', had === 1 && after.down && after.nades === 0 && !after.primary && !/◆/.test(after.util), JSON.stringify({ bn, had, k, after }));
+  } else check('a death clears the victim\'s loadout (skipped: same team)', true); }
 // M: the guest asks to switch side → next round.
 const tm = await act(guest, { type: 'team', team: s.teams.guest === 't' ? 'ct' : 't' });
 check('M during a match: change at the next round', /next round/.test(String(tm)) || /too many/.test(tm?.error || ''), JSON.stringify(tm));
