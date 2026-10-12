@@ -87,6 +87,10 @@ export const sign = (text, x, y, z, face, size = 5, color = '#f2e3c0', bg = 'rgb
 // An awning on a wall (visual only, above head height): at (x, z) facing `face`, `w` wide.
 export const awning = (x, z, face, w, y = 15, color = 0xc0392b, stripes = 0xf2e3c0) => ({ kind: 'awning', x, z, face, w, y, color, stripes });
 
+// Windows painted on the face of a solid block (decoration: shutters and frames on a wall you can't enter).
+// faces: [x, z, face, length] — the face's centre, which way it looks, how long it is; y = sill height, h = window height.
+export function windows(faces, y = 15, h = 6, every = 13) { const out = []; for (const [x, z, face, len] of faces) { const n = Math.max(1, Math.floor(len / every)); for (let i = 0; i < n; i++) { const off = (i - (n - 1) / 2) * every, horiz = face === 'n' || face === 's'; out.push({ kind: 'window', x: horiz ? x + off : x, z: horiz ? z : z + off, face, y, w: 4.2, h, shutters: [0x2f6d7a, 0x7a3b2a, 0x5b6b3a][(i + Math.round(x)) % 3] }); } } return out; }
+
 // Assemble a map: parts are { solids, decor } objects, arrays of boxes (solids) or props. Returns the map's lists.
 export function assemble(...parts) {
   const solids = [], decor = [], props = [];
