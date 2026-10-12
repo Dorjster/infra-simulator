@@ -56,10 +56,16 @@ check('…and it is listed under Nearby dropped weapons', await p.evaluate(() =>
 await p.evaluate(() => document.querySelector('#ar-buy [data-ground]').click()); await p.waitForTimeout(900);
 check('picking it up from the menu swaps it back (M4 drops)', await p.evaluate(() => { const g = __infra.lab.world.operations.game; return g.arena.loadout.tester.primary === 'ak' && g.combat.ground.some(x => x.item === 'm4'); }));
 await p.keyboard.press('Escape');
-// AWP scope: right click scopes in (two levels, then out); left click fires and stays scoped.
+// AWP scope: right click scopes in (two levels, then out); left click fires scoped and the bolt unscopes (CS2).
 await p.evaluate(() => __infra.lab.arenaUI.buy(true)); await p.evaluate(() => document.querySelector('#ar-buy [data-pick="sniper"]').click()); await p.waitForTimeout(500); await p.keyboard.press('Escape'); await p.evaluate(() => __infra.lab.enter()); await p.waitForTimeout(1300);
-const sc = await p.evaluate(async () => { const P = __infra.lab.pistol, s = []; P.button(2, true); P.button(2, false); await new Promise(r => setTimeout(r, 200)); s.push(P.scope, Math.round(__infra.camera.fov)); P.button(0, true); P.button(0, false); await new Promise(r => setTimeout(r, 200)); s.push(P.scope, P.ammo, document.getElementById('gd-scope').className); P.button(2, true); P.button(2, false); s.push(P.scope); P.button(2, true); P.button(2, false); s.push(P.scope); return s; });
-check('AWP: scope, fire scoped (stays scoped), second zoom, out', sc[0] === 1 && sc[1] === 40 && sc[2] === 1 && sc[3] === 4 && /on/.test(sc[4]) && sc[5] === 2 && sc[6] === 0, JSON.stringify(sc));
+const sc = await p.evaluate(async () => { const P = __infra.lab.pistol, S = __infra.lab.settings, wait = ms => new Promise(r => setTimeout(r, ms)), s = {}, xh = () => document.getElementById('gd-x').hidden;
+  s.unscopedNoCrosshair = xh(); P.button(2, true); P.button(2, false); await wait(200); s.in = [P.scope, Math.round(__infra.camera.fov)];
+  S.autoRescope = true; P.button(0, true); P.button(0, false); await wait(60); s.shot = [P.scope, P.ammo, document.getElementById('gd-scope').className, xh()];
+  await wait(1700); s.auto = P.scope;   // Auto re-scope (default on): back in once the bolt is done
+  S.autoRescope = false; P.button(0, true); P.button(0, false); await wait(1700); s.manualWait = P.scope; P.button(2, true); P.button(2, false); await wait(50); s.manual = P.scope;
+  P.button(2, true); P.button(2, false); s.second = P.scope; P.button(2, true); P.button(2, false); s.out = P.scope; S.autoRescope = true; return s; });
+check('AWP: no crosshair unscoped; scope in; the shot unscopes (overlay gone, bolt); auto re-scope on; off = right click; second zoom; out',
+  sc.unscopedNoCrosshair && sc.in[0] === 1 && sc.in[1] === 40 && sc.shot[0] === 0 && sc.shot[1] === 4 && !/on/.test(sc.shot[2]) && sc.shot[3] && sc.auto === 1 && sc.manualWait === 0 && sc.manual === 1 && sc.second === 2 && sc.out === 0, JSON.stringify(sc));
 // Knife: light and heavy.
 await p.keyboard.press('Digit3'); await p.waitForTimeout(700);
 const kn = await p.evaluate(async () => { const P = __infra.lab.pistol, r = []; P.button(0, true); P.button(0, false); r.push(P.knife?.kind); await new Promise(x => setTimeout(x, 500)); P.button(2, true); P.button(2, false); r.push(P.knife?.kind); return r; });
