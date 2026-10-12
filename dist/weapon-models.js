@@ -3,6 +3,8 @@
 // the gun in other engineers' hands and the weapon market display.
 import * as THREE from './three.module.js';
 import { pistolModel } from './fun-pistol.js';
+import { OBJLoader } from './post/OBJLoader.js';
+import { MTLLoader } from './post/MTLLoader.js';
 
 // Surface textures, drawn once at start (256 px, a few KB of GPU memory each): brushed steel, blued metal with
 // wear on the edges, stippled polymer, walnut grain. Each also drives roughness, so light catches the grain.
@@ -273,9 +275,45 @@ async function loadReal(id) {
   return wrap;
 }
 // Start loading every realistic model (call once at startup; safe to call again). Resolves when all are ready.
+// Guns with a model of their own from the CC0 "Ultimate Gun Pack" by Quaternius (dist/models/qguns, OBJ + MTL):
+// file · grip (fraction of the length from the back, fraction of the height from the bottom) · parts to add.
+// The pack's units already match the game's (an AK is 5.4 long); muzzles point along +x and are turned to −z.
+export const QGUNS = {
+  p250: { file: 'Pistol_1', grip: [.3, .55] }, usps: { file: 'Pistol_2', grip: [.3, .55], suppressor: [.75, .06] }, fiveseven: { file: 'Pistol_3', grip: [.3, .55] }, deagle: { file: 'Pistol_6', grip: [.25, .55] },
+  mp9: { file: 'SubmachineGun_1', grip: [.38, .55] }, smg: { file: 'SubmachineGun_2', grip: [.45, .55], suppressor: [1.1, .09] }, mp7: { file: 'SubmachineGun_3', grip: [.45, .55] }, mac10: { file: 'SubmachineGun_4', grip: [.35, .55] }, ump45: { file: 'SubmachineGun_5', grip: [.45, .55] },
+  p90: { file: 'Bullpup_1', grip: [.5, .5] }, aug: { file: 'Bullpup_2', grip: [.55, .5], scope: true }, famas: { file: 'Bullpup_3', grip: [.55, .5] },
+  sg553: { file: 'AssaultRifle_3', grip: [.4, .55], scope: true }, galil: { file: 'AssaultRifle_4', grip: [.38, .55] }, m4s: { file: 'AssaultRifle2_2', grip: [.38, .55], suppressor: [1.15, .09] }, lmg: { file: 'AssaultRifle2_1', grip: [.38, .55], box: true, scale: 1.12 },
+  xm1014: { file: 'Shotgun_ShortStock', grip: [.33, .5] }, ssg08: { file: 'SniperRifle_4', grip: [.35, .5] },
+};
+const Q_DIR = new URL('./models/qguns/', import.meta.url).href;
+// Flat pack colours → our materials: dark parts gunmetal, browns wood, greens / tans polymer.
+function qMaterial(m) { const c = m.color || new THREE.Color(.1, .1, .1), hsl = c.getHSL({}), metal = hsl.s < .25;   // greys / blacks are metal; coloured parts (wood, polymer) keep their hue
+  const out = new THREE.MeshStandardMaterial({ color: metal ? new THREE.Color().setHSL(hsl.h, hsl.s * .5, Math.min(.16, .05 + hsl.l * 1.4)) : new THREE.Color().setHSL(hsl.h, Math.min(.65, hsl.s * 1.1), Math.min(.42, .12 + hsl.l * 2.2)), roughness: metal ? .4 : .72, metalness: metal ? .8 : .05, envMapIntensity: .9 }); out.userData.shared = true; return out; }
+async function loadQ(id) {
+  const Q = QGUNS[id], mtl = await new MTLLoader().setPath(Q_DIR).loadAsync(Q.file + '.mtl'); mtl.preload();
+  const obj = await new OBJLoader().setMaterials(mtl).setPath(Q_DIR).loadAsync(Q.file + '.obj'), mats = new Map();
+  obj.traverse(o => { if (!o.isMesh) return; o.material = [].concat(o.material).map(m => { if (!mats.has(m.uuid)) mats.set(m.uuid, qMaterial(m)); return mats.get(m.uuid); }); if (o.material.length === 1) o.material = o.material[0]; o.castShadow = true; o.geometry.userData.shared = true; });
+  const box = new THREE.Box3().setFromObject(obj), L = box.max.x - box.min.x, H = box.max.y - box.min.y, gx = box.min.x + Q.grip[0] * L, gy = box.min.y + Q.grip[1] * H, gz = (box.min.z + box.max.z) / 2;
+  // Muzzle: centre of the vertices at the very front (+x).
+  let mx = 0, my = 0, mn = 0; obj.traverse(o => { if (!o.isMesh) return; const P = o.geometry.attributes.position; for (let i = 0; i < P.count; i++) if (P.getX(i) > box.max.x - .04) { my += P.getY(i); mn++; } });
+  my = mn ? my / mn : gy + H * .2;
+  const inner = new THREE.Group(); inner.add(obj); obj.position.set(-gx, -gy, -gz); inner.rotation.y = Math.PI / 2;   // +x (muzzle) → −z
+  const g = new THREE.Group(); g.add(inner); g.scale.setScalar(Q.scale || 1);
+  const s = Q.scale || 1, muzzle = new THREE.Vector3(0, (my - gy) * s, -(box.max.x - gx) * s);
+  decorate(g, Q, muzzle, L * s, (box.max.y - gy) * s, (box.min.y - gy) * s);
+  const wrap = new THREE.Group(); wrap.add(g); wrap.userData.muzzle = muzzle.clone().add(new THREE.Vector3(0, 0, Q.suppressor ? -Q.suppressor[0] : 0)).toArray(); return wrap;
+}
+// Parts added to a gun: suppressor at the muzzle, scope on top, a box magazine under (game units, the gun's frame).
+function decorate(g, V, mz, len, top, bottom) {
+  const cyl = (r, l) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, l, 18).rotateX(Math.PI / 2), decoMat); m.geometry.userData.shared = true; return m; };
+  if (V.suppressor) { const [l, r] = V.suppressor, c = cyl(r, l); c.position.copy(mz).add(new THREE.Vector3(0, 0, -l / 2 + .02)); g.add(c); }
+  if (V.scope) { const t = cyl(.08, len * .26); t.position.set(0, top + .1, mz.z + len * .55); g.add(t); for (const dz of [-.12, .12]) { const m = new THREE.Mesh(new THREE.BoxGeometry(.05, .12, .05), decoMat); m.geometry.userData.shared = true; m.position.set(0, top + .02, mz.z + len * .55 + dz); g.add(m); } }
+  if (V.box) { const b = new THREE.Mesh(new THREE.BoxGeometry(.3, .36, .4), decoMat); b.geometry.userData.shared = true; b.position.set(0, bottom + .1, mz.z + len * .62); g.add(b); }
+}
 export function loadRealWeapons() {
   if (typeof fetch !== 'function' || typeof document === 'undefined') return Promise.resolve(0);
-  return realLoading ??= Promise.all(Object.keys(REAL_FIT).map(id => loadReal(id).then(m => { real.set(id, m); cache.delete(id); if (m.userData.muzzle) MUZZLE[id] = m.userData.muzzle; }, () => {}))).then(() => real.size);
+  const one = (id, f) => f(id).then(m => { real.set(id, m); cache.delete(id); if (m.userData.muzzle) MUZZLE[id] = m.userData.muzzle; }, e => console.warn('model', id, e?.message));
+  return realLoading ??= Promise.all([...Object.keys(REAL_FIT).map(id => one(id, loadReal)), ...Object.keys(QGUNS).map(id => one(id, loadQ))]).then(() => real.size);
 }
 export const hasReal = id => real.has(id);
 const cache = new Map();

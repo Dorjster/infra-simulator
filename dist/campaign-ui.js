@@ -10,6 +10,7 @@ import {usdMoney, short} from './money.js';
 import {goalsView, goalsDoneOf} from './casino-logic.js';
 import {notify} from './hud.js';
 import {savePreferences} from './player-preferences.js';
+import { loadCrosshair, saveCrosshair, crosshairEditorHTML, crosshairHTML, CROSSHAIR_DEFAULT } from './gd-crosshair.js';
 import {LEVELS, PLACES, CATEGORY_LEVEL, OFFICE_ITEM_LEVEL} from './campaign-levels.js';
 import {CATALOG, CHALLENGES} from './operations.js';
 import {OFFICE_CATALOG} from './office-schema.js';
@@ -391,6 +392,8 @@ export function createCampaignUI(ctx) {
      <h3>Controls</h3><div class="cp-row ctl-tabs">${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
      <input id="ctl-search" class="ctl-search" placeholder="Search controls…" value="${esc(ctlFilter)}"><table class="ctl"><tbody><tr><td><kbd>Mouse</kbd></td><td>Look</td><td></td></tr>${actionsIn(ctlCtx).filter(a => !ctlFilter || a.label.toLowerCase().includes(ctlFilter.toLowerCase())).map(a => `<tr><td><button class="ctl-key${capturing === a.id ? ' wait' : ''}" data-rebind="${a.id}">${capturing === a.id ? 'Press a key… (Esc cancels)' : esc(labelOf(ctlCtx, a.id))}</button></td><td>${esc(a.label)}</td><td><button class="ctl-x" data-unbind="${a.id}" title="Unbind">×</button></td></tr>`).join('')}<tr><td><kbd>Esc</kbd></td><td>Menu (fixed)</td><td></td></tr></tbody></table>
      <div class="cp-row"><button data-ctl="reset">Reset ${esc(CONTEXTS[ctlCtx].split(' (')[0])}</button><button data-ctl="reset-all">Reset all</button><button data-ctl="export">Export controls</button><button data-ctl="import">Import controls</button></div><p class="cp-muted">Controls are saved on this computer only. Joining a LAN room never changes them.</p>
+     <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
+     ${crosshairEditorHTML(loadCrosshair())}
      <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. Without them the arena uses the engineer avatars.</p>
      <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
   }
@@ -407,7 +410,7 @@ export function createCampaignUI(ctx) {
     el.dataset.tab = tab;
     if (same) { el.querySelectorAll?.('[data-key]').forEach(x => { const v = keep[x.dataset.key]; if (v === undefined) return; if (x.tagName === 'DETAILS') x.open = v; else x.value = v; }); el.scrollTop = scroll; }
   }
-  $('campaign-panel').addEventListener('click', e => {
+  $('campaign-panel').addEventListener('click', e => { if (e.target.closest?.('[data-xh-reset]')) { saveCrosshair({ ...CROSSHAIR_DEFAULT }); render(); return; }
     const t = e.target.closest('button'); if (!t) return;
     if (t.dataset.tab) { tab = t.dataset.tab; render(); return; }
     if (t.dataset.adv) { close(); engineering.panel(t.dataset.adv); return; }
@@ -447,7 +450,7 @@ export function createCampaignUI(ctx) {
     if (a === 'import') { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,application/json'; f.onchange = async () => { try { importBindings(await f.files[0].text()); notify('Controls imported'); } catch (err) { notify('Could not import: ' + err.message + ' · your current controls are kept'); } render(); }; f.click(); }
     render();
   });
-  $('campaign-panel').addEventListener('input', e => { if (e.target.id === 'ctl-search') { ctlFilter = e.target.value; const pos = e.target.selectionStart; render(); const el = $('ctl-search'); el?.focus(); el?.setSelectionRange(pos, pos); return; } const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
+  $('campaign-panel').addEventListener('input', e => { if (e.target.id === 'ctl-search') { ctlFilter = e.target.value; const pos = e.target.selectionStart; render(); const el = $('ctl-search'); el?.focus(); el?.setSelectionRange(pos, pos); return; } const xk = e.target.dataset?.xh; if (xk) { const c = loadCrosshair(); c[xk] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'range' ? +e.target.value : e.target.value; saveCrosshair(c); const pv = document.querySelector('#campaign-panel .xh-preview'); if (pv) pv.innerHTML = crosshairHTML(c); const lab = e.target.closest('label'); if (lab && e.target.type === 'range') lab.firstChild.textContent = lab.firstChild.textContent.replace(/· [\d.]+/, '· ' + e.target.value); return; } const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
   $('site-map') || 0;
   document.addEventListener('click', e => { const place = e.target.closest?.('#site-map [data-place]'); if (!place) return; const p = PLACES[place.dataset.place]; if (p?.x !== null && p) { focus = { x: p.x, z: p.z, label: p.label, until: Date.now() + 60000 }; notify('Marker · ' + p.label); render(); } });
 

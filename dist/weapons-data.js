@@ -69,6 +69,9 @@ export const KNIFE = { light: { front: 40, back: 90, rateMs: 400, hitMs: 90, ran
 // Grenades (slot 4) and the bomb (slot 5); their effects are host-run (arena-nades.js, arena-defuse.js).
 export const GRENADES = [['he', 'HE Grenade', 300], ['flash', 'Flashbang', 200], ['smoke', 'Smoke Grenade', 300], ['molotov', 'Molotov', 400]].map(([id, name, price]) => ({ id, name, kind: 'nade', price, reward: 300, dmg: 0, ap: 1, rangeMod: 1, rateMs: 900, mode: 'semi', range: 0, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 245 }));
 export const C4 = { id: 'c4', name: 'C4 bomb', kind: 'bomb', price: 0, reward: 0, dmg: 0, ap: 1, rangeMod: 1, rateMs: 500, mode: 'semi', range: 0, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 250 };
+// Grenade throwing (one place for the input timing; flight is arena-nades.js): the pin takes primeMs to come out; a
+// release before that throws nothing.
+export const THROW = { primeMs: 350 };
 // Body armor (buy menu · Equipment).
 export const ARMOR = { kevlar: { name: 'Kevlar Vest', price: 650 }, helmet: { name: 'Kevlar + Helmet', price: 1000, upgrade: 350 } };
 const BY_ID = new Map([...WEAPONS, ...KNIVES, ...GRENADES, C4, DARJA_GUN].map(w => [w.id, w]));
