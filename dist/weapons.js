@@ -57,11 +57,12 @@ export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kin
 // Options: scene, camera, effects (fun-pistol), arsenal() ids, targets() [{ id, feet, crouched }], report(hit),
 // canFire(), aim() { pitch, yaw }, boxes() map boxes, move() { speed, max, onGround, landedAgo, ducked },
 // throwNade(id, strength), moveSpeed(), host() { ammo: { id: [mag, res] }, shots: { n, r, pending } } (mine).
-export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true }) {
+const PIVOT = new THREE.Vector3(), pivR = new THREE.Quaternion(), pivE = new THREE.Euler(), pivA = new THREE.Vector3(), pivB = new THREE.Vector3();
+export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true, planting = () => false }) {
   let current = null, view = null, lastShot = 0, kick = 0, heldLeft = false, reloadUntil = 0, reloadId = null, lastDry = 0;
   // Shot and reload numbers start somewhere random each session, so a host that saw an older session re-syncs.
   let shots = 1e6 + Math.floor(Math.random() * 4e8), reloads = 1000 + Math.floor(Math.random() * 1e6);
-  let rescope = null, lastEnds = null, ri = 0, scope = 0, knife = null, nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }, punch = { pitch: 0, yaw: 0 };
+  let inspecting = null, idleT = 0, plantE = 0, rescope = null, lastEnds = null, ri = 0, scope = 0, knife = null, nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }, punch = { pitch: 0, yaw: 0 };
   const ammo = new Map(), origin = new THREE.Vector3(), muzzle = new THREE.Vector3(), base = new THREE.Vector3(), tmpD = new THREE.Vector3();
   const now = () => performance.now(), w = () => current, fire_ = () => current && isFirearm(current);
   const left = id => (ammo.get(id) || fullAmmo(id) || [0, 0]);
@@ -85,10 +86,10 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     if (!camera.parent) scene.add(camera);
   }
   function stopReload() { reloadUntil = 0; reloadId = null; }
-  function equip(id) { const was = current?.id; current = id ? weaponById(id) : null; if (current?.id !== was) { setView(current?.id, true); scope = 0; ri = 0; rescope = null; stopReload(); knife = null; nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }; } heldLeft = false; return current; }
+  function equip(id) { const was = current?.id; current = id ? weaponById(id) : null; if (current?.id !== was) { setView(current?.id, true); inspecting = null; fp?.twirl?.(0); scope = 0; ri = 0; rescope = null; stopReload(); knife = null; nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }; } heldLeft = false; return current; }
   function cycle() { const own = arsenal(); if (!own.length) return null; const i = current ? own.indexOf(current.id) : -1; return equip(i + 1 < own.length ? own[i + 1] : null); }
   // R: reload (time per gun). Rounds move from the reserve at the end; never more than the reserve has.
-  function reload() {
+  function reload() { inspecting = null;
     if (!fire_() || reloading()) return false; const id = current.id, [mag, res] = left(id); if (mag >= current.mag || res <= 0) return false;
     reloadUntil = now() + current.reloadMs; reloadId = id; heldLeft = false; scope = 0; reloads++; sounds.magOut(null, id); fp?.reload(current.reloadMs);
     setTimeout(() => sounds.magIn(null, id), current.reloadMs * .7);
@@ -99,7 +100,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // along your aim, within reach, not through walls.
   function attack(kind) {
     const K = KNIFE[kind]; if (knife && now() < knife.until) return false; if (now() - drawAt < drawMs) return false;
-    knife = { kind, start: now(), hitAt: now() + K.hitMs, until: now() + K.rateMs, done: false }; lastShot = now(); sounds.slash(null, kind === 'heavy'); fp?.fire(); return true;
+    inspecting = null; knife = { kind, start: now(), hitAt: now() + K.hitMs, until: now() + K.rateMs, done: false }; lastShot = now(); sounds.slash(null, kind === 'heavy'); fp?.fire(); return true;
   }
   function knifeHit() {
     const K = KNIFE[knife.kind], a = aim(), d = dirFor(a.pitch, a.yaw, tmpD), o = camera.getWorldPosition(origin), wall = rayBoxes(boxes(), o.x, o.y, o.z, d.x, d.y, d.z, 40);
@@ -128,7 +129,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     if (now() - lastShot < current.rateMs) return false;
     const id = current.id, [mag, res] = left(id);
     if (mag <= 0) { if (now() - lastDry > 250) { lastDry = now(); sounds.dry(); } if (res > 0) reload(); return false; }
-    lastShot = now(); shots++; kick = 1; ammo.set(id, [mag - 1, res]); fp?.fire();
+    inspecting = null; lastShot = now(); shots++; kick = 1; ammo.set(id, [mag - 1, res]); fp?.fire();
     // The ray: from the eye along aim + spray(ri) (+ movement cone).
     const a = aim(), o = camera.getWorldPosition(origin), m = move();
     dirFor(a.pitch, a.yaw, base);   // along the screen centre (the camera already carries the recoil: punch below)
@@ -160,6 +161,9 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     get reloadLeft() { return reloading() ? (reloadUntil - now()) / current.reloadMs : 0; },
     get punch() { return punch; }, get lastShot() { return lastEnds; }, get scope() { return scope; }, get scopeFov() { return scope && current?.zoom ? current.zoom[scope - 1] : 0; },
     get nade() { return current?.kind === 'nade' ? { state: nade.state, strength: nade.buttons.size > 1 || nade.both ? 'medium' : nade.buttons.has(2) ? 'short' : 'long' } : null; },
+    // Inspect (F): look the weapon over; any action cancels it.
+    inspect() { if (!current || (knife && now() < knife.until) || reloading() || scope || now() - drawAt < drawMs || (current.kind === 'nade' && nade.state !== 'idle')) return false; inspecting = { start: now(), ms: current.kind === 'knife' ? 2400 : current.kind === 'bomb' ? 1400 : 2000 }; return true; },
+    get inspecting() { return !!inspecting; },
     get knife() { return knife; }, get drawing() { return now() - drawAt < drawMs; },
     equip, cycle, fire, reload, setView,
     // Mouse buttons (0 left, 2 right) while playing.
@@ -206,11 +210,23 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       let kx = 0, ky = 0, kz = 0, rx = 0, ry = 0, rz = 0;
       if (knife) { const K = KNIFE[knife.kind], t = Math.min(1, (now() - knife.start) / K.rateMs);
         if (knife.kind === 'light') { const s = Math.sin(Math.min(1, t * 2.2) * Math.PI); kx = -s * .22; ky = s * .06; kz = -s * .08; rz = s * .45; ry = s * .28; }   // a quick diagonal swipe that stays in the lower right
-        else { const back = Math.min(1, t / .26), stab = Math.max(0, Math.min(1, (t - .26) / .16)), rec = Math.max(0, (t - .55) / .45), amt = (back - stab * 1.6 + 0) * (1 - rec); kz = amt * .35 - stab * (1 - rec) * .3; rx = -stab * (1 - rec) * .5 + back * (1 - stab) * .25; ky = back * (1 - stab) * .1; } }
+        else { const ss = v => v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v), back = ss(t / .26) * (1 - ss((t - .26) / .1)), stab = ss((t - .26) / .14) * (1 - ss((t - .55) / .45));   /* wind up back and to the right, then a hard stab forward toward the centre */
+          kz = back * .1 - stab * .36; kx = back * .05 - stab * .13; ky = back * .05 + stab * .05; rx = back * .2 - stab * .15; rz = -back * .15 + stab * .15; } }
       // Grenade held: raised back over the shoulder (long) or low (short) while the pin is out.
       let ny = 0, nz = 0, nr = 0; const N = nade.state; if (current.kind === 'nade' && (N === 'priming' || N === 'held')) { const s = this.nade?.strength; ny = s === 'short' ? -.12 : .05; nz = s === 'short' ? -.04 : .1; nr = s === 'short' ? .12 : -.18; }
+      // Knife idle: a slow breathing sway (the packs' idle clip barely moves a one-handed fist).
+      idleT += dt; if (current.kind === 'knife' && !knife) { kx += Math.sin(idleT * 1.1) * .006; ky += Math.sin(idleT * 2.2) * .004; rz += Math.sin(idleT * 1.1) * .02; }
+      // Inspect: raise and turn the hand to show the weapon's side, hold, turn back; the karambit spins round the ring.
+      if (inspecting) { const t = (now() - inspecting.start) / inspecting.ms; if (t >= 1) { inspecting = null; fp?.twirl?.(0); } else { const ss = v => v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v), e = ss(t / .22) * (1 - ss((t - .78) / .22));
+        if (current.kind === 'knife') { ky += e * .06; kx -= e * .07; ry -= e * .35; rz += e * .35; rx -= e * .12; if (current.id === 'karambit') fp?.twirl?.(Math.PI * 2 * ss((t - .34) / .3)); }
+        else if (current.kind === 'bomb') { ky += e * .05; ry -= e * .25; rz += e * .15; }
+        else { ky += e * .04; kx -= e * .05; ry -= e * .3; rz += e * .35; rx -= e * .08; } } }
+      // Planting: the bomb is lowered to the ground in front of you while the plant runs.
+      plantE += ((current.kind === 'bomb' && planting() ? 1 : 0) - plantE) * Math.min(1, dt * 7); if (plantE > .001) { ky -= plantE * .22; kz -= plantE * .12; kx -= plantE * .1; rx -= plantE * .7; }
       view.position.set(x + kx, y0 + kick * .05 * k - rl * .35 - dr * .55 + ky + ny, z + kick * .22 * k + dr * .15 + kz + nz);
       view.rotation.set(kick * .35 * k - rl * .6 - dr * .9 + rx + nr, .04 + ry, rl * .4 + dr * .35 + spin + rz);
+      // Swings, inspect and planting turn round the hand (not the eye), so the weapon twists in place on screen.
+      if (fp && (rx || ry || rz)) { fp.handIn(view, PIVOT); pivR.setFromEuler(pivE.set(rx, ry, rz)); view.position.add(pivA.copy(PIVOT).sub(pivB.copy(PIVOT).applyQuaternion(pivR))); }
       if (scope && view) view.visible = false;
     }
   };
