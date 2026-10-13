@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>GD Map Viewer</title><link rel="icon" href="data:,">
+<!-- Developer viewer for an imported Counter-Strike 1.6 map (bsp30.js + bsp-mesh.js): ?map=<url of a .bsp>&at=<T|CT|A|B>
+     renders it with its textures and baked light from a spawn or a bomb site. -->
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#info{position:fixed;left:8px;top:8px;color:#fff;font:12px monospace;text-shadow:0 1px 2px #000}</style></head>
+<body><div id="info">loading…</div>
+<script type="module">
+import * as THREE from './three.module.js';
+import { parseBsp, vec, modelOf } from './bsp30.js';
+import { buildBspMeshes } from './bsp-mesh.js';
+const q = new URLSearchParams(location.search), U = 2.54 / 16.5, info = document.getElementById('info');
+const buf = await (await fetch(q.get('map'))).arrayBuffer(), t0 = performance.now(), bsp = parseBsp(buf), toGame = (x, y, z) => [x * U, z * U, -y * U];
+const { meshes, atlas } = buildBspMeshes(bsp, { toGame, ...(q.get('light') ? { lightScale: +q.get('light') } : {}), ...(q.get('gamma') ? { lightGamma: +q.get('gamma') } : {}) });
+const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(devicePixelRatio); renderer.setSize(innerWidth, innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; document.body.append(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x9fc0e0); for (const m of meshes) scene.add(m);
+const cam = new THREE.PerspectiveCamera(+(q.get('fov') || 74), innerWidth / innerHeight, .05, 2000);
+const pick = cls => { const e = bsp.entities.filter(e => e.classname === cls); return e.length ? vec(e[0].origin) : [0, 0, 0]; }, sites = bsp.entities.filter(e => e.classname === 'func_bomb_target').map(e => { const m = bsp.models[modelOf(e)]; return m.mins.map((v, j) => (v + m.maxs[j]) / 2); });
+const at = q.get('at') || 'T', p = at === 'CT' ? pick('info_player_start') : at === 'A' ? sites[0] : at === 'B' ? sites[1] : pick('info_player_deathmatch'), e = toGame(p[0], p[1], p[2] + (at.length === 1 && /[AB]/.test(at) ? 30 : 28));
+if (q.get('pos')) { const v = q.get('pos').split(',').map(Number), g = toGame(v[0], v[1], v[2]); cam.position.set(...g); } else cam.position.set(...e); cam.rotation.order = 'YXZ'; cam.rotation.y = +(q.get('yaw') || 0) * Math.PI / 180; cam.rotation.x = +(q.get('pitch') || 0) * Math.PI / 180;
+renderer.render(scene, cam); info.textContent = `${bsp.faces.length} faces · ${meshes.length} meshes · atlas ${atlas.width}×${atlas.height} (${atlas.faces} lit faces) · ${(performance.now() - t0).toFixed(0)} ms`; window.__ready = true;
+let k = 0; (function loop() { renderer.render(scene, cam); if (++k < 4) requestAnimationFrame(loop); })();
+</script></body></html>

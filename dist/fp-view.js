@@ -5,8 +5,9 @@
 // pistol arms). The rig looks along +z from just in front of its shoulders.
 import * as THREE from './three.module.js';
 import { GLTFLoader } from './post/GLTFLoader.js';
-import { weaponModel, MUZZLE, VARIANTS } from './weapon-models.js';
+import { weaponModel, MUZZLE, VARIANTS, modelFromFile } from './weapon-models.js';
 import { weaponById } from './weapons-data.js';
+import { userAssets, userAssetURL } from './user-assets.js';
 
 const U = 1 / .165;   // metres → game units
 // Per pack: model scale (the rifle pack is in metres, the others bigger), eye (rig units: height, forward, pitch),
@@ -41,7 +42,59 @@ function load(name) {
   if (!loaded.has(name)) loaded.set(name, new GLTFLoader().loadAsync(new URL('./models/fp/' + PACKS[name].url + '/scene.gltf', import.meta.url).href).then(g => { const b = build(name, g); ready.set(name, b); return b; }).catch(() => null));
   return loaded.get(name);
 }
-export const loadFP = () => Promise.all(Object.keys(PACKS).map(load));
+export const loadFP = () => Promise.all([...Object.keys(PACKS).map(load), loadKarambit()]);
+
+// The karambit's own first-person model when one is imported on this computer (tools/import-cs2-models.mjs →
+// user-assets/fp/karambit.glb, never shipped: CS:GO's view model — arms in sport gloves, the knife in the right hand,
+// ring on the index finger). It replaces the pistol arms for the karambit. Posed, not animated: weapons.js swings and
+// turns the whole view round the hand (handIn) and the inspect spins the knife on its ring (twirl). The file comes
+// untextured: skin, dark sport gloves and a Fade blade (purple → pink → gold along it) are painted here.
+// KARAMBIT: model units → game units, and the eye in model units (between and above the shoulders, looking along +z).
+export const KARAMBIT = { scale: .0076, eye: [50, 505, -1030], forearm: .9 };   // forearm: their length (the model's reach far out)
+let karambitRig = null, karambitLoading = null;
+function loadKarambit() {
+  return karambitLoading ??= userAssets().then(ua => { const v = ua.models.viewmodels?.karambit; if (!v) return null;
+    return new GLTFLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { karambitRig = buildKarambit(g.scene); return karambitRig; }); }).catch(e => { console.warn('karambit view model', e?.message); return null; });
+}
+function buildKarambit(sc) {
+  const root = new THREE.Group(), fix = new THREE.Group(); root.add(fix); fix.add(sc); fix.rotation.y = Math.PI; fix.scale.setScalar(KARAMBIT.scale); sc.position.set(-KARAMBIT.eye[0], -KARAMBIT.eye[1], -KARAMBIT.eye[2]);
+  const bones = {}; sc.traverse(o => { if (o.isBone) bones[o.name.replace(/^v_weapon/, '')] = o; });
+  // The knife rides on the right hand (in the file it hangs off the rig's root, placed by animations we don't have);
+  // then shorter forearms: the hands closer in along them, the knife with them.
+  sc.updateMatrixWorld(true); if (bones.knife && bones.Bip01_R_Hand) bones.Bip01_R_Hand.attach(bones.knife);
+  for (const s2 of ['L', 'R']) bones[`Bip01_${s2}_Hand`]?.position.multiplyScalar(KARAMBIT.forearm);
+  const skin = new THREE.MeshStandardMaterial({ color: 0x9a6a4f, roughness: .55, metalness: 0 }), glove = new THREE.MeshStandardMaterial({ color: 0x2b313b, roughness: .78, metalness: 0 });
+  const blade = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .22, metalness: .9, envMapIntensity: 1.1 });
+  for (const m of [skin, glove, blade]) m.userData.shared = true;
+  sc.traverse(o => { if (!o.isMesh) return; o.frustumCulled = false; o.castShadow = o.receiveShadow = false;
+    o.material = [].concat(o.material).map(m => /^knife:/.test(m.name) ? blade : /^skin:/.test(m.name) ? skin : glove); if (o.material.length === 1) o.material = o.material[0];
+    if (/knife/i.test(o.name)) fade(o); });
+  const hand = bones.Bip01_R_Hand, ring = bones.Bip01_R_Finger11 || bones.Bip01_R_Finger1 || hand, finger = bones.Bip01_R_Finger1 || hand, knife = bones.knife;
+  const k0 = knife ? [knife.position.clone(), knife.quaternion.clone()] : null, piv = new THREE.Vector3(), ax = new THREE.Vector3(), tq = new THREE.Quaternion(), tm = new THREE.Matrix4(), out0 = new THREE.Vector3();
+  let t = 0;
+  return {
+    root, karambit: true,
+    hold() { root.position.set(0, 0, 0); root.rotation.set(0, 0, 0); this.twirl(0); },
+    // Spin the knife on its ring (round the index finger) by `a` radians.
+    twirl(a) { if (!knife) return; knife.position.copy(k0[0]); knife.quaternion.copy(k0[1]); if (!a) return; sc.updateMatrixWorld(true);
+      const inv = tm.copy(knife.parent.matrixWorld).invert(); ring.getWorldPosition(piv).applyMatrix4(inv); finger.getWorldPosition(ax); ring.getWorldPosition(out0); ax.sub(out0).transformDirection(inv).normalize();
+      if (ax.lengthSq() < .5) ax.set(1, 0, 0); tq.setFromAxisAngle(ax, a); knife.position.sub(piv).applyQuaternion(tq).add(piv); knife.quaternion.premultiply(tq); },
+    handIn(space, out) { space.updateMatrixWorld(true); return out.setFromMatrixPosition(tm.copy(space.matrixWorld).invert().multiply(hand.matrixWorld)); },
+    fire() {}, reload() {},
+    // A slow breathing sway.
+    update(dt) { t += dt; root.position.set(Math.sin(t * 1.1) * .004, Math.sin(t * 2.2) * .006, 0); root.updateMatrixWorld(true); },
+    get boneMuzzle() { return new THREE.Vector3(); },
+    muzzle(out) { root.updateMatrixWorld(true); return out.setFromMatrixPosition(hand.matrixWorld); },
+  };
+}
+// Fade: the blade coloured along its length (its bind-pose vertices' longest axis), purple at the ring to gold at the tip.
+function fade(mesh) {
+  const P = mesh.geometry.attributes.position, box = new THREE.Box3().setFromBufferAttribute(P), size = box.getSize(new THREE.Vector3()), axis = size.x > size.y ? (size.x > size.z ? 'x' : 'z') : (size.y > size.z ? 'y' : 'z');
+  const lo = box.min[axis], len = size[axis] || 1, C = new Float32Array(P.count * 3), stops = [[0, [.32, .16, .62]], [.45, [.9, .32, .62]], [.75, [.98, .6, .7]], [1, [1, .82, .35]]], c = new THREE.Color();
+  for (let i = 0; i < P.count; i++) { const v = ({ x: P.getX(i), y: P.getY(i), z: P.getZ(i) })[axis], f = (v - lo) / len; let a = stops[0], b = stops[stops.length - 1]; for (let k = 0; k + 1 < stops.length; k++) if (f >= stops[k][0] && f <= stops[k + 1][0]) { a = stops[k]; b = stops[k + 1]; break; }
+    const w = (f - a[0]) / ((b[0] - a[0]) || 1); c.setRGB(a[1][0] + (b[1][0] - a[1][0]) * w, a[1][1] + (b[1][1] - a[1][1]) * w, a[1][2] + (b[1][2] - a[1][2]) * w, THREE.SRGBColorSpace); C[i * 3] = c.r; C[i * 3 + 1] = c.g; C[i * 3 + 2] = c.b; }
+  mesh.geometry.setAttribute('color', new THREE.BufferAttribute(C, 3));
+}
 function build(name, gltf) {
   const P = PACKS[name], sc = gltf.scene, root = new THREE.Group(), fix = new THREE.Group(), rig = new THREE.Group(); root.add(fix); fix.add(rig); rig.add(sc); fix.matrixAutoUpdate = false;
   // Rig units → game units, turned to look along −z, the eye at the camera.
@@ -96,11 +149,12 @@ function build(name, gltf) {
   return {
     root,
     // Hold this weapon id (draw: play the draw animation over `drawMs`).
-    hold(id, { draw = true, drawMs = 800 } = {}) {
+    hold(id, { draw = true, drawMs = 800, model = id } = {}) {
       const F = fpInfo(id) || {}; onehand = !!F.onehand; fist = !!F.fist; noLeft = !!F.noLeft; root.position.set(...(F.view || [0, 0, 0])); viewBase.copy(root.position); root.rotation.set(...(F.viewRot || [0, 0, 0]));   /* per weapon: how close / where the arms sit */ if (leftArm) leftArm.scale.setScalar(1);
-      if (ours) { ours.removeFromParent(); ours = null; } oursId = F.own ? null : id;
-      const own = F.own; for (const m of gunMeshes) m.visible = !!own;
-      if (!own) { const a = attachInfo(id), g = weaponModel(id, a.scale || 1); ours = new THREE.Group(); ours.add(g); root.add(ours); g.position.set(...(a.at || [0, 0, 0])); g.rotation.set(...(a.rot || [0, 0, 0])); follow(); }
+      // A CS2 model imported for this gun (weapon-models.js) replaces the pack's own: held like the other rifles / pistols.
+      const own = F.own && !modelFromFile(id); if (ours) { ours.removeFromParent(); ours = null; } oursId = own ? null : id;
+      for (const m of gunMeshes) m.visible = !!own;
+      if (!own) { const a = F.own ? (ATTACH[F.pack === 'rifle' ? 'm4' : 'deagle'] || {}) : attachInfo(id), g = weaponModel(model, a.scale || 1); ours = new THREE.Group(); ours.add(g); root.add(ours); g.position.set(...(a.at || [0, 0, 0])); g.rotation.set(...(a.rot || [0, 0, 0])); follow(); }
       reloadPlan = null; base = 'idle';
       if (draw && A.equip) { to('equip', 0, { once: true, ms: drawMs }); oneShotUntil = performance.now() + drawMs; } else to('idle', 0);
     },
@@ -127,4 +181,4 @@ function build(name, gltf) {
   };
 }
 // The arms for a weapon id, if its pack has loaded (else null: the caller shows the plain gun meanwhile).
-export function fpFor(id) { const f = fpInfo(id); return f ? ready.get(f.pack) || null : null; }
+export function fpFor(id) { if (id === 'karambit' && karambitRig) return karambitRig; const f = fpInfo(id); return f ? ready.get(f.pack) || null : null; }

@@ -18,8 +18,6 @@ export const THEMES = {
     indoor: { PalaceInterior: 160, Tunnel: 140, LowerTunnel: 130, TunnelStairs: 150, Connector: 150, Walkway: 0 } },
   ancient: { name: 'Ancient', wall: 'stone', floor: 'stone', indoorWall: 'tunnel', indoorFloor: 'tunnelfloor', sky: 0xb7cfc0, sun: 0xfff0d6,
     indoor: { House: 150, MainHall: 180, SideHall: 150, BackHall: 150, Tunnel: 140 } },
-  train: { name: 'Train', navFootprint: true, car: 'metal-blue', wall: 'concrete', floor: 'concrete', indoorWall: 'concrete', indoorFloor: 'concrete', sky: 0xa9b8c6, sun: 0xfff2dc,
-    indoor: { Tunnels: 140, Tunnel1: 140, Tunnel2: 140, LockerRoom: 140, Kitchen: 140, LadderBottom: 140, PopDog: 140, Connector: 140 } },
 };
 // The look of the outdoor walls, from reference screenshots of each map: palette (each block of buildings takes one
 // colour — a multiplier on the wall texture), band (a painted stripe, Hammer units above the wall's foot: Nuke's blue)
@@ -32,7 +30,6 @@ const LOOKS = {
   cache: { crate: 'crate-blue', palette: [[1, 1, 1], [.9, .92, .9], [.96, 1, .94], [1.04, 1, .96]], cap: { h: 6, out: 2, shade: .78 } },
   anubis: { crate: 'stoneblock', palette: [[1, 1, 1], [1.04, .96, .84], [.92, .86, .74]], cap: { h: 8, out: 3, shade: .8 } },
   ancient: { crate: 'fieldblock', wall: 'fieldstone', palette: [[.92, .96, .86], [.86, .92, .8], [1, 1, .94]], cap: { h: 8, out: 2, shade: .74 } },
-  train: { crate: 'crate-dark', indoorWall: 'brick', palette: [[1, 1, 1], [.92, .9, .86], [.86, .9, .92]], cap: { h: 5, out: 2, shade: .8 } },
 };
 for (const [id, L] of Object.entries(LOOKS)) Object.assign(THEMES[id], L);
 export const CS_MAP_IDS = Object.keys(THEMES);

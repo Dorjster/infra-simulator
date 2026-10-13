@@ -76,9 +76,9 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   const D = () => g().combat?.d || null, myTeam = () => D()?.teams?.[me()] || null;
   function spawnIndex() { const so = g().combat?.spawnTo?.[me()]; if (D()) return so ? so.i : myTeam() === 'ct' ? ARENA_MAPS[g().arena.map].t.length : 0; const players = (lan.players || []).filter(p => !p.bot); const i = players.findIndex(p => p.id === lan.selfID); return i >= 0 ? i * 3 + 1 : Math.floor(Math.random() * 8); }
   // Spawn, facing the middle of the map (camera looks along (−sin yaw, −cos yaw)).
-  function goTo(i) { const s = scene.spawnFor(i); if (!s) return; teleport(s.x, s.z, Math.atan2(-(ARENA.cx - s.x), -(ARENA.cz - s.z))); }
+  function goTo(i) { const s = scene.spawnFor(i); if (!s) return; teleport(s.x, s.z, Math.atan2(-(ARENA.cx - s.x), -(ARENA.cz - s.z)), s.y); }
   // A spawn order from the host: exact spot (x, z) when given, else the map spawn index.
-  function goSpawn(so) { if (Number.isFinite(so?.x)) teleport(so.x, so.z, Math.atan2(-(ARENA.cx - so.x), -(ARENA.cz - so.z))); else goTo(so?.i ?? spawnIndex()); }
+  function goSpawn(so) { if (Number.isFinite(so?.x)) teleport(so.x, so.z, Math.atan2(-(ARENA.cx - so.x), -(ARENA.cz - so.z)), so.y); else goTo(so?.i ?? spawnIndex()); }
   // Entering waits for the arena warm-up (shaders, textures) behind a short loading screen instead of a frozen frame.
   let loading = false;
   function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; r.catch(() => {}).finally(() => { loading = false; $('ar-load').hidden = true; }); } return; } enterNow(); }

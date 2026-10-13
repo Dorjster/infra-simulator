@@ -5,10 +5,11 @@
 // metal-blue, metal-green, roof, stone. kind: 'dm' (deathmatch) or 'defuse' (bomb sites A / B, T / CT spawns, bot routes).
 import { DRESS } from './arena-maps-more.js';
 import { buildCsMap } from './cs-mapbuild.js';
+import { parseBsp } from './bsp30.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js';
 import { THEMES, CS_MAP_IDS } from './cs-maps/themes.js';
 import dust2 from './cs-maps/dust2-nav.js'; import mirage from './cs-maps/mirage-nav.js'; import inferno from './cs-maps/inferno-nav.js'; import nuke from './cs-maps/nuke-nav.js';
-import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js'; import train from './cs-maps/train-nav.js';
-const NAV = { dust2, mirage, inferno, nuke, cache, anubis, ancient, train };
+import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js';
+const NAV = { dust2, mirage, inferno, nuke, cache, anubis, ancient };
 const B = (x, z, w, d, h, m, y0 = 0) => [x, z, w, d, h, m, y0];
 // Windows painted on the face of a solid block (decoration: shutters and frames on a wall you can't enter).
 // (windows() — painted windows on solid blocks — lives in arena-mapkit.js.)
@@ -60,6 +61,14 @@ export const ARENA_MAPS = {
 // (cs-mapbuild.js). Each is built the first time it is used (a fraction of a second) and kept.
 for (const id of CS_MAP_IDS) Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() {
   const m = buildCsMap(id, NAV[id], THEMES[id]); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } });
+// Maps from files (Counter-Strike 1.6 .bsp, imported on this computer, never shipped): useMapFile puts one in place of
+// the built-in version of the same map — drawn from the file, walked on its own geometry (bsp-map.js). Built the first
+// time it is used. The host and every client load the same file (the room serves it), so all build the same map.
+const FILE_MAPS = new Map();
+// Counter-Strike 1.6 (BSP 30) or Source (VBSP: CS:S / CS:GO ports; its terrain and solid props join the collision when the map is built).
+export function useMapFile(id, buffer, info = {}) { if (!CS_MAP_IDS.includes(id)) throw Error('No such Defuse map: ' + id); const bsp = isVbsp(buffer) ? (sb => { const g = toGoldSrc(sb); g.extraSpans = (x, y) => (g._solids ??= sourceSolids(sb, { bounds: playBounds(sb) })).extraSpans(x, y); return g; })(parseVbsp(buffer)) : parseBsp(buffer); FILE_MAPS.set(id, { size: buffer.byteLength, ...info });
+  Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() { const m = buildBspMap(id, bsp, { T: THEMES[id], nav: NAV[id] }); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } }); }
+export const mapFileOf = id => FILE_MAPS.get(id) || null;
 // Every map's id, name and kind without building any (menus, settings).
 export const MAP_LIST = [...Object.keys(ARENA_MAPS).filter(id => !CS_MAP_IDS.includes(id)).map(id => ({ id, name: ARENA_MAPS[id].name, kind: ARENA_MAPS[id].kind })), ...CS_MAP_IDS.map(id => ({ id, name: THEMES[id].name, kind: 'defuse' }))];
 // In a team's buy zone? (dx, dz relative to the arena centre.) Classic maps: within reach of any of the team's spawn
@@ -140,10 +149,11 @@ export function spawnSlots(map, side) {
   const k = (map.name || '') + ':' + side; if (slotCache.has(k)) return slotCache.get(k);
   const base = side === 't' ? map.t : side === 'ct' ? map.ct : map.spawns, boxes = mapBoxes(map, 0, 0), [sw, sd] = map.size, bounds = { minX: -sw / 2, maxX: sw / 2, minZ: -sd / 2, maxZ: sd / 2 }, out = [];
   // Classic maps: a spot on the spawn's own floor with floor all round it (their columns know the levels).
-  const nav = map.nav, levelOf = (x, z) => nav ? nav.floorAt(x, z) : 0;
+  const nav = map.nav, levelOf = (x, z, y) => nav ? (Number.isFinite(y) ? nav.floorAt(x, z, y + 9.7) : nav.floorAt(x, z)) : 0;   // (a spawn's own height when it has one: [x, z, y])
   const ground = (x, z, level) => !nav ? walkable(boxes, bounds, x, z, 1.8) : [[0, 0], [1.8, 0], [-1.8, 0], [0, 1.8], [0, -1.8]].every(([dx, dz]) => { const f = nav.floorAt(x + dx, z + dz, level); return Number.isFinite(f) && Math.abs(f - level) < 2.8; });
   const free = (x, z, level = levelOf(x, z)) => ground(x, z, level) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
-  for (const [x, z] of base) if (free(x, z)) out.push([x, z]);
-  for (const r of [6.5, 13]) for (const [x, z] of base) { const level = levelOf(x, z); for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz, level)) out.push([+px.toFixed(2), +pz.toFixed(2)]); } }
+  const lv = l => Number.isFinite(l) ? +l.toFixed(2) : undefined;
+  for (const [x, z, y] of base) { const level = levelOf(x, z, y); if (free(x, z, level)) out.push([x, z, lv(level)]); }
+  for (const r of [6.5, 13]) for (const [x, z, y] of base) { const level = levelOf(x, z, y); for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz, level)) out.push([+px.toFixed(2), +pz.toFixed(2), lv(level)]); } }
   slotCache.set(k, out); return out;
 }

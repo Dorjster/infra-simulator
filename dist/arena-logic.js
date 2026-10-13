@@ -261,7 +261,7 @@ export function applyTeam(game, k, team, players, now) {
   const d = game.combat.d, C = game.combat; d.teams[k] = team; if (d.pending) delete d.pending[k]; delete game.arena.loadout[k]; delete (C.ammo ??= {})[k]; if (d.bomb?.carrier === k) d.bomb.carrier = null;
   for (const bk of d.botMoves || []) if (d.teams[bk]) d.teams[bk] = d.teams[bk] === 't' ? 'ct' : 't'; d.botMoves = [];
   if (team === 'spec') { C.down[k] = { until: 4e15, by: '', weapon: 'spectating' }; return; }
-  delete C.down[k]; C.hp[k] = MAX_HP; const at = freeSpot(game, players, team, k); C.spawnTo[k] = { at: now, x: at.x, z: at.z };
+  delete C.down[k]; C.hp[k] = MAX_HP; const at = freeSpot(game, players, team, k); C.spawnTo[k] = { at: now, x: at.x, z: at.z, ...(at.y !== undefined ? { y: at.y } : {}) };
 }
 // Host tick (~20×/s): bots think, move and shoot; respawned players get a spawn point; the match clock.
 // Returns true when the streamed combat state changed.
@@ -371,7 +371,7 @@ function defuseBot(game, bot, team, g, dt, now) {
   // A waypoint is reached on its own floor (classic maps: a point below a ledge is not reached from the ledge above
   // it). Above a lower waypoint, keep going the way the route goes until off the edge, then come back to it.
   const [wx, wz, wy] = bot.path[bot.pi], above = m.nav && Number.isFinite(wy) && feetOf(g, bot) - wy > 6,   /* a ledge, not a ramp (on a steep ramp the body rides a few units above the next point) */ dw = Math.hypot(wx - bot.x, wz - bot.z);
-  if (dw < (m.nav ? 1.5 : 4) && !above) { bot.pi++; return true; }
+  if (dw < (m.nav ? 1.5 : 4) && (!above || now - (bot.stillSince ?? now) > 1000)) { bot.pi++; return true; }   // (above it and stuck a second: on to the next point — a vent's way down)
   // Progress towards the waypoint (distance, and height still to drop): none for 3 s means this way does not work for a
   // body here (a drop or gap the route allowed) — re-plan from where the bot stands, round the spot it failed at.
   { const prog = dw + (Number.isFinite(wy) ? Math.max(0, feetOf(g, bot) - wy) : 0);

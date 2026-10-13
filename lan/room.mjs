@@ -3,13 +3,14 @@
 import http from 'node:http';
 import https from 'node:https';
 import {selfSigned} from './selfsigned.mjs';
-import {readFile,stat,writeFile,rename,copyFile,mkdir} from 'node:fs/promises';
+import {readZip} from './zip.mjs';
+import {readFile,stat,writeFile,rename,copyFile,mkdir,readdir} from 'node:fs/promises';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,createHash} from 'node:crypto';
 const here=path.dirname(fileURLToPath(import.meta.url));
-// options: { port=8080, bind='0.0.0.0', savePath, roomCode, hostKey, deliveryScale, log, error }
+// options: { port=8080, bind='0.0.0.0', savePath, roomCode, hostKey, deliveryScale, mapsDir, assetsDir, log, error }
 export async function startRoom(options={}){
 const log=options.log||console.log,logError=options.error||console.error;
 const project=path.resolve(here,'..');
@@ -24,7 +25,26 @@ const {combatApply,combatTick,ownedWeapons,poseAmmo}=await import(pathToFileURL(
 // steps back to an older one when a reply and a stream frame cross.
 const stampCombat=()=>{const c=world.operations?.game?.combat;if(c)c.rev=++combatRev;};
 const {arenaTick,botRoster}=await import(pathToFileURL(path.join(root,'arena-logic.js')));
-const {radioCall,chatRecipients}=await import(pathToFileURL(path.join(root,'gd-radio.js')));const {locationOf}=await import(pathToFileURL(path.join(root,'gd-radar-art.js')));const {ARENA_MAPS:MAPS}=await import(pathToFileURL(path.join(root,'arena-maps.js')));
+const {radioCall,chatRecipients}=await import(pathToFileURL(path.join(root,'gd-radio.js')));const {locationOf}=await import(pathToFileURL(path.join(root,'gd-radar-art.js')));const {ARENA_MAPS:MAPS,useMapFile}=await import(pathToFileURL(path.join(root,'arena-maps.js')));const {CS_MAP_IDS}=await import(pathToFileURL(path.join(root,'cs-maps','themes.js')));
+// Maps from files (Counter-Strike 1.6 .bsp, imported on this computer, never shipped): <mapsDir>/<id>.bsp replaces the
+// built-in map <id> (dust2, mirage…). Loaded here for the host's own logic (bots, sites, spawns) and served to every
+// player, who loads the same file before entering (dist/user-maps.js).
+const mapsDir=options.mapsDir||process.env.GD_MAPS_DIR||path.join(project,'user-maps'),userMaps=new Map();
+async function loadMapFile(id,data){useMapFile(id,data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength));userMaps.set(id,{id,size:data.length,hash:createHash('sha1').update(data).digest('hex').slice(0,12)});}
+for(const f of await readdir(mapsDir).catch(()=>[])){const id=f.replace(/\.bsp$/i,'');if(!f.toLowerCase().endsWith('.bsp')||!CS_MAP_IDS.includes(id))continue;try{await loadMapFile(id,await readFile(path.join(mapsDir,f)));log('Map from file: '+id+' ('+f+')');}catch(e){logError('Map file '+f+' skipped: '+e.message);}}
+// Models from files (Counter-Strike 2 agents, guns, knives, bomb and defuse kit, converted on this computer by
+// tools/import-cs2-models.mjs, never shipped): <assetsDir>/manifest.json lists them; served to every player in the room
+// (dist/user-assets.js), who then draws them in place of the built-in models.
+const assetsDir=path.resolve(options.assetsDir||process.env.GD_ASSETS_DIR||path.join(project,'user-assets'));
+const ASSET_MIME={'.bin':'application/octet-stream','.jpg':'image/jpeg','.png':'image/png','.glb':'model/gltf-binary','.json':'application/json'};
+// An asset pack (one .zip made by tools/import-cs2-models.mjs: infra-pack.json, assets/…, maps/<id>.bsp) installed in
+// one step on any computer: models into assetsDir, maps into mapsDir (each checked and loaded), every player told.
+async function installPack(buf){const entries=readZip(buf);if(!entries.some(e=>e.name==='infra-pack.json'))throw new Error('no infra-pack.json in it (asset packs are made by tools/import-cs2-models.mjs)');let files=0,maps=0;
+  for(const {name,data} of entries){let m;
+    if((m=/^assets\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){const f=path.resolve(assetsDir,m[1]);if(!f.startsWith(assetsDir+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);files++;}
+    else if((m=/^maps\/([a-z0-9]+)\.bsp$/.exec(name))&&CS_MAP_IDS.includes(m[1])){await loadMapFile(m[1],data);await mkdir(mapsDir,{recursive:true});await writeFile(path.join(mapsDir,m[1]+'.bsp'),data);maps++;}}
+  return {ok:true,files,maps};}
+
 const {hostActionError,EMOTE_IDS,FACE_IDS,SKIN_IDS,HAT_IDS,OUTFIT_IDS,CARRY_IDS,cleanName}=await import(pathToFileURL(path.join(root,'play-rules.js')));
 const {physicalOffline,physicalLinkDown,CATALOG}=await import(pathToFileURL(path.join(root,'operations.js')));
 const {createNetwork}=await import(pathToFileURL(path.join(root,'network-sim.js')));
@@ -61,6 +81,20 @@ function remove(id){const p=players.get(id);if(!p)return;p.stream?.end();players
 async function body(req){let length=0,chunks=[];for await(const chunk of req){length+=chunk.length;if(length>32768)throw new Error('Request too large');chunks.push(chunk);}return JSON.parse(Buffer.concat(chunks).toString()||'{}');}
 const handler=async(req,res)=>{try{
  const url=new URL(req.url,'http://'+req.headers.host);if(req.headers.origin&&req.headers.origin!=='http://'+req.headers.host&&req.headers.origin!=='https://'+req.headers.host){json(res,403,{error:'Use this server address directly'});return;}
+ // Maps from files: the list, the files, and (the host) adding one.
+ if(url.pathname==='/api/user-maps'&&req.method==='GET'){json(res,200,{maps:[...userMaps.values()]});return;}
+ if(url.pathname==='/api/user-assets/pack'&&req.method==='POST'){const p=players.get(req.headers['x-player-token']);if(!(p?.isHost||(!p&&loopback(req)))){json(res,403,{error:'Only the host adds models and maps'});return;}
+   const chunks=[];let n=0;for await(const c of req){n+=c.length;if(n>2048*1048576){json(res,413,{error:'Asset pack too large'});return;}chunks.push(c);}
+   try{const r=await installPack(Buffer.concat(chunks));broadcast('user-maps',{maps:[...userMaps.values()]});broadcast('user-assets',{});log('Asset pack installed: '+r.files+' model files, '+r.maps+' maps');json(res,200,r);}catch(e){json(res,400,{error:'Not a usable asset pack: '+e.message});}return;}
+ if(url.pathname==='/api/user-assets'&&req.method==='GET'){json(res,200,await readFile(path.join(assetsDir,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({models:{}})));return;}
+ if(url.pathname.startsWith('/user-assets/')&&req.method==='GET'){const rel=decodeURIComponent(url.pathname.slice(13)),file=path.resolve(assetsDir,rel),mime=ASSET_MIME[path.extname(file)];
+   if(!/^[a-z0-9][a-z0-9_.\-\/]*$/i.test(rel)||rel.split('/').some(x=>!x||x.startsWith('.'))||!file.startsWith(assetsDir+path.sep)||!mime){res.writeHead(403);res.end();return;}
+   const data=await readFile(file).catch(()=>null);if(!data){res.writeHead(404);res.end();return;}res.writeHead(200,{'Content-Type':mime,'Content-Length':data.length,'Cache-Control':'max-age=31536000, immutable','X-Content-Type-Options':'nosniff'});res.end(data);return;}
+ { const m=/^\/user-maps\/([a-z0-9]+)\.bsp$/.exec(url.pathname); if(m&&req.method==='GET'){if(!userMaps.has(m[1])){json(res,404,{error:'No such map file'});return;}const data=await readFile(path.join(mapsDir,m[1]+'.bsp'));res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':data.length,'Cache-Control':'max-age=31536000, immutable'});res.end(data);return;} }
+ { const m=/^\/api\/user-maps\/([a-z0-9]+)$/.exec(url.pathname); if(m&&req.method==='POST'){const p=players.get(req.headers['x-player-token']);if(!(p?.isHost||(!p&&loopback(req)))){json(res,403,{error:'Only the host adds maps'});return;}if(!CS_MAP_IDS.includes(m[1])){json(res,400,{error:'Unknown map: '+m[1]});return;}
+   const chunks=[];let n=0;for await(const c of req){n+=c.length;if(n>96*1048576)throw new Error('Map file too large');chunks.push(c);}const data=Buffer.concat(chunks);
+   try{await loadMapFile(m[1],data);}catch(e){json(res,400,{error:'Not a usable Counter-Strike 1.6 map: '+e.message});return;}
+   await mkdir(mapsDir,{recursive:true});await writeFile(path.join(mapsDir,m[1]+'.bsp'),data);broadcast('user-maps',{maps:[...userMaps.values()]});json(res,200,{ok:true,...userMaps.get(m[1])});return;} }
  if(url.pathname==='/api/room'&&req.method==='GET'){const localHost=loopback(req)&&![...players.values()].some(p=>p.isHost);json(res,200,{protocol:'infra-lan-v1',app:'infra-simulator',name:[...players.values()].find(p=>p.isHost)?.name||'',mode:(g=>g?.payday?'Payday':g?.mode==='campaign'?'Campaign':g?.mode||'')(world.operations?.game),hosting:host!=='127.0.0.1',locked:true,players:players.size,maxPlayers:12,localHost,...localHost?{roomCode,hostKey,addresses:lanAddresses(),securePort}:{},...loopback(req)?{campaign:world.operations.campaignSummary(),payday:world.operations.paydaySummary()}:{}});return;}
  if(url.pathname==='/api/players-check'&&req.method==='GET'){json(res,players.has(url.searchParams.get('token'))?200:401,{ok:players.has(url.searchParams.get('token'))});return;}
  if(url.pathname==='/api/join'&&req.method==='POST'){const data=await body(req);if(data.code!==roomCode){json(res,403,{error:'Incorrect passcode. Ask the host.'});return;}if(players.size>=12){json(res,409,{error:'Room full (12/12).'});return;}const isHost=typeof data.hostKey==='string'&&data.hostKey===hostKey;if(data.hostKey&&!isHost){json(res,403,{error:'Incorrect host key. Guests should leave it empty.'});return;}if(isHost&&[...players.values()].some(p=>p.isHost)){json(res,409,{error:'The host is already connected.'});return;}const token=randomBytes(16).toString('hex'),id=randomBytes(8).toString('hex'),used=new Set([...players.values()].map(p=>p.color)),color=[0x6bd9ff,0xffc875,0xaf98ff,0x82e5aa,0xff879e,0xe2e779,0x7ca1ff,0xc5a27d,0x94d8d3,0xe19df5,0xe2b7a5,0xb4c4d4].find(c=>!used.has(c));const p={id,token,isHost,role:'field',name:cleanName(data.name),color,pose:{x:-3+players.size*2,y:9.7,z:11,yaw:0,crouched:false,active:false},seen:Date.now(),stream:null,count:0,window:Date.now()};players.set(token,p);json(res,200,{id,token,isHost,revision,world:viewFor(world.snapshotFor(),p),players:roster(),events});broadcast('players',roster());return;}

@@ -12,7 +12,7 @@
 //   node tools/maps/extract-nav.mjs <awpy data folder> <overviews folder: de_x/flat.png (non-interlaced copy of radar.png) + index.ts>
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'; import { readPNG } from './png.mjs'; import { CELL } from '../../dist/cs-columns.js'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 const [dir, radarDir] = process.argv.slice(2), out = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'cs-maps'); mkdirSync(out, { recursive: true });
-const MAPS = { dust2: 'de_dust2', mirage: 'de_mirage', inferno: 'de_inferno', nuke: 'de_nuke', cache: 'de_cache', anubis: 'de_anubis', ancient: 'de_ancient', train: 'de_train' };
+const MAPS = { dust2: 'de_dust2', mirage: 'de_mirage', inferno: 'de_inferno', nuke: 'de_nuke', cache: 'de_cache', anubis: 'de_anubis', ancient: 'de_ancient' };
 const csv = readFileSync(path.join(dir, 'nav_info.csv'), 'utf8').trim().split('\n'), head = csv.shift().split(','), meta = JSON.parse(readFileSync(path.join(dir, 'map_data.json'), 'utf8'));
 const col = Object.fromEntries(head.map((h, i) => [h, i]));
 for (const [id, de] of Object.entries(MAPS)) {

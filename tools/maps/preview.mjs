@@ -1,7 +1,8 @@
 // Top view of a rasterised map: floor height as colour (low blue → high yellow), stacked columns hatched, nothing = black.
 //   node tools/maps/preview.mjs <id> <out.png>
 import { writeFileSync } from 'node:fs'; import { rasterize, MAXF } from '../../dist/cs-columns.js'; import { writePNG } from './png-write.mjs';
-const [id, out] = process.argv.slice(2), nav = (await import('../../dist/cs-maps/' + id + '-nav.js')).default, G = rasterize(nav, { navFootprint: id === 'train' });
+import { THEMES } from '../../dist/cs-maps/themes.js';
+const [id, out] = process.argv.slice(2), nav = (await import('../../dist/cs-maps/' + id + '-nav.js')).default, G = rasterize(nav, { navFootprint: !!THEMES[id]?.navFootprint });
 let lo = Infinity, hi = -Infinity; for (let i = 0; i < G.n.length; i++) for (let k = 0; k < G.n[i]; k++) { lo = Math.min(lo, G.z[i * MAXF + k]); hi = Math.max(hi, G.z[i * MAXF + k]); }
 const S = 2, W = G.cols * S, H = G.rows * S, px = new Uint8Array(W * H * 4);
 for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const i = r * G.cols + c, k = G.n[i]; let col = [0, 0, 0];

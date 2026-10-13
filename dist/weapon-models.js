@@ -5,6 +5,7 @@ import * as THREE from './three.module.js';
 import { pistolModel } from './fun-pistol.js';
 import { OBJLoader } from './post/OBJLoader.js';
 import { MTLLoader } from './post/MTLLoader.js';
+import { userAssets, userAssetURL } from './user-assets.js';
 
 // Surface textures, drawn once at start (256 px, a few KB of GPU memory each): brushed steel, blued metal with
 // wear on the edges, stippled polymer, walnut grain. Each also drives roughness, so light catches the grain.
@@ -252,13 +253,13 @@ export const REAL_FIT = {
   he: { at: [0, 5, 0] }, flash: { at: [0, -2, 0] }, smoke: { at: [0, -4, 0] }, molotov: { at: [0, 0, 0], maps: { bottle: ['base', 'orm'], fabric: ['base', 'normal'], liquid: ['base'] } }, c4: { at: [0, 2, 0] },
 };
 const real = new Map(); let realLoading = null;
-async function loadReal(id) {
-  const buf = await (await fetch(REAL_DIR + id + '.bin')).arrayBuffer(), dv = new DataView(buf), hl = dv.getUint32(0, true), head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
+async function loadReal(id, src = { file: n => REAL_DIR + n, fit: REAL_FIT[id] || {} }) {
+  const buf = await (await fetch(src.file(id + '.bin'))).arrayBuffer(), dv = new DataView(buf), hl = dv.getUint32(0, true), head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
   let o = 4 + hl; const f32 = n => { const a = new Float32Array(buf.slice(o, o + n * 4)); o += n * 4; return a; };
   // Textures are decoded off the main thread (ImageBitmap), so uploading them never stalls a frame.
-  const tex = (part, kind, srgb) => REAL_FIT[id]?.maps && !REAL_FIT[id].maps[part]?.includes(kind) ? Promise.resolve(null) : fetch(`${REAL_DIR}${id}-${part}-${kind}.jpg`).then(r => r.ok ? r.blob() : null).then(b => b && createImageBitmap(b, { imageOrientation: 'flipY' })).then(bmp => {
+  const tex = (part, kind, srgb) => src.fit.maps && !src.fit.maps[part]?.includes(kind) ? Promise.resolve(null) : fetch(src.file(`${id}-${part}-${kind}.jpg`)).then(r => r.ok ? r.blob() : null).then(b => b && createImageBitmap(b, { imageOrientation: 'flipY' })).then(bmp => {
     if (!bmp) return null; const t = new THREE.Texture(bmp); t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 4; t.needsUpdate = true; return t; }).catch(() => null);
-  const g = new THREE.Group(), fit = REAL_FIT[id] || {}, inner = new THREE.Group(); g.add(inner);
+  const g = new THREE.Group(), fit = src.fit, inner = new THREE.Group(); g.add(inner);
   // Muzzle: centre of the vertices within 1 cm of the front end (file cm), for flashes and tracers.
   const zMin = fit.flip ? head.box[1][2] : head.box[0][2], front = z => fit.flip ? z > zMin - 1 : z < zMin + 1; let my = 0, mx = 0, mn = 0;   // the muzzle end (−z, or +z for models authored the other way round)
   for (const pt of head.parts) {
@@ -271,7 +272,7 @@ async function loadReal(id) {
   // centimetres → game units; muzzle along −z; trigger / grip at the origin.
   inner.position.set(-fit.at[0], -fit.at[1], -fit.at[2]); g.scale.setScalar(CM * (fit.scale || 1)); if (fit.flip) g.rotation.y = Math.PI; if (fit.rot) g.rotation.set(...fit.rot);
   const wrap = new THREE.Group(); wrap.add(g);
-  if (mn && MUZZLE[id] && !['knife', 'karambit'].includes(id)) { g.updateMatrixWorld(true); const v = new THREE.Vector3(mx / mn, my / mn, zMin).applyMatrix4(inner.matrixWorld); wrap.userData.muzzle = v.toArray(); }
+  if (mn && (MUZZLE[id] || fit.gun) && !['knife', 'knife-t', 'karambit', 'c4', 'kit'].includes(id)) { g.updateMatrixWorld(true); const v = new THREE.Vector3(mx / mn, my / mn, zMin).applyMatrix4(inner.matrixWorld); wrap.userData.muzzle = v.toArray(); }
   return wrap;
 }
 // Start loading every realistic model (call once at startup; safe to call again). Resolves when all are ready.
@@ -314,10 +315,31 @@ function decorate(g, V, mz, len, top, bottom) {
   if (V.slimScope) { const t = cyl(.045, len * .3); t.position.set(0, top + .07, mz.z + len * .55); g.add(t); const shade = cyl(.055, len * .06); shade.position.set(0, top + .07, mz.z + len * .38); g.add(shade); }   // SSG 08: a slim scope with a sunshade (the AWP's is bulky)
   if (V.box) { const b = new THREE.Mesh(new THREE.BoxGeometry(.3, .36, .4), decoMat); b.geometry.userData.shared = true; b.position.set(0, bottom + .1, mz.z + len * .62); g.add(b); }
 }
+// Counter-Strike 2 models imported on this computer (tools/import-cs2-models.mjs → user-assets/, served by the room;
+// never shipped): the same format, in centimetres, muzzle / blade along −z. at (file cm), measured on each model on a
+// 5 cm grid: guns — the grip, 4 cm behind and 3 cm under the trigger (the files' origins differ: the AK's and the
+// M4A1-S's are at the hand, the M4A4's 40 cm behind it); knives — the guard, as the built-in knife (they stand
+// blade-up in their files: rot lays the blade along −z, edge down); the bomb — 1.5 cm under its middle, so it rests
+// on the ground. Any other gun imported holds by its origin (CS2's hand point).
+export const CS2_FIT = {
+  ak: { at: [0, 1.6, -3.4], gun: true }, m4: { at: [0, 25.3, -38.5], gun: true }, m4s: { at: [0, 6.2, .8], gun: true }, sniper: { at: [0, 17.6, -4.9], gun: true }, usps: { at: [0, 5.1, -11.4], gun: true }, deagle: { at: [0, 4.8, -2.2], gun: true },
+  famas: { at: [0, -1.5, -13], gun: true }, mp7: { at: [0, -2.7, 7], gun: true }, mp9: { at: [0, 6, -14.6], gun: true },
+  knife: { at: [0, 4.1, 0], rot: [-Math.PI / 2, Math.PI / 2, 0] }, 'knife-t': { at: [0, 3.4, 0], rot: [-Math.PI / 2, Math.PI / 2, 0] }, karambit: { at: [0, 0, 0] }, c4: { at: [0, -2.5, 0] }, kit: { at: [0, 0, 0] },
+};
+const fromFile = new Set();
+// Is this weapon drawn from an imported file (a CS2 model)?
+export const modelFromFile = id => fromFile.has(id);
+// The knife a side carries: the Terrorists' own default knife when one is imported.
+export const knifeFor = (id, team) => id === 'knife' && team === 't' && real.has('knife-t') ? 'knife-t' : id;
 export function loadRealWeapons() {
   if (typeof fetch !== 'function' || typeof document === 'undefined') return Promise.resolve(0);
-  const one = (id, f) => f(id).then(m => { real.set(id, m); cache.delete(id); if (m.userData.muzzle) MUZZLE[id] = m.userData.muzzle; }, e => console.warn('model', id, e?.message));
-  return realLoading ??= Promise.all([...Object.keys(REAL_FIT).map(id => one(id, loadReal)), ...Object.keys(QGUNS).map(id => one(id, loadQ))]).then(() => real.size);
+  const one = (id, f, fallback) => f(id).then(m => { real.set(id, m); cache.delete(id); if (m.userData.muzzle) MUZZLE[id] = m.userData.muzzle; }, e => { console.warn('model', id, e?.message); fromFile.delete(id); return fallback && one(id, fallback); });
+  return realLoading ??= userAssets().then(ua => {
+    const own = ua.models.weapons || {}, file = id => ({ file: n => userAssetURL(ua, 'weapons/' + n), fit: { ...(CS2_FIT[id] || { at: [0, 0, 0], gun: true }), maps: { main: own[id].maps || [] } } });
+    for (const id of Object.keys(own)) fromFile.add(id);
+    const builtIn = id => REAL_FIT[id] ? loadReal : QGUNS[id] ? loadQ : null;
+    return Promise.all([...new Set([...Object.keys(REAL_FIT), ...Object.keys(QGUNS), ...Object.keys(own)])].map(id => own[id] ? one(id, i => loadReal(i, file(i)), builtIn(id)) : one(id, builtIn(id))));
+  }).then(() => real.size);
 }
 export const hasReal = id => real.has(id);
 const cache = new Map();

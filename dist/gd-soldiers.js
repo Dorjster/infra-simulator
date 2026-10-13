@@ -3,6 +3,7 @@
 // carrier and combat helmet with goggles. Same body, rig and gun hold as everywhere else, so hit boxes (computed
 // from the pose, never from the model) don't change. Imported CS 1.6 characters, when present, take priority.
 import { createAvatar } from './avatar.js';
+import { knifeFor } from './weapon-models.js';
 
 export const SIDE_LOOK = { t: { color: 0x8c7448, hat: 'balaclava', outfit: 'rig' }, ct: { color: 0x34465e, hat: 'combat', outfit: 'plate' } };
 const hash = s => { let h = 7; for (const c of String(s || '')) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
@@ -16,7 +17,7 @@ export function makeSoldier(p, team) {
   return {
     g: a.g, team,
     update(dt, s) { a.update(dt, { speed: s.speed, crouch: s.crouch, gun: !!s.aim && !s.dead, act: s.act }); fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); a.g.rotation.x = -fall * Math.PI / 2; a.g.position.y = fall * 1.3; },
-    setWeapon(id) { a.setWeapon(id || 'cannon'); },
+    setWeapon(id) { a.setWeapon(knifeFor(id || 'cannon', team)); },
     dispose() { a.dispose(); },
   };
 }

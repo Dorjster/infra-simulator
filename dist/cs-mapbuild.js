@@ -37,6 +37,17 @@ export function buildCsMap(id, nav, T) {
     for (let k = 1; k < n[i]; k++) { const f = z[i * MAXF + k], topCrate = crate && k === n[i] - 1, slab = slabBottom(z[i * MAXF + k - 1], f), base = G.crateBase[i] > NONE ? Math.round(G.crateBase[i] / Q) * Q : slab; out.push([topCrate ? Math.min(base, slab) : slab, f, topCrate ? (flags[i] & CAR ? T.car || 'metal-blue' : T.crate || 'crate') : T.floor, true]); }   // a crate (or car) on an upper level stands on that level's floor
     if (above[i] > NONE) { const a = Math.round(above[i] / Q) * Q; out.push([a, Math.max(a + SLAB, wallTop[i]), indoor(i, n[i] - 1) ? T.indoorWall : T.wall, false]); }
     segs[i] = out; }
+  return finishMap(id, G, T, { segs, above, zLow });
+}
+
+// The part shared by every classic map, however its columns were made (from navigation data here, from a map file in
+// bsp-map.js): collision boxes from the segments, spawns, bomb sites, callouts, navigation, bot routes, the radar grid.
+// opts: segs (per column [bottom, top, material, walk] HU), above (ceiling per column or NONE), zLow, and optionally
+// spawns { t, ct } ([x, z] game units) to use instead of picking them from the TSpawn / CTSpawn places.
+export function finishMap(id, G, T, { segs, above, zLow, spawns = null, extra = {} }) {
+  const { cols, rows, n, z, place, flags } = G, N = cols * rows, P = G.places;
+  const W = cols * CELL * U, D = rows * CELL * U, gx = c => -W / 2 + (c + .5) * CELL * U, gz = r => -D / 2 + (r + .5) * CELL * U, gy = h => (h - zLow) * U;
+  const top = i => n[i] ? z[i * MAXF + n[i] - 1] : NONE, placeOf = (i, k) => P[place[i * MAXF + k]] || '', lowerLevel = h => !!G.split && h <= G.split.top && h >= G.split.bottom;
   // Merge equal segments of neighbouring columns into boxes (grow right, then down).
   const solids = [], keyOf = s => s[0] + '|' + s[1] + '|' + s[2] + '|' + s[3], byKey = new Map();
   for (let i = 0; i < N; i++) for (const s of segs[i]) { const k = keyOf(s); let e = byKey.get(k); if (!e) byKey.set(k, e = { s, cells: new Uint8Array(N) }); e.cells[i] = 1; }
@@ -51,14 +62,16 @@ export function buildCsMap(id, nav, T) {
     let first = src[0], bd = Infinity; for (const i of src) { const d = (i % cols - cx) ** 2 + (((i / cols) | 0) - cz) ** 2; if (d < bd) { bd = d; first = i; } }
     const picks = [first]; while (picks.length < k) { let best = -1, bv = -1; for (const i of src) { let m = Infinity; for (const p of picks) m = Math.min(m, (i % cols - p % cols) ** 2 + (((i / cols) | 0) - ((p / cols) | 0)) ** 2); if (m > bv) { bv = m; best = i; } } if (bv < 4) break; picks.push(best); } return picks; };
   const at = i => [+gx(i % cols).toFixed(1), +gz((i / cols) | 0).toFixed(1)];
-  const tCells = cellsOf('TSpawn'), ctCells = cellsOf('CTSpawn'), t = spread(tCells, 10).map(at), ct = spread(ctCells, 10).map(at);
+  const tCells = cellsOf('TSpawn'), ctCells = cellsOf('CTSpawn'), t = spawns ? spawns.t : spread(tCells, 10).map(at), ct = spawns ? spawns.ct : spread(ctCells, 10).map(at);
   // Bomb sites: the overview's site columns, A or B by their place; a circle for the old checks plus the columns.
-  const siteCells = { A: [], B: [] }; for (let i = 0; i < N; i++) if (flags[i] & SITE && n[i]) { const p = placeOf(i, n[i] - 1), L = p === 'BombsiteB' ? 'B' : p === 'BombsiteA' ? 'A' : null; if (L) siteCells[L].push(i); }
+  const siteCells = { A: [], B: [] }; for (let i = 0; i < N; i++) if (flags[i] & SITE && n[i]) for (let k = n[i] - 1; k >= 0; k--) { const p = placeOf(i, k), L = p === 'BombsiteB' ? 'B' : p === 'BombsiteA' ? 'A' : null; if (L) { siteCells[L].push(i); break; } }   // (on any of the column's floors: a site under a roof)
   for (const L of ['A', 'B']) if (!siteCells[L].length) siteCells[L] = cellsOf('Bombsite' + L);
   const circle = cells => { let x = 0, zz = 0; for (const i of cells) { x += gx(i % cols); zz += gz((i / cols) | 0); } x /= cells.length; zz /= cells.length; let r = 0; for (const i of cells) r = Math.max(r, Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz)); return [+x.toFixed(1), +zz.toFixed(1), +Math.max(6, r).toFixed(1)]; };
   // Where bots head on each site: its open (not crate) column nearest the site's centre, with room round it.
   const goalOf = (cells, [x, zz]) => { let best = null, bd = Infinity; for (const i of cells) { if (flags[i] & CRATE || !roomy(i)) continue; const d = Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz); if (d < bd) { bd = d; best = i; } } if (best === null) for (const i of cells) { if (flags[i] & CRATE) continue; const d = Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz); if (d < bd) { bd = d; best = i; } } return best === null ? [x, zz] : at(best); };
   const sites = { A: circle(siteCells.A), B: circle(siteCells.B) }, siteGoals = { A: goalOf(siteCells.A, sites.A), B: goalOf(siteCells.B, sites.B) }, goalH = L => { const i = (() => { const [x, zz] = siteGoals[L]; const c = Math.round((x + W / 2) / (CELL * U) - .5), r = Math.round((zz + D / 2) / (CELL * U) - .5); return r * cols + c; })(); for (let k = 0; k < n[i]; k++) if (placeOf(i, k) === 'Bombsite' + L) return z[i * MAXF + k]; return null; }, midCells = cellsOf('Middle').length ? cellsOf('Middle') : cellsOf('TopofMid'), midGoal = midCells.length ? goalOf(midCells, circle(midCells)) : [(siteGoals.A[0] + siteGoals.B[0]) / 2, (siteGoals.A[1] + siteGoals.B[1]) / 2], siteMask = new Uint8Array(N); for (const i of siteCells.A) siteMask[i] = 1; for (const i of siteCells.B) siteMask[i] = 2;
+  // Each site goal with its floor's height ([x, z, y]): a site may lie under another floor (Nuke's B under A).
+  for (const L of ['A', 'B']) { const h = goalH(L); if (h !== null && siteGoals[L].length === 2) siteGoals[L].push(+gy(h).toFixed(2)); }
   // Callouts: each place's label at its open column nearest the place's centre.
   // Callouts: each named place at the middle of its floor — every floor, so a place wholly under another (Nuke's lower
   // rooms) has one too — with its floor height `y` (game units; the radar's lower layer shows only the low ones).
@@ -66,9 +79,11 @@ export function buildCsMap(id, nav, T) {
     if (cells.length < 6) continue; let cx = 0, cz = 0; for (const i of cells) { cx += i % cols; cz += (i / cols) | 0; } cx /= cells.length; cz /= cells.length;
     let best = 0, bd = Infinity; for (let j = 0; j < cells.length; j++) { const i = cells[j], d = (i % cols - cx) ** 2 + (((i / cols) | 0) - cz) ** 2; if (d < bd) { bd = d; best = j; } }
     callouts.push({ name: calloutName(name), x: +gx(cells[best] % cols).toFixed(1), z: +gz((cells[best] / cols) | 0).toFixed(1), y: +gy(hs[best]).toFixed(1), place: name }); }
+  // The site labels stand at the sites themselves (their plant area's centre, on the site's floor).
+  for (const c of callouts) { const L = c.place === 'BombsiteA' ? 'A' : c.place === 'BombsiteB' ? 'B' : null; if (L && siteCells[L].length) { c.x = sites[L][0]; c.z = sites[L][1]; if (siteGoals[L][2] !== undefined) c.y = siteGoals[L][2]; } }
   const navApi = makeNav(G, { W, D, zLow, above, siteMask });
   const columns = { G, segs, zLow, W, D, cell: CELL * U, U, floorMats: new Set([T.floor, T.indoorFloor, T.crate || 'crate', T.car || 'metal-blue']) };   // for the renderer (cs-mesh.js)
-  const map = { id, name: T.name, kind: 'defuse', classic: true, columns, size: [W, D], floor: T.floor, sky: T.sky, sun: T.sun, solids, props: [], decor: [], t, ct, sites, siteMask, callouts, nav: navApi, scaled: true,
+  const map = { ...extra, id, name: T.name, kind: 'defuse', classic: true, columns, size: [W, D], floor: T.floor, sky: T.sky, sun: T.sun, solids, props: [], decor: [], t, ct, sites, siteMask, callouts, nav: navApi, scaled: true,
     floorAt: (x, zz, yEye) => navApi.floorAt(x, zz, yEye), siteGoals, get routes() { return this._routes ??= navApi.routes(t[0], ct[0], siteGoals, midGoal, { A: goalH('A'), B: goalH('B') }); },
     grid: { cols, rows, cell: CELL * U, classic: true, cells: (() => { const g = new Uint8Array(N); for (let i = 0; i < N; i++) g[i] = !n[i] ? 0 : flags[i] & CRATE ? 2 : 1; return g; })(), heights: (() => { const h = new Float32Array(N); for (let i = 0; i < N; i++) h[i] = n[i] ? gy(top(i)) : 0; return h; })(), stacked: (() => { const s = new Uint8Array(N); for (let i = 0; i < N; i++) s[i] = n[i] > 1 ? 1 : above[i] > NONE ? 2 : 0; return s; })(), roofs: [], ramps: [],
       // A separate lower level (Nuke): its own radar layer, shown while you stand below `lowerY` (feet, game units).
@@ -95,6 +110,7 @@ function makeNav(G, { W, D, zLow }) {
     step(x, zz, y, nx, nz) { const f = toH(y), i = cellOf(nx, nz); if (i < 0) return NaN; let h = floorFor(i, f); if (h === NONE) return NaN;
       for (const [dx, dz] of BODY_PTS) { const j = cellOf(nx + dx, nz + dz); if (j < 0) return NaN; const hj = floorFor(j, f); if (hj === NONE) return NaN; if (hj > h) h = hj; }
       if (f - h > DROP) return NaN;
+      for (const [dx, dz] of BODY_PTS) { const j = cellOf(nx + dx, nz + dz); if (floorFor(j, h) === NONE) return NaN; }   // the whole body fits at the height it ends up at (head room under arches)
       return toY(h); },
     // Clear line between two points (game units, y absolute): stepped every half column through the columns.
     sight(ax, ay, az, bx, by, bz) { const L = Math.hypot(bx - ax, bz - az), steps = Math.ceil(L / (CELL * U * .5)); for (let s = 1; s < steps; s++) { const t = s / steps, x = ax + (bx - ax) * t, zz = az + (bz - az) * t, h = toH(ay + (by - ay) * t), i = cellOf(x, zz); if (i < 0) return false; if (!openAt(G, i, h)) return false; } return true; },
@@ -115,7 +131,7 @@ function makeNav(G, { W, D, zLow }) {
     // Bot routes (lazily, on the host): walks over the columns from a spawn to each site / mid, as [x, z] points.
     // Bot routes. Terrorists heading for one site keep out of the other (on Nuke the shortest walk to B crosses A, past its
     // defenders): its columns cost extra, so another way is taken unless it is much longer.
-    routes(tSpawn, ctSpawn, sites, mid, goalH = {}) { const go = (from, to, h = null, avoid = null) => pathBetween(G, cellOf(from[0], from[1]), cellOf(to[0], to[1]), W, D, null, h, avoid, toY);
+    routes(tSpawn, ctSpawn, sites, mid, goalH = {}) { const go = (from, to, h = null, avoid = null) => pathBetween(G, cellOf(from[0], from[1]), cellOf(to[0], to[1]), W, D, from[2] !== undefined ? toH(from[2]) : null, h, avoid, toY);   // a spawn with its height starts on its own floor
       const near = L => { const [sx, sz] = sites[L], c0 = cellOf(sx, sz), sc = c0 % G.cols, sr = (c0 / G.cols) | 0, h0 = goalH[L] ?? null, R = Math.round(160 / (CELL * U)), m = new Uint8Array(G.cols * G.rows * MAXF);
         for (let r = Math.max(0, sr - R); r <= Math.min(G.rows - 1, sr + R); r++) for (let c = Math.max(0, sc - R); c <= Math.min(G.cols - 1, sc + R); c++) { if ((c - sc) ** 2 + (r - sr) ** 2 > R * R) continue; const i = r * G.cols + c; for (let k = 0; k < G.n[i]; k++) if (h0 === null || Math.abs(G.z[i * MAXF + k] - h0) < 60) m[i * MAXF + k] = AVOID; } return m; };   // within 160 units of that site, on its own floor
       const A = go(tSpawn, sites.A, goalH.A, near('B')), M = go(tSpawn, mid); return { t: { A, B: go(tSpawn, sites.B, goalH.B, near('A')), M: M.length ? M : A }, ct: { A: go(ctSpawn, sites.A, goalH.A), B: go(ctSpawn, sites.B, goalH.B) } }; },

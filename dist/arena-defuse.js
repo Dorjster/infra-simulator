@@ -86,8 +86,8 @@ export function newRound(game, players, now) {
   // Every member gets their own spawn spot on their side (no two in the same place, any team size).
   const idx = { t: 0, ct: 0 };
   for (const mem of members(game, players)) { const t = d.teams[mem.k]; if (t !== 't' && t !== 'ct') continue; const slots = spawnSlots(m, t), i = idx[t]++ % slots.length, at = slots[i];
-    if (mem.bot) { const b = mem.bot; b.x = ARENA.cx + at[0]; b.z = ARENA.cz + at[1]; b.y = undefined; b.path = null; b.avoid = null; b.retake = false; b.dead = false; arm(b, b.weapon || defaultPistol(t)); botBuy(game, b); }
-    else { C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + Math.min(i, (t === 't' ? m.t : m.ct).length - 1), x: ARENA.cx + at[0], z: ARENA.cz + at[1] }; if (A.loadout[mem.k] && A.loadout[mem.k].secondary === undefined) A.loadout[mem.k].secondary = defaultPistol(t); refillAll(game, mem.name); } }   // every gun full for the new round (survivors keep theirs)
+    if (mem.bot) { const b = mem.bot; b.x = ARENA.cx + at[0]; b.z = ARENA.cz + at[1]; b.y = at[2] !== undefined && m.nav ? m.nav.floorAt(at[0], at[1], at[2] + 9.7) : undefined; b.path = null; b.avoid = null; b.retake = false; b.dead = false; arm(b, b.weapon || defaultPistol(t)); botBuy(game, b); }
+    else { C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + Math.min(i, (t === 't' ? m.t : m.ct).length - 1), x: ARENA.cx + at[0], z: ARENA.cz + at[1], ...(at[2] !== undefined ? { y: at[2] } : {}) }; if (A.loadout[mem.k] && A.loadout[mem.k].secondary === undefined) A.loadout[mem.k].secondary = defaultPistol(t); refillAll(game, mem.name); } }   // every gun full for the new round (survivors keep theirs)
   const ts = members(game, players).filter(x => d.teams[x.k] === 't'); d.bomb = { carrier: ts.length ? ts[Math.floor(Math.random() * ts.length)].k : null };
   const rid = d.match + '.' + (d.rseq = (d.rseq || 0) + 1);
   if (warmup(game)) { d.round = { id: rid, phase: 'warmup', at: now, freezeUntil: 4e15, buyUntil: 4e15, endsAt: 4e15, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: 'A' }; A.dirty = true; return; }
@@ -102,9 +102,11 @@ function botBuy(game, b) {
   if (want) { gain(d, k, -PRICE[want]); arm(b, want); }
 }
 // A spawn spot on a side that nobody (alive, of any team) stands on: for players and bots joining mid-freeze.
+// A bot's feet at a spawn spot with a height (map files: floors above the spawns), else undefined (the top floor).
+const spotY = (m, at) => at.y !== undefined && m.nav ? m.nav.floorAt(at.x - ARENA.cx, at.z - ARENA.cz, at.y + 9.7) : undefined;
 export function freeSpot(game, players, team, but = null) {
   const m = map(game), C = game.combat, recent = Date.now() - 4000, taken = members(game, players).filter(x => x.k !== but && !(C.down || {})[x.k]).flatMap(x => x.bot ? [{ x: x.bot.x, z: x.bot.z }] : [{ x: x.pose.x, z: x.pose.z }, ...(C.spawnTo?.[x.k] && Number.isFinite(C.spawnTo[x.k].x) && (C.spawnTo[x.k].at || 0) > Math.min(recent, (C.spawnTo[x.k].at || 0)) - 1 ? [{ x: C.spawnTo[x.k].x, z: C.spawnTo[x.k].z }] : [])]);   // where they stand, and where they were just sent
-  const slots = spawnSlots(m, team).map(([x, z]) => ({ x: ARENA.cx + x, z: ARENA.cz + z }));
+  const slots = spawnSlots(m, team).map(([x, z, y]) => ({ x: ARENA.cx + x, z: ARENA.cz + z, ...(y !== undefined ? { y } : {}) }));
   return slots.find(s => taken.every(o => Math.hypot(o.x - s.x, o.z - s.z) > 4.5)) || slots[Math.floor(Math.random() * slots.length)];
 }
 // May this player buy now (buy time, in their spawn, alive)? Returns an error message or null.
@@ -147,10 +149,10 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   if (d.paused) return false;   // paused by the host: every clock stands still
   for (const mem of members(game, players)) if (!d.teams[mem.k]) { const t = assignTeam(game, mem.name, players); changed = true;
     if (r.phase !== 'freeze' && r.phase !== 'warmup' && !(r.phase === 'live' && now - r.at < JOIN_GRACE_MS)) C.down[mem.k] = { until: 4e15, by: '', weapon: 'joined mid-round' };   // watch until the next round (the first seconds of a round still spawn you: nobody can have met yet)
-    else { const at = freeSpot(game, players, t, mem.k); if (mem.bot) { mem.bot.x = at.x; mem.bot.z = at.z; } else (C.spawnTo ??= {})[mem.k] = { at: now, i: t === 'ct' ? map(game).t.length : 0, x: at.x, z: at.z }; } }
+    else { const at = freeSpot(game, players, t, mem.k); if (mem.bot) { mem.bot.x = at.x; mem.bot.z = at.z; mem.bot.y = spotY(map(game), at); } else (C.spawnTo ??= {})[mem.k] = { at: now, i: t === 'ct' ? map(game).t.length : 0, x: at.x, z: at.z, ...(at.y !== undefined ? { y: at.y } : {}) }; } }
   // Someone on the Terrorist side always has the bomb during the freeze (e.g. the first players just joined).
   if (r.phase === 'freeze' && !d.bomb.carrier) { const ts = members(game, players).filter(x => d.teams[x.k] === 't'); if (ts.length) { d.bomb.carrier = ts[Math.floor(Math.random() * ts.length)].k; changed = true; } }
-  if (r.phase === 'warmup') { for (const [k, dn] of Object.entries(C.down || {})) if (d.teams[k] !== 'spec' && now - (dn.at || 0) > 3000 && dn.until > now) { const t = d.teams[k], at = freeSpot(game, players, t, k), b = game.arena.bots.find(x => key(x.name) === k); delete C.down[k]; C.hp[k] = MAX_HP; if (b) { b.x = at.x; b.z = at.z; } else C.spawnTo[k] = { at: now, x: at.x, z: at.z }; changed = true; } return changed; }   // warmup: back after 3 s
+  if (r.phase === 'warmup') { for (const [k, dn] of Object.entries(C.down || {})) if (d.teams[k] !== 'spec' && now - (dn.at || 0) > 3000 && dn.until > now) { const t = d.teams[k], at = freeSpot(game, players, t, k), b = game.arena.bots.find(x => key(x.name) === k); delete C.down[k]; C.hp[k] = MAX_HP; if (b) { b.x = at.x; b.z = at.z; b.y = spotY(map(game), at); } else C.spawnTo[k] = { at: now, x: at.x, z: at.z, ...(at.y !== undefined ? { y: at.y } : {}) }; changed = true; } return changed; }   // warmup: back after 3 s
   if (d.matchOver) { if (now - d.matchOver.at > DEFUSE.matchOverMs) { startDefuse(game, now, players, d.teams); return true; } return false; }
   if (r.phase === 'freeze' && now >= r.freezeUntil) { r.phase = 'live'; changed = true; }
   const alive = t => members(game, players).filter(m => d.teams[m.k] === t && !(C.down || {})[m.k]).length;

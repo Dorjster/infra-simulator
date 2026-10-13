@@ -33,6 +33,8 @@ app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch
 let win = null, room = null, hosting = false, inMatch = false, quitting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');
+// Map files the player imported (Counter-Strike 1.6 .bsp, <id>.bsp): kept on this computer, never shipped.
+const mapsDir = () => path.join(app.getPath('userData'), 'maps'), assetsDir = () => path.join(app.getPath('userData'), 'assets');
 const origin = () => 'http://127.0.0.1:' + room.port;
 // Private LAN hosts a player may join (http or its https twin; RFC 1918 + link-local + loopback).
 // The LAN room's HTTPS twin uses a self-signed certificate (lan/selfsigned.mjs): trusted only on private LAN
@@ -45,7 +47,7 @@ const lanHost = h => /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254
 const LAN_PORT = 8080;
 const portFree = port => new Promise(res => { const s = net.createServer().once('error', () => res(false)).once('listening', () => s.close(() => res(true))); s.listen(port, '0.0.0.0'); });
 async function openRoom() {
-  room = await startRoom({ port: await portFree(LAN_PORT) ? LAN_PORT : 0, bind: '127.0.0.1', savePath: savePath(), deliveryScale: process.env.INFRA_DELIVERY_SCALE, log: m => console.log('[room]', m), error: m => console.error('[room]', m) });
+  room = await startRoom({ port: await portFree(LAN_PORT) ? LAN_PORT : 0, bind: '127.0.0.1', savePath: savePath(), mapsDir: mapsDir(), assetsDir: assetsDir(), deliveryScale: process.env.INFRA_DELIVERY_SCALE, log: m => console.log('[room]', m), error: m => console.error('[room]', m) });
   hosting = false;
 }
 
@@ -93,7 +95,7 @@ async function importSave() {
     if (data.operations?.mode !== 'campaign' || !Array.isArray(data.nets) || !Array.isArray(data.cables)) throw Error('This file is not a campaign save.');
     const target = savePath(); await copyFile(target, target.replace(/\.json$/, '') + '.before-import.json').catch(() => {});
     await writeFile(target + '.tmp', text); await rename(target + '.tmp', target);
-    const port = room.port; await room.close(); room = await startRoom({ port, bind: '127.0.0.1', savePath: target }); hosting = false;
+    const port = room.port; await room.close(); room = await startRoom({ port, bind: '127.0.0.1', savePath: target, mapsDir: mapsDir(), assetsDir: assetsDir() }); hosting = false;
     win.loadURL(origin() + '/'); dialog.showMessageBox(win, { message: 'Campaign imported', detail: 'Choose Solo Campaign → Continue (or LAN Host Campaign) to play it. The previous save was kept as campaign-save.before-import.json.' });
   } catch (e) { dialog.showErrorBox('Import failed', e.message); }
 }

@@ -54,6 +54,12 @@ Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and p
 - Explosions (HE, flashbang, bomb) and the molotov burn: [Kenney "Sci-Fi Sounds"](https://kenney.nl/assets/sci-fi-sounds) — CC0.
 - Epidemic Sound recordings (October 2026, `tools/pack-epidemic.mjs`): the project owner's Epidemic Sound downloads, cut into each gun's close, second, third and distant takes, the per-class reload sequences, knife, grenades, hits, death, footsteps, landing and the freeze-time jazz. **Licence for redistribution in a public repository or a downloadable app has not been confirmed**; the GitHub repository is public.
 
+## Imported on the player's computer (never shipped, never committed)
+
+- Map files (`user-maps/`, the desktop app's `maps/`): Counter-Strike 1.6 maps (BSP 30) and Source ports (VBSP: CS:S / CS:GO) the player downloaded — Valve's designs, made by their community porters; their packed textures and models stay inside the file.
+- Models (`user-assets/`, the desktop app's `assets/`): Counter-Strike 2 agents, guns, knives, the C4, the defuse kit and the karambit view model the player downloaded (e.g. Sketchfab uploads of CS2's own models) — Valve's, converted locally by `tools/import-cs2-models.mjs`.
+- Shared only with players in the same LAN room (the room serves them); the one-file asset pack is for the player's own other computers.
+
 ## Classic Defuse maps (`dist/cs-maps/`, built by `tools/maps/extract-nav.mjs`)
 
 Full notices: `dist/cs-maps/LICENSES.md`.

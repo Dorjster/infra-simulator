@@ -6,6 +6,7 @@ import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, MAP_LIST, mapBoxes, walkable } from './arena-maps.js';
 import { THEMES } from './cs-maps/themes.js';
 import { buildColumnMeshes } from './cs-mesh.js';
+import { buildBspMeshes } from './bsp-mesh.js';
 import { buildProps, propWarmMeshes } from './arena-props.js';
 
 function tex(draw, size = 256) {
@@ -97,18 +98,21 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   const DOME = new THREE.SphereGeometry(1000, 32, 16), WHITE = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1), domeMat = new THREE.MeshBasicMaterial({ map: WHITE, vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });   // (a texture: the High preset's glow pass leaves it alone — an untextured bright material is boosted into bloom and washes the screen white)
   WHITE.needsUpdate = true; domeMat.userData.shared = true; DOME.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(DOME.attributes.position.count * 3), 3));
   DOME.userData.shared = true; const dome = new THREE.Mesh(DOME, domeMat); dome.userData.keep = true; dome.renderOrder = -1; dome.frustumCulled = false; dome.position.set(ARENA.cx, 0, ARENA.cz); group.add(dome);
-  function outdoor(id) { const T = THEMES[id] || {}, base = new THREE.Color(T.sky ?? ARENA_MAPS[id]?.sky ?? 0x9fb8cc), warm = !/nuke|cache|train/.test(id);
+  function outdoor(id) { const T = THEMES[id] || {}, base = new THREE.Color(T.sky ?? ARENA_MAPS[id]?.sky ?? 0x9fb8cc), warm = !/nuke|cache/.test(id);
     const zenith = base.clone().lerp(new THREE.Color(0x2f6fc8), .6), horizon = base.clone().lerp(new THREE.Color(0xeef3f6), .3);
     return { sun: T.sun ?? 0xfff0d6, sunK: 1.3, sky: base.clone().lerp(new THREE.Color(0xffffff), .25).getHex(), ground: warm ? 0x9a8464 : 0x7d8188, hemiK: .85, zenith: zenith.getHex(), horizon: horizon.getHex(), fill: warm ? 0xfff1dc : 0xeef2f6 }; }
   function sky(L) { fill.color.setHex(L.fill); const P = DOME.attributes.position, C = DOME.attributes.color, z = new THREE.Color(L.zenith), h = new THREE.Color(L.horizon), c = new THREE.Color();
     for (let i = 0; i < P.count; i++) { const t = Math.max(0, P.getY(i) / 1000); c.copy(h).lerp(z, Math.pow(t, .4)); C.setXYZ(i, c.r, c.g, c.b); } C.needsUpdate = true; }
   function clearMap() { for (const o of [...group.children]) { if (o.userData.ground || o.userData.keep) continue;   // dropped guns (arena-ui), the sky dome and fill light stay   // dropped guns: arena-ui owns them
-    group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
+    group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); if (o.userData.bsp) { o.material.map?.dispose(); o.material.lightMap?.dispose(); o.material.dispose(); }   /* a map file's own textures and light */ const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
+  let builtFrom = null;   // the map object drawn (a map file loaded later replaces it: draw again)
   function build(id) {
-    if (current === id) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id;
+    if (current === id && builtFrom === ARENA_MAPS[id]) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id; builtFrom = map;
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
+    // A map from a file: its own faces, textures and baked light (bsp-mesh.js); collision is the columns, as always.
+    if (map.bsp) { const T = map.bsp.toGame; for (const mesh of buildBspMeshes(map.bsp.data, { toGame: (x, y, z) => { const g = T(x, y, z); return [cx + g[0], g[1], cz + g[2]]; } }).meshes) group.add(mesh); return; }
     if (map.columns) { for (const mesh of buildColumnMeshes(map, shadedMaterial, tileOf, cx, cz)) group.add(mesh);   // classic maps: drawn from their columns (not aim-raycast: shots and the arena use the collision boxes)
-      for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; const g = map.siteGoals?.[L] || [x, z], fy = map.nav.floorAt(g[0], g[1]); s.position.set(cx + g[0], (Number.isFinite(fy) ? fy : 0) + .08, cz + g[1]); s.scale.setScalar(Math.min(r, 30) * 1.2); s.renderOrder = 1; group.add(s); }
+      for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; const g = map.siteGoals?.[L] || [x, z], fy = g[2] ?? map.nav.floorAt(g[0], g[1]); s.position.set(cx + g[0], (Number.isFinite(fy) ? fy : 0) + .08, cz + g[1]); s.scale.setScalar(Math.min(r, 30) * 1.2); s.renderOrder = 1; group.add(s); }
       return; }
     const byMat = new Map(); for (const b of boxes) { if (b.prop) continue; const tile = tileOf(b.mat); (byMat.get(b.mat) || byMat.set(b.mat, []).get(b.mat)).push(boxGeometry(b, tile)); }
     const floor = { minX: bounds.minX, maxX: bounds.maxX, minZ: bounds.minZ, maxZ: bounds.maxZ, y0: -1, y1: 0 }; (byMat.get(map.floor) || byMat.set(map.floor, []).get(map.floor)).push(boxGeometry(floor, tileOf(map.floor)));
@@ -127,6 +131,6 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     // What the feet are on at (x, z) with feet at height y, for footstep sounds: wood, metal, grass (sand) or concrete.
     surfaceAt(x, z, y = 0) { const b = y > .3 && boxes.find(b => Math.abs(b.y1 - y) < .6 && x > b.minX - 1 && x < b.maxX + 1 && z > b.minZ - 1 && z < b.maxZ + 1), m = b ? b.mat : ARENA_MAPS[current]?.floor || 'concrete';
       return /wood|crate/.test(m) ? 'wood' : /metal/.test(m) ? 'metal' : /sand/.test(m) ? 'grass' : 'concrete'; },
-    spawnFor(i) { const map = ARENA_MAPS[current]; if (!map) return null; const s = map.spawns[((i % map.spawns.length) + map.spawns.length) % map.spawns.length]; return { x: ARENA.cx + s[0], z: ARENA.cz + s[1] }; },
+    spawnFor(i) { const map = ARENA_MAPS[current]; if (!map) return null; const s = map.spawns[((i % map.spawns.length) + map.spawns.length) % map.spawns.length]; return { x: ARENA.cx + s[0], z: ARENA.cz + s[1], ...(s[2] !== undefined ? { y: s[2] } : {}) }; },
   };
 }
