@@ -86,7 +86,7 @@ export function newRound(game, players, now) {
   // Every member gets their own spawn spot on their side (no two in the same place, any team size).
   const idx = { t: 0, ct: 0 };
   for (const mem of members(game, players)) { const t = d.teams[mem.k]; if (t !== 't' && t !== 'ct') continue; const slots = spawnSlots(m, t), i = idx[t]++ % slots.length, at = slots[i];
-    if (mem.bot) { const b = mem.bot; b.x = ARENA.cx + at[0]; b.z = ARENA.cz + at[1]; b.y = undefined; b.path = null; b.retake = false; b.dead = false; arm(b, b.weapon || defaultPistol(t)); botBuy(game, b); }
+    if (mem.bot) { const b = mem.bot; b.x = ARENA.cx + at[0]; b.z = ARENA.cz + at[1]; b.y = undefined; b.path = null; b.avoid = null; b.retake = false; b.dead = false; arm(b, b.weapon || defaultPistol(t)); botBuy(game, b); }
     else { C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + Math.min(i, (t === 't' ? m.t : m.ct).length - 1), x: ARENA.cx + at[0], z: ARENA.cz + at[1] }; if (A.loadout[mem.k] && A.loadout[mem.k].secondary === undefined) A.loadout[mem.k].secondary = defaultPistol(t); refillAll(game, mem.name); } }   // every gun full for the new round (survivors keep theirs)
   const ts = members(game, players).filter(x => d.teams[x.k] === 't'); d.bomb = { carrier: ts.length ? ts[Math.floor(Math.random() * ts.length)].k : null };
   const rid = d.match + '.' + (d.rseq = (d.rseq || 0) + 1);

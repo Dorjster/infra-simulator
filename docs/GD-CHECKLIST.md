@@ -18,7 +18,7 @@ Last updated: 2026-10-13.
 | Entry points, LAN host, map pipeline, movement, combat, UI, audio identified | Verified | `lab.js` (client), `lan/room.mjs` (authoritative host), `cs-mapbuild.js` / `cs-columns.js` (maps), `arena-move.js`, `combat-logic.js` / `arena-logic.js` / `arena-defuse.js`, `arena-ui.js`, `sound-bank.js` / `spatial-audio.js` |
 | Baseline frame time | Verified | Dust II, Retina ×2, High preset, 9 bots + utility: avg 16.7 ms, p95 20.6, p99 24.5 (`stress.mjs`) |
 | Asset sources tracked | Partial | `MODEL-SOURCES.md` lists models and CC0 sounds; the Epidemic Sound recordings are the owner's subscription (licence for public distribution **unconfirmed**; the GitHub repository is public, so pushing them publishes the files) |
-| Map reference data licences | Partial | awpy MIT, Ancient / Anubis overviews MIT (notices in `dist/cs-maps/LICENSES.md`); the other six overviews come from boltobserv, **GPL-3.0** — whether the derived masks may ship in this project is unresolved. Layouts are Valve's designs |
+| Map reference data licences | Verified | All eight maps from MIT sources only: awpy navigation data and Lexogrine's radar overviews (csgo-react-hud); notices in `dist/cs-maps/LICENSES.md`. The six overviews earlier sampled from boltobserv (GPL-3.0) are replaced. Layouts are Valve's designs |
 
 ## 1. Critical correctness
 
@@ -139,7 +139,7 @@ Existing (v43): team-only WebRTC with HTTPS twin, push-to-talk, devices, mutes, 
 
 ## 13. Maps
 
-All eight are rebuilt at true scale from the CS:GO navigation meshes (awpy, MIT) and overviews (boltobserv, MIT): real heights, stacked levels (Nuke upper/lower, underpasses, bridges), crates, railcars.
+All eight are rebuilt at true scale from the CS:GO navigation meshes (awpy, MIT) and radar overviews (Lexogrine, MIT): real heights, stacked levels (Nuke upper/lower, underpasses, bridges), crates, railcars.
 
 | Map | Routes walkable (player physics) | Spawns fair | Sites plantable | Bot matches | Gaps |
 |---|---|---|---|---|---|
@@ -151,6 +151,8 @@ All eight are rebuilt at true scale from the CS:GO navigation meshes (awpy, MIT)
 | Anubis | Verified | Verified | Verified | Verified | Water look |
 | Ancient | Verified | Verified | Verified | Verified | Vegetation |
 | Train | Verified | Verified | Verified | Verified | Overview older than the nav (railcars inferred); ladders |
+
+Thin walls (fixed this round): an overview wall line between two same-height areas the navigation mesh does not join there was turned into floor, so you saw, shot and could walk through it — 127 wall cells restored on Nuke (A hall ↔ Outside), 56 on Cache, 43 Anubis, 21 Train, 16 Ancient, 15 Inferno, 7 Mirage, 6 Dust II. Sight lines now also stop at a top floor's ceiling (they passed through solid ground over lower corridors). Bots that make no progress for 3 s re-plan round the spot. Nuke plants after the fix: 13 / 11 / 8 (were 1 / 0 / 0).
 
 Evidence: `tests/gd-classic-maps.mjs` (298 checks), `tests/gd-bots.mjs` (24 full bot matches, 112 checks). Geometry rules changed this round: a tight gap between floors leaves a body plus a step of room; ceilings are only borrowed from a neighbouring level when they leave a body plus two steps; a route may drop only where a body fits past the edge. First-person walkthrough captures are partial (Dust II only).
 

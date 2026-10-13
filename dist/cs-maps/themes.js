@@ -1,7 +1,7 @@
 // How each classic map looks and which of its places are indoors. The geometry comes from its navigation areas and
 // overview (cs-columns.js); this adds what those don't say: wall / floor / indoor materials, which named places have a
 // ceiling (and how high, Hammer units above the floor), the sky. Reference versions: the CS:GO navigation meshes and
-// overviews used by awpy (2023) and boltobserv (radar v4); see MODEL-SOURCES.md.
+// overviews from awpy (2023, MIT) and Lexogrine (csgo-react-hud, MIT); see dist/cs-maps/LICENSES.md.
 export const THEMES = {
   dust2: { name: 'Dust II', wall: 'adobe', floor: 'sand', indoorWall: 'tunnel', indoorFloor: 'tunnelfloor', sky: 0xbcd6ec, sun: 0xfff0d0,
     indoor: { UpperTunnel: 150, LowerTunnel: 130, TunnelStairs: 150, UnderA: 120, Hole: 120 } },

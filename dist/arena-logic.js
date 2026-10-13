@@ -364,6 +364,14 @@ function defuseBot(game, bot, team, g, dt, now) {
   // it). Above a lower waypoint, keep going the way the route goes until off the edge, then come back to it.
   const [wx, wz, wy] = bot.path[bot.pi], above = m.nav && Number.isFinite(wy) && feetOf(g, bot) - wy > 6,   /* a ledge, not a ramp (on a steep ramp the body rides a few units above the next point) */ dw = Math.hypot(wx - bot.x, wz - bot.z);
   if (dw < (m.nav ? 1.5 : 4) && !above) { bot.pi++; return true; }
+  // Progress towards the waypoint (distance, and height still to drop): none for 3 s means this way does not work for a
+  // body here (a drop or gap the route allowed) — re-plan from where the bot stands, round the spot it failed at.
+  { const prog = dw + (Number.isFinite(wy) ? Math.max(0, feetOf(g, bot) - wy) : 0);
+    if (bot.wpI !== bot.pi || bot.wpPath !== bot.path) { bot.wpI = bot.pi; bot.wpPath = bot.path; bot.wpBest = prog; bot.wpAt = now; }
+    else if (prog < bot.wpBest - 1) { bot.wpBest = prog; bot.wpAt = now; }
+    else if (m.nav && now - bot.wpAt > 3000) { bot.wpAt = now; (bot.avoid ??= []).push([wx - cx, wz - cz]); if (bot.avoid.length > 8) bot.avoid.shift();
+      const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz, bot.avoid);
+      if (fresh.length) { bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; } } }
   let tx = wx, tz = wz; if (above && dw < 4) { const [px, pz] = bot.pi > 0 ? bot.path[bot.pi - 1] : [bot.x - (wx - bot.x), bot.z - (wz - bot.z)], L = Math.hypot(wx - px, wz - pz) || 1; tx = wx + (wx - px) / L * 3; tz = wz + (wz - pz) / L * 3; }
   const head0 = Math.atan2(tx - bot.x, tz - bot.z), step = 26 * dt;
   // No progress for a second: sidestep for half a second (out of a corner between two obstacles), then carry on.

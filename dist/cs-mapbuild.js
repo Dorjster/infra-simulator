@@ -104,11 +104,13 @@ function makeNav(G, { W, D, zLow }) {
     // A fresh walk from where a bot stands (feet y) to (tx, tz): [x, z] points (bots that got stuck re-plan).
     // Standing on a ledge's edge the column under the body's middle may have no floor at the feet: start from the
     // nearest column that has (else a replan would begin on a floor above or below and lead nowhere).
-    route(x, zz, y, tx, tz) { const f = toH(y), at = i => { if (i < 0 || !n[i]) return false; for (let k = 0; k < n[i]; k++) if (Math.abs(z[i * MAXF + k] - f) <= STEP) return true; return false; };
+    // avoidPts: [x, z] spots this bot failed to get past (a route round them is preferred: 40 per column within one).
+    route(x, zz, y, tx, tz, avoidPts = null) { const f = toH(y), at = i => { if (i < 0 || !n[i]) return false; for (let k = 0; k < n[i]; k++) if (Math.abs(z[i * MAXF + k] - f) <= STEP) return true; return false; };
       let a = cellOf(x, zz); if (a >= 0 && !at(a)) { const c0 = a % G.cols, r0 = (a / G.cols) | 0; let best = -1, bd = Infinity;
         for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) { const c = c0 + dc, r = r0 + dr; if (c < 0 || r < 0 || c >= G.cols || r >= G.rows) continue; const j = r * G.cols + c; if (at(j) && dc * dc + dr * dr < bd) { bd = dc * dc + dr * dr; best = j; } }
         if (best >= 0) a = best; }
-      return pathBetween(G, a, cellOf(tx, tz), W, D, f, null, null, toY); },
+      let avoid = null; if (avoidPts?.length) { const bad = new Set(); for (const [ax, az] of avoidPts) { const ci = cellOf(ax, az); if (ci < 0) continue; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) bad.add(ci + dr * G.cols + dc); } avoid = v => bad.has((v / MAXF) | 0) ? 40 : 0; }
+      return pathBetween(G, a, cellOf(tx, tz), W, D, f, null, avoid, toY); },
     cellOf, toY, toH, G,
     // Bot routes (lazily, on the host): walks over the columns from a spawn to each site / mid, as [x, z] points.
     // Bot routes. Terrorists heading for one site keep out of the other (on Nuke the shortest walk to B crosses A, past its
@@ -121,7 +123,9 @@ function makeNav(G, { W, D, zLow }) {
   return api;
 }
 // Is height h (HU) open air in column i? Above a floor and below what is over it (the next floor's slab or a ceiling).
-function openAt(G, i, h) { const { n, z } = G; if (!n[i]) return false; for (let k = 0; k < n[i]; k++) { const f = z[i * MAXF + k], next = k + 1 < n[i] ? z[i * MAXF + k + 1] - 16 : Infinity; if (h >= f && h <= next) return true; } return false; }
+// (Up to its ceiling: the slab of the floor above, or a top floor's ceiling — a lower corridor under ground, an indoor
+// room — not open air above it.)
+function openAt(G, i, h) { const { n, z } = G; if (!n[i]) return false; for (let k = 0; k < n[i]; k++) { const f = z[i * MAXF + k], top = G.ceil ? G.ceil[i * MAXF + k] : k + 1 < n[i] ? z[i * MAXF + k + 1] - 16 : Infinity; if (h >= f && h <= top) return true; } return false; }
 // Shortest walk between two columns (8-way, no corner cutting, up a step / down a drop), pulled straight wherever the
 // straight walk is clear (a body's width, climbable all the way); [x, z] points in game units.
 // avoid: optional extra cost per column floor (a Uint8Array, index column × MAXF + floor), e.g. round the other bomb site.
@@ -146,7 +150,7 @@ function pathBetween(G, a, b, W, D, startFloor = null, goalFloor = null, avoid =
         const op = d => { const m = j + d; return m >= 0 && m < n.length && near(m, hj); };
         if (j !== b && ((!op(-1) && !op(1)) || (!op(-cols) && !op(cols)) || (!op(-cols - 1) && !op(cols + 1)) || (!op(-cols + 1) && !op(cols - 1)))) continue;   // obstacles on opposite sides (square hull, corners too): narrower than a body
         let roomy = true; for (const d of [1, -1, cols, -cols]) { const m = j + d; if (m < 0 || m >= n.length || !near(m, hj)) { roomy = false; break; } }
-        const v = key(j, kk), nc = cost[u] + (dc && dr ? 1.4 : 1) + (roomy ? 0 : 6) + (avoid ? avoid[v] : 0); if (nc < cost[v]) { cost[v] = nc; prev[v] = u; push(v, nc); } } } } }
+        const v = key(j, kk), nc = cost[u] + (dc && dr ? 1.4 : 1) + (roomy ? 0 : 6) + (avoid ? (typeof avoid === 'function' ? avoid(v) : avoid[v]) : 0); if (nc < cost[v]) { cost[v] = nc; prev[v] = u; push(v, nc); } } } } }
   if (globalThis.__navDebug) globalThis.__navDebug.cost = cost;   // tools/maps/frontier.mjs
   if (goal < 0) return []; const nodes = []; for (let v = goal; ; v = prev[v]) { nodes.push(v); if (v === start) break; } nodes.reverse();
   // A straight walk from node A to node B: half-column samples, each within a step of the last (or a drop), on both sides.

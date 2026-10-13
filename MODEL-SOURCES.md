@@ -59,5 +59,5 @@ Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and p
 Full notices: `dist/cs-maps/LICENSES.md`.
 
 - Heights, floors, place names and connections: [awpy](https://github.com/pnxenopoulos/awpy) navigation data, commit a5434abc06 — MIT, Peter Xenopoulos.
-- Floor / wall / cover outline: radar overviews from [boltobserv](https://github.com/boltgolt/boltobserv) — Ancient and Anubis MIT (Lexogrine); Dust II, Mirage, Inferno, Nuke, Cache and Train under the repository's **GPL-3.0** (whether the sampled masks must follow GPL-3.0 is unresolved).
+- Floor / wall / cover outline: radar overviews from Lexogrine's [csgo-react-hud](https://github.com/lexogrine/csgo-react-hud) (commit 2c6bbaa31e) — MIT, Lexogrine, all eight maps (earlier builds sampled boltobserv's GPL-3.0 copies for six maps; replaced).
 - The layouts are Valve's Counter-Strike designs; the reference data is derived from Valve's game files.
