@@ -49,7 +49,9 @@ export function defuseKill(game, shooter, target, wpn) {
 // teams: sides to keep (the lobby's choices); bots without one alternate.
 export function startDefuse(game, now, players = [], teams = null) {
   const A = game.arena; if (A?.rulesNext) { A.rules = A.rulesNext; delete A.rulesNext; }   // rules the host changed during the last match: from this one on
-  game.combat.d = { rules: cleanRules(game.arena?.rules), teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {}, history: [] }; game.combat.stats = {};   // a fresh match: fresh report
+  // match: this match's id; every round gets `round.id` (match id · round sequence, restarts and warmup included), which
+  // round-bound requests (buys, plant, defuse) carry so one sent in a round that has since ended is refused.
+  game.combat.d = { match: now.toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0'), rseq: 0, rules: cleanRules(game.arena?.rules), teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {}, history: [] }; game.combat.stats = {};   // a fresh match: fresh report
   for (const [i, b] of (game.arena.bots || []).entries()) { const k = key(b.name); game.combat.d.teams[k] ??= i % 2 ? 'ct' : 't'; }
   newRound(game, players, now);
 }
@@ -87,8 +89,9 @@ export function newRound(game, players, now) {
     if (mem.bot) { const b = mem.bot; b.x = ARENA.cx + at[0]; b.z = ARENA.cz + at[1]; b.y = undefined; b.path = null; b.retake = false; b.dead = false; arm(b, b.weapon || defaultPistol(t)); botBuy(game, b); }
     else { C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + Math.min(i, (t === 't' ? m.t : m.ct).length - 1), x: ARENA.cx + at[0], z: ARENA.cz + at[1] }; if (A.loadout[mem.k] && A.loadout[mem.k].secondary === undefined) A.loadout[mem.k].secondary = defaultPistol(t); refillAll(game, mem.name); } }   // every gun full for the new round (survivors keep theirs)
   const ts = members(game, players).filter(x => d.teams[x.k] === 't'); d.bomb = { carrier: ts.length ? ts[Math.floor(Math.random() * ts.length)].k : null };
-  if (warmup(game)) { d.round = { phase: 'warmup', at: now, freezeUntil: 4e15, buyUntil: 4e15, endsAt: 4e15, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: 'A' }; A.dirty = true; return; }
-  const FZ = A.freezeMs ?? DEFUSE.freezeMs; d.round = { phase: FZ > 0 ? 'freeze' : 'live', at: now, freezeUntil: now + FZ, buyUntil: now + FZ + DEFUSE.buyMs, endsAt: now + FZ + RU.roundS * 1000, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: Math.random() < .5 ? 'A' : 'B' };
+  const rid = d.match + '.' + (d.rseq = (d.rseq || 0) + 1);
+  if (warmup(game)) { d.round = { id: rid, phase: 'warmup', at: now, freezeUntil: 4e15, buyUntil: 4e15, endsAt: 4e15, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: 'A' }; A.dirty = true; return; }
+  const FZ = A.freezeMs ?? DEFUSE.freezeMs; d.round = { id: rid, phase: FZ > 0 ? 'freeze' : 'live', at: now, freezeUntil: now + FZ, buyUntil: now + FZ + DEFUSE.buyMs, endsAt: now + FZ + RU.roundS * 1000, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: Math.random() < .5 ? 'A' : 'B' };
   A.dirty = true;   // loadouts changed: the room sends the whole world
 }
 // A bot's gun, full: magazine and reserve.

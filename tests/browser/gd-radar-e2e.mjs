@@ -34,5 +34,15 @@ for (const [w, h] of [[1920, 1080], [1280, 720]]) {
   check(w + 'p: N switches rotating ⇄ fixed', m0 === 'rotate' && m1 === 'fixed', m0 + ' → ' + m1);
   await p.screenshot({ path: path.join(out, 'hud-' + w + '.png') }); await p.keyboard.press('KeyN');
 }
+// Nuke, two floors: at B (under A) the radar shows the lower level and says so; at A the upper one. Team mates on the
+// other floor carry ▲ / ▼ (checked through the same rule the radar draws with).
+await p.evaluate(() => __infra.lab.lan.send({ type: 'arena', action: { type: 'change-map', map: 'nuke' } }));
+await p.waitForFunction(() => __infra.lab.arenaScene?.map === 'nuke' && __infra.lab.world.operations.game.arena.map === 'nuke', null, { timeout: 40000 }); await p.waitForTimeout(1500);
+const at = L => p.evaluate(async L => { const { ARENA } = await import('./facility-layout.js'), { ARENA_MAPS } = await import('./arena-maps.js'), M = ARENA_MAPS.nuke, [x, z] = M.siteGoals[L], f = M.nav.floorAt(x, z);
+  __infra.lab.look(ARENA.cx + x, ARENA.cz + z, ARENA.cx + x + 10, f + 9.7, ARENA.cz + z, f + 9.7); await new Promise(r => setTimeout(r, 600)); return { layer: __infra.lab.radar.layer, label: __infra.lab.radar.label, feet: +(__infra.camera.position.y - 9.7).toFixed(1), floor: +f.toFixed(1) }; }, L);
+const atB = await at('B'); check('Nuke: at B (below A) the radar shows the lower level and "LOWER · B SITE"', atB.layer === 'lower' && atB.label === 'LOWER · B SITE', JSON.stringify(atB));
+await p.screenshot({ path: path.join(out, 'nuke-lower.png') });
+const atA = await at('A'); check('Nuke: at A the upper level and "A SITE"', atA.layer === null && atA.label === 'A SITE', JSON.stringify(atA));
+await p.evaluate(() => __infra.lab.radar.expand(true)); await p.waitForTimeout(300); await p.screenshot({ path: path.join(out, 'nuke-upper-big.png') }); await p.evaluate(() => __infra.lab.radar.expand(false));
 check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 console.log(ok + '/' + n); await b.close(); server.kill(); process.exit(ok === n ? 0 : 1);

@@ -108,9 +108,12 @@ function reachable(game, p, it) { if (!p) return true; const g = G(game), d = Ma
 const poseOf = (players, name) => players.find(p => key(p.name) === key(name))?.pose || null;
 // A player's loadout (created with the team's starting pistol).
 export const loadoutOf = (game, name) => game.arena.loadout[key(name)] ??= { primary: null, secondary: teamPistol(game, name), nades: [] };
+export const ROUND_BOUND = new Set(['buy', 'loadout', 'buy-armor', 'buy-nade', 'buy-kit', 'refund', 'plant', 'defuse']);
 export function arenaApply(game, a, name, players = [], now = Date.now(), perm = { isHost: true }) {
   if (game.mode !== 'arena' || !game.arena) throw Error('Start the arena first');
   const A = game.arena;
+  // A request made in a round that has ended (it crossed the round change on the network) does nothing.
+  if (a.round !== undefined && ROUND_BOUND.has(a.type) && game.combat?.d?.round?.id && a.round !== game.combat.d.round.id) throw Error('That round has ended');
   // ── Match: lobby, teams, host settings, map ──
   if (a.type === 'ready') { if (!A.lobby || A.lobby.started) throw Error('The match is running'); A.lobby.ready[key(name)] = a.ready !== false; return a.ready === false ? 'Not ready' : 'Ready'; }
   if (a.type === 'start-match') { if (!perm.isHost) throw Error('Only the host starts the match'); if (!A.lobby || A.lobby.started) throw Error('The match is already running'); const e = lobbyShort(game, players); if (e) throw Error(e); beginMatch(game, players, now); return 'Match started'; }
@@ -344,7 +347,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
 // bomb is down, walk to it and defuse. Same steering as deathmatch bots.
 function defuseBot(game, bot, team, g, dt, now) {
   const d = game.combat.d, r = d.round, m = g.map, k = key(bot.name), cx = ARENA.cx, cz = ARENA.cz;
-  if (!bot.path) { const routes = m.routes[team], site = team === 't' ? r.tSite : parseInt(bot.id.slice(4)) % 2 ? 'A' : 'B'; bot.site = site; bot.path = routes[site].map(([x, z]) => [cx + x, cz + z]); bot.pi = 0; }
+  if (!bot.path) { const routes = m.routes[team], site = team === 't' ? r.tSite : parseInt(bot.id.slice(4)) % 2 ? 'A' : 'B'; bot.site = site; bot.path = routes[site].map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; }
   if (r.phase === 'planted' && team === 'ct' && !bot.retake) { bot.retake = true; bot.path = [...bot.path.slice(bot.pi), [r.planted.x, r.planted.z]]; bot.pi = 0; }
   // At the bomb: defuse. At the site with the bomb: plant.
   if (team === 'ct' && r.phase === 'planted' && Math.hypot(bot.x - r.planted.x, bot.z - r.planted.z) < 5) { if (!r.defuse) { r.defuse = { by: k, start: now, ms: d.kits[k] ? DEFUSE.kitMs : DEFUSE.defuseMs, x: bot.x, z: bot.z }; return true; } return false; }
@@ -352,15 +355,24 @@ function defuseBot(game, bot, team, g, dt, now) {
   if (r.plant?.by === k) return false;   // standing still while planting
   // A Terrorist without the bomb picks it up if it lies near.
   if (team === 't' && !d.bomb.carrier) { const i = (game.combat.ground || []).findIndex(it => it.item === 'c4' && Math.hypot(it.x - bot.x, it.z - bot.z) < 4); if (i >= 0) { game.combat.ground.splice(i, 1); d.bomb.carrier = k; return true; } }
-  if (bot.pi >= bot.path.length) return false; const [wx, wz] = bot.path[bot.pi]; if (Math.hypot(wx - bot.x, wz - bot.z) < 4) { bot.pi++; return true; }
-  const head0 = Math.atan2(wx - bot.x, wz - bot.z), step = 26 * dt;
+  // Past the last waypoint but not there (it was skipped while stuck): walk a fresh route to it (at most every 2 s).
+  if (bot.pi >= bot.path.length) { const end = bot.path[bot.path.length - 1]; if (!m.nav || !end || Math.hypot(end[0] - bot.x, end[1] - bot.z) < 4 || now - (bot.replanAt || 0) <= 2000) return false;
+    bot.replanAt = now; const fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz); if (!fresh.length) return false; bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; }
+  // Reached when close: on the classic maps within 1.5 units (a tick's step), so a bot never cuts a corner off the walk the
+  // route checked (4 units let bots shortcut round ledges and wedge there).
+  // A waypoint is reached on its own floor (classic maps: a point below a ledge is not reached from the ledge above
+  // it). Above a lower waypoint, keep going the way the route goes until off the edge, then come back to it.
+  const [wx, wz, wy] = bot.path[bot.pi], above = m.nav && Number.isFinite(wy) && feetOf(g, bot) - wy > 6,   /* a ledge, not a ramp (on a steep ramp the body rides a few units above the next point) */ dw = Math.hypot(wx - bot.x, wz - bot.z);
+  if (dw < (m.nav ? 1.5 : 4) && !above) { bot.pi++; return true; }
+  let tx = wx, tz = wz; if (above && dw < 4) { const [px, pz] = bot.pi > 0 ? bot.path[bot.pi - 1] : [bot.x - (wx - bot.x), bot.z - (wz - bot.z)], L = Math.hypot(wx - px, wz - pz) || 1; tx = wx + (wx - px) / L * 3; tz = wz + (wz - pz) / L * 3; }
+  const head0 = Math.atan2(tx - bot.x, tz - bot.z), step = 26 * dt;
   // No progress for a second: sidestep for half a second (out of a corner between two obstacles), then carry on.
   if (Math.hypot(bot.x - (bot.lastX ?? 1e9), bot.z - (bot.lastZ ?? 1e9)) > 1.5) { bot.lastX = bot.x; bot.lastZ = bot.z; bot.stillSince = now; }
   const stuckFor = now - (bot.stillSince ?? now), head = stuckFor > 1000 && stuckFor % 1500 < 500 ? head0 + (Math.floor(stuckFor / 1500) % 2 ? 2.2 : -2.2) : head0;
   for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (tryMove(g, bot, nx, nz)) { bot.yaw = h + Math.PI; return true; } }
   // Stuck: on classic maps walk a fresh route from here to where this one ends (at most every 2 s); else skip the waypoint.
   if (m.nav && now - (bot.replanAt || 0) > 2000) { bot.replanAt = now; const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz);
-    if (fresh.length) { bot.path = fresh.map(([x, z]) => [cx + x, cz + z]); bot.pi = 0; return true; } }
+    if (fresh.length) { bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; } }
   bot.pi++; return true;   // stuck: skip this waypoint
 }
 const wp = (g, i) => { const [x, z] = g.map.spawns[i]; return [ARENA.cx + x, ARENA.cz + z]; };

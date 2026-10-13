@@ -6,7 +6,7 @@ import { fx as recFx, freezeMusic } from './sound-bank.js';
 import { ARENA } from './facility-layout.js';
 import { WEAPONS, KNIVES, weaponById, ARMOR, hitDamage, defaultPistol } from './weapons-data.js';
 import { arenaArsenalOf } from './combat-logic.js';
-import { slotOf, PICK_R } from './arena-logic.js';
+import { slotOf, PICK_R, ROUND_BOUND } from './arena-logic.js';
 import { weaponModel } from './weapon-models.js';
 import { NADES } from './arena-nades.js';
 import { throwSound, explosion, beep } from './arena-nades-view.js';
@@ -33,7 +33,9 @@ const wpic = id => HAS_PIC.has(id) ? `<img class="wi" src="${ICON_DIR}w-${id}.pn
 const feedLine = (f, mine, ca = '', cv = '') => { const h = f.how || {}; return `<p class="${mine ? 'mine' : ''}"><span class="a"${ca ? ` style="color:${ca}"` : ''}>${esc(f.by)}</span>${h.blind ? MARK.blind : ''}${wpic(f.wid)}${h.noscope ? MARK.noscope : ''}${h.air ? MARK.air : ''}${h.smoke ? MARK.smoke : ''}${h.wallbang ? MARK.wallbang : ''}${f.head ? HS : ''}${h.far >= 35 ? `<small class="far">${h.far} m</small>` : ''}<span class="v"${cv ? ` style="color:${cv}"` : ''}>${esc(f.target)}</span>${f.assist ? `<small class="as">+ ${esc(f.assist)}</small>` : ''}</p>`; };
 const HS = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><circle cx="8" cy="7" r="5"/><rect x="6" y="11" width="4" height="4"/><circle cx="6" cy="7" r="1.2" fill="#000"/><circle cx="10" cy="7" r="1.2" fill="#000"/></svg>';
 
-export function createArenaUI({ voice = () => null, comms = () => null, report = () => null, world, lan, name, notify, scene, send, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null, invite = () => null }) {
+export function createArenaUI({ voice = () => null, comms = () => null, report = () => null, world, lan, name, notify, scene, send: sendRaw, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null, invite = () => null }) {
+  // Round-bound requests (buys, plant, defuse) carry the round they were made in (the host refuses stale ones).
+  const send = a => { const id = world.operations.game.combat?.d?.round?.id; return sendRaw(id && ROUND_BOUND.has(a.type) ? { ...a, round: id } : a); };
   const g = () => world.operations.game, me = () => key(name());
   const css = document.createElement('style'); css.textContent = `
 #ar-top{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:37;display:flex;gap:10px;align-items:center;font:800 18px ui-monospace,Menlo,monospace;color:#fff;text-shadow:0 2px 4px #000}#ar-top[hidden]{display:none}#ar-top span{background:#000a;border-radius:6px;padding:4px 12px}#ar-top small{font:600 11px system-ui;opacity:.75;letter-spacing:.1em}

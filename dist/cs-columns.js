@@ -6,7 +6,9 @@
 export const CELL = 16, MAXF = 3, HEAD = 74, STEP = 18, DROP = 260, BODY = 72, SLAB = 16;
 // The underside of the slab under floor `up`, above floor `low` (HU): SLAB thick, thinner where the gap is tight so a
 // body (BODY) still fits under it — two navigation floors that close are both walkable in the reference.
-export const slabBottom = (low, up) => Math.max(up - SLAB, Math.min(up - 2, low + BODY));   // HU: column size, floors per column, head room, step up, safe drop
+// The underside of the floor above a floor: a SLAB-thick slab, thinner (down to 2) where needed to leave a body plus a
+// step of room — walking down a slope into a low passage the head is up to a step above the floor it is entering.
+export const slabBottom = (low, up) => Math.max(up - SLAB, Math.min(up - 2, low + BODY + STEP));   // HU: column size, floors per column, head room, step up, safe drop
 const NONE = -1e9;
 
 // Height of an area at (x, y) along its slope axis.

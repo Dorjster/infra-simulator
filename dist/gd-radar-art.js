@@ -7,7 +7,8 @@ import { mapBoxes, walkable } from './arena-maps.js';
 
 const cache = new Map();
 // The floor as cells: { cols, rows, cell, cells (0 wall · 1 floor · 2 cover), ox, oz } in map coordinates.
-function cellsOf(m) {
+function cellsOf(m, layer = null) {
+  if (m.grid && layer === 'lower' && m.grid.lower) return { ...m.grid, cells: m.grid.lower, heights: null, ox: -m.size[0] / 2, oz: -m.size[1] / 2 };   // Nuke's lower level, on its own
   if (m.grid) return { ...m.grid, ox: -m.size[0] / 2, oz: -m.size[1] / 2 };
   const [w, d] = m.size, cell = 3, cols = Math.ceil(w / cell), rows = Math.ceil(d / cell), cells = new Uint8Array(cols * rows), boxes = mapBoxes(m, 0, 0), bd = { minX: -w / 2, maxX: w / 2, minZ: -d / 2, maxZ: d / 2 };
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const x = -w / 2 + (c + .5) * cell, z = -d / 2 + (r + .5) * cell; if (walkable(boxes, bd, x, z, .4)) { cells[r * cols + c] = 1; continue; }
@@ -22,13 +23,15 @@ function reach(G, pts) { const D = new Float32Array(G.cols * G.rows).fill(Infini
 // Callouts: the map's own, else its painted signs (A, B, MID, LONG…).
 export const calloutsOf = m => m.callouts?.length ? m.callouts : (m.decor || []).filter(d => d.kind === 'sign' && d.text && d.text.length > 1 && !/[⟵⟶]/.test(d.text)).map(d => ({ name: d.text[0] + d.text.slice(1).toLowerCase(), x: d.x, z: d.z }));
 // The callout area a point is in: the nearest callout within reach (70 units), else ''.
-export function locationOf(m, x, z) { let best = '', bd = 70 * 70; for (const c of calloutsOf(m)) { const d = (c.x - x) ** 2 + (c.z - z) ** 2; if (d < bd) { bd = d; best = c.name; } } return best; }
+// With `feet` (game units) on a map whose callouts know their floor, a place on another floor counts as far away
+// (on Nuke, standing at B under A says B Site).
+export function locationOf(m, x, z, feet) { let best = '', bd = 70 * 70; for (const c of calloutsOf(m)) { const d = (c.x - x) ** 2 + (c.z - z) ** 2 + (feet !== undefined && c.y !== undefined ? (Math.max(0, Math.abs(c.y - feet) - 6) * 3) ** 2 : 0); if (d < bd) { bd = d; best = c.name; } } return best; }
 
 // The radar picture: { canvas, scale (pixels per unit) }.
-export function radarImage(m, id = m.name, px = 2) {
-  const k = id + ':' + px; if (cache.has(k)) return cache.get(k);
+export function radarImage(m, id = m.name, px = 2, layer = null) {
+  const k = id + ':' + px + ':' + (layer || ''); if (cache.has(k)) return cache.get(k);
   const [w, d] = m.size, cv = typeof OffscreenCanvas !== 'undefined' && !globalThis.document ? new OffscreenCanvas(1, 1) : document.createElement('canvas'); cv.width = Math.ceil(w * px); cv.height = Math.ceil(d * px);
-  const g = cv.getContext('2d'), G = cellsOf(m), X = v => (v + w / 2) * px, Z = v => (v + d / 2) * px, cs = G.cell * px;
+  const g = cv.getContext('2d'), G = cellsOf(m, layer), X = v => (v + w / 2) * px, Z = v => (v + d / 2) * px, cs = G.cell * px;
   g.fillStyle = '#0b0f12'; g.fillRect(0, 0, cv.width, cv.height);
   // The coordinate grid (A… across, 1… down), faint, under everything.
   const n = 17, step = cv.width / n; g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1; for (let i = 1; i < n; i++) { g.beginPath(); g.moveTo(i * step, 0); g.lineTo(i * step, cv.height); g.moveTo(0, i * cv.height / n); g.lineTo(cv.width, i * cv.height / n); g.stroke(); }
@@ -52,9 +55,11 @@ export function radarImage(m, id = m.name, px = 2) {
   // Spawns (green outline) and bomb sites (orange box, yellow letter).
   const boxOf = pts => { let a = Infinity, b = Infinity, c = -Infinity, e = -Infinity; for (const [x, z] of pts) { a = Math.min(a, x); b = Math.min(b, z); c = Math.max(c, x); e = Math.max(e, z); } return [a - 12, b - 12, c + 12, e + 12]; };
   const label = (text, x, y, size, color = '#fff') => { g.font = `900 ${size}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = Math.max(2, size * .22); g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(text, x, y); g.fillStyle = color; g.fillText(text, x, y); };
-  for (const [side, pts, name] of [['t', m.t, 'T SPAWN'], ['ct', m.ct, 'CT SPAWN']]) { if (!pts?.length) continue; const [a, b, c, e] = boxOf(pts); g.strokeStyle = '#3ddc6a'; g.lineWidth = Math.max(2, px * 1.2); g.strokeRect(X(a), Z(b), (c - a) * px, (e - b) * px); g.fillStyle = 'rgba(61,220,106,.10)'; g.fillRect(X(a), Z(b), (c - a) * px, (e - b) * px); label(name, X((a + c) / 2), Z((b + e) / 2), Math.round(13 * px * .9)); }
-  for (const [L, [sx, sz, r]] of Object.entries(m.sites || {})) { const h = r * .7; g.strokeStyle = '#ff8a1e'; g.lineWidth = Math.max(2, px * 1.3); g.fillStyle = 'rgba(255,138,30,.12)'; g.fillRect(X(sx - h), Z(sz - h), 2 * h * px, 2 * h * px); g.strokeRect(X(sx - h), Z(sz - h), 2 * h * px, 2 * h * px); label(L, X(sx), Z(sz), Math.round(22 * px * .9), '#ffd33a'); }
+  // Two layers (Nuke): each shows its own sites and names; spawns are upstairs.
+  const lowY = m.grid?.lowerY, onLayer = y => lowY === undefined || y === undefined || (layer === 'lower') === (y < lowY), siteY = L => calloutsOf(m).find(c => c.place === 'Bombsite' + L)?.y;
+  for (const [side, pts, name] of [['t', m.t, 'T SPAWN'], ['ct', m.ct, 'CT SPAWN']]) { if (!pts?.length || layer === 'lower') continue; const [a, b, c, e] = boxOf(pts); g.strokeStyle = '#3ddc6a'; g.lineWidth = Math.max(2, px * 1.2); g.strokeRect(X(a), Z(b), (c - a) * px, (e - b) * px); g.fillStyle = 'rgba(61,220,106,.10)'; g.fillRect(X(a), Z(b), (c - a) * px, (e - b) * px); label(name, X((a + c) / 2), Z((b + e) / 2), Math.round(13 * px * .9)); }
+  for (const [L, [sx, sz, r]] of Object.entries(m.sites || {})) { if (layer === 'lower' && !onLayer(siteY(L))) continue; const h = r * .7; g.strokeStyle = '#ff8a1e'; g.lineWidth = Math.max(2, px * 1.3); g.fillStyle = 'rgba(255,138,30,.12)'; g.fillRect(X(sx - h), Z(sz - h), 2 * h * px, 2 * h * px); g.strokeRect(X(sx - h), Z(sz - h), 2 * h * px, 2 * h * px); label(L, X(sx), Z(sz), Math.round(22 * px * .9), '#ffd33a'); }
   // Callout names.
-  for (const c of calloutsOf(m)) { if (/^(A|B) Site$|^T Spawn$|^CT Spawn$/i.test(c.name)) continue; label(c.name.toUpperCase(), X(c.x), Z(c.z), Math.round(7.5 * px)); }
+  for (const c of calloutsOf(m)) { if (/^(A|B) Site$|^T Spawn$|^CT Spawn$/i.test(c.name) || !onLayer(c.y)) continue; label(c.name.toUpperCase(), X(c.x), Z(c.z), Math.round(7.5 * px)); }
   const out = { canvas: cv, scale: px }; cache.set(k, out); return out;
 }

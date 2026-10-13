@@ -10,6 +10,7 @@ import { ARENA_MAPS, mapBoxes } from '../dist/arena-maps.js';
 import { CS_MAP_IDS } from '../dist/cs-maps/themes.js';
 import { createMoveState, moveStep, blocked, MOVE } from '../dist/arena-move.js';
 import { EYE } from '../dist/weapons-data.js';
+import { locationOf } from '../dist/gd-radar-art.js';
 let n = 0; const ok = (name, c, d = '') => { n++; assert(c, name + (d ? ' · ' + d : '')); };
 const only = process.argv.slice(2), report = [];
 for (const id of CS_MAP_IDS) { if (only.length && !only.includes(id)) continue;
@@ -38,6 +39,11 @@ for (const id of CS_MAP_IDS) { if (only.length && !only.includes(id)) continue;
   for (const L of ['A', 'B']) { const [gx, gz] = M.siteGoals[L], f = nav.floorAt(gx, gz); ok(`${id}: ${L} site is plantable at its goal`, nav.site(gx, gz, f) === L, String(nav.site(gx, gz, f))); }
   ok(`${id}: no site at the T spawn`, nav.site(M.t[0][0], M.t[0][1], nav.floorAt(M.t[0][0], M.t[0][1])) === null);
   ok(`${id}: callouts`, M.callouts.length >= 12, M.callouts.length);
+  // Callouts know their floor: standing at each one (at its height) names it — on stacked maps too.
+  ok(`${id}: every callout has a floor height and names its own spot`, M.callouts.every(c => Number.isFinite(c.y) && locationOf(M, c.x, c.z, c.y) === c.name), M.callouts.filter(c => locationOf(M, c.x, c.z, c.y) !== c.name).map(c => c.name).join(', '));
+  if (id === 'nuke') { const [bx, bz] = M.siteGoals.B, [ax, az] = M.siteGoals.A;
+    ok('nuke: a lower radar layer (B site, tunnels) below the upper floor', !!M.grid.lower && M.grid.lower.some(Boolean) && nav.floorAt(bx, bz) < M.grid.lowerY && nav.floorAt(ax, az) > M.grid.lowerY, M.grid.lowerY);
+    ok('nuke: standing at B (under A) says B Site; at A, A Site', locationOf(M, bx, bz, nav.floorAt(bx, bz)) === 'B Site' && locationOf(M, ax, az, nav.floorAt(ax, az)) === 'A Site'); }
   report.push(id + ' ' + Object.entries(times).map(([k, v]) => k + ' ' + v + 's').join(' '));
 }
 console.log('PASS: classic maps · ' + n + ' checks\n  ' + report.join('\n  '));

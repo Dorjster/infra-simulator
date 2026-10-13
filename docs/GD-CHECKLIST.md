@@ -44,7 +44,7 @@ Last updated: 2026-10-13.
 |---|---|---|
 | Lobby → teams → warmup → freeze → live → result → halftime → final | Existing | `gd-match.mjs` |
 | One authoritative round end, no double rewards | Existing | `gd-match.mjs` "one outcome" |
-| Match ID / round ID / revision on events | Missing | |
+| Match ID / round ID / revision on events | Verified | Each match has an id and each round (restarts and warmup too) its own; buys, refunds, plant and defuse carry their round and the host refuses ones from a round that has ended; every combat state leaving the host (frames, world snapshots, replies) carries a rising revision and clients never step back to an older one (bug fixed: an action reply arriving after a newer frame could restore older combat state until the next change) · `gd-netstate.mjs` (real room, 11 checks). The client-side "ignore older" rule is covered only indirectly by the LAN browser suites |
 | Late-joiner state | Partial | Joiners get mode, map, round and loadout on the combat stream; not audited field by field |
 | Reconnect identity | Partial | Name-based identity |
 
@@ -127,7 +127,8 @@ Existing (v43–v44): throw strengths, smoke volume, HE holes in smoke, molotov 
 
 | Item | Status | Evidence / gap |
 |---|---|---|
-| Radar from the map's own grid | Partial | Classic maps draw from their columns; floor indicator for stacked maps missing |
+| Radar from the map's own grid | Verified | Classic maps draw from their columns |
+| Floors on the radar | Verified | Team mates and spotted enemies a floor above or below you carry ▲ / ▼; Nuke has a separate lower-level layer shown while you are down there ("LOWER · B SITE"); callouts know their floor, so the location label and radio callouts name the right one (bug fixed: standing at B on Nuke said "Hut") · `gd-classic-maps.mjs` (every callout names its own spot on all 8 maps), `gd-radar-e2e` 11/11 |
 | Spotting with real 3D sight | Verified | `gd-radar.js` uses the map's sight test |
 | Bomb carried / dropped / planted | Existing | |
 
@@ -144,13 +145,13 @@ All eight are rebuilt at true scale from the CS:GO navigation meshes (awpy, MIT)
 | Dust II | Verified | Verified | Verified | Verified | Architectural detail; doors |
 | Mirage | Verified | Verified | Verified | Verified | Ladder room ladder |
 | Inferno | Verified | Verified | Verified | Verified | Detail |
-| Nuke | Verified | Verified | Verified | Verified (T bots rarely plant on Hard) | Vents, ladders; radar floor indicator |
+| Nuke | Verified | Verified | Verified | Verified | Vents (too narrow to drop through standing: routes avoid them), ladders. Fixed: a ceiling inherited from Outside made Secret's entrance too low to walk into |
 | Cache | Verified | Verified | Verified | Verified | Vents |
 | Anubis | Verified | Verified | Verified | Verified | Water look |
 | Ancient | Verified | Verified | Verified | Verified | Vegetation |
 | Train | Verified | Verified | Verified | Verified | Overview older than the nav (railcars inferred); ladders |
 
-Evidence: `tests/gd-classic-maps.mjs` (288 checks), `tests/gd-bots.mjs` (24 full bot matches). First-person walkthrough captures are partial (Dust II only).
+Evidence: `tests/gd-classic-maps.mjs` (298 checks), `tests/gd-bots.mjs` (24 full bot matches, 112 checks). Geometry rules changed this round: a tight gap between floors leaves a body plus a step of room; ceilings are only borrowed from a neighbouring level when they leave a body plus two steps; a route may drop only where a body fits past the edge. First-person walkthrough captures are partial (Dust II only).
 
 ## 14. Graphics
 
@@ -160,7 +161,8 @@ Partial: true-scale maps, materials per theme, tunnel interiors, shadows on High
 
 | Item | Status | Evidence / gap |
 |---|---|---|
-| Bots walk stacked maps, plant, defuse, use cover | Verified | `gd-bots.mjs` |
+| Bots walk stacked maps, plant, defuse, use cover | Verified | `gd-bots.mjs`: 24 full matches (8 maps × 3 difficulties), 112 checks: no Terrorist stands still 10 s on the way (fighting, planting and arriving excepted), bots plant on every map. Bugs fixed: bots could not walk off a ledge (the edge counted as a wall; now the body rests on the highest floor under it, like players); a bot that skipped its last waypoint while stuck never re-planned; waypoints counted as reached from the ledge above them (route points now carry their floor height); Terrorists on Nuke took the walk to B across A (now routes keep 160 units clear of the other site: Secret) |
+| Bot balance | Partial | Nuke: Terrorists win mostly by fighting (plants 2 / 2 / 0 on easy / normal / hard); Ancient hard 0–13. No grouping before an execute yet |
 | Practice mode | Missing | |
 
 ## 16. Scoreboard, spectators, results
