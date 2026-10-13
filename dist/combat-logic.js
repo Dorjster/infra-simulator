@@ -58,7 +58,7 @@ export function takeReload(game, name, r, id) {
   const C = state(game), k = key(name), s = (C.shots ??= {})[k] ??= { n: null, r: null, dry: [] }; r = Math.floor(+r);
   if (!Number.isFinite(r)) return false; if (s.r === null || r < s.r || r > s.r + 50) { s.r = r; return false; }
   if (r === s.r) return false; s.r = r; const w = weaponById(id); if (!isFirearm(w)) return false;
-  const a = ammoOf(game, name, id), move = Math.min(w.mag - a[0], a[1]); if (move <= 0) return false; a[0] += move; a[1] -= move; setAmmo(game, name, id, a); return true;
+  const a = ammoOf(game, name, id), move = Math.min(w.mag - a[0], a[1]); if (move <= 0) return false; a[0] += move; if (!game.arena?.practice?.ammo) a[1] -= move; setAmmo(game, name, id, a); return true;   // practice: the reserve never runs down
 }
 // The pose stream (room.mjs): shots and reloads since the last pose, for the gun in hand. Returns true on change.
 export function poseAmmo(game, name, shot, weapon) {

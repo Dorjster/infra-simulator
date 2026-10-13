@@ -33,15 +33,35 @@ const LOOK = {
   tunnel: [g => { speckle(g, 256, '#6a5641', .2, 5000); g.strokeStyle = 'rgba(30,20,10,.35)'; for (let y = 0; y < 256; y += 48) { g.beginPath(); g.moveTo(0, y + rnd() * 6); g.lineTo(256, y + rnd() * 6); g.stroke(); } }, 22],
   tunnelfloor: [g => { speckle(g, 256, '#7a6448', .2, 5000); for (let i = 0; i < 30; i++) { g.fillStyle = `rgba(40,28,15,${rnd() * .18})`; g.fillRect(rnd() * 256, rnd() * 256, 20 + rnd() * 50, 10 + rnd() * 30); } }, 20],
   tunnelroof: [g => { g.fillStyle = '#3e3022'; g.fillRect(0, 0, 256, 256); for (let x = 0; x < 256; x += 64) { g.fillStyle = '#2a1f15'; g.fillRect(x, 0, 18, 256); g.fillStyle = 'rgba(255,220,170,.06)'; g.fillRect(x + 18, 0, 3, 256); } speckle(g, 256, 'rgba(0,0,0,0)', .1, 1500); }, 16],
+  'crate-dark': [g => { g.fillStyle = '#5e4128'; g.fillRect(0, 0, 256, 256); }, 8], 'crate-metal': [g => { g.fillStyle = '#5d6b58'; g.fillRect(0, 0, 256, 256); }, 8], 'crate-blue': [g => { g.fillStyle = '#3c5c80'; g.fillRect(0, 0, 256, 256); }, 8],
+  stoneblock: [g => { speckle(g, 256, '#c9a676', .12); }, 8], fieldblock: [g => { speckle(g, 256, '#8f8f7c', .14); }, 8], fieldstone: [g => { speckle(g, 256, '#8e8b78', .16); }, 12],
   roof: [g => { speckle(g, 256, '#6d5f52', .15); for (let y = 0; y < 256; y += 20) { g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(0, y, 256, 3); } }, 14],
 };
+// Photo textures (CC0, ambientCG — see MODEL-SOURCES.md): file, tint (multiplies the photo) and world units per tile.
+// The drawn texture above stands in until the photo has loaded (no shader change: the map is swapped in place).
+const PHOTO = {
+  sand: ['sand', 0xf2dcb4, 18], adobe: ['plaster', 0xe9cf9e, 14], plaster: ['plaster', 0xf3e4c6, 14], stone: ['stone', 0xffeccc, 12],
+  sandstone: ['sandstone', 0xf6d49a, 16], ancientstone: ['ancientstone', 0xe8e4d6, 12], concrete: ['concrete', 0xe9ebe8, 16],
+  tunnel: ['plaster', 0xa48a6c, 14], tunnelfloor: ['tunnelfloor', 0xc7ab84, 14], 'metal-blue': ['metal-blue', 0x7d9fcb, 10],
+  wood: ['wood', 0xffffff, 8], roof: ['roof', 0xffffff, 6], brick: ['brick', 0xf0e6dc, 10], 'metal-green': ['metal-green', 0xffffff, 10], fieldstone: ['fieldstone', 0xd8dcc6, 12],
+  // Crates and blocks, a kind per map (themes.js crate): weathered planks, dark planks, painted metal, stone blocks.
+  crate: ['crate', 0xffe2bc, 6], 'crate-dark': ['crate', 0xb08a68, 6], 'crate-metal': ['metal-green', 0xc9d4c4, 8], 'crate-blue': ['metal-blue', 0xa8c0e0, 8],
+  stoneblock: ['sandstone', 0xffe6c0, 7], fieldblock: ['fieldstone', 0xcfd6be, 8],
+};
+const tileOf = name => PHOTO[name]?.[2] ?? (LOOK[name] || LOOK.concrete)[1];
+const photoLoader = typeof document !== 'undefined' ? new THREE.TextureLoader() : null;
+function photo(m, name) { const P = PHOTO[name]; if (!P || !photoLoader) return; m.color.setHex(P[1]);
+  photoLoader.load(new URL('./textures/' + P[0] + '.jpg', import.meta.url).href, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; m.map = t; for (const v of vmats.values()) if (v.userData.base === name) v.map = t; }); }
 const mats = new Map();
 function material(name) {
   if (mats.has(name)) return mats.get(name); const [draw] = LOOK[name] || LOOK.concrete, map = tex(draw);
   // Map surfaces: Lambert (diffuse) lighting — the walls and floors cover the whole screen, and at Retina resolution the
   // physically based shader cost a few ms a frame for no visible gain on rough plaster, sand and stone.
-  const m = name.startsWith('metal') ? new THREE.MeshStandardMaterial({ map, color: map ? 0xffffff : 0x999999, roughness: .55, metalness: .35 }) : new THREE.MeshLambertMaterial({ map, color: map ? 0xffffff : 0x999999 }); if (name === 'tunnelroof') m.emissive.setHex(0x1c140c); /* never pitch black from below */ m.userData.shared = true; mats.set(name, m); return m;
+  const m = name.startsWith('metal') ? new THREE.MeshStandardMaterial({ map, color: map ? 0xffffff : 0x999999, roughness: .55, metalness: .35 }) : new THREE.MeshLambertMaterial({ map, color: map ? 0xffffff : 0x999999 }); if (name === 'tunnelroof') m.emissive.setHex(0x1c140c); /* never pitch black from below */ m.userData.shared = true; mats.set(name, m); photo(m, name); return m;
 }
+// The classic maps' surfaces carry baked shade per vertex (cs-mesh.js: corner shading, wall feet, lit undersides).
+const vmats = new Map();
+function shadedMaterial(name) { let m = vmats.get(name); if (!m) { m = material(name).clone(); m.vertexColors = true; m.userData.shared = true; m.userData.base = name; vmats.set(name, m); } return m; }
 // A box with world-scaled UVs (each face tiles its texture by its own size).
 function boxGeometry(b, tile) {
   const w = b.maxX - b.minX, h = b.y1 - b.y0, d = b.maxZ - b.minZ, g = new THREE.BoxGeometry(w, h, d);
@@ -64,21 +84,34 @@ const SITE_GEO = new THREE.PlaneGeometry(1, 1); SITE_GEO.userData.shared = true;
 // their textures before anyone enters the arena.
 export function arenaWarmMeshes() {
   const names = new Set(['crate', 'metal-blue']); for (const { id } of MAP_LIST) { const T = THEMES[id]; if (T) { for (const k of ['wall', 'floor', 'indoorWall', 'indoorFloor', 'car']) if (T[k]) names.add(T[k]); continue; } const m = ARENA_MAPS[id]; names.add(m.floor); for (const s of m.solids) names.add(s[5]); }   /* classic maps: their theme's materials (no build needed) */
-  return [...propWarmMeshes(), ...[...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; }), ...Object.values(SITE_MAT).map(m => new THREE.Mesh(SITE_GEO, m))];
+  const shadedBox = () => { const g = new THREE.BoxGeometry(1, 1, 1); g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count * 3).fill(1), 3)); return g; };
+  return [...propWarmMeshes(), ...[...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; }), ...[...names].map((n, i) => { const m = new THREE.Mesh(shadedBox(), shadedMaterial(n)); m.position.x = i * 2; m.position.z = 3; m.castShadow = m.receiveShadow = true; return m; }), ...Object.values(SITE_MAT).map(m => new THREE.Mesh(SITE_GEO, m))];
 }
 export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.userData.gd = true; group.visible = false; scene.add(group);
   let current = null, boxes = [], bounds = null, savedBg = null, savedFog = null;
-  function clearMap() { for (const o of [...group.children]) { if (o.userData.ground) continue;   // dropped guns: arena-ui owns them
+  // Outdoor light per map: a strong warm sun (hard building shadows, as on the real maps), the sky's colour from above
+  // and the ground's warm bounce from below, a soft fill so no shade is pitch black, and a sky dome — deep blue
+  // overhead, pale and hazy at the horizon (the fog takes the horizon colour).
+  const fill = new THREE.AmbientLight(0xffffff, .35); fill.userData.keep = true; group.add(fill);
+  const DOME = new THREE.SphereGeometry(1000, 32, 16), WHITE = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1), domeMat = new THREE.MeshBasicMaterial({ map: WHITE, vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });   // (a texture: the High preset's glow pass leaves it alone — an untextured bright material is boosted into bloom and washes the screen white)
+  WHITE.needsUpdate = true; domeMat.userData.shared = true; DOME.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(DOME.attributes.position.count * 3), 3));
+  DOME.userData.shared = true; const dome = new THREE.Mesh(DOME, domeMat); dome.userData.keep = true; dome.renderOrder = -1; dome.frustumCulled = false; dome.position.set(ARENA.cx, 0, ARENA.cz); group.add(dome);
+  function outdoor(id) { const T = THEMES[id] || {}, base = new THREE.Color(T.sky ?? ARENA_MAPS[id]?.sky ?? 0x9fb8cc), warm = !/nuke|cache|train/.test(id);
+    const zenith = base.clone().lerp(new THREE.Color(0x2f6fc8), .6), horizon = base.clone().lerp(new THREE.Color(0xeef3f6), .3);
+    return { sun: T.sun ?? 0xfff0d6, sunK: 1.3, sky: base.clone().lerp(new THREE.Color(0xffffff), .25).getHex(), ground: warm ? 0x9a8464 : 0x7d8188, hemiK: .85, zenith: zenith.getHex(), horizon: horizon.getHex(), fill: warm ? 0xfff1dc : 0xeef2f6 }; }
+  function sky(L) { fill.color.setHex(L.fill); const P = DOME.attributes.position, C = DOME.attributes.color, z = new THREE.Color(L.zenith), h = new THREE.Color(L.horizon), c = new THREE.Color();
+    for (let i = 0; i < P.count; i++) { const t = Math.max(0, P.getY(i) / 1000); c.copy(h).lerp(z, Math.pow(t, .4)); C.setXYZ(i, c.r, c.g, c.b); } C.needsUpdate = true; }
+  function clearMap() { for (const o of [...group.children]) { if (o.userData.ground || o.userData.keep) continue;   // dropped guns (arena-ui), the sky dome and fill light stay   // dropped guns: arena-ui owns them
     group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
   function build(id) {
     if (current === id) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id;
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
-    if (map.columns) { for (const mesh of buildColumnMeshes(map, material, m => (LOOK[m] || LOOK.concrete)[1], cx, cz)) group.add(mesh);   // classic maps: drawn from their columns (not aim-raycast: shots and the arena use the collision boxes)
+    if (map.columns) { for (const mesh of buildColumnMeshes(map, shadedMaterial, tileOf, cx, cz)) group.add(mesh);   // classic maps: drawn from their columns (not aim-raycast: shots and the arena use the collision boxes)
       for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; const g = map.siteGoals?.[L] || [x, z], fy = map.nav.floorAt(g[0], g[1]); s.position.set(cx + g[0], (Number.isFinite(fy) ? fy : 0) + .08, cz + g[1]); s.scale.setScalar(Math.min(r, 30) * 1.2); s.renderOrder = 1; group.add(s); }
       return; }
-    const byMat = new Map(); for (const b of boxes) { if (b.prop) continue; const [, tile] = LOOK[b.mat] || LOOK.concrete; (byMat.get(b.mat) || byMat.set(b.mat, []).get(b.mat)).push(boxGeometry(b, tile)); }
-    const floor = { minX: bounds.minX, maxX: bounds.maxX, minZ: bounds.minZ, maxZ: bounds.maxZ, y0: -1, y1: 0 }; (byMat.get(map.floor) || byMat.set(map.floor, []).get(map.floor)).push(boxGeometry(floor, (LOOK[map.floor] || LOOK.concrete)[1]));
+    const byMat = new Map(); for (const b of boxes) { if (b.prop) continue; const tile = tileOf(b.mat); (byMat.get(b.mat) || byMat.set(b.mat, []).get(b.mat)).push(boxGeometry(b, tile)); }
+    const floor = { minX: bounds.minX, maxX: bounds.maxX, minZ: bounds.minZ, maxZ: bounds.maxZ, y0: -1, y1: 0 }; (byMat.get(map.floor) || byMat.set(map.floor, []).get(map.floor)).push(boxGeometry(floor, tileOf(map.floor)));
     for (const [mat, geos] of byMat) { const mesh = new THREE.Mesh(merge(geos), material(mat)); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.arena = true; group.add(mesh); }   // not aim-raycast (the facility's per-frame pick ray): the arena uses its collision boxes
     { const P = buildProps(map, cx, cz); for (const m of P.meshes) { m.userData.arena = true; group.add(m); } for (const l of P.lights.slice(0, 4)) { const pl = new THREE.PointLight(0xffd9a0, 6, 45, 2); pl.position.set(l.x, l.y, l.z); group.add(pl); } }   // props as their own shapes, lamps lit (at most 4 real lights: every map then shares the same shader programs, and the per-pixel cost stays fixed)
     for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; s.position.set(cx + x, .06, cz + z); s.scale.setScalar(r * 1.6); s.renderOrder = 1; group.add(s); }
@@ -87,8 +120,8 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     group,
     get map() { return current; }, get boxes() { return boxes; }, get bounds() { return bounds; },
     // Show / hide the arena (and swap the dark indoor background for a sky while inside it).
-    show(id) { build(id); group.visible = true; if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id]; scene.background = new THREE.Color(map?.sky || 0x9fb8cc); scene.fog = new THREE.FogExp2(map?.sky || 0x9fb8cc, .0011); },   // light haze: the far side of the map stays visible   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
-    hide() { group.visible = false; if (savedBg !== null) { scene.background = savedBg; scene.fog = savedFog; savedBg = null; } },
+    show(id) { build(id); group.visible = true; if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id], L = outdoor(id); scene.background = new THREE.Color(L.horizon); scene.fog = new THREE.FogExp2(L.horizon, .0011); scene.userData.outdoor = L; sky(L); },   // light haze: the far side of the map stays visible   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
+    hide() { group.visible = false; delete scene.userData.outdoor; if (savedBg !== null) { scene.background = savedBg; scene.fog = savedFog; savedBg = null; } },
     inArena: z => z < ARENA.maxZ,
     clear(x, z) { return !!bounds && walkable(boxes, bounds, x, z); },
     // What the feet are on at (x, z) with feet at height y, for footstep sounds: wood, metal, grass (sand) or concrete.

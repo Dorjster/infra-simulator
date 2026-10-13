@@ -61,3 +61,7 @@ Full notices: `dist/cs-maps/LICENSES.md`.
 - Heights, floors, place names and connections: [awpy](https://github.com/pnxenopoulos/awpy) navigation data, commit a5434abc06 — MIT, Peter Xenopoulos.
 - Floor / wall / cover outline: radar overviews from Lexogrine's [csgo-react-hud](https://github.com/lexogrine/csgo-react-hud) (commit 2c6bbaa31e) — MIT, Lexogrine, all eight maps (earlier builds sampled boltobserv's GPL-3.0 copies for six maps; replaced).
 - The layouts are Valve's Counter-Strike designs; the reference data is derived from Valve's game files.
+
+## Map surface textures (`dist/textures/`)
+
+CC0 photo textures from [ambientCG](https://ambientcg.com) (1K JPG colour maps, resaved at quality 80): Ground079S (sand), Ground079L (tunnel floor), Plaster002 (plaster: Dust II and Mirage walls, tunnels), Tiles143 (stone), Tiles142 (sandstone), Concrete034 (concrete), CorrugatedSteel007A (blue metal), PavingStones138 (Ancient paving), Planks037A (crates), WoodFloor043 (wood), RoofingTiles012A (Inferno roof ledges), Bricks094 (brick), PaintedMetal006 (green metal), Bricks075A (Ancient fieldstone walls).

@@ -33,8 +33,8 @@ export function buildCsMap(id, nav, T) {
   const segs = new Array(N), indoor = (i, k) => !!T.indoor?.[placeOf(i, k)];
   for (let i = 0; i < N; i++) { const out = []; if (!n[i]) { if (wallTop[i] > zLow) out.push([zLow, wallTop[i], T.wall, false]); segs[i] = out; continue; }   // (nothing at all far outside the map)
     const f0 = z[i * MAXF], crate = flags[i] & CRATE;
-    if (f0 > zLow) out.push([zLow, f0, crate && n[i] === 1 ? (flags[i] & CAR ? T.car || 'metal-blue' : 'crate') : indoor(i, 0) ? T.indoorFloor : T.floor, true]);
-    for (let k = 1; k < n[i]; k++) { const f = z[i * MAXF + k], topCrate = crate && k === n[i] - 1, slab = slabBottom(z[i * MAXF + k - 1], f), base = G.crateBase[i] > NONE ? Math.round(G.crateBase[i] / Q) * Q : slab; out.push([topCrate ? Math.min(base, slab) : slab, f, topCrate ? (flags[i] & CAR ? T.car || 'metal-blue' : 'crate') : T.floor, true]); }   // a crate (or car) on an upper level stands on that level's floor
+    if (f0 > zLow) out.push([zLow, f0, crate && n[i] === 1 ? (flags[i] & CAR ? T.car || 'metal-blue' : T.crate || 'crate') : indoor(i, 0) ? T.indoorFloor : T.floor, true]);
+    for (let k = 1; k < n[i]; k++) { const f = z[i * MAXF + k], topCrate = crate && k === n[i] - 1, slab = slabBottom(z[i * MAXF + k - 1], f), base = G.crateBase[i] > NONE ? Math.round(G.crateBase[i] / Q) * Q : slab; out.push([topCrate ? Math.min(base, slab) : slab, f, topCrate ? (flags[i] & CAR ? T.car || 'metal-blue' : T.crate || 'crate') : T.floor, true]); }   // a crate (or car) on an upper level stands on that level's floor
     if (above[i] > NONE) { const a = Math.round(above[i] / Q) * Q; out.push([a, Math.max(a + SLAB, wallTop[i]), indoor(i, n[i] - 1) ? T.indoorWall : T.wall, false]); }
     segs[i] = out; }
   // Merge equal segments of neighbouring columns into boxes (grow right, then down).
@@ -67,7 +67,7 @@ export function buildCsMap(id, nav, T) {
     let best = 0, bd = Infinity; for (let j = 0; j < cells.length; j++) { const i = cells[j], d = (i % cols - cx) ** 2 + (((i / cols) | 0) - cz) ** 2; if (d < bd) { bd = d; best = j; } }
     callouts.push({ name: calloutName(name), x: +gx(cells[best] % cols).toFixed(1), z: +gz((cells[best] / cols) | 0).toFixed(1), y: +gy(hs[best]).toFixed(1), place: name }); }
   const navApi = makeNav(G, { W, D, zLow, above, siteMask });
-  const columns = { G, segs, zLow, W, D, cell: CELL * U, U, floorMats: new Set([T.floor, T.indoorFloor, 'crate', T.car || 'metal-blue']) };   // for the renderer (cs-mesh.js)
+  const columns = { G, segs, zLow, W, D, cell: CELL * U, U, floorMats: new Set([T.floor, T.indoorFloor, T.crate || 'crate', T.car || 'metal-blue']) };   // for the renderer (cs-mesh.js)
   const map = { id, name: T.name, kind: 'defuse', classic: true, columns, size: [W, D], floor: T.floor, sky: T.sky, sun: T.sun, solids, props: [], decor: [], t, ct, sites, siteMask, callouts, nav: navApi, scaled: true,
     floorAt: (x, zz, yEye) => navApi.floorAt(x, zz, yEye), siteGoals, get routes() { return this._routes ??= navApi.routes(t[0], ct[0], siteGoals, midGoal, { A: goalH('A'), B: goalH('B') }); },
     grid: { cols, rows, cell: CELL * U, classic: true, cells: (() => { const g = new Uint8Array(N); for (let i = 0; i < N; i++) g[i] = !n[i] ? 0 : flags[i] & CRATE ? 2 : 1; return g; })(), heights: (() => { const h = new Float32Array(N); for (let i = 0; i < N; i++) h[i] = n[i] ? gy(top(i)) : 0; return h; })(), stacked: (() => { const s = new Uint8Array(N); for (let i = 0; i < N; i++) s[i] = n[i] > 1 ? 1 : above[i] > NONE ? 2 : 0; return s; })(), roofs: [], ramps: [],

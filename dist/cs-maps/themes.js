@@ -21,6 +21,20 @@ export const THEMES = {
   train: { name: 'Train', navFootprint: true, car: 'metal-blue', wall: 'concrete', floor: 'concrete', indoorWall: 'concrete', indoorFloor: 'concrete', sky: 0xa9b8c6, sun: 0xfff2dc,
     indoor: { Tunnels: 140, Tunnel1: 140, Tunnel2: 140, LockerRoom: 140, Kitchen: 140, LadderBottom: 140, PopDog: 140, Connector: 140 } },
 };
+// The look of the outdoor walls, from reference screenshots of each map: palette (each block of buildings takes one
+// colour — a multiplier on the wall texture), band (a painted stripe, Hammer units above the wall's foot: Nuke's blue)
+// and cap (the ledge along a wall's top: material, height and how far it sticks out, Hammer units; Inferno's roof tiles).
+const LOOKS = {
+  dust2: { crate: 'crate', palette: [[1, 1, 1], [1.04, .96, .86], [.9, .8, .66], [1.06, 1.02, .94]], cap: { h: 7, out: 3, shade: .8 } },
+  mirage: { crate: 'crate', palette: [[1.04, 1.01, .95], [1, .94, .84], [.96, .88, .76], [1.06, 1.04, 1]], cap: { h: 6, out: 3, shade: .78 } },
+  inferno: { crate: 'crate-dark', palette: [[1.04, 1, .92], [1.08, .76, .56], [1.06, .78, .74], [1.04, .9, .6], [.96, .92, .86]], cap: { mat: 'roof', h: 9, out: 6, shade: .95 } },
+  nuke: { crate: 'crate-metal', palette: [[1.1, 1.1, 1.1], [1.02, 1.04, 1.06]], band: { from: 64, to: 80, color: [.42, .62, .92] }, cap: { h: 5, out: 2, shade: .85 } },
+  cache: { crate: 'crate-blue', palette: [[1, 1, 1], [.9, .92, .9], [.96, 1, .94], [1.04, 1, .96]], cap: { h: 6, out: 2, shade: .78 } },
+  anubis: { crate: 'stoneblock', palette: [[1, 1, 1], [1.04, .96, .84], [.92, .86, .74]], cap: { h: 8, out: 3, shade: .8 } },
+  ancient: { crate: 'fieldblock', wall: 'fieldstone', palette: [[.92, .96, .86], [.86, .92, .8], [1, 1, .94]], cap: { h: 8, out: 2, shade: .74 } },
+  train: { crate: 'crate-dark', indoorWall: 'brick', palette: [[1, 1, 1], [.92, .9, .86], [.86, .9, .92]], cap: { h: 5, out: 2, shade: .8 } },
+};
+for (const [id, L] of Object.entries(LOOKS)) Object.assign(THEMES[id], L);
 export const CS_MAP_IDS = Object.keys(THEMES);
 // 'TopofMid' → 'Top of Mid', 'BombsiteA' → 'A Site', 'CTSpawn' → 'CT Spawn'.
 export const calloutName = p => ({ BombsiteA: 'A Site', BombsiteB: 'B Site', TSpawn: 'T Spawn', CTSpawn: 'CT Spawn', TopofMid: 'Top of Mid', BackofB: 'Back of B', CTSideUpper: 'CT Upper', TSideUpper: 'T Upper', TSideLower: 'T Lower', SnipersNest: 'Window' }[p]

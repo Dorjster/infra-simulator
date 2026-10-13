@@ -23,10 +23,14 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     envTexture = pmrem.fromScene(room, .04).texture; scene.environmentIntensity = .38; room.dispose?.(); pmrem.dispose(); }
   catch (e) { console.warn('reflections unavailable:', e.message); }                                            // the game still runs without them
   // Shadows: the key light casts; its shadow box moves with the player.
-  const SHADOW_BOX = 70, sunOffset = sun.position.clone(), LIGHT_DIST = 17;
+  const SHADOW_BOX = 70, OUT_BOX = 90, SUN_DIR = new THREE.Vector3(), OUT_TILT = new THREE.Vector3(1, .62, 1), ONE3 = new THREE.Vector3(1, 1, 1),   // outdoors the sun a little lower: longer shadows
+    sunOffset = sun.position.clone(), LIGHT_DIST = 17;
   sun.shadow.camera.left = sun.shadow.camera.bottom = -SHADOW_BOX; sun.shadow.camera.right = sun.shadow.camera.top = SHADOW_BOX;
   sun.shadow.camera.near = .5; sun.shadow.camera.far = 170; sun.shadow.bias = -.0004; sun.shadow.normalBias = .04; scene.add(sun.target);
-  let composer = null, bloom = null, mode = '', frame = 0, fxOn = false; const hemi = scene.children.find(o => o.isHemisphereLight), base = { sun: sun.intensity, hemi: hemi?.intensity };
+  let composer = null, bloom = null, mode = '', frame = 0, fxOn = false; const hemi = scene.children.find(o => o.isHemisphereLight), base = { sun: sun.intensity, hemi: hemi?.intensity, sunColor: sun.color.clone(), sky: hemi?.color.clone(), ground: hemi?.groundColor.clone() };
+  // scene.userData.outdoor (Global Defensive maps): { sun, sunK, sky, ground, hemiK } — that map's sunlight and sky light, and the sun
+  // far enough out for buildings to cast their shadows; the hall's lighting comes back when it is cleared.
+  let lastOutdoor = null;
   const auto = (v, def) => v === 'on' ? true : v === 'off' ? false : def;
   const high = () => !software && auto(prefs().effects, ['High', 'Ultra'].includes(preset()));
   const reflect = () => !!envTexture && auto(prefs().reflections, ['High', 'Ultra'].includes(preset()));
@@ -36,7 +40,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap; sun.castShadow = on;
     AVATAR_SHADOW.visible = !on;                                                                             // contact shadows only without real ones
     sun.intensity = base.sun * (on ? 1.55 : 1); if (hemi) hemi.intensity = base.hemi * (on ? .72 : 1);              // more light from the shadow-casting key on High
-    sun.shadow.mapSize.setScalar(fx === 'Ultra' ? 2048 : 1024); sun.shadow.map?.dispose(); sun.shadow.map = null;
+    sun.shadow.mapSize.setScalar(fx === 'Ultra' ? 2048 : 1024); sun.shadow.map?.dispose(); sun.shadow.map = null; lastOutdoor = undefined;   // (outdoor shadow settings re-applied on the next frame)
     if (on) flagShadows();   // first time at once; the job keeps it current
     if (on && !composer) {
       const size = renderer.getDrawingBufferSize(new THREE.Vector2());
@@ -129,11 +133,19 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   };
   function draw() {
       apply(); frame++; updatePool(performance.now());
+      { const O = scene.userData.outdoor || null; if (O !== lastOutdoor) { lastOutdoor = O; sun.color.copy(O ? new THREE.Color(O.sun) : base.sunColor);
+          // Outdoors (a Global Defensive map): the shadow box covers what you see around you (buildings cast across the
+          // streets), the sun far out; the hall's tight box comes back indoors.
+          const SC = sun.shadow.camera, box = O ? OUT_BOX : SHADOW_BOX; SC.left = SC.bottom = -box; SC.right = SC.top = box; SC.far = O ? 520 : 170; SC.updateProjectionMatrix();
+          const ms = O ? (mode.startsWith('Ultra') ? 4096 : 2048) : (mode.startsWith('Ultra') ? 2048 : 1024); if (sun.shadow.mapSize.x !== ms) { sun.shadow.mapSize.setScalar(ms); sun.shadow.map?.dispose(); sun.shadow.map = null; }
+          sun.shadow.normalBias = O ? .12 : .04; if (hemi) { hemi.color.copy(O ? new THREE.Color(O.sky) : base.sky); hemi.groundColor.copy(O ? new THREE.Color(O.ground) : base.ground); } }
+        sun.intensity = base.sun * (fxOn ? 1.55 : 1) * (O ? O.sunK : 1); if (hemi) hemi.intensity = base.hemi * (fxOn ? .72 : 1) * (O ? O.hemiK : 1); }
       if (jobs) jobs.add('metal-shine', metalShine, 3000); else if (frame % 180 === 2) metalShine();
       if (fxOn) {
         if (jobs) jobs.add('shadow-flags', () => { if (fxOn) { flagShadows(); glow(true); } }, 2000); else if (frame % 120 === 1) { flagShadows(); glow(true); }
         const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
-        sun.target.position.set(camera.position.x, 0, camera.position.z); sun.position.copy(sun.target.position).add(sunOffset.clone().setLength(LIGHT_DIST));   // just under the ceilings, so they don't shade the rooms
+        { const O = scene.userData.outdoor, tx = O ? 2 * OUT_BOX / sun.shadow.mapSize.x : 0, snap = v => tx ? Math.round(v / tx) * tx : v;   // whole shadow texels: shadows don't crawl as you move
+          sun.target.position.set(snap(camera.position.x), 0, snap(camera.position.z)); sun.position.copy(sun.target.position).add(SUN_DIR.copy(sunOffset).multiply(O ? OUT_TILT : ONE3).setLength(O ? 260 : LIGHT_DIST)); }   // just under the ceilings, so they don't shade the rooms
         composer.render();
       } else renderer.render(scene, camera);
   }

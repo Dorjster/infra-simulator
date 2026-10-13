@@ -31,12 +31,19 @@ const BOT_GUNS = ['ak', 'm4', 'ak', 'smg', 'm4', 'shotgun', 'ak', 'sniper'];
 export const LOBBY_MS = 120000, LOBBY_MORE_MS = 30000, DIFFICULTY = { easy: { skill: .35, react: 800, head: .03, aim: .5 }, normal: { skill: .55, react: 480, head: .06, aim: 1 }, hard: { skill: .8, react: 260, head: .12, aim: 1.4 } };
 export const TIMER_LIMITS = { warmup: [0, 600], freeze: [0, 60] };   // seconds (host settings)
 const clampS = (v, [lo, hi], dflt) => { const n = Math.round(+v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
-export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs = 0, difficulty = 'normal', freezeS = 15, warmupS = null, rules = null } = {}, now = Date.now()) {
+// Practice (spec §15): any map, deathmatch rules (free buying, respawns) with no time limit, and its settings: bots
+// stand still / move without shooting / fight back, infinite ammo, and the assists the client draws (bullet impacts,
+// your recoil pattern, grenade flight paths). Only a practice session carries arena.practice: no assist reaches a
+// normal match.
+export function cleanPractice(p = {}) { return { bots: ['stand', 'move', 'fight'].includes(p.bots) ? p.bots : 'stand', ammo: p.ammo !== false, impacts: p.impacts !== false, recoil: p.recoil !== false, paths: p.paths !== false }; }
+export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs = 0, difficulty = 'normal', freezeS = 15, warmupS = null, rules = null, practice = null } = {}, now = Date.now()) {
   if (!ARENA_MAPS[map]) throw Error('Unknown arena map');
-  if (ARENA_MAPS[map].kind !== kind) throw Error(ARENA_MAPS[map].name + ' is not a ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' map');
+  if (practice) kind = 'dm';
+  else if (ARENA_MAPS[map].kind !== kind) throw Error(ARENA_MAPS[map].name + ' is not a ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' map');
   game.mode = 'arena'; game.payday = false;
   game.arena = { kind, map, startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null, difficulty: DIFFICULTY[difficulty] ? difficulty : 'normal', lobby: lobbyMs > 0 ? { until: now + lobbyMs, started: false, ready: {}, note: '' } : null, freezeMs: clampS(freezeS, TIMER_LIMITS.freeze, 15) * 1000, warmupS: Math.round(lobbyMs / 1000), nextMap: null };
   game.arena.rules = cleanRules(rules || {});   // Defuse match rules (host settings), fixed for this match
+  if (practice) { game.arena.practice = cleanPractice(practice); game.arena.endsAt = 4e15; }   // no time limit
   game.combat = { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: 0, nades: [], nadeSeq: 0 };
   for (let i = 0; i < bots; i++) addBot(game, now);
   if (kind === 'defuse') startDefuse(game, now);
@@ -298,6 +305,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     if (C.d && (C.d.round?.phase === 'freeze' || C.d.round?.phase === 'over' || C.d.matchOver || C.d.paused)) continue;   // defuse: frozen while buying, between rounds
     if (A.lobby && !A.lobby.started) continue;   // lobby: no fighting
     const team = C.d ? C.d.teams[key(bot.name)] : null;
+    if (A.practice?.bots === 'stand') continue;   // practice: targets that stand still
     // Defuse: the bomb carrier on a site plants straight away (even under fire) and keeps at it.
     if (C.d && team === 't' && C.d.bomb.carrier === key(bot.name) && C.d.round.phase === 'live') { if (C.d.round.plant?.by === key(bot.name)) continue; if (!C.d.round.plant) { const site = siteAt(game, { x: bot.x, z: bot.z, y: feetOf(g, bot) + EYE }); if (site) { C.d.round.plant = { by: key(bot.name), start: now, x: bot.x, z: bot.z, y: feetOf(g, bot), site }; changed = true; continue; } } }
     const wpn = weaponById(bot.weapon), foes = alive(game, players, bot.name).filter(f => !team || C.d.teams[key(f.name)] !== team), DF = DIFFICULTY[A.difficulty] || DIFFICULTY.normal;
@@ -305,7 +313,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     { const danger = (C.nades || []).find(n => (n.phase === 'air' && n.kind === 'he' && Math.hypot(n.x - bot.x, n.z - bot.z) < 40) || (n.phase === 'fire' && Math.hypot(n.x - bot.x, n.z - bot.z) < NADES.molotov.radius + 2 && inFire(fireCells(g.boxes, n.x, n.z, n.y), bot.x, bot.z)));
       if (danger && botStep(g, bot, Math.atan2(bot.x - danger.x, bot.z - danger.z), 34 * dt)) { changed = true; continue; } }
     // Nearest visible enemy within range.
-    let tgt = null, td = Infinity; for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && sees(game, g, bot.x, feetOf(g, bot) + EYE, bot.z, f.x, f.y ?? EYE, f.z)) { tgt = f; td = d; } }   // walls and smoke block
+    let tgt = null, td = Infinity; if (!A.practice || A.practice.bots === 'fight') for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && sees(game, g, bot.x, feetOf(g, bot) + EYE, bot.z, f.x, f.y ?? EYE, f.z)) { tgt = f; td = d; } }   // walls and smoke block
     if (tgt) {
       if (bot.target !== tgt.name) { bot.target = tgt.name; bot.seenAt = now; }
       const want = Math.atan2(-(tgt.x - bot.x), -(tgt.z - bot.z)), diff = Math.atan2(Math.sin(want - bot.yaw), Math.cos(want - bot.yaw)); bot.yaw += Math.sign(diff) * Math.min(Math.abs(diff), dt * 6);

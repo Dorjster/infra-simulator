@@ -158,7 +158,7 @@ Evidence: `tests/gd-classic-maps.mjs` (298 checks), `tests/gd-bots.mjs` (24 full
 
 ## 14. Graphics
 
-Partial: true-scale maps, materials per theme, tunnel interiors, shadows on High. Missing: normal detail, contextual wear, a quality sample per map, and before/after captures from identical viewpoints.
+Partial. Done this round, from reference screenshots of each map: CC0 photo textures for every surface (sand, plaster, stone tiles, concrete, fieldstone, brick, planks, roof tiles, metal); baked shade in the geometry (corners, wall feet, lit undersides); flat floors no longer creased; diagonal walls cut straight; per-map wall colours by block, Nuke's blue band, ledges along wall tops (Inferno's roof tiles); crates of different heights (48 / 64 / 80 / 128) and a material per map (planks, dark planks, painted metal, blue containers, sandstone and fieldstone blocks); per-map sunlight, sky dome and fill light; sun shadows across the streets around you (90 units, snapped so they don't crawl). All eight maps still 60 fps on High (p99 19.5–21.6 ms). Before/after captures from identical viewpoints: scratchpad only. Missing: normal maps, decals and props (doors, windows, trims).
 
 ## 15. Bots and practice
 

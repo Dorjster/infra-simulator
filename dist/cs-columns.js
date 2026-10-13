@@ -67,8 +67,14 @@ export function rasterize(nav, opts = {}) {
     for (const [i, g] of cars) { add(i, g + CAR_H, 0); flags[i] |= CAR | CRATE; carBase.set(i, g); } }
   // Cover: a crate standing on the floor around it (or the navigation's own crate top when that is high enough); sites.
   G.crateBase = new Float32Array(N).fill(NONE); for (const [i, g] of carBase) G.crateBase[i] = g;   // the floor a crate stands on (its column's top floor is the crate top)
+  // A crate whose top the navigation data doesn't give takes a height by its group (crate cells that touch): crates
+  // and stacks differ as on the real maps — low (48), standard (64, crouch-jumpable), tall (80) and, for small groups,
+  // a double stack (128). Fixed per map (from the group's position), so every client builds the same.
+  const crateH = new Map(); { const seen = new Uint8Array(N); for (let i0 = 0; i0 < N; i0++) { if (seen[i0] || mask[i0] !== 2) continue; const comp = [i0]; seen[i0] = 1;
+    for (let q = 0; q < comp.length; q++) { const i = comp[q], c = i % cols; for (const j of [c > 0 ? i - 1 : -1, c < cols - 1 ? i + 1 : -1, i - cols, i + cols]) if (j >= 0 && j < N && !seen[j] && mask[j] === 2) { seen[j] = 1; comp.push(j); } }
+    const h = (((i0 * 2654435761) >>> 0) % 100), H = comp.length <= 12 && h < 18 ? 128 : h < 38 ? 48 : h < 78 ? CRATE_H : 80; for (const i of comp) crateH.set(i, H); } }
   for (let i = 0; i < N; i++) { if (mask[i] === 3 || (mask2 && mask2[i] === 3)) flags[i] |= SITE; if (mask[i] !== 2 || !n[i] || flags[i] & CAR) continue; const t = i * MAXF + n[i] - 1, base = groundAround(G, i, z[t]);
-    G.crateBase[i] = n[i] > 1 ? z[t] : Math.min(base, z[t]); if (z[t] < base + 40) z[t] = (n[i] > 1 ? z[t] : base) + CRATE_H; flags[i] |= CRATE; }   // stacked: the crate stands on its own level's floor, the passage under it stays open
+    G.crateBase[i] = n[i] > 1 ? z[t] : Math.min(base, z[t]); if (z[t] < base + 40) z[t] = (n[i] > 1 ? z[t] : base) + (crateH.get(i) ?? CRATE_H); flags[i] |= CRATE; }   // stacked: the crate stands on its own level's floor, the passage under it stays open
   return G;
 }
 // The floor level around a column (the lowest top floor among its non-cover neighbours within 3 columns, near zz).

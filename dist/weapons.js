@@ -65,7 +65,7 @@ export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kin
 // canFire(), blind() 0…1 (flashed), aim() { pitch, yaw }, boxes() map boxes, move() { speed, max, onGround, landedAgo, ducked },
 // throwNade(id, strength), moveSpeed(), host() { ammo: { id: [mag, res] }, shots: { n, r, pending } } (mine).
 const PIVOT = new THREE.Vector3(), pivR = new THREE.Quaternion(), pivE = new THREE.Euler(), pivA = new THREE.Vector3(), pivB = new THREE.Vector3();
-export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, blind = () => 0, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true, planting = () => false }) {
+export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, blind = () => 0, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true, planting = () => false, practiceAmmo = () => false }) {
   let current = null, view = null, lastShot = 0, kick = 0, heldLeft = false, reloadUntil = 0, reloadId = null, lastDry = 0;
   // Shot and reload numbers start somewhere random each session, so a host that saw an older session re-syncs.
   let shots = 1e6 + Math.floor(Math.random() * 4e8), reloads = 1000 + Math.floor(Math.random() * 1e6);
@@ -98,7 +98,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // weapons before that cancels the reload and the gun keeps the magazine it had. After it, the reload stands.
   const MAG_IN = .75; let magInAt = 0, magIn = false;
   function stopReload() { reloadUntil = 0; reloadId = null; magIn = false; }
-  function seatMag() { const id = reloadId, wpn = weaponById(id); if (!wpn || magIn) return; magIn = true; const [mag, res] = left(id), move = Math.min(wpn.mag - mag, res); ammo.set(id, [mag + move, res - move]); reloads++; }
+  function seatMag() { const id = reloadId, wpn = weaponById(id); if (!wpn || magIn) return; magIn = true; const [mag, res] = left(id), move = Math.min(wpn.mag - mag, res); ammo.set(id, [mag + move, practiceAmmo() ? res : res - move]); reloads++; }
   let prevWeapon = null;
   function equip(id) { const was = current?.id; { const k = weaponById(id)?.kind, wk = weaponById(was)?.kind; if ((k === 'nade' || k === 'bomb') && wk && wk !== 'nade' && wk !== 'bomb') prevWeapon = was; } current = id ? weaponById(id) : null; if (current?.id !== was) { setView(current?.id, true); inspecting = null; fp?.twirl?.(0); scope = 0; ri = 0; rescope = null; stopReload(); knife = null; nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }; } heldLeft = false; return current; }
   function cycle() { const own = arsenal(); if (!own.length) return null; const i = current ? own.indexOf(current.id) : -1; return equip(i + 1 < own.length ? own[i + 1] : null); }
