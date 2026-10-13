@@ -34,4 +34,17 @@ for (const [id, M] of Object.entries(ARENA_MAPS)) {
   // Decoration on walls: within 0.6 of a box face (signs, windows, awnings).
   for (const d of M.decor || []) { if (!['sign', 'window', 'awning'].includes(d.kind)) continue; const near = boxes.some(b => { const dx = Math.max(b.minX - d.x, 0, d.x - b.maxX), dz = Math.max(b.minZ - d.z, 0, d.z - b.maxZ); return Math.hypot(dx, dz) < .9 && (d.y ?? 15) <= b.y1 + .5; }); ok(id + ': ' + d.kind + ' "' + (d.text || '') + '" at ' + d.x + ',' + d.z + ' is on a wall', near); }
 }
+// Heights (grid maps): every floor can be walked to from both spawns without a ledge higher than a step (18 HU), the
+// spawns are on the ground, and roofs leave head room above the floor.
+{ const STEP = 18 * 2.54 / 16.5, HEAD = 72 * 2.54 / 16.5;
+  for (const [id, M] of Object.entries(ARENA_MAPS)) { if (!M.grid?.heights) continue; const { cols, rows, cell, cells } = M.grid, W = cols * cell, D = rows * cell, X = c => -W / 2 + (c + .5) * cell, Z = r => -D / 2 + (r + .5) * cell, open = (c, r) => c >= 0 && r >= 0 && c < cols && r < rows && cells[r * cols + c] === 1;
+    const reachFrom = ([sx, sz]) => { const c0 = Math.floor((sx + W / 2) / cell), r0 = Math.floor((sz + D / 2) / cell), seen = new Uint8Array(cols * rows), q = [[c0, r0]]; seen[r0 * cols + c0] = 1;
+      while (q.length) { const [c, r] = q.pop(); for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const cc = c + dc, rr = r + dr; if (!open(cc, rr) || seen[rr * cols + cc]) continue; const ex = (X(c) + X(cc)) / 2, ez = (Z(r) + Z(rr)) / 2, ha = M.floorAt(ex - dc * .05, ez - dr * .05), hb = M.floorAt(ex + dc * .05, ez + dr * .05);
+          if (Math.abs(ha - hb) <= STEP + 1e-6 || hb < ha) { if (hb > ha + STEP + 1e-6) continue; seen[rr * cols + cc] = 1; q.push([cc, rr]); } } } return seen; };
+    const fromT = reachFrom(M.t[0]), fromCT = reachFrom(M.ct[0]); let lost = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (open(c, r) && (!fromT[r * cols + c] || !fromCT[r * cols + c])) lost.push(c + ',' + r);
+    ok(id + ': every floor reachable on foot from both spawns (no ledge above a step)', !lost.length, lost.slice(0, 12).join(' '));
+    ok(id + ': spawns on the ground', [...M.t, ...M.ct].every(([x, z]) => M.floorAt(x, z) === 0));
+    for (const [c0, r0, c1, r1, y] of M.grid.roofs) for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (open(c, r)) { const top = M.floorAt(X(c) + cell * .45, Z(r)), top2 = M.floorAt(X(c) - cell * .45, Z(r)); if (y - Math.max(top, top2) < HEAD + 3) { ok(id + ': head room under the roof at ' + c + ',' + r, false, y + ' over ' + Math.max(top, top2)); } }
+    ok(id + ': head room under every roof', true); } }
 console.log('PASS: Global Defensive maps · ' + n + ' checks · ' + Object.keys(ARENA_MAPS).join(', '));

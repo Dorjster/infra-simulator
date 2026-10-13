@@ -9,7 +9,7 @@
 //  · Bots: added and removed by any player; they walk between spawn points, need real line of sight (map walls),
 //    react after a short delay, miss more at range and reload. They hit through the same damage rules as players.
 import { ARENA } from './facility-layout.js';
-import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots } from './arena-maps.js';
+import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol } from './combat-logic.js';
 import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire } from './arena-nades.js';
@@ -74,7 +74,7 @@ function place(game, bot, players = []) { const s = bestSpot(game, occupied(game
 // Everyone alive (players in the arena + bots), except `but`.
 function alive(game, players, but) {
   const out = []; for (const p of players) if (p.pose && p.pose.z < ARENA.maxZ && key(p.name) !== key(but) && !isDown(game, p.name)) out.push({ name: p.name, x: p.pose.x, z: p.pose.z, y: p.pose.y });
-  for (const b of game.arena?.bots || []) if (key(b.name) !== key(but) && !isDown(game, b.name)) out.push({ name: b.name, x: b.x, z: b.z, y: EYE }); return out;
+  for (const b of game.arena?.bots || []) if (key(b.name) !== key(but) && !isDown(game, b.name)) out.push({ name: b.name, x: b.x, z: b.z, y: EYE + botFloor(game, b) }); return out;
 }
 
 // Put an item on the ground at (x, z), resting at height y.
@@ -85,6 +85,8 @@ function dropItem(game, item, x, z, y, by, now, ammo = null) {
   while (C.ground.length > GROUND_MAX) { const i = C.ground.findIndex(it => it.item !== 'c4'); C.ground.splice(i < 0 ? 0 : i, 1); }
   return 'g' + C.groundSeq;
 }
+// The floor a bot stands on (raised floors and stairs of grid maps).
+const botFloor = (game, b) => floorAt(ARENA_MAPS[game.arena?.map], ARENA.cx, ARENA.cz, b.x, b.z);
 // This round's purchases per player (for refunds), newest last.
 function bought(game, name, b) { const d = game.combat.d; ((d.bought ??= {})[key(name)] ??= []).push(b); }
 // Take a gun out of a player's hands onto the ground (with its rounds); forgets their ammo for it.
@@ -341,6 +343,6 @@ const wp = (g, i) => { const [x, z] = g.map.spawns[i]; return [ARENA.cx + x, ARE
 // Bots as roster entries, so every client draws, hears and can shoot them like players.
 export function botRoster(game) {
   return (game.mode === 'arena' && game.arena?.bots || []).map((b, i) => ({ id: b.id, name: b.name, role: 'bot', bot: true, color: [0xff879e, 0xe2e779, 0x7ca1ff, 0xc5a27d][i % 4], slot: -1,
-    pose: { t: Date.now(), x: b.x, y: EYE, z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, shot: { n: b.shotN, pitch: 0, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));
+    pose: { t: Date.now(), x: b.x, y: EYE + botFloor(game, b), z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, shot: { n: b.shotN, pitch: 0, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));
 }
 export const arenaHp = (game, name) => hpOf(game, name) ?? MAX_HP;

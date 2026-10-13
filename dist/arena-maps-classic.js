@@ -37,7 +37,14 @@ export const DUNE = {
     [22, 17, 22, 17, 6, 'crate'],                                                        // mid: xbox
     [30, 36, 30, 36, 6, 'crate'], [42, 30, 42, 30, 6, 'crate'], [4, 28, 4, 28, 6, 'crate'], [8, 37, 9, 37, 6, 'crate'],
   ],
-  props: [['car', 42, 13, 0, { color: 0x9a3b2a }], ['barrel', 26, 31], ['palm', 25, 41], ['palm', 13, 44], ['lamp', 20, 41, 0, { light: true }], ['lamp', 24, 4, 0, { light: true }], ['lamp', 21, 25, 0, { light: true }], ['lamp', 41, 22, 0, { light: true }]],
+  props: [['car', 42, 13, 0, { color: 0x9a3b2a }], ['barrel', 26, 31], ['palm', 25, 41], ['palm', 13, 44], ['lamp', 20, 41, 0, { light: true }], ['lamp', 24, 4, 0, { light: true }], ['lamp', 21, 25, 0, { light: true }], ['lamp', 41, 22, 0, { light: true }],
+    ['cart', 18, 42], ['barrels', 24, 45, 1], ['pallet', 30, 40], ['barrels', 39, 35], ['sandbags', 43, 25, 1], ['barrel', 20, 28], ['bench', 25, 12], ['planter', 18, 11], ['hay', 11, 4], ['barrels', 4, 4],
+    ['pallet', 41, 7], ['barrel', 4, 24], ['barrel', 6, 31], ['palm', 4, 40], ['planter', 32, 21], ['cart', 37, 29, 1], ['bollard', 20, 15], ['bollard', 22, 15]],
+  // Heights: the T outskirts climb to the tunnels; upper tunnels (roofed) lead to raised B; the stairs go down into the
+  // roofed lower tunnels and out to mid; A sits up the ramps from long, short and the CT ramp.
+  lift: [[3, 34, 9, 41, 5], [4, 21, 6, 33, 5], [5, 13, 7, 20, 5], [7, 18, 7, 21, 5], [3, 3, 13, 12, 5], [34, 2, 44, 8, 4], [33, 9, 35, 19, 4]],
+  ramp: [[10, 34, 12, 41, 'w', 0, 5], [8, 18, 12, 21, 'w', 0, 5], [14, 7, 16, 9, 'w', 0, 5], [28, 4, 33, 6, 'e', 0, 4], [40, 9, 43, 12, 'n', 0, 4], [33, 20, 35, 22, 'n', 0, 4]],
+  roof: [[4, 21, 6, 33, 21], [5, 14, 7, 20, 21], [8, 18, 12, 21, 21], [13, 18, 19, 20, 15], [33, 33, 35, 35, 16]],
   T: [14, 41, 26, 44], C: [21, 3, 27, 8], A: [35, 3, 43, 7], B: [4, 4, 12, 11], mid: [21, 22],
   callouts: [['B Site', 8, 7], ['B Doors', 16, 8], ['CT Mid', 21, 11], ['CT Spawn', 24, 5], ['Mid Doors', 21, 14], ['Xbox', 22, 18], ['Mid', 21, 24], ['Catwalk', 29, 21], ['Short', 34, 16],
     ['A Site', 39, 5], ['CT Ramp', 31, 5], ['Goose', 43, 2], ['Car', 42, 11], ['Long', 42, 19], ['Pit', 42, 34], ['Long Doors', 34, 34], ['Outside Long', 29, 37], ['Upper Mid', 22, 31],
@@ -75,10 +82,16 @@ export const OLDCITY = {
   cover: [
     [37, 29, 37, 30, 6, 'crate'], [41, 33, 41, 33, 12, 'crate'], [40, 30, 40, 30, 6, 'crate'],   // A: cubby, triple, default
     [24, 8, 25, 9, 4, 'stone'], [26, 5, 26, 6, 6, 'crate'], [18, 10, 18, 10, 6, 'crate'],     // B: fountain, coffins, first
-    [22, 21, 23, 21, 4, 'sand'],                                                             // banana: sandbags
+    [22, 14, 23, 14, 4, 'sand'],                                                             // banana: sandbags (top)
     [26, 31, 26, 31, 6, 'crate'], [44, 34, 44, 34, 6, 'crate'],
   ],
-  props: [['car', 21, 17, 0, { color: 0x6a7a52 }], ['palm', 4, 28], ['palm', 4, 35], ['barrels', 13, 38, 0], ['cart', 30, 37, 0], ['lamp', 6, 31, 0, { light: true }], ['lamp', 43, 16, 0, { light: true }], ['lamp', 22, 26, 0, { light: true }], ['lamp', 38, 26, 0, { light: true }]],
+  props: [['car', 21, 26, 0, { color: 0x6a7a52 }], ['palm', 4, 28], ['palm', 4, 35], ['barrels', 13, 38, 0], ['cart', 30, 37, 0], ['lamp', 6, 31, 0, { light: true }], ['lamp', 43, 16, 0, { light: true }], ['lamp', 22, 26, 0, { light: true }], ['lamp', 38, 26, 0, { light: true }]],
+  props2: [['barrels', 30, 6], ['cart', 18, 28], ['planter', 27, 32], ['bench', 44, 27, 1], ['hay', 44, 37], ['planter', 38, 13], ['barrel', 9, 31], ['pallet', 12, 30], ['tree', 43, 26], ['barrel', 41, 36], ['planter', 19, 37]],
+  // Heights (Inferno-style): banana climbs to raised B (and pool, coffins); the CT corridor steps down to the CT side;
+  // the T apartments are upstairs under a roof; boiler, the underpass and the library are roofed.
+  lift: [[20, 14, 23, 14, 4], [18, 12, 25, 13, 4], [17, 5, 27, 11, 4], [28, 5, 31, 11, 4], [11, 36, 13, 39, 4]],
+  ramp: [[20, 15, 23, 23, 'n', 0, 4], [32, 9, 35, 11, 'w', 0, 4], [8, 36, 10, 39, 'e', 0, 4], [14, 36, 16, 39, 'w', 0, 4]],
+  roof: [[8, 36, 16, 39, 21], [28, 35, 31, 39, 17], [24, 34, 25, 35, 15], [39, 22, 44, 24, 17]],
   T: [3, 28, 6, 35], C: [41, 12, 45, 19], A: [37, 29, 41, 33], B: [18, 6, 26, 10], mid: [27, 31],
   callouts: [['B Site', 22, 8], ['Fountain', 25, 10], ['Coffins', 27, 6], ['Pool', 30, 7], ['CT', 34, 10], ['Car', 21, 19], ['Banana', 21, 24], ['Sandbags', 23, 21], ['Logs', 17, 27],
     ['T Ramp', 11, 30], ['Mid', 24, 31], ['Long Corner', 30, 28], ['Long', 35, 26], ['Arch', 38, 23], ['Library', 43, 23], ['Speedway', 37, 16], ['CT Spawn', 43, 15],
@@ -116,6 +129,12 @@ export const PLAZA = {
     [27, 18, 27, 18, 6, 'crate'], [36, 33, 37, 33, 6, 'crate'],                                  // mid box, tetris
   ],
   props: [['stall', 34, 40, 0, { color: 0x9c3b2a }], ['planter', 35, 17], ['bench', 15, 39, 0], ['lamp', 46, 9, 0, { light: true }], ['lamp', 5, 36, 0, { light: true }], ['lamp', 25, 19, 0, { light: true }], ['lamp', 8, 16, 0, { light: true }]],
+  props2: [['planter', 44, 13], ['barrels', 45, 10], ['bench', 30, 20], ['planter', 6, 35], ['pallet', 11, 13], ['barrel', 20, 18], ['tree', 9, 32], ['bollard', 23, 22], ['barrels', 38, 41], ['planter', 27, 37], ['cart', 42, 26, 1]],
+  // Heights (Mirage-style): the T and B apartments are upstairs (roofed), down the B stairs to B; the connector,
+  // jungle, window room, market and palace are covered.
+  lift: [[26, 4, 40, 7, 4], [14, 5, 25, 8, 4]],
+  ramp: [[41, 4, 44, 8, 'w', 0, 4], [12, 9, 15, 11, 'n', 0, 4]],
+  roof: [[26, 4, 40, 7, 21], [14, 5, 25, 8, 21], [16, 19, 18, 22, 17], [21, 22, 24, 32, 17], [21, 33, 26, 35, 17], [10, 22, 12, 25, 16], [32, 38, 39, 41, 17]],
   T: [41, 10, 45, 14], C: [5, 32, 9, 36], A: [22, 37, 29, 42], B: [5, 12, 13, 20], mid: [25, 19],
   callouts: [['T Spawn', 43, 12], ['T Apps', 33, 5], ['B Apps', 19, 6], ['B Stairs', 13, 10], ['B Site', 9, 16], ['Bench', 5, 13], ['Van', 12, 18], ['Short', 16, 14], ['Window', 17, 21],
     ['Top Mid', 36, 18], ['Mid', 26, 19], ['Connector', 22, 27], ['Jungle', 23, 34], ['A Site', 25, 39], ['Ninja', 22, 42], ['Firebox', 29, 42], ['Ramp', 35, 33], ['Tetris', 32, 33],
@@ -147,6 +166,12 @@ export const HAMLET = {
     [19, 22, 19, 22, 6, 'crate'], [8, 30, 9, 31, 6, 'crate'], [12, 36, 12, 37, 6, 'crate'], [33, 19, 33, 19, 6, 'crate'], [27, 12, 27, 12, 6, 'crate'],
   ],
   props: [['palm', 5, 28], ['palm', 13, 28], ['well', 9, 35], ['cart', 25, 39, 1], ['lamp', 29, 34, 0, { light: true }], ['lamp', 22, 4, 0, { light: true }], ['lamp', 18, 24, 0, { light: true }], ['lamp', 34, 15, 0, { light: true }]],
+  props2: [['barrels', 36, 33], ['hay', 14, 38], ['palm', 29, 39], ['pallet', 25, 5], ['planter', 18, 30], ['barrel', 34, 24], ['bench', 40, 8, 1], ['barrels', 4, 4], ['planter', 26, 12], ['cart', 10, 37]],
+  // Heights (Dust-style): the roofed underpass runs north from the courtyard to the stairs up to raised B (also up the
+  // B corridor from the CT side); A sits up the east lane.
+  lift: [[3, 2, 12, 9, 5], [30, 2, 41, 9, 4]],
+  ramp: [[4, 10, 7, 16, 'n', 0, 5], [13, 4, 17, 7, 'w', 0, 5], [32, 10, 35, 14, 'n', 0, 4]],
+  roof: [[3, 17, 6, 25, 17]],
   T: [19, 34, 28, 39], C: [21, 3, 28, 8], A: [32, 3, 40, 8], B: [4, 3, 11, 8], mid: [18, 24],
   callouts: [['Spot B', 7, 5], ['Spot A', 36, 5], ['CT Spawn', 24, 5], ['Clash', 22, 12], ['B Corridor', 16, 5], ['Stairs', 5, 13], ['Underpass', 4, 21], ['Tunnel', 10, 18],
     ['Courtyard', 8, 33], ['Gate', 16, 36], ['Mid', 18, 24], ['T Spawn', 23, 36], ['East Gate', 33, 32], ['East Lane', 33, 18], ['Right Clash', 30, 12]],
@@ -180,6 +205,12 @@ export const DEPOT = {
     [30, 32, 31, 33, 15, 'metal-red'], [36, 35, 37, 35, 6, 'crate'], [22, 36, 23, 36, 6, 'crate'],   // outside: silo / containers
   ],
   props: [['forklift', 40, 31, 0], ['truck', 24, 32, 1, { color: 0x3c5a78 }], ['barrels', 13, 24, 0], ['lamp', 3, 34, 0, { light: true }], ['lamp', 49, 16, 0, { light: true }], ['lamp', 34, 30, 0, { light: true }], ['lamp', 29, 3, 0, { light: true }]],
+  props2: [['barrels', 9, 23], ['pallet', 16, 21], ['crate2', 41, 36], ['barrels', 26, 37], ['pallet', 33, 25], ['barrels', 37, 17], ['bollard', 46, 26], ['barrels', 22, 8], ['pallet', 14, 6], ['crate', 8, 39]],
+  // Heights (Nuke-style): the A building stands raised and roofed, reached up the hut ramp, the lockers, main and the
+  // long ramp room from B; the tunnels and the garage are roofed.
+  lift: [[25, 16, 38, 26, 5]],
+  ramp: [[20, 23, 24, 24, 'e', 0, 5], [39, 17, 43, 19, 'w', 0, 5], [30, 27, 32, 28, 'n', 0, 5], [31, 4, 34, 15, 's', 0, 5]],
+  roof: [[25, 16, 38, 26, 23], [12, 10, 15, 19, 16], [44, 25, 47, 31, 17]],
   T: [3, 34, 8, 40], C: [44, 15, 50, 23], A: [26, 17, 37, 25], B: [19, 3, 29, 8], mid: [30, 34],
   callouts: [['T Spawn', 5, 37], ['Lobby', 13, 22], ['Squeaky', 22, 24], ['A Site', 31, 21], ['Heaven', 37, 17], ['Lockers', 41, 18], ['CT Spawn', 47, 19], ['Outside', 28, 34],
     ['T Outside', 14, 35], ['Main', 31, 27], ['Garage', 45, 28], ['Silo', 30, 31], ['Tunnels', 13, 14], ['B Site', 24, 5], ['Vents', 14, 6], ['Ramp', 32, 10], ['Secret', 41, 37]],
@@ -218,7 +249,15 @@ export const TEMPLE = {
     [34, 19, 35, 20, 6, 'crate'], [39, 22, 39, 23, 12, 'stone'], [37, 19, 37, 19, 6, 'crate'],  // B
     [23, 21, 26, 22, 26, 'stone'], [21, 25, 21, 25, 6, 'crate'], [41, 14, 41, 14, 6, 'crate'], [9, 20, 9, 20, 6, 'stone'], [35, 35, 36, 35, 4, 'stone'],
   ],
-  props: [['tree', 7, 9], ['tree', 14, 34], ['palm', 31, 36], ['well', 16, 20], ['lamp', 26, 41, 0, { light: true }], ['lamp', 22, 4, 0, { light: true }], ['lamp', 20, 27, 0, { light: true }], ['lamp', 42, 18, 0, { light: true }]],
+  props: [['tree', 7, 9], ['tree', 14, 34], ['palm', 31, 36], ['well', 16, 20], ['lamp', 26, 41, 0, { light: true }], ['lamp', 22, 4, 0, { light: true }], ['lamp', 20, 27, 0, { light: true }], ['lamp', 42, 18, 0, { light: true }],
+    ['pillar', 13, 4, 0, { size: [3, 3, 17] }], ['pillar', 17, 4, 0, { size: [3, 3, 17] }], ['tree', 18, 36], ['tree', 27, 39], ['planter', 24, 30], ['planter', 19, 19], ['barrels', 42, 6], ['bench', 24, 8, 1],
+    ['pillar', 35, 36, 0, { size: [3, 3, 9] }], ['pillar', 41, 32, 0, { size: [3, 3, 7] }], ['tree', 6, 22], ['pallet', 31, 26], ['tree', 9, 27], ['planter', 42, 10]],
+  // Heights (Ancient-style): the jungle stairs climb to A main, A and the roofed temple; donut (roofed) steps up to A;
+  // B stands raised over short, long and the ruins ramp, with the roofed cave beside it; the lamproom and the tunnel to
+  // T spawn are roofed.
+  lift: [[5, 14, 10, 25, 5], [6, 8, 10, 13, 5], [11, 10, 19, 15, 5], [13, 4, 17, 9, 5], [33, 18, 39, 24, 4], [40, 18, 43, 22, 4], [30, 19, 32, 23, 4]],
+  ramp: [[8, 26, 12, 33, 'n', 0, 5], [18, 5, 20, 8, 'w', 0, 5], [14, 16, 16, 17, 'n', 0, 5], [32, 15, 34, 17, 's', 0, 4], [40, 13, 43, 17, 's', 0, 4], [40, 23, 43, 30, 'n', 0, 4], [33, 25, 35, 26, 'n', 0, 4]],
+  roof: [[13, 4, 17, 9, 22], [13, 18, 18, 23, 17], [30, 19, 32, 23, 20], [27, 25, 32, 27, 17], [28, 37, 33, 39, 16]],
   T: [21, 39, 26, 43], C: [21, 3, 28, 9], A: [12, 11, 18, 14], B: [34, 19, 39, 23], mid: [22, 25],
   callouts: [['T Spawn', 23, 41], ['Jungle', 15, 34], ['Stairs', 10, 29], ['A Main', 7, 19], ['Plateau', 8, 10], ['A Site', 15, 12], ['Temple', 15, 6], ['CT Spawn', 24, 5], ['Sniper Nest', 26, 11],
     ['Red', 26, 15], ['Mid', 22, 24], ['Lower Mid', 17, 29], ['Donut', 15, 20], ['Alley', 31, 6], ['Back Alley', 40, 6], ['Short', 33, 13], ['Long', 41, 15], ['B Site', 36, 21], ['Cave', 31, 21],
@@ -256,7 +295,15 @@ export const CANAL = {
     [13, 19, 14, 20, 6, 'crate'], [18, 22, 18, 23, 12, 'stone'], [16, 19, 16, 19, 6, 'crate'],  // B
     [32, 24, 33, 25, 15, 'wood'], [9, 30, 9, 30, 6, 'crate'], [24, 33, 24, 33, 6, 'crate'], [27, 19, 27, 19, 6, 'crate'],
   ],
-  props: [['palm', 19, 3], ['palm', 28, 3], ['palm', 12, 38], ['lamp', 28, 42, 0, { light: true }], ['lamp', 21, 7, 0, { light: true }], ['lamp', 24, 33, 0, { light: true }], ['lamp', 38, 20, 0, { light: true }]],
+  props: [['palm', 19, 3], ['palm', 28, 3], ['palm', 12, 38], ['lamp', 28, 42, 0, { light: true }], ['lamp', 21, 7, 0, { light: true }], ['lamp', 24, 33, 0, { light: true }], ['lamp', 38, 20, 0, { light: true }],
+    ['pillar', 21, 15, 0, { size: [3, 3, 15] }], ['pillar', 24, 17, 0, { size: [3, 3, 15] }], ['palm', 29, 44], ['palm', 18, 45], ['cart', 32, 37], ['barrels', 38, 33], ['planter', 9, 33], ['pallet', 15, 39],
+    ['bench', 22, 10, 1], ['planter', 41, 9], ['barrels', 29, 24], ['palm', 17, 2], ['bollard', 26, 13], ['hay', 11, 29]],
+  // Heights (Anubis-style): the bridge and top mid stand over the canal; the roofed palace climbs from mid to raised B,
+  // the gate and the street step up to it; the roofed heaven tunnel climbs from the CT spawn to raised A (heaven), and
+  // A main steps up to it from the boat.
+  lift: [[22, 25, 23, 31, 2.5], [20, 32, 26, 35, 2.5], [12, 18, 19, 24, 4], [15, 15, 19, 17, 4], [13, 15, 14, 17, 4], [32, 9, 41, 15, 5]],
+  ramp: [[22, 36, 24, 39, 'n', 0, 2.5], [8, 21, 11, 25, 'e', 0, 4], [20, 15, 25, 17, 'w', 0, 4], [13, 11, 17, 14, 's', 0, 4], [27, 7, 31, 9, 'e', 0, 5], [36, 16, 40, 19, 'n', 0, 5]],
+  roof: [[18, 15, 25, 17, 20], [26, 7, 31, 9, 21]],
   T: [19, 41, 28, 44], C: [18, 6, 25, 11], A: [33, 10, 40, 14], B: [13, 19, 18, 23], mid: [27, 19],
   callouts: [['T Spawn', 23, 42], ['Alley', 30, 36], ['Upper', 37, 31], ['A Main', 38, 19], ['A Site', 36, 12], ['Heaven', 29, 8], ['Boat', 32, 23], ['Ruins', 13, 38], ['Long', 9, 31],
     ['Gate', 10, 23], ['B Site', 15, 21], ['Top Mid', 23, 33], ['Bridge', 22, 29], ['Water', 18, 27], ['Mid', 27, 18], ['Palace', 20, 16], ['CT Spawn', 21, 8], ['Beach', 23, 3], ['Street', 15, 11]],
@@ -287,6 +334,12 @@ export const PARK = {
     [15, 11, 17, 12, 4, 'stone'], [20, 14, 20, 14, 6, 'crate'], [30, 31, 31, 31, 6, 'crate'], [5, 27, 5, 27, 6, 'crate'],
   ],
   props: [['tree', 11, 9], ['tree', 19, 9], ['tree', 38, 11], ['fountain', 33, 34], ['bench', 31, 37, 0], ['lamp', 39, 4, 0, { light: true }], ['lamp', 22, 41, 0, { light: true }], ['lamp', 14, 14, 0, { light: true }], ['lamp', 35, 25, 0, { light: true }]],
+  props2: [['bench', 15, 15], ['barrels', 38, 6], ['planter', 30, 4], ['pallet', 6, 30], ['bench', 20, 42, 1], ['tree', 6, 25], ['barrel', 26, 11], ['planter', 34, 20], ['tree', 44, 36], ['barrels', 29, 36]],
+  // Heights (Overpass-style): the halls and the toilets are roofed; the ladder room stands raised between the mid
+  // ramp and the CT ramp.
+  lift: [[13, 22, 18, 25, 4]],
+  ramp: [[12, 18, 18, 21, 's', 0, 4], [15, 26, 18, 30, 'n', 0, 4]],
+  roof: [[27, 9, 30, 13, 17], [24, 14, 28, 25, 17], [42, 30, 45, 38, 17], [13, 22, 18, 25, 20]],
   T: [27, 4, 39, 7], C: [15, 39, 23, 44], A: [6, 37, 12, 43], B: [37, 33, 41, 37], mid: [15, 13],
   callouts: [['T Spawn', 33, 5], ['Mid', 15, 12], ['Sidewalk', 10, 19], ['Mid Ramp', 15, 19], ['Long A', 5, 27], ['Cubby', 6, 34], ['A Site', 9, 40], ['Window Room', 15, 23], ['CT Ramp', 16, 31],
     ['CT Spawn', 19, 41], ['Upper Halls', 26, 17], ['Lower Halls', 26, 23], ['Skyfall', 26, 28], ['Garden', 38, 12], ['B Main', 35, 22], ['B Yard', 32, 32], ['B Site', 39, 35], ['Toilets', 43, 33], ['Connector', 23, 34]],
