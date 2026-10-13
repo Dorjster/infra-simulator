@@ -77,6 +77,14 @@ msg = arenaApply(g, { type: 'pickup', id: dg.id, swap: true }, 'Bo', P, t + 5200
     const rr = combatApply(gw, { type: 'hit', target: 'b', weapon: 'ak', zone: 'stomach', n: 5 }, 'Ann', [{ id: 'a', name: 'Ann', pose: { ...a2, y: 9.7 } }, { id: 'b', name: 'Bo', pose: b2 }], 'a', 1e10 + 10);
     ok('host: a wallbang through a crate does less than an open shot', rr.dmg > 0 && rr.dmg < Math.round(36 * 1.25), JSON.stringify(rr)); } }
 
+// ── Kill feed marks (CS2): no-scope / airborne / blind from the shooter, wallbang and distance from the host ──
+{ const gk = { levels: {} }, T = 6e10; startArena(gk, { map: 'yard', bots: 0 }, T); arenaApply(gk, { type: 'loadout', primary: 'sniper' }, 'Ann', P, T); arenaApply(gk, { type: 'loadout', primary: 'ak' }, 'Bo', P, T);
+  combatApply(gk, { type: 'hit', target: 'b', weapon: 'sniper', zone: 'head', head: true, n: 1, noscope: true, air: true }, 'Ann', P, 'a', T + 10);
+  const f = gk.combat.feed[0]; ok('feed: the AWP head shot kill is marked no-scope + airborne, head shot, with its distance', f && f.wid === 'sniper' && f.head && f.how?.noscope && f.how?.air && !f.how?.wallbang && !f.how?.smoke && f.how?.far === Math.round(Math.hypot(P[0].pose.x - P[1].pose.x, P[0].pose.y - P[1].pose.y, P[0].pose.z - P[1].pose.z) * .165), JSON.stringify(f));
+  for (let i = 0; i < 300; i++) arenaTick(gk, P, .05, T + 20 + i * 50);
+  combatApply(gk, { type: 'hit', target: 'a', weapon: 'ak', zone: 'head', head: true, n: 1, noscope: true }, 'Bo', P, 'b', T + 20000);
+  const f2 = gk.combat.feed[0]; ok('feed: a no-scope mark only for scoped guns', f2 && f2.wid === 'ak' && !f2.how?.noscope, JSON.stringify(f2)); }
+
 // ── Defuse: purchases, team guns, new-round ammo ──
 let td = 8e9; const d = { levels: {} }; startArena(d, { map: 'dune', kind: 'defuse', bots: 0 }, td); const M = ARENA_MAPS.dune, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7, z: ARENA.cz + z, yaw: 0 });
 const DP = [{ id: 't1', name: 'Tess', pose: at(M.t[0]) }, { id: 'c1', name: 'Cal', pose: at(M.ct[0]) }]; arenaTick(d, DP, .05, td += 50);
@@ -87,6 +95,18 @@ ok('a refused purchase charges nothing and changes nothing', d.combat.d.money.te
 d.combat.d.money.tess = 5000; d.combat.d.money.cal = 5000;
 arenaApply(d, { type: 'loadout', primary: 'ak' }, 'Tess', DP, td); arenaApply(d, { type: 'buy-armor', kind: 'helmet' }, 'Tess', DP, td); arenaApply(d, { type: 'loadout', primary: 'm4s' }, 'Cal', DP, td); arenaApply(d, { type: 'buy-armor', kind: 'vest' }, 'Cal', DP, td); arenaApply(d, { type: 'buy-nade', kind: 'flash' }, 'Cal', DP, td);
 ok('money paid once per item: AK 2700 + helmet 1000', d.combat.d.money.tess === 5000 - 2700 - 1000); ok('armor bought', armorOf(d, 'Tess').kevlar === 100 && armorOf(d, 'Tess').helmet);
+// Undo a purchase (buy time, in spawn, unused): full price back; a gun brings back the one it replaced.
+{ const m0 = d.combat.d.money.tess; arenaApply(d, { type: 'loadout', secondary: 'deagle' }, 'Tess', DP, td);
+  ok('buying a Deagle drops the Glock', loadoutOf(d, 'Tess').secondary === 'deagle' && d.combat.ground.some(it => it.item === 'pistol') && d.combat.d.money.tess === m0 - 700);
+  arenaApply(d, { type: 'refund', item: 'deagle' }, 'Tess', DP, td);
+  ok('refund: $700 back, the Glock back in hand (off the ground), Deagle gone', d.combat.d.money.tess === m0 && loadoutOf(d, 'Tess').secondary === 'pistol' && !d.combat.ground.some(it => it.item === 'pistol' || it.item === 'deagle'), JSON.stringify(loadoutOf(d, 'Tess')));
+  arenaApply(d, { type: 'buy-nade', kind: 'smoke' }, 'Tess', DP, td); const m1 = d.combat.d.money.tess; arenaApply(d, { type: 'refund' }, 'Tess', DP, td);
+  ok('refund with no item undoes the last purchase (the smoke)', d.combat.d.money.tess === m1 + 300 && !loadoutOf(d, 'Tess').nades.includes('smoke'));
+  arenaApply(d, { type: 'refund', item: 'helmet' }, 'Tess', DP, td); ok('armor refund: $1000 back, no armor', d.combat.d.money.tess === m1 + 1300 && armorOf(d, 'Tess').kevlar === 0);
+  arenaApply(d, { type: 'buy-armor', kind: 'helmet' }, 'Tess', DP, td);
+  assert.throws(() => arenaApply(d, { type: 'refund', item: 'm4s' }, 'Tess', DP, td), /Nothing to refund/); n++;
+  poseAmmo(d, 'Tess', { n: 0, r: 0 }, 'ak'); poseAmmo(d, 'Tess', { n: 1, r: 0 }, 'ak'); assert.throws(() => arenaApply(d, { type: 'refund', item: 'ak' }, 'Tess', DP, td), /Already used/); n++;
+  ok('a fired gun is not refunded (money unchanged)', loadoutOf(d, 'Tess').primary === 'ak'); d.combat.d.money.tess = 5000 - 2700 - 1000; d.combat.ammo.tess.ak = [30, 90]; delete d.combat.shots.tess; }
 // Live: Tess sprays, Cal dies; the round ends (CT eliminated): Tess won with a half-empty AK → refilled; Cal dead → USP-S only, full.
 td += DEFUSE.freezeMs + 100; arenaTick(d, DP, .05, td); poseAmmo(d, 'Tess', { n: 0, r: 0 }, 'ak'); poseAmmo(d, 'Tess', { n: 17, r: 0 }, 'ak'); ok('Tess fired 17', ammoOf(d, 'Tess', 'ak')[0] === 13);
 applyHit(d, 'Tess', 'Cal', weaponById('ak'), 'head', 20, 1, td); ok('Cal is down', isDown(d, 'Cal', td)); arenaTick(d, DP, .05, td += 50);

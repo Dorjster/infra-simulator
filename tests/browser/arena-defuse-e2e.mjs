@@ -29,7 +29,11 @@ check('Frozen during the freeze time', Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) 
 await p.keyboard.press('KeyB'); await p.waitForTimeout(300); check('Buy menu shows your money', await p.evaluate(() => /\$800/.test(document.getElementById('ar-buy').textContent)));
 check('An AK-47 is too dear at $800 (button disabled)', await p.evaluate(() => document.querySelector('#ar-buy [data-pick="ak"]').disabled));
 await p.evaluate(() => document.querySelector('#ar-buy [data-pick="deagle"]').click()); await p.waitForTimeout(600);
-s = await G(); check('Bought a Desert Eagle: $100 left', s.money === 100, s.money); await p.evaluate(() => document.querySelector('#ar-buy [data-act="close"]').click());
+s = await G(); check('Bought a Desert Eagle: $100 left', s.money === 100, s.money);
+check('…it carries a sell-back badge in the buy menu', await p.evaluate(() => !!document.querySelector('#ar-buy [data-sell="deagle"]')));
+await p.keyboard.press('Backspace'); await p.waitForTimeout(600); s = await G(); check('Backspace undoes it: $800 back', s.money === 800, s.money);
+await p.evaluate(() => document.querySelector('#ar-buy [data-pick="deagle"]').click()); await p.waitForTimeout(600); s = await G(); check('…and it can be bought again ($100 left)', s.money === 100, s.money);
+await p.evaluate(() => document.querySelector('#ar-buy [data-act="close"]').click());
 await p.waitForFunction(() => __infra.lab.world.operations.game.combat.d.round.phase === 'live', null, { timeout: 20000 });
 await p.evaluate(() => __infra.lab.enter()); a0 = await pos(); await p.keyboard.down('KeyW'); await p.waitForTimeout(700); await p.keyboard.up('KeyW'); a1 = await pos();
 check('Moving after the freeze', Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) > 5, Math.hypot(a1[0] - a0[0], a1[1] - a0[1]).toFixed(1));
