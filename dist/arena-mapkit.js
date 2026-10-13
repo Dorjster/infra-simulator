@@ -45,7 +45,7 @@ export function house({ x, z, w, d, h, m, t = 1.5, sides = {}, roof = 'roof', fl
 // starting at (x, z) (the foot of the first step), `w` wide. Each box reaches the floor (no gaps to fall into).
 export function stairs({ x, z, dir = 'n', w = 8, steps = 6, rise = STEP, run = RUN, m = 'stone', y0 = 0 }) {
   const out = [], [dx, dz] = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] }[dir];
-  for (let i = 0; i < steps; i++) { const cx = x + dx * (i + .5) * run, cz = z + dz * (i + .5) * run; out.push(B(cx, cz, dx ? run : w, dx ? w : run, y0 + rise * (i + 1), m)); }
+  for (let i = 0; i < steps; i++) { const cx = x + dx * (i + .5) * run, cz = z + dz * (i + .5) * run, b = B(cx, cz, dx ? run : w, dx ? w : run, y0 + rise * (i + 1), m); b.stair = true; out.push(b); }
   return out;
 }
 // A raised platform (walkable top) with stairs up one side.
@@ -79,7 +79,8 @@ export function prop(type, x, z, rot = 0, extra = {}) {
   else if (type === 'fountain') solids.push(B(x, z, w, d, h, 'stone', y0), B(x, z, 2.4, 2.4, 9, 'stone', y0));
   else if (type === 'stall') solids.push(B(x, z, w, d, 3.6, 'wood', y0));   // the counter; the awning is high above
   else solids.push(B(x, z, w, d, h, mat, y0));
-  if (DRAWN.has(type)) for (const b of solids) b.prop = type;   // drawn as its own shape by arena-scene (not as a plain box)
+  if (DRAWN.has(type)) for (const b of solids) b.prop = type;
+  for (const b of solids) b.fixed = true;   // a prop keeps its real size when a map is scaled   // drawn as its own shape by arena-scene (not as a plain box)
   return { solids, visual: { type, x, z, y: y0, rot, w, d, h, color: extra.color, text: extra.text, light: extra.light } };
 }
 // Signs and callouts (painted on walls; visual only): [text, x, y, z, facing ('n'|'s'|'e'|'w'), size].

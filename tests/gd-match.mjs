@@ -15,7 +15,7 @@ const throws = (f, re, name) => { n++; assert.throws(f, re, name); };
 const spread = pts => { let m = Infinity; for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) m = Math.min(m, Math.hypot(pts[i].x - pts[j].x, pts[i].z - pts[j].z)); return m; };
 
 // ── Spawns: 10 people + 2 bots in Defuse, everyone on their own spot, all walkable ──
-{ let t = 1e10; const g = { levels: {} }; startArena(g, { map: 'dune', kind: 'defuse', bots: 2 }, t); const M = ARENA_MAPS.dune, boxes = mapBoxes(M, ARENA.cx, ARENA.cz), bounds = { minX: ARENA.cx - 150, maxX: ARENA.cx + 150, minZ: ARENA.cz - 150, maxZ: ARENA.cz + 150 };
+{ let t = 1e10; const g = { levels: {} }; startArena(g, { map: 'dune', kind: 'defuse', bots: 2 }, t); const M = ARENA_MAPS.dune, boxes = mapBoxes(M, ARENA.cx, ARENA.cz), bounds = { minX: ARENA.cx - M.size[0] / 2, maxX: ARENA.cx + M.size[0] / 2, minZ: ARENA.cz - M.size[1] / 2, maxZ: ARENA.cz + M.size[1] / 2 };
   const P = Array.from({ length: 10 }, (_, i) => ({ id: 'p' + i, name: 'P' + i, pose: { x: ARENA.cx, y: 9.7, z: ARENA.cz } }));
   for (let i = 0; i < 4; i++) arenaTick(g, P, .05, t += 50);
   // Apply the spawn orders like clients do, then finish the round so a new one places everyone.
