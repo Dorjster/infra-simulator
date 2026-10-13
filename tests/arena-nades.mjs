@@ -3,7 +3,7 @@
 // you look, smoke blocks sight (bots too), molotov burns whoever stands in it, then everything clears; drops.
 import assert from 'node:assert/strict';
 import { startArena, arenaApply, arenaTick, slotOf } from '../dist/arena-logic.js';
-import { NADES, flashAmount, clearView, nadesTick, predictThrow, stepNade, fireCells, launch } from '../dist/arena-nades.js';
+import { NADES, flashAmount, clearView, nadesTick, predictThrow, stepNade, fireCells, launch, smokeBlocks, smokeDensity, SMOKE } from '../dist/arena-nades.js';
 import { ARENA_MAPS, mapBoxes } from '../dist/arena-maps.js';
 import { hpOf, isDown, arenaArsenalOf } from '../dist/combat-logic.js';
 import { ARENA } from '../dist/facility-layout.js';
@@ -62,4 +62,25 @@ assert(NADES.smoke.radius ** 2 >= (144 * 2.54 / 16.5) ** 2 * 3.9, 'smoke covers 
 // No throwing in the freeze time (Defuse).
 { const gd = { levels: {} }; startArena(gd, { map: 'dune', kind: 'defuse', bots: 0 }, 9e9); const sp = ARENA_MAPS.dune.t[0], ann = [{ name: 'Ann', pose: { x: ARENA.cx + sp[0], y: 9.7, z: ARENA.cz + sp[1], yaw: 0 } }]; arenaTick(gd, ann, .05, 9e9); arenaApply(gd, { type: 'buy-nade', kind: 'he' }, 'Ann', ann, 9e9);
   assert.throws(() => arenaApply(gd, { type: 'throw', kind: 'he', x: 0, y: 9.7, z: 0, dx: 0, dy: 0, dz: -1 }, 'Ann', ann, 9e9 + 10), /throw now/); assert(arenaArsenalOf(gd, 'Ann').includes('he'), 'and the grenade is kept'); }
-console.log('PASS: grenades · throw strengths (full / medium / short), preview = host flight, fire 4× area within walls, smoke 4× area, no throws in the freeze,  · buy limits, throw + flight, HE damage + cover, smoke blocks sight 18 s, molotov burns 7 s, flashbang (bots + facing), drop / pickup');
+// ── Smoke as a volume, HE holes, smoke vs fire (one shared state) ──
+{ const T0 = 5e9, R = NADES.smoke.radius, sm = { id: 's1', kind: 'smoke', phase: 'smoke', x: 0, y: 0, z: 0, firedAt: T0 }, gs = { combat: { nades: [sm], clock: T0 + 4000 } }, now = T0 + 4000, eye = 9.7;
+  assert(smokeBlocks(gs, -R - 30, eye, 0, R + 30, eye, 0, now), 'outside → outside through the cloud: blocked');
+  assert(smokeBlocks(gs, -R - 30, eye, 0, 0, eye, 0, now), 'outside → someone in the middle: blocked');
+  assert(smokeBlocks(gs, 0, eye, 0, -R - 30, eye, 0, now), 'from deep inside you cannot see out (the same rule both ways)');
+  assert(!smokeBlocks(gs, -R * .93, eye, 0, -R - 40, eye, 0, now), 'at the very edge, looking out: you can see');
+  assert(smokeDensity(gs, 0, eye, 0, now) > .9 && smokeDensity(gs, R + 5, eye, 0, now) === 0, 'dense in the core, nothing outside');
+  assert(!smokeBlocks(gs, -R - 30, eye, 0, R + 30, eye, 0, T0 + NADES.smoke.lasts - 200), 'thin at the end of its life');
+  // An HE blast in the smoke opens a hole for a moment, then it closes.
+  const ge = { levels: {}, combat: { nades: [{ ...sm }, { id: 'h1', kind: 'he', phase: 'air', x: 0, y: 3, z: 0, vx: 0, vy: 0, vz: 0, at: T0 + 3000 - NADES.he.fuse - 10, still: 0 }], hp: {}, down: {} }, arena: { bots: [] } };
+  nadesTick(ge, [], .05, T0 + 3000, {}); const s1 = ge.combat.nades.find(n => n.id === 's1');
+  assert(s1.holes?.length === 1, 'the blast punched a hole in the smoke (shared state)');
+  assert(!smokeBlocks(ge, -6, eye, 0, 6, eye, 0, T0 + 3300), 'right after: you can see through the hole');
+  assert(smokeBlocks(ge, -R - 30, eye, 0, R + 30, eye, 0, T0 + 3000 + SMOKE.holeOpen + SMOKE.holeClose + 100), 'then the smoke closes again');
+  // Smoke over a burning molotov puts it out; a molotov into smoke fizzles; nothing re-ignites.
+  const gf = { levels: {}, combat: { nades: [{ id: 'f1', kind: 'molotov', phase: 'fire', x: 10, y: 0, z: 0, firedAt: T0, at: T0 }, { id: 's2', kind: 'smoke', phase: 'air', x: 0, y: 0.3, z: 0, vx: 0, vy: -1, vz: 0, at: T0 - 1000, still: 1 }], hp: {}, down: {} }, arena: { bots: [] } };
+  for (let i = 0; i < 4; i++) nadesTick(gf, [], .05, T0 + 50 * i, {});
+  assert(gf.combat.nades.find(n => n.id === 'f1')?.phase === 'out', 'smoke landing on the fire puts it out');
+  for (let i = 0; i < 30; i++) nadesTick(gf, [], .05, T0 + 200 + 50 * i, {}); assert(!gf.combat.nades.some(n => n.id === 'f1' && n.phase === 'fire'), 'the fire never comes back');
+  const gm = { levels: {}, combat: { nades: [{ id: 's3', kind: 'smoke', phase: 'smoke', x: 0, y: 0, z: 0, firedAt: T0 }, { id: 'm1', kind: 'molotov', phase: 'air', x: 5, y: 0.3, z: 0, vx: 0, vy: -3, vz: 0, at: T0, still: 0 }], hp: {}, down: {} }, arena: { bots: [] } };
+  for (let i = 0; i < 6; i++) nadesTick(gm, [], .05, T0 + 2000 + 50 * i, {}); assert.notEqual(gm.combat.nades.find(n => n.id === 'm1')?.phase, 'fire', 'a molotov thrown into smoke fizzles'); }
+console.log('PASS: grenades · throw strengths (full / medium / short), preview = host flight, fire 4× area within walls, smoke 4× area, no throws in the freeze,  · buy limits, throw + flight, HE damage + cover, smoke blocks sight 18 s (a volume: outside, edge, inside), HE opens a hole that closes, smoke puts out fire / molotov fizzles in smoke, molotov burns 7 s, flashbang (bots + facing), drop / pickup');

@@ -3,7 +3,7 @@
 // molotov fire, each with 3D sound. Materials are made once and shared (the graphics warm-up compiles them).
 import * as THREE from './three.module.js';
 import { weaponModel } from './weapon-models.js';
-import { NADES, flashAmount, fireCells } from './arena-nades.js';
+import { NADES, flashAmount, fireCells, smokeShape, holeOpen, smokeDensity } from './arena-nades.js';
 import { audioCtx, outAt, reverb } from './spatial-audio.js';
 
 const soft = (inner, outer) => { try { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); if (typeof g?.createRadialGradient !== 'function') return null;
@@ -46,11 +46,14 @@ function burst(at, { len = 1.2, decay = 2.5, freq = 900, vol = 1, type = 'lowpas
 function ring(secs) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 3200; g.gain.setValueAtTime(.08, t); g.gain.linearRampToValueAtTime(0, t + secs); o.connect(g).connect(c.destination); o.start(t); o.stop(t + secs); } catch {} }
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
 
-export function createNadeView({ scene, camera, world, boxes = () => [], quality = () => 'Medium' }) {
+export function createNadeView({ scene, camera, world, boxes = () => [], quality = () => 'Medium', hostNow = () => Date.now() }) {
   const group = new THREE.Group(); group.name = 'nades'; scene.add(group);
   const live = new Map(), dir = new THREE.Vector3(); let flashUntil = 0, flashPeak = 0, flashAt = 0, path = null, landRing = null;
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-flash" style="position:fixed;inset:0;z-index:39;background:#fff;opacity:0;pointer-events:none"></div>');
   const white = document.getElementById('gd-flash') || { style: {} };
+  // Inside a smoke you see smoke: a veil as thick as the smoke at your eye (the same density the rules use).
+  document.body.insertAdjacentHTML('beforeend', '<div id="gd-smokeveil" style="position:fixed;inset:0;z-index:20;background:#c9ccd0;opacity:0;pointer-events:none"></div>');
+  const veil = document.getElementById('gd-smokeveil') || { style: {} }; let veilNow = 0;
   function effect(g) {
     const fx = new THREE.Group(); fx.position.set(g.x, g.y, g.z); group.add(fx); const at = { x: g.x, y: g.y, z: g.z }, parts = [];
     if (g.phase === 'boom') { const b = new THREE.Mesh(BALL, MAT.boom.clone()); fx.add(b); parts.push(b); const s = new THREE.Mesh(DISC, MAT.scorch); s.rotation.x = -Math.PI / 2; s.position.y = .05 - g.y + Math.max(0, g.y - .4); s.scale.setScalar(5); fx.add(s); burst(at, { len: 1.6, decay: 2.2, freq: 700, vol: 1.3, thump: 1 }); }
@@ -66,6 +69,9 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
       cells.forEach(([cx, cz], i) => { const h = .7 + ((i * 7919) % 13) / 13 * .7; q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (i * 2.4) % 6.28); m4.compose(new THREE.Vector3(cx - g.x, .05, cz - g.z), q, sc.set(1, h, 1)); flames.setMatrixAt(i, m4); m4.compose(new THREE.Vector3(cx - g.x, .06, cz - g.z), new THREE.Quaternion(), sc.set(1, 1, 1)); glow.setMatrixAt(i, m4); });
       flames.count = glow.count = cells.length; flames.frustumCulled = glow.frustumCulled = false; fx.add(glow, flames); parts.push(flames); F_CELLS.set(fx, cells.length);
       burst(at, { len: 1.2, decay: 1.5, freq: 1200, vol: .7, thump: .3 }); }
+    if (g.phase === 'out') { // put out by smoke: a puff of steam and a hiss where the fire was
+      for (let i = 0; i < 10; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), a = i * 2.4; sp.position.set(Math.cos(a) * 5 * (i % 3) / 2, 1 + (i % 4), Math.sin(a) * 5 * (i % 3) / 2); sp.userData.size = 5 + (i % 3) * 2; fx.add(sp); parts.push(sp); }
+      burst(at, { len: 1, decay: 2.5, freq: 4200, vol: .45, type: 'highpass' }); }
     return { fx, parts, start: performance.now(), phase: g.phase, crackle: 0 };
   }
   return {
@@ -76,18 +82,24 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
         seen.add(g.id); let v = live.get(g.id);
         if (!v) { v = { model: weaponModel(g.kind, 1.4), fx: null }; v.model.position.set(g.x, g.y, g.z); group.add(v.model); live.set(g.id, v); }
         if (g.phase === 'air') { const k = 1 - Math.exp(-dt * 18); v.model.position.x += (g.x - v.model.position.x) * k; v.model.position.y += (g.y - v.model.position.y) * k; v.model.position.z += (g.z - v.model.position.z) * k; v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; continue; }
+        if (v.fx && v.fx.phase !== g.phase) { v.fx.fx.removeFromParent(); for (const p of v.fx.parts) if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); v.fx = null; }   // fire → out
         if (!v.fx) { v.fx = effect(g); if (g.phase !== 'fire' && g.phase !== 'smoke') v.model.visible = false; else v.model.position.set(g.x, g.y + .3, g.z); }
         const t = (now - v.fx.start) / 1000, F = v.fx;
         if (g.phase === 'boom' || g.phase === 'pop') { const b = F.parts[0], k = Math.min(1, t / .35); b.scale.setScalar(.5 + k * (g.phase === 'boom' ? 16 : 4)); b.material.opacity = Math.max(0, 1 - t / .5); b.visible = t < .5; }
-        if (g.phase === 'smoke') { const total = NADES.smoke.lasts / 1000, grow = 1 - Math.pow(1 - Math.min(1, t / 1.8), 3), fade = Math.min(1, Math.max(0, (total - t) / 3)); for (const sp of F.parts) { if (sp.userData.core) { const k = .35 + .65 * grow; sp.scale.set(NADES.smoke.radius * .66 * k, NADES.smoke.radius * .5 * k, NADES.smoke.radius * .66 * k); sp.material.opacity = Math.min(1, t / .6) * fade; sp.visible = sp.material.opacity > .02; continue; } sp.scale.setScalar(sp.userData.size * (.35 + .65 * grow) * (1 + .08 * Math.sin(now / 900 + sp.id))); sp.material.opacity = .95 * fade * Math.min(1, t / .5); } }
+        if (g.phase === 'smoke') { // the shared smoke shape (arena-nades smokeShape): grows, thins at the end; HE holes clear puffs near the blast
+          const hn = hostNow(), S = smokeShape(g, hn), k = S.r / NADES.smoke.radius, fade = S.dens * Math.min(1, t / .5); let coreCut = 0; for (const h of g.holes || []) if (Math.hypot(h.x - g.x, h.z - g.z) < NADES.smoke.radius * .8) coreCut = Math.max(coreCut, holeOpen(g, h.x, h.y, h.z, hn));
+          for (const sp of F.parts) { if (sp.userData.core) { sp.scale.set(NADES.smoke.radius * .66 * k, NADES.smoke.radius * .5 * k, NADES.smoke.radius * .66 * k); sp.material.opacity = Math.min(1, t / .6) * S.dens * (1 - coreCut * .9); sp.visible = sp.material.opacity > .02; continue; }
+            const cut = g.holes?.length ? holeOpen(g, g.x + sp.position.x * k, g.y + sp.position.y, g.z + sp.position.z * k, hn) : 0; sp.position.multiplyScalar(1); sp.scale.setScalar(sp.userData.size * k * (1 + .08 * Math.sin(now / 900 + sp.id))); sp.material.opacity = .95 * fade * (1 - cut); } }
+        if (g.phase === 'out') { for (const sp of F.parts) { sp.position.y += dt * 4; sp.scale.setScalar(sp.userData.size * (1 + t * 1.5)); sp.material.opacity = Math.max(0, .8 - t); } }
         if (g.phase === 'fire') { const left = NADES.molotov.lasts / 1000 - t, k = Math.max(0, Math.min(1, left / 1.2)); F.parts[0].scale.set(1, (.8 + .2 * Math.sin(now / 80)) * k, 1); MAT.glow.opacity = .45 * k;
           if (now - F.crackle > 380) { F.crackle = now; burst({ x: g.x, y: g.y, z: g.z }, { len: .2, decay: 3, freq: 2200, vol: .25, type: 'bandpass' }); } }
       }
       for (const [id, v] of live) if (!seen.has(id)) { v.model.removeFromParent(); if (v.fx) { v.fx.fx.removeFromParent(); for (const p of v.fx.parts) if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); } live.delete(id); }
       // Flashbang white-out: full for a moment, then fades.
       const left = flashUntil - now; white.style.opacity = left > 0 ? String(Math.min(1, flashPeak * Math.min(1, left / 1800))) : '0';
+      { const c = camera.position, want = list.some(n => n.phase === 'smoke') ? Math.min(.97, smokeDensity(G, c.x, c.y, c.z, hostNow()) * 1.25) : 0; veilNow += (want - veilNow) * Math.min(1, dt * 10); const o = veilNow < .01 ? '0' : veilNow.toFixed(2); if (veil.style.opacity !== o) veil.style.opacity = o; }
     },
-    clear() { for (const v of live.values()) { v.model.removeFromParent(); v.fx?.fx.removeFromParent(); } live.clear(); white.style.opacity = '0'; flashUntil = 0; this.preview(null); },
+    clear() { for (const v of live.values()) { v.model.removeFromParent(); v.fx?.fx.removeFromParent(); } live.clear(); white.style.opacity = '0'; veil.style.opacity = '0'; veilNow = 0; flashUntil = 0; this.preview(null); },
     // Where the grenade in your hand will go (points from arena-nades predictThrow), or null to hide.
     preview(pts) { if (!pts || pts.length < 2) { if (path) path.visible = landRing.visible = false; return; }
       if (!path) { path = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(82 * 3), 3)), MAT.path); path.frustumCulled = false; path.renderOrder = 5; landRing = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.5, 24).rotateX(-Math.PI / 2), MAT.ring); landRing.renderOrder = 5; group.add(path, landRing); }
