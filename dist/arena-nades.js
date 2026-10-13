@@ -46,7 +46,7 @@ export const throwStart = a => ({ x: +a.x || 0, y: (+a.y || EYE) + ((POWER[a.str
 export function throwNade(game, name, kind, a, now = Date.now()) {
   const l = game.arena.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, list = l.nades ??= [], i = list.indexOf(kind);
   if (!NADES[kind]) throw Error('Unknown grenade'); if (i < 0) throw Error('You have no ' + NADES[kind].name);
-  const r = game.combat?.d?.round; if (r && ['freeze', 'over', 'warmup'].includes(r.phase) || game.arena?.lobby && !game.arena.lobby.started) throw Error('You can’t throw now');
+  const r = game.combat?.d?.round; if (r && ['freeze', 'over', 'warmup'].includes(r.phase) || game.arena?.lobby && !game.arena.lobby.started || game.combat?.d?.paused) throw Error('You can’t throw now');
   list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1; const v = launch(a);
   C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), ...throwStart(a), ...v, at: now, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long' });
   return 'Threw a ' + NADES[kind].name;
