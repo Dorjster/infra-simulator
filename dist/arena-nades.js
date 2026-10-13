@@ -11,7 +11,7 @@
 //  · Molotov: bursts on landing (or after 2.2 s) · 7 s of fire over up to 37 units around, spreading only over the
 //    floor it landed on (walls and drops stop it); burns anyone standing in it.
 import { EYE } from './weapons-data.js';
-import { hurt, isDown } from './combat-logic.js';
+import { hurt, isDown, recording, statOf } from './combat-logic.js';
 import { lineOfSight, segmentClear } from './arena-maps.js';
 
 const HU = 2.54 / 16.5;
@@ -136,6 +136,9 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
       if (g.kind === 'he') for (const s of C.nades) if (s.phase === 'smoke' && Math.hypot(s.x - g.x, s.z - g.z) < smokeShape(s, now).r + SMOKE.holeR * .6) { s.holes = [...(s.holes || []), { x: +g.x.toFixed(2), y: +g.y.toFixed(2), z: +g.z.toFixed(2), at: now }].slice(-3); }   // a blast opens the smoke for a moment
       if (g.kind === 'he') for (const t of people(game, players)) { const d = Math.hypot(t.x - g.x, t.z - g.z, t.y + 5 - g.y); if (d > N.radius || !(segmentClear(boxes, g.x, g.y + .5, g.z, t.x, t.y + 5, t.z) || segmentClear(boxes, g.x, g.y + .5, g.z, t.x, t.y + 9, t.z))) continue;
         hurt(game, g.by, t.name, { id: 'he', name: N.name }, Math.round(N.dmg * Math.pow(1 - d / N.radius, 1.3)), 'chest', now); }
+      // Flash statistics: enemies it blinded (people: from where they look; bots: as the bots themselves react).
+      if (g.kind === 'flash' && recording(game)) { const tm = game.combat.d?.teams || {}, mine = tm[key(g.by)]; for (const p of players) { if (!p.pose || isDown(game, p.name, now) || !mine || tm[key(p.name)] === mine) continue; const yaw = +p.pose.yaw || 0, pit = +p.pose.shot?.pitch || 0, a = flashAmount(boxes, g.x, g.y, g.z, p.pose.x, p.pose.y ?? EYE, p.pose.z, -Math.sin(yaw) * Math.cos(pit), Math.sin(pit), -Math.cos(yaw) * Math.cos(pit), game); if (a > .4) { const st = statOf(game, g.by); st.flashed++; st.blindMs += Math.round(600 + 3400 * a); } }
+        for (const b of game.arena?.bots || []) if (!isDown(game, b.name, now) && mine && tm[key(b.name)] !== mine && Math.hypot(b.x - g.x, b.z - g.z) < N.radius && segmentClear(boxes, g.x, Math.max(1, g.y), g.z, b.x, 9.7, b.z) && !smoked(game, g.x, g.z, b.x, b.z)) { const st = statOf(game, g.by); st.flashed++; st.blindMs += 2500; } }
       if (g.kind === 'flash') for (const t of people(game, players)) if (t.bot && Math.hypot(t.x - g.x, t.z - g.z) < N.radius && segmentClear(boxes, g.x, Math.max(1, g.y), g.z, t.x, 9.7, t.z) && !smoked(game, g.x, g.z, t.x, t.z)) t.bot.blindUntil = now + 2500;
     } else if (g.phase === 'fire') {
       // Burning: damage in steps of a quarter second to everyone standing in the flames (only where it burns).

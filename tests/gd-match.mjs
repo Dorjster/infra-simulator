@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { startArena, arenaApply, arenaTick, LOBBY_MS } from '../dist/arena-logic.js';
 import { DEFUSE, teamOf } from '../dist/arena-defuse.js';
-import { combatApply, isDown, applyHit } from '../dist/combat-logic.js';
+import { combatApply, isDown, applyHit, takeShots, hurt } from '../dist/combat-logic.js';
+import { buildReport } from '../dist/gd-report.js';
 import { ARENA_MAPS, mapBoxes, walkable } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
 import { weaponById } from '../dist/weapons-data.js';
@@ -107,5 +108,21 @@ const spread = pts => { let m = Infinity; for (let i = 0; i < pts.length; i++) f
   arenaApply(g, { type: 'move-spec', name: 'Gus' }, 'Host', P, t, H); ok('host moves a player to spectator', g.combat.d.teams.gus === 'spec');
   arenaApply(g, { type: 'next-map', map: 'temple' }, 'Host', P, t, H); g.combat.d.matchOver = { at: t - 20000, winner: 't' }; arenaTick(g, P, .05, t += 50);
   ok('the next match starts on the scheduled map, sides kept', g.arena.map === 'temple' && g.combat.d.teams.host !== undefined, g.arena.map); }
+
+// ── Match statistics (post-match report) from the host's own events ──
+{ const g = { levels: {} }; let t = 4e11; const P = [{ name: 'Ann', pose: { x: ARENA.cx, y: 9.7, z: ARENA.cz } }, { name: 'Bo', pose: { x: ARENA.cx + 5, y: 9.7, z: ARENA.cz } }, { name: 'Cy', pose: { x: ARENA.cx + 9, y: 9.7, z: ARENA.cz } }];
+  startArena(g, { map: 'dune', kind: 'defuse', bots: 0, lobbyMs: 5000 }, t); for (let i = 0; i < 3; i++) arenaTick(g, P, .05, t += 50); g.combat.d.teams = { ann: 't', bo: 'ct', cy: 't' };
+  g.arena.loadout.ann = { primary: 'ak', secondary: 'pistol', nades: [] }; takeShots(g, 'Ann', 100, 'ak'); takeShots(g, 'Ann', 103, 'ak');
+  ok('warmup / lobby: nothing recorded', !(g.combat.stats?.ann?.shots));
+  g.arena.lobby.until = t; for (let i = 0; i < 3; i++) arenaTick(g, P, .05, t += 50); const d = g.combat.d; d.teams = { ann: 't', bo: 'ct', cy: 't' }; d.round.phase = 'live'; g.combat.stats = {};
+  g.combat.ammo = { ann: { ak: [30, 90] } }; takeShots(g, 'Ann', 110, 'ak'); takeShots(g, 'Ann', 115, 'ak');
+  applyHit(g, 'Ann', 'Bo', weaponById('ak'), 'chest', 10, 1, t); hurt(g, 'Ann', 'Bo', weaponById('ak'), 500, 'head', t, true);   // 36ish, then a head shot that kills (capped at the HP left)
+  hurt(g, 'Cy', 'Ann', weaponById('ak'), 20, 'chest', t);   // team damage: not in the report
+  const st = g.combat.stats.ann; ok('shots counted once each (12 fired after the match went live)', st.shots === 12, st.shots); ok('hits, head-shot kill', st.hits === 2 && st.hsKills === 1 && st.hsHits === 1, JSON.stringify(st));
+  ok('damage capped at the HP the victim had (100 in all)', st.dmg === 100, st.dmg); ok('team damage not counted', !g.combat.stats.cy?.dmg);
+  d.round.phase = 'over'; d.history = [{ n: 1, winner: 't', reason: 'elimination', at: t, score: { t: 1, ct: 0 } }, { n: 2, winner: 't', reason: 'bomb', at: t, score: { t: 2, ct: 0 } }]; g.combat.stats.ann.plants = 1; d.score = { t: 13, ct: 0 }; d.matchOver = { at: t, winner: 't' };
+  const R = buildReport(g), A = R.players.find(p => p.k === 'ann');
+  ok('report: result, rounds, ADR (dmg / rounds), accuracy, HS%, plants', R.winner === 't' && R.rounds.length === 2 && A.adr === 50 && A.acc === 17 && A.hs === 100 && A.plants === 1 && A.kills === 1, JSON.stringify(A));
+  ok('report: MVP is a real player', R.players.some(p => p.k === R.mvp)); }
 
 console.log('PASS: Global Defensive match flow · ' + n + ' checks (unique spawns for 12, one-attempt plant / defuse with stale positions, one outcome, lobby window + start rules, team changes + balance + spectator, host settings, map changes, no Defuse → Deathmatch fallback)');

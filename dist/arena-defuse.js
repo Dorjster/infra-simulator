@@ -11,7 +11,7 @@
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, spawnSlots } from './arena-maps.js';
 import { weaponById, EYE, MAX_HP, defaultPistol } from './weapons-data.js';
-import { refillAll } from './combat-logic.js';
+import { refillAll, recording, statOf } from './combat-logic.js';
 
 export const DEFUSE = { freezeMs: 15000, roundMs: 115000, buyMs: 20000, bombMs: 40000, plantMs: 3200, defuseMs: 10000, kitMs: 5000, overMs: 6000, matchOverMs: 12000, half: 12, win: 13, start: 800, max: 16000, buyRadius: 45, bombRadius: 1750 * 2.54 / 16.5 };
 // Prices come from the weapon table (weapons-data.js); grenades and the kit here.
@@ -36,7 +36,7 @@ export function defuseKill(game, shooter, target, wpn) {
 
 // teams: sides to keep (the lobby's choices); bots without one alternate.
 export function startDefuse(game, now, players = [], teams = null) {
-  game.combat.d = { teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {} };
+  game.combat.d = { teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {}, history: [] }; game.combat.stats = {};   // a fresh match: fresh report
   for (const [i, b] of (game.arena.bots || []).entries()) { const k = key(b.name); game.combat.d.teams[k] ??= i % 2 ? 'ct' : 't'; }
   newRound(game, players, now);
 }
@@ -137,9 +137,9 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   // Planting: stand still on the site with the bomb.
   // Planting stops only for a real move away (5 units: more than a stop's slide plus position lag), death or losing the bomb.
   if (r.plant) { const p = posOf(r.plant.by); if (!p || (C.down || {})[r.plant.by] || Math.hypot(p.x - r.plant.x, p.z - r.plant.z) > 5 || d.bomb.carrier !== r.plant.by) { r.plant = null; changed = true; }
-    else if (now - r.plant.start >= DEFUSE.plantMs && r.phase === 'live') { r.planted = { x: r.plant.x, z: r.plant.z, y: r.plant.y, site: r.plant.site, at: now, explodeAt: now + DEFUSE.bombMs, by: r.plant.by }; r.phase = 'planted'; d.bomb.carrier = null; gain(d, r.plant.by, 300); r.plant = null; r.defuse = null; changed = true; } }
+    else if (now - r.plant.start >= DEFUSE.plantMs && r.phase === 'live') { if (recording(game)) statOf(game, r.plant.by).plants++; r.planted = { x: r.plant.x, z: r.plant.z, y: r.plant.y, site: r.plant.site, at: now, explodeAt: now + DEFUSE.bombMs, by: r.plant.by }; r.phase = 'planted'; d.bomb.carrier = null; gain(d, r.plant.by, 300); r.plant = null; r.defuse = null; changed = true; } }
   if (r.defuse) { const p = posOf(r.defuse.by); if (!p || (C.down || {})[r.defuse.by] || Math.hypot(p.x - r.defuse.x, p.z - r.defuse.z) > 5) { r.defuse = null; changed = true; }
-    else if (now - r.defuse.start >= r.defuse.ms) { end(game, 'ct', 'defuse', now); return true; } }
+    else if (now - r.defuse.start >= r.defuse.ms) { if (recording(game)) statOf(game, r.defuse.by).defuses++; end(game, 'ct', 'defuse', now); return true; } }
   if (r.phase === 'live' || r.phase === 'planted') {
     if (r.phase === 'planted' && now >= r.planted.explodeAt) { hurtAll(r.planted.x, r.planted.z, r.planted.y, 500, DEFUSE.bombRadius); end(game, 't', 'bomb', now); return true; }
     if (alive('ct') === 0 && members(game, players).some(m => d.teams[m.k] === 'ct')) { end(game, 't', 'elim', now); return true; }
@@ -151,7 +151,7 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
 }
 function end(game, winner, reason, now) {
   const C = game.combat, d = C.d, r = d.round; r.phase = 'over'; r.winner = winner; r.reason = reason; r.overAt = now; r.plant = null; r.defuse = null;
-  d.score[winner]++; const loser = other(winner);
+  d.score[winner]++; const loser = other(winner); (d.history ??= []).push({ n: d.n, winner, reason, at: now, score: { ...d.score } }); if (d.history.length > 40) d.history.shift();
   for (const [k, t] of Object.entries(d.teams)) { if (t === winner) gain(d, k, WIN[reason]); else gain(d, k, LOSS[Math.min(4, d.loss[loser])] + (loser === 't' && r.planted ? 800 : 0)); }
   d.loss[loser]++; d.loss[winner] = Math.max(0, d.loss[winner] - 1);
   if (d.score[winner] >= DEFUSE.win) d.matchOver = { at: now, winner };

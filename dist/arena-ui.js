@@ -23,7 +23,7 @@ Object.assign(ICON, NADE_ICON);
 const icon = id => `<svg viewBox="0 0 30 16" width="44" height="20" fill="currentColor"><path d="${ICON[id] || ICON.pistol}"/></svg>`;
 const HS = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><circle cx="8" cy="7" r="5"/><rect x="6" y="11" width="4" height="4"/><circle cx="6" cy="7" r="1.2" fill="#000"/><circle cx="10" cy="7" r="1.2" fill="#000"/></svg>';
 
-export function createArenaUI({ voice = () => null, comms = () => null, world, lan, name, notify, scene, send, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null, invite = () => null }) {
+export function createArenaUI({ voice = () => null, comms = () => null, report = () => null, world, lan, name, notify, scene, send, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null, invite = () => null }) {
   const g = () => world.operations.game, me = () => key(name());
   const css = document.createElement('style'); css.textContent = `
 #ar-top{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:37;display:flex;gap:10px;align-items:center;font:800 18px ui-monospace,Menlo,monospace;color:#fff;text-shadow:0 2px 4px #000}#ar-top[hidden]{display:none}#ar-top span{background:#000a;border-radius:6px;padding:4px 12px}#ar-top small{font:600 11px system-ui;opacity:.75;letter-spacing:.1em}
@@ -135,7 +135,7 @@ export function createArenaUI({ voice = () => null, comms = () => null, world, l
         <div class="row"><label>Next match map <select id="ar-nextsel"><option value="">Same map</option>${Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === 'defuse').map(([id, m]) => `<option value="${id}"${id === A.nextMap ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label><button data-next>Set</button></div>` : ''}` : '<p class="note">The host chooses the map, bots, difficulty and timers.</p>'}
       ${(() => { const v = voice?.(); if (!v || !d) return ''; const mates = names().filter(n => key(n) !== me() && !/^BOT /.test(n) && d.teams[key(n)] === myTeam());
         return `<h3>TEAM VOICE</h3><div class="row"><button data-voice-toggle>${v.status === 'on' ? 'Turn voice off' : 'Turn voice on'}</button><small class="note">${v.status === 'on' ? 'Hold K to talk · team mates only' : v.status === 'error' ? esc(v.error) : !v.secure ? 'Needs a secure page: ' + esc(v.httpsHint()) : 'Off'}</small></div>${mates.length ? `<div class="row">${mates.map(n => `<button data-voice-mute="${esc(n)}" title="voice">${v.isMuted(n) ? '🔇 ' : '🔈 '}${esc(n)}</button><button data-text-mute="${esc(n)}" title="text chat">${comms?.()?.isTextMuted(n) ? '🚫💬' : '💬'}</button>`).join('')}</div>` : ''}`; })()}
-      <div class="row"><button data-close>Close (M / Esc)</button></div>`;
+      <div class="row">${report?.()?.last ? '<button data-report>📊 Last match report</button>' : ''}<button data-close>Close (M / Esc)</button></div>`;
     const R = $('ar-team'), act = async (a, after) => { const r = await send(a); if (r?.error) notify(r.error); else notify(typeof r === 'string' ? r : r?.message || 'Done'); after?.(r); if (teamOpen) drawTeam(); };
     R.querySelectorAll('[data-team]').forEach(b => b.onclick = () => act({ type: 'team', team: b.dataset.team }));
     R.querySelector('[data-ready]')?.addEventListener('click', e => act({ type: 'ready', ready: e.currentTarget.dataset.ready === '1' }));
@@ -150,6 +150,7 @@ export function createArenaUI({ voice = () => null, comms = () => null, world, l
     R.querySelector('[data-voice-toggle]')?.addEventListener('click', async () => { const v = voice?.(); if (!v) return; if (v.status === 'on') v.disable(); else await v.enable(); if (teamOpen) drawTeam(); });
     R.querySelectorAll('[data-text-mute]').forEach(b => b.onclick = () => { const c = comms?.(), n = b.dataset.textMute; c?.muteText(n, !c.isTextMuted(n)); drawTeam(); });
     R.querySelectorAll('[data-voice-mute]').forEach(b => b.onclick = () => { const v = voice?.(), n = b.dataset.voiceMute; v?.mute(n, !v.isMuted(n)); drawTeam(); });
+    R.querySelector('[data-report]')?.addEventListener('click', () => { teamMenu(false); report?.()?.show(); });
     R.querySelector('[data-close]').onclick = () => teamMenu(false);
   }
   // Lobby panel (LAN, before the match): mode + map confirmed by the room, countdown, who joined (team, ready,
