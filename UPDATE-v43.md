@@ -1,5 +1,7 @@
 # v43: Global Defensive, the classic maps update
 
+**v43.0.1:** the desktop app crashed at start ("Cannot find module … lan/selfsigned.mjs") because the new room module was not included in the app. It is now, along with any future room module.
+
 ## Maps
 - Eight Defuse maps built on the classic CS flows, with our own layouts and names: Dune (Dust II), Old City (Inferno), Plaza (Mirage), Hamlet (Dust), Depot (Nuke, on one level), and three new maps: Temple (Ancient), Canal (Anubis) and Park (Overpass).
 - Fair starts on every map. The two spawns can't see each other at round start, or within the first 1.5 seconds of running.
