@@ -6,6 +6,7 @@
 //    the desktop app, this computer (localhost) or the host's https address.
 //  · Speaking indicators come from the audio actually sent / received (its level), not from a held key.
 //  · Voice never touches the game state: if it fails, the match and the LAN connection carry on.
+import { getVolumes } from './spatial-audio.js';
 const KEY = 'gd-voice', key = n => String(n || '').trim().toLowerCase().slice(0, 40);
 const DEFAULTS = { enabled: false, inputId: '', outputId: '', micGain: 1, volume: 1, micMuted: false, muted: [] };
 export function loadVoicePrefs() { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULTS }; } }
@@ -14,7 +15,8 @@ function savePrefs(p) { try { localStorage.setItem(KEY, JSON.stringify(p)); } ca
 export function createVoice({ lan, world, name, notify = () => {} }) {
   const prefs = loadVoicePrefs(), peers = new Map(), outbox = new Map();
   let ctx = null, stream = null, src = null, gain = null, analyser = null, dest = null, track = null, talking = false, status = 'off', lastErr = '', selfLevel = 0, testUntil = 0, monitor = null, flushTimer = null;
-  const buf = new Float32Array(512);
+  const buf = new Float32Array(512), outVol = () => { const v = getVolumes(); return v.master * v.voice; };
+  addEventListener('infra-volume', () => { for (const p of peers.values()) if (p.audio) p.audio.volume = Math.min(1, prefs.volume * outVol()); });   // Settings → Audio: master × voice
   const level = a => { if (!a) return 0; a.getFloatTimeDomainData(buf); let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; return Math.sqrt(s / buf.length); };
   const myTeam = () => { const g = world.operations.game; return g.mode === 'arena' ? g.combat?.d?.teams?.[key(name())] || null : null; };
   const teamOf = n => world.operations.game.combat?.d?.teams?.[key(n)] || null;
@@ -47,7 +49,7 @@ export function createVoice({ lan, world, name, notify = () => {} }) {
     const pc = new RTCPeerConnection({ iceServers: [] }), p = { pc, id, name: pname, level: 0, speakingAt: 0, sender: null, audio: null, meter: null, made: performance.now() };
     p.sender = pc.addTrack(track, dest.stream);
     pc.onicecandidate = e => { if (e.candidate) queue(id, { type: 'ice', c: e.candidate.toJSON() }); };
-    pc.ontrack = e => { const rs = e.streams[0] || new MediaStream([e.track]); p.audio?.remove(); const a = document.createElement('audio'); a.autoplay = true; a.srcObject = rs; a.volume = Math.min(1, prefs.volume); a.muted = prefs.muted.includes(key(pname)); a.style.display = 'none'; document.body.append(a); if (prefs.outputId && a.setSinkId) a.setSinkId(prefs.outputId).catch(() => {}); a.play?.().catch(() => {}); p.audio = a;
+    pc.ontrack = e => { const rs = e.streams[0] || new MediaStream([e.track]); p.audio?.remove(); const a = document.createElement('audio'); a.autoplay = true; a.srcObject = rs; a.volume = Math.min(1, prefs.volume * outVol()); a.muted = prefs.muted.includes(key(pname)); a.style.display = 'none'; document.body.append(a); if (prefs.outputId && a.setSinkId) a.setSinkId(prefs.outputId).catch(() => {}); a.play?.().catch(() => {}); p.audio = a;
       try { p.meter = Object.assign(ctx.createAnalyser(), { fftSize: 1024 }); ctx.createMediaStreamSource(rs).connect(p.meter); } catch {} };
     pc.onconnectionstatechange = () => { if (['failed', 'closed'].includes(pc.connectionState)) closePeer(id, false); };
     peers.set(id, p); return p;
@@ -85,7 +87,7 @@ export function createVoice({ lan, world, name, notify = () => {} }) {
     talk(on) { talking = !!on; if (track) track.enabled = talking && !prefs.micMuted; },
     setMicMuted(m) { prefs.micMuted = !!m; savePrefs(prefs); if (track) track.enabled = talking && !prefs.micMuted; },
     setMicGain(v) { prefs.micGain = Math.max(0, Math.min(2.5, +v || 0)); savePrefs(prefs); if (gain) gain.gain.value = prefs.micGain; },
-    setVolume(v) { prefs.volume = Math.max(0, Math.min(1, +v || 0)); savePrefs(prefs); for (const p of peers.values()) if (p.audio) p.audio.volume = prefs.volume; },
+    setVolume(v) { prefs.volume = Math.max(0, Math.min(1, +v || 0)); savePrefs(prefs); for (const p of peers.values()) if (p.audio) p.audio.volume = Math.min(1, prefs.volume * outVol()); },
     async setInput(id) { prefs.inputId = id || ''; savePrefs(prefs); if (status === 'on') await capture().catch(e => fail(e)); },
     setOutput(id) { prefs.outputId = id || ''; savePrefs(prefs); for (const p of peers.values()) p.audio?.setSinkId?.(prefs.outputId).catch(() => {}); },
     get canPickOutput() { return typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype; },

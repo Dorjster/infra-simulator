@@ -2,6 +2,7 @@
 // Laptop · Team · Settings). Everything shown here is read from the shared world through
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
+import { getVolumes, setVolumes } from './spatial-audio.js';
 import { ARENA_MAPS } from './arena-maps.js';
 import * as THREE from './three.module.js';
 import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
@@ -409,6 +410,7 @@ export function createCampaignUI(ctx) {
      <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
      ${crosshairEditorHTML(loadCrosshair())}
      <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. The desktop app also finds them by itself in a Steam install of CS 1.6. Without them the arena uses the built-in Terrorist / Counter-Terrorist gear.</p>
+     <h3>Audio</h3><div class="set-grid">${(() => { const v = getVolumes(); return [['master', 'Master'], ['effects', 'Game effects'], ['voice', 'Team voice'], ['music', 'Music'], ['ui', 'Interface']].map(([k, l]) => `<label>${l} · ${Math.round(v[k] * 100)}%<input type="range" data-vol="${k}" id="vol-${k}" min="0" max="1" step=".05" value="${v[k]}"></label>`).join(''); })()}</div>
      ${voiceHTML()}
      <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
   }
@@ -453,6 +455,7 @@ export function createCampaignUI(ctx) {
     if (vb.dataset.vc === 'test') v.test(); });
   $('campaign-panel').addEventListener('change', e => { const v = ctx.voice?.(), t = e.target; if (!v || !t.dataset) return;
     if (t.dataset.vcm === 'mute') v.setMicMuted(t.checked); if (t.dataset.vcsel === 'in') v.setInput(t.value); if (t.dataset.vcsel === 'out') v.setOutput(t.value); });
+  $('campaign-panel').addEventListener('input', e => { const t = e.target; if (!t.dataset?.vol) return; setVolumes({ [t.dataset.vol]: +t.value }); const lab = t.closest('label'); if (lab) lab.firstChild.textContent = lab.firstChild.textContent.replace(/· \d+%/, '· ' + Math.round(t.value * 100) + '%'); });
   $('campaign-panel').addEventListener('input', e => { const v = ctx.voice?.(), t = e.target; if (!v || !t.dataset?.vcr) return; if (t.dataset.vcr === 'gain') v.setMicGain(t.value); else v.setVolume(t.value); const lab = t.closest('label'); if (lab) lab.firstChild.textContent = (t.dataset.vcr === 'gain' ? 'Microphone volume · ' : 'Team mates’ voices · ') + Math.round(t.value * 100) + '%'; });
   $('campaign-panel').addEventListener('click', e => {
     const imp = e.target.closest?.('[data-csimp]');

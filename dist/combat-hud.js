@@ -6,15 +6,16 @@ import { MAX_HP } from './weapons-data.js';
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 
 // Hit feedback sounds (synthesized): a short tick for a body hit, a bright ding for a head shot, two notes for a knock-out.
+import { audioCtx, uiBus } from './spatial-audio.js';   // hit sounds on the UI bus (Settings → Audio)
 let hctx = null;
-function hitSound(kind) { try { hctx ??= new AudioContext(); if (hctx.state === 'suspended') hctx.resume(); const t = hctx.currentTime;
-  const note = (f, at, len, vol, type = 'sine') => { const o = hctx.createOscillator(), g = hctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, t + at); g.gain.setValueAtTime(vol, t + at); g.gain.exponentialRampToValueAtTime(.001, t + at + len); o.connect(g).connect(hctx.destination); o.start(t + at); o.stop(t + at + len + .02); };
-  const thud = (vol, f = 380) => { const n = hctx.createBuffer(1, Math.ceil(hctx.sampleRate * .06), hctx.sampleRate), d = n.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3); const s = hctx.createBufferSource(), b = hctx.createBiquadFilter(), g = hctx.createGain(); s.buffer = n; b.type = 'bandpass'; b.frequency.value = f; b.Q.value = 1.2; g.gain.value = vol; s.connect(b).connect(g).connect(hctx.destination); s.start(t); };
+function hitSound(kind) { try { hctx = audioCtx(); const out = uiBus(hctx), t = hctx.currentTime;
+  const note = (f, at, len, vol, type = 'sine') => { const o = hctx.createOscillator(), g = hctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, t + at); g.gain.setValueAtTime(vol, t + at); g.gain.exponentialRampToValueAtTime(.001, t + at + len); o.connect(g).connect(out); o.start(t + at); o.stop(t + at + len + .02); };
+  const thud = (vol, f = 380) => { const n = hctx.createBuffer(1, Math.ceil(hctx.sampleRate * .06), hctx.sampleRate), d = n.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3); const s = hctx.createBufferSource(), b = hctx.createBiquadFilter(), g = hctx.createGain(); s.buffer = n; b.type = 'bandpass'; b.frequency.value = f; b.Q.value = 1.2; g.gain.value = vol; s.connect(b).connect(g).connect(out); s.start(t); };
   // Body: a fleshy thud. Head: the helmet "dink" (inharmonic metal partials ringing out). Kill: a two-note confirm.
   if (kind === 'body') { thud(.5); note(170, 0, .08, .25); note(1300, 0, .03, .08, 'triangle'); }
   else if (kind === 'head') { thud(.35, 900); for (const [f, v, l] of [[2950, .2, .38], [4870, .12, .3], [7120, .07, .22], [1980, .08, .25]]) note(f, 0, l, v); }
   else { thud(.45); note(1800, 0, .1, .25); note(2700, .09, .18, .25); } } catch {} }
-export const warmHitSound = () => { try { hctx ??= new AudioContext(); } catch {} };
+export const warmHitSound = () => { try { hctx = audioCtx(); } catch {} };
 export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
   const css = document.createElement('style'); css.textContent = `
 #cb-hp{position:fixed;left:22px;bottom:92px;z-index:36;display:flex;align-items:baseline;gap:8px;color:#f2f2f2;text-shadow:0 2px 4px #000c;font:800 40px ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.02em}#cb-hp[hidden]{display:none}

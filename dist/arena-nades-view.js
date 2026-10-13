@@ -39,7 +39,7 @@ function noise(c, len, decay) { const k = len + ':' + decay; let b = noiseCache.
 export async function warmNadeSounds() { try { reverb(audioCtx()); } catch {}   /* the mix's reverb impulse is prepared here, while idle, not at the first shot */
   for (const [l, dc] of [[1.6, 2.2], [.6, 4], [2.5, .8], [1.2, 1.5], [.2, 3], [3, 1.8], [.25, 1.5]]) { await new Promise(r => (globalThis.requestIdleCallback || setTimeout)(r)); try { noise(audioCtx(), l, dc); } catch {} } }   // one shape per idle moment
 function burst(at, { len = 1.2, decay = 2.5, freq = 900, vol = 1, type = 'lowpass', thump = 0 } = {}) {
-  try { const c = audioCtx(), t = c.currentTime, out = outAt(c, at), s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(); s.buffer = noise(c, len, decay); f.type = type; f.frequency.value = freq; g.gain.value = vol; s.connect(f).connect(g).connect(out); s.start(t);
+  try { const c = audioCtx(), t = c.currentTime, out = outAt(c, at, thump ? 'explosion' : 'effect'), s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(); s.buffer = noise(c, len, decay); f.type = type; f.frequency.value = freq; g.gain.value = vol; s.connect(f).connect(g).connect(out); s.start(t);
     if (thump) { const w = c.createGain(); w.gain.value = Math.min(1, vol * .7); g.connect(w).connect(reverb(c)); }   // blasts ring off the walls
     if (thump) { const o = c.createOscillator(), og = c.createGain(); o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(30, t + .5); og.gain.setValueAtTime(thump, t); og.gain.exponentialRampToValueAtTime(.001, t + .6); o.connect(og).connect(out); o.start(t); o.stop(t + .65); } } catch {}
 }
@@ -107,7 +107,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
   };
 }
 // The planted bomb's beep (3D) and the bomb's explosion (a big fireball, a heavy blast heard far away).
-export function beep(at, pitch = 1) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 1700 * pitch; g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.001, t + .09); o.connect(g).connect(outAt(c, at)); o.start(t); o.stop(t + .1); } catch {} }
+export function beep(at, pitch = 1) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 1700 * pitch; g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.001, t + .09); o.connect(g).connect(outAt(c, at, 'beep')); o.start(t); o.stop(t + .1); } catch {} }
 export function explosion(parent, p, scale = 1) {
   const b = new THREE.Mesh(BALL, MAT.boom.clone()), t0 = performance.now(); b.position.set(p.x, (p.y || 0) + 2, p.z); parent.add(b);
   burst({ x: p.x, y: (p.y || 0) + 2, z: p.z }, { len: 3, decay: 1.8, freq: 500, vol: 2.5, thump: 1.5 });

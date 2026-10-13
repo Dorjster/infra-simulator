@@ -14,9 +14,9 @@ export function loadSounds() {
     return buffers.size; })();
 }
 // Play a sound; `at` = where it happens ({x, y, z}, 3D) or null for your own. Returns false if not loaded.
-export function play(name, { at = null, volume = 1, rate = 1 } = {}) {
+export function play(name, { at = null, volume = 1, rate = 1, kind = 'effect' } = {}) {
   const buf = buffers.get(name); if (!buf) { loadSounds(); return false; }
-  try { const c = audioCtx(), src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = volume; src.connect(g).connect(outAt(c, at)); src.start(); return true; } catch { return false; }
+  try { const c = audioCtx(), src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = volume; src.connect(g).connect(outAt(c, at, kind)); src.start(); return true; } catch { return false; }
 }
 // Gunshot per weapon: [recording, playback rate, suppressed]. Guns without their own recording use the closest one,
 // pitched so each still sounds different; suppressed guns are muffled (low-pass) and quieter.
@@ -31,7 +31,7 @@ function burst(c, t, out, { type, freq, q = .8, dur, gain }) { const n = c.creat
 export function shotSound(id, { at = null, volume = 1 } = {}) {
   const [file, rate, quiet] = SHOT[id] || ['pistol', 1], buf = buffers.get('shot-' + file); if (!buf) { loadSounds(); return false; }
   try {
-    const c = audioCtx(), t = c.currentTime, L = LAYER_ID[id] || LAYER[weaponById(id)?.kind] || LAYER.pistol, out = outAt(c, at), vol = volume * (quiet ? .4 : 1);
+    const c = audioCtx(), t = c.currentTime, L = LAYER_ID[id] || LAYER[weaponById(id)?.kind] || LAYER.pistol, out = outAt(c, at, 'gun'), vol = volume * (quiet ? .4 : 1);
     const me = listenerAt(), dist = at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0, far = Math.min(1, dist / 260);
     const src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate * (.97 + Math.random() * .06); g.gain.value = vol * 1.1;
     const tone = c.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = quiet ? 1300 : Math.max(1100, 17000 * Math.exp(-dist / 120)); src.connect(tone).connect(g).connect(out); src.start(t);
@@ -51,6 +51,6 @@ export const isQuiet = id => !!SHOT[id]?.[2];
 // Reload parts per weapon: magazine out, magazine in, bolt / slide / pump.
 const RELOAD = { rifle: ['reload-rifle-0', 'reload-rifle-1', 'reload-pistol-1'], pistol: ['reload-pistol-0', 'reload-pistol-1', 'reload-rifle-0'], shotgun: [null, 'reload-pistol-0', 'reload-pump-0'] };
 const kindOf = id => ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'shotgun' : 'rifle';
-export function reloadSound(part, id, at = null) { const name = RELOAD[kindOf(id)][part]; return name === null ? true : play(name, { at, volume: .9, rate: .96 + Math.random() * .08 }); }
+export function reloadSound(part, id, at = null) { const name = RELOAD[kindOf(id)][part]; return name === null ? true : play(name, { at, volume: .9, rate: .96 + Math.random() * .08, kind: 'handling' }); }
 // Footstep on a surface (concrete, wood, grass, carpet, metal); a random take each step.
-export const stepSound = (surface, at = null, volume = .6) => play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12 });
+export const stepSound = (surface, at = null, volume = .6) => play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12, kind: 'step' });
