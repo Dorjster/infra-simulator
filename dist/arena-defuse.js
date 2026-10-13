@@ -13,6 +13,7 @@ import { ARENA_MAPS, spawnSlots } from './arena-maps.js';
 import { weaponById, EYE, MAX_HP, defaultPistol } from './weapons-data.js';
 import { refillAll, recording, statOf } from './combat-logic.js';
 
+export const JOIN_GRACE_MS = 8000;
 export const DEFUSE = { freezeMs: 15000, roundMs: 115000, buyMs: 20000, bombMs: 40000, plantMs: 3200, defuseMs: 10000, kitMs: 5000, overMs: 6000, matchOverMs: 12000, half: 12, win: 13, start: 800, max: 16000, buyRadius: 45, bombRadius: 1750 * 2.54 / 16.5 };
 // Prices come from the weapon table (weapons-data.js); grenades and the kit here.
 export const PRICE = new Proxy({ he: 300, flash: 200, smoke: 300, molotov: 400, kit: 400 }, { get: (o, id) => o[id] ?? weaponById(id)?.price });
@@ -126,7 +127,7 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   const C = game.combat, d = C.d; if (!d?.round) return false; const r = d.round; let changed = false;
   if (d.paused) return false;   // paused by the host: every clock stands still
   for (const mem of members(game, players)) if (!d.teams[mem.k]) { const t = assignTeam(game, mem.name, players); changed = true;
-    if (r.phase !== 'freeze' && r.phase !== 'warmup') C.down[mem.k] = { until: 4e15, by: '', weapon: 'joined mid-round' };   // watch until the next round
+    if (r.phase !== 'freeze' && r.phase !== 'warmup' && !(r.phase === 'live' && now - r.at < JOIN_GRACE_MS)) C.down[mem.k] = { until: 4e15, by: '', weapon: 'joined mid-round' };   // watch until the next round (the first seconds of a round still spawn you: nobody can have met yet)
     else { const at = freeSpot(game, players, t, mem.k); if (mem.bot) { mem.bot.x = at.x; mem.bot.z = at.z; } else (C.spawnTo ??= {})[mem.k] = { at: now, i: t === 'ct' ? map(game).t.length : 0, x: at.x, z: at.z }; } }
   // Someone on the Terrorist side always has the bomb during the freeze (e.g. the first players just joined).
   if (r.phase === 'freeze' && !d.bomb.carrier) { const ts = members(game, players).filter(x => d.teams[x.k] === 't'); if (ts.length) { d.bomb.carrier = ts[Math.floor(Math.random() * ts.length)].k; changed = true; } }
