@@ -105,7 +105,8 @@ Last updated: 2026-10-13.
 | Item | Status | Evidence / gap |
 |---|---|---|
 | A distinct model per gun | Verified | v44 icons rendered from the models; the USP-S, Five-SeveN and Deagle fallback bug was fixed |
-| Developer gallery and duplicate-mapping test | Missing | |
+| Duplicate-mapping test | Verified | `gd-assets.mjs` (401 checks): every gun, knife, grenade and the bomb has a model source of its own (never the generic fallback), no two guns look the same, AWP ≠ SSG 08, an icon of its own, four gunshot files of its own and not the same take as another gun's, a first-person rig. Found and fixed: UMP-45 / MP9 and P90 / MP7 shared a distant gunshot file, the SG 553's third take was a copy of its first, and the USP-S's distant take was the MP5-SD's |
+| Developer gallery | Missing | |
 | Karambit hand rig | Missing | |
 | CS 1.6 imported assets | Existing | Optional, imported on the player's own computer only |
 
