@@ -21,6 +21,7 @@ const viewFor=(base,p)=>base.operations?.casino?{...base,operations:{...base.ope
 const {modelForSKU}=await import(pathToFileURL(path.join(root,'enterprise-models.js')));
 const {combatApply,combatTick,ownedWeapons,poseAmmo}=await import(pathToFileURL(path.join(root,'combat-logic.js')));let combatDirty=false;
 const {arenaTick,botRoster}=await import(pathToFileURL(path.join(root,'arena-logic.js')));
+const {radioCall,chatRecipients}=await import(pathToFileURL(path.join(root,'gd-radio.js')));const {locationOf}=await import(pathToFileURL(path.join(root,'gd-radar-art.js')));const {ARENA_MAPS:MAPS}=await import(pathToFileURL(path.join(root,'arena-maps.js')));
 const {hostActionError,EMOTE_IDS,FACE_IDS,SKIN_IDS,HAT_IDS,OUTFIT_IDS,CARRY_IDS,cleanName}=await import(pathToFileURL(path.join(root,'play-rules.js')));
 const {physicalOffline,physicalLinkDown,CATALOG}=await import(pathToFileURL(path.join(root,'operations.js')));
 const {createNetwork}=await import(pathToFileURL(path.join(root,'network-sim.js')));
@@ -67,6 +68,17 @@ const handler=async(req,res)=>{try{
  if(url.pathname==='/api/voice'&&req.method==='POST'){const d=await body(req),q=players.get([...players.keys()].find(t=>players.get(t).id===d.to));const sig=d.signal;if(!q||q===p){json(res,404,{error:'No such player'});return;}
    if(!sig||typeof sig!=='object'||JSON.stringify(sig).length>16000){json(res,400,{error:'Bad voice message'});return;}const a=voiceTeam(p.name),b=voiceTeam(q.name);if(sig.type!=='bye'&&(!a||a!==b)){json(res,403,{error:'Voice is team only'});return;}
    send(q,'voice',{from:p.id,signal:sig});json(res,200,{ok:true});return;}
+ // Global Defensive comms: all / team chat and quick radio. The room decides who reads it (gd-radio.js), builds radio
+ // lines itself (no free text), adds the sender's callout, and rate-limits (chat 0.7 s, radio 1 s).
+ if(url.pathname==='/api/comms'&&req.method==='POST'){const d=await body(req),g=world.operations?.game;if(g?.mode!=='arena'){json(res,409,{error:'Comms work in Global Defensive'});return;}
+   const k=vkey(p.name),D=g.combat?.d,team=D?.teams?.[k]||null,down=(g.combat?.down?.[k]?.until||0)>Date.now(),live=!!D&&['live','planted'].includes(D.round?.phase),deadOrSpec=down||team==='spec';
+   const kind=d.kind==='radio'?'radio':'say',gap=kind==='radio'?1000:700;if(Date.now()-(p.lastComms?.[kind]||0)<gap){json(res,429,{error:'Wait a moment before sending again'});return;}
+   const toTeam=!!d.team&&!!team;let text='',ping=null;if(kind==='radio'){const call=radioCall(team,d.cmd);if(!call||down){json(res,400,{error:down?'The dead can’t use the radio':'Unknown radio call'});return;}text=call[1];if(call[2]&&p.pose)ping={x:+p.pose.x.toFixed(1),z:+p.pose.z.toFixed(1)};}
+   else{text=String(d.text||'').replace(/\s+/g,' ').trim().slice(0,120);if(!text){json(res,400,{error:'Type a message'});return;}}
+   const M=MAPS[g.arena?.map],callout=M&&p.pose?locationOf(M,p.pose.x-ARENA.cx,p.pose.z-ARENA.cz):'';(p.lastComms??={})[kind]=Date.now();
+   const msg={from:p.id,name:p.name,team,kind,toTeam:kind==='radio'?true:toTeam,text,callout,ping,dead:deadOrSpec,at:Date.now()};
+   for(const q of players.values()){const qk=vkey(q.name),qd=(g.combat?.down?.[qk]?.until||0)>Date.now(),qt=D?.teams?.[qk]||null;if(chatRecipients({team,toTeam:msg.toTeam,deadOrSpec,live},{team:qt,deadOrSpec:qd||qt==='spec'}))send(q,'comms',msg);}
+   json(res,200,{ok:true});return;}
  if(url.pathname==='/api/name'&&req.method==='POST'){const d=await body(req);p.name=cleanName(d.name);broadcast('players',roster());json(res,200,{ok:true,name:p.name});return;}
  if(url.pathname==='/api/role'&&req.method==='POST'){const d=await body(req);if(!['field','operations'].includes(d.role))throw Error('Unknown engineer role');p.role=d.role;broadcast('players',roster());json(res,200,{ok:true});return;}
  if(url.pathname==='/api/chat'&&req.method==='POST'){const d=await body(req);if(typeof d.text!=='string'||!d.text.trim()||d.text.length>200)throw Error('Message must contain 1–200 characters');if(Date.now()-(p.lastChat||0)<700)throw Error('Please wait before sending another message');p.lastChat=Date.now();broadcast('chat',{player:p.id,name:'ENGINEER-0'+([0x6bd9ff,0xffc875,0xaf98ff,0x82e5aa,0xff879e,0xe2e779,0x7ca1ff,0xc5a27d,0x94d8d3,0xe19df5,0xe2b7a5,0xb4c4d4].indexOf(p.color)+1),color:p.color,text:d.text.trim(),at:Date.now()});json(res,200,{ok:true});return;}

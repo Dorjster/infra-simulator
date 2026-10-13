@@ -11,7 +11,7 @@ import { radarImage, locationOf } from './gd-radar-art.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const PREF = 'gd-radar-mode', SPAN = 170;   // game units shown across the radar (rotating mode)
-export function createRadar({ world, lan, name, yaw, where, active, speed = () => 0 }) {
+export function createRadar({ world, lan, name, yaw, where, active, speed = () => 0, pings = () => [] }) {
   const css = document.createElement('style'); css.textContent = `#gd-radar{position:fixed;left:14px;top:14px;z-index:36;width:var(--rs);height:var(--rs);border-radius:10px;overflow:hidden;background:#0d1419d9;border:1px solid #ffffff33;box-shadow:0 2px 10px #0008;pointer-events:none;--rs:min(210px,26vh)}#gd-radar[hidden]{display:none}#gd-radar.big{--rs:min(64vh,640px);z-index:47;border-color:#ffffff55}#gd-radar canvas{width:100%;height:100%;display:block}#gd-radar small{position:absolute;left:0;right:0;bottom:4px;text-align:center;font:800 11px system-ui;color:#fff;letter-spacing:.06em;text-shadow:0 1px 2px #000,0 0 4px #000}`;
   (document.head || document.body).append?.(css);
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-radar" hidden><canvas width="420" height="420"></canvas><small></small></div>');
@@ -57,6 +57,8 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
       for (const o of people) { const foe = isFoe(G, me, o.k), team = d?.teams?.[o.k];
         if (!foe) { if (o.dead) { const [ax, az] = toMap(o.x, o.z); x.save(); x.translate(ax, az); x.scale(1 / k, 1 / k); x.strokeStyle = '#ffffff88'; x.lineWidth = 2; x.beginPath(); x.moveTo(-4, -4); x.lineTo(4, 4); x.moveTo(4, -4); x.lineTo(-4, 4); x.stroke(); x.restore(); } else { dot(o.x, o.z, team === 'ct' ? '#5b9be8' : '#e8a53f', 5, d?.bomb?.carrier === o.k ? '#ff3030' : '#000'); } continue; }
         if (!o.dead && now - (seen.get(o.k) || -1e9) < 2000) dot(o.x, o.z, '#ff4040', 5, '#000'); }
+      // Radio pings from team mates (their own position), pulsing for 3 s.
+      for (const pg of pings()) { const [ax, az] = toMap(pg.x, pg.z), t = (performance.now() - pg.at) / 3000; x.save(); x.translate(ax, az); x.scale(1 / k, 1 / k); x.strokeStyle = `rgba(255,214,90,${1 - t})`; x.lineWidth = 2.5; for (const r of [6 + (t * 26) % 26, 6 + ((t * 26) + 13) % 26]) { x.beginPath(); x.arc(0, 0, r, 0, Math.PI * 2); x.stroke(); } x.restore(); }
       x.restore();
       // You: centre (rotating: pointing up) or on the map (fixed).
       if (!full) { x.save(); x.translate(R, R); x.beginPath(); x.moveTo(0, -13); x.lineTo(8, 9); x.lineTo(0, 4); x.lineTo(-8, 9); x.closePath(); x.fillStyle = '#ffffff'; x.fill(); x.lineWidth = 1.5; x.strokeStyle = '#000'; x.stroke(); x.restore(); }

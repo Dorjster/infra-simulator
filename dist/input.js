@@ -60,7 +60,9 @@ export const ACTIONS = [
   { id: 'a-team', label: 'Change team', legacy: 'team', def: ['KeyM'], ctx: ['arena'] },
   { id: 'a-radar', label: 'Radar: rotate / fixed', legacy: 'radar', def: ['KeyN'], ctx: ['arena'] },
   { id: 'a-voice', label: 'Team voice: push to talk (hold)', legacy: 'voice', def: ['KeyK'], ctx: ['arena'], hold: true },
-  { id: 'a-chat', label: 'Chat', legacy: 't', def: ['KeyY'], ctx: ['arena'] },
+  { id: 'a-chat', label: 'Chat: everyone', legacy: 't', def: ['KeyY'], ctx: ['arena'] },
+  { id: 'a-teamchat', label: 'Chat: team only', legacy: 'teamchat', def: ['KeyU'], ctx: ['arena'] },
+  { id: 'a-radio', label: 'Quick radio menu', legacy: 'radio', def: ['KeyZ'], ctx: ['arena'] },
 ];
 export const CONTEXTS = { infra: 'Infrastructure (Campaign, Free Build, Challenges)', payday: 'Payday', arena: 'Global Defensive (arena)' };
 const STORE = 'infra-bindings-v1';
