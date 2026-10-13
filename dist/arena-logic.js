@@ -226,6 +226,16 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     // Everything else is gone with them right away (pistol, grenades, armor, kit), so nothing old shows while dead or
     // at the next round: they come back with the team's starting pistol only (CS2).
     A.loadout[k] = { primary: null, secondary: defaultPistol(C.d.teams[k]), nades: [] }; delete (C.armor ??= {})[k]; if (C.d.kits) delete C.d.kits[k]; A.dirty = true; changed = true; }
+  // Walking over a dropped gun with that slot empty picks it up (CS2): a rifle into an empty primary, a pistol into an
+  // empty secondary; grenades while there's room; the bomb (Terrorists). An occupied slot is never replaced (E or the
+  // B menu swap); your own drop isn't picked straight back up. One claim: it leaves the ground as it's taken.
+  if (C.ground?.length) for (const p of players) { if (!p.pose || !(p.pose.z < ARENA.maxZ) || isDown(game, p.name, now)) continue; const k = key(p.name), l = loadoutOf(game, p.name), fy = Math.max(0, (p.pose.y ?? EYE) - EYE);
+    for (let i = C.ground.length - 1; i >= 0; i--) { const it = C.ground[i]; if (Math.hypot(it.x - p.pose.x, it.z - p.pose.z) > 3.2 || Math.abs((it.y || 0) - fy) > 4 || now - it.at < 300 || (key(it.by) === k && now - it.at < 1500)) continue;
+      const slot = slotOf(it.item); let took = false;
+      if (slot === 'bomb') { if (C.d && teamOf(game, p.name) === 't' && !C.d.bomb.carrier) { C.d.bomb.carrier = k; took = true; } }
+      else if (slot === 'nades') { if (canCarry(l.nades ??= [], it.item)) { l.nades.push(it.item); took = true; } }
+      else if (slot === 'primary' ? !l.primary : slot === 'secondary' && l.secondary === null) { l[slot] = it.item; setAmmo(game, p.name, it.item, it.ammo || fullAmmo(it.item)); took = true; }
+      if (took) { C.ground.splice(i, 1); (C.picked ??= {})[k] = { item: it.item, at: now, ammo: it.ammo || null }; A.dirty = true; changed = true; } } }
   if (nadesTick(game, players, dt, now, g)) changed = true;
   if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => it.item === 'c4' || now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
   for (const bot of A.bots) {

@@ -69,6 +69,7 @@ const twice = await act(host, { type: 'pickup', id: g1.id }); check('nobody else
 await guest.keyboard.press('Escape');
 // A death clears the victim's loadout on their own screen at once (no old guns / grenades until the next round).
 { const tm = await host.evaluate(() => __infra.lab.world.operations.game.combat.d.teams); if (tm.host !== tm.guest) {
+    await act(host, { type: 'settings', bots: 0 }); await host.waitForTimeout(300);   // just the two of us: the host is the one who shoots
     await guest.evaluate(() => { const s = __infra.lab.world.operations.game.combat.spawnTo.guest; __infra.lab.look(s.x, s.z, s.x, 9, s.z - 30); }); await guest.waitForTimeout(600);
     const bn = await act(guest, { type: 'buy-nade', kind: 'flash' }); await guest.waitForTimeout(500); const had = await guest.evaluate(() => (__infra.lab.world.operations.game.arena.loadout.guest?.nades || []).length);
     await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 30000 }).catch(() => {});
@@ -78,6 +79,10 @@ await guest.keyboard.press('Escape');
     const k = await host.evaluate(([id, w]) => __infra.lab.world.operations.game.combat.down?.guest ? 'already down' : __infra.lab.lan.combat({ type: 'hit', target: id, weapon: w, zone: 'head', n: 1 }), [gid, hw]); await guest.waitForFunction(() => !!__infra.lab.world.operations.game.combat.down?.guest, null, { timeout: 30000 }).catch(() => {}); await guest.waitForTimeout(400);   // shot by the host, or by a bot if the host fell first
     const after = await guest.evaluate(() => { const g = __infra.lab.world.operations.game, l = g.arena.loadout.guest || {}; return { down: !!g.combat.down?.guest, nades: (l.nades || []).length, primary: l.primary, util: document.getElementById('gd-hud').hidden ? '(hud hidden while dead)' : document.querySelector('#gd-wp .util')?.textContent || '' }; });
     check('a death clears the victim\'s loadout on their screen at once (grenade gone, no rifle)', had === 1 && after.down && after.nades === 0 && !after.primary && !/◆/.test(after.util), JSON.stringify({ bn, had, k, after }));
+    // Bodies never block: the host walks straight at the guest's body and through it.
+    const body = await host.evaluate(() => { const m = [...__infra.lab.lan.models.values()].find(x => /guest/i.test(x.name || '')); return m ? { x: m.g.position.x, z: m.g.position.z } : null; });
+    if (body && after.down) { await host.evaluate(b => __infra.lab.look(b.x - 8, b.z, b.x + 30, 9, b.z), body); await host.waitForTimeout(300); await host.evaluate(() => __infra.lab.enter()); await host.keyboard.down('KeyW'); await host.waitForTimeout(900); await host.keyboard.up('KeyW');
+      const hx = await host.evaluate(() => __infra.camera.position.x); check('a dead body does not block: the host walks through it', hx > body.x + 2, (hx - body.x).toFixed(1)); }
   } else check('a death clears the victim\'s loadout (skipped: same team)', true); }
 // M: the guest asks to switch side → next round.
 const tm = await act(guest, { type: 'team', team: s.teams.guest === 't' ? 'ct' : 't' });

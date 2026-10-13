@@ -101,6 +101,17 @@ ok('nobody is down at the new round', !isDown(d, 'Cal', td) && hpOf(d, 'Cal') ==
 { const f = { levels: {} }; startArena(f, { map: 'dune', kind: 'defuse', bots: 0 }, 9e9); const FP = [{ name: 'T1', pose: at(M.t[0]) }, { name: 'C1', pose: at(M.ct[0]) }, { name: 'T2', pose: at(M.t[1]) }]; arenaTick(f, FP, .05, 9e9 + 50);
   const team = f.combat.d.teams; const [x, y] = Object.keys(team).filter(k => team[k] === team.t1); if (y) { applyHit(f, x, y, weaponById('ak'), 'head', 10, 1, 9e9 + DEFUSE.freezeMs + 200); ok('a team mate’s head shot does not kill', !isDown(f, y, 9e9 + DEFUSE.freezeMs + 300)); } }
 
+// ── Walk-over pickups: an empty slot fills itself, an occupied one never; one claim; your own drop waits ──
+{ const g = { levels: {} }, T0 = 7e10; startArena(g, { map: 'yard', bots: 0 }, T0); const P = n => ({ name: n, pose: { x: ARENA.cx + 40, y: 9.7, z: ARENA.cz + 40, yaw: 0 } });
+  const ann = P('Ann'), bo = P('Bo'); arenaTick(g, [ann, bo], .05, T0 + 10); loadoutOf(g, 'Ann').primary = null; loadoutOf(g, 'Bo').primary = 'm4';
+  g.combat.ground = [{ id: 'gx', item: 'ak', x: ann.pose.x + 1, z: ann.pose.z, y: 0, at: T0 - 5000, by: 'Cal', ammo: [17, 40] }]; arenaTick(g, [ann, bo], .05, T0 + 60);
+  ok('walking over a rifle with the primary slot empty picks it up, with its rounds', loadoutOf(g, 'Ann').primary === 'ak' && JSON.stringify(ammoOf(g, 'Ann', 'ak')) === '[17,40]' && !g.combat.ground.length, JSON.stringify(loadoutOf(g, 'Ann')));
+  ok('…only one player gets it (Bo, standing there too, keeps his M4)', loadoutOf(g, 'Bo').primary === 'm4');
+  g.combat.ground = [{ id: 'gy', item: 'famas', x: ann.pose.x, z: ann.pose.z, y: 0, at: T0 - 5000, by: 'Cal', ammo: [25, 90] }]; arenaTick(g, [ann, bo], .05, T0 + 110);
+  ok('an occupied slot is never replaced by walking over a gun', loadoutOf(g, 'Ann').primary === 'ak' && loadoutOf(g, 'Bo').primary === 'm4' && g.combat.ground.length === 1);
+  g.combat.ground = [{ id: 'gz', item: 'p250', x: ann.pose.x, z: ann.pose.z, y: 0, at: T0 + 100, by: 'Ann', ammo: [13, 26] }]; loadoutOf(g, 'Ann').secondary = null; arenaTick(g, [ann], .05, T0 + 600);
+  ok('your own drop is not picked straight back up', loadoutOf(g, 'Ann').secondary === null); arenaTick(g, [ann], .05, T0 + 1700); ok('…a moment later it is (empty pistol slot)', loadoutOf(g, 'Ann').secondary === 'p250'); }
+
 // ── Aim: first shot exact, spray learnable ──
 for (const w of WEAPONS) { const [p, y] = sprayAt(w, 0); ok(w.name + ': first bullet exactly at the crosshair', p === 0 && y === 0); ok(w.name + ': standing still is exact', moveInaccuracy(w, { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: !!w.zoom }) === 0 || !!w.unscoped); }
 ok('the AK climbs, then pulls sideways', sprayAt(weaponById('ak'), 9)[0] > 4 && Math.abs(sprayAt(weaponById('ak'), 15)[1]) > 1.5);
