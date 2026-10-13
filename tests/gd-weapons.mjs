@@ -72,9 +72,12 @@ msg = arenaApply(g, { type: 'pickup', id: dg.id, swap: true }, 'Bo', P, t + 5200
   ok('a Glock does not go through a crate', thr(crate, 'pistol') === 0); ok('a Glock goes through a thin plaster wall', thr(thin, 'pistol') > 0);
   ok('nothing goes through a shipping container', thr(box, 'sniper') === 0); ok('nothing goes through stone', thr(stone, 'sniper') === 0); ok('shotgun pellets stop in a crate', thr(crate, 'shotgun') === 0);
   // Host: a hit through a crate lands with less damage; through a container it is refused.
-  const dboxes = mapBoxes(ARENA_MAPS.dune, ARENA.cx, ARENA.cz), cr = dboxes.find(b => b.mat === 'crate' && b.maxX - b.minX <= 8 && b.y1 - b.y0 >= 11); assert(cr, 'a tall crate on Dune'); { const z = (cr.minZ + cr.maxZ) / 2, a2 = { x: cr.minX - 4, y: 7, z, yaw: 0 }, b2 = { x: cr.maxX + 4, y: 9.7, z, yaw: 0, crouched: false };
-    const gw = { levels: {} }; startArena(gw, { map: 'yard', bots: 0 }, 1e10); gw.arena.map = 'dune'; /* deathmatch rules, Dune's crates */ arenaApply(gw, { type: 'loadout', primary: 'ak' }, 'Ann', [], 1e10);
-    const rr = combatApply(gw, { type: 'hit', target: 'b', weapon: 'ak', zone: 'stomach', n: 5 }, 'Ann', [{ id: 'a', name: 'Ann', pose: { ...a2, y: 9.7 } }, { id: 'b', name: 'Bo', pose: b2 }], 'a', 1e10 + 10);
+  // A crate on Dust II that hides a standing body: shooter and target on the floor either side of it (true-scale map: real floor heights).
+  const D2 = ARENA_MAPS.dust2, dboxes = mapBoxes(D2, ARENA.cx, ARENA.cz), fl = (x, z) => D2.nav.floorAt(x - ARENA.cx, z - ARENA.cz);
+  const cr = dboxes.find(b => { if (b.mat !== 'crate' || b.maxX - b.minX > 8 || b.maxZ - b.minZ > 8) return false; const z = (b.minZ + b.maxZ) / 2, fa = fl(b.minX - 4, z), fb = fl(b.maxX + 4, z); return Number.isFinite(fa) && Math.abs(fa - fb) < .5 && b.y1 - fa >= 9; });
+  assert(cr, 'a tall crate on Dust II'); { const z = (cr.minZ + cr.maxZ) / 2, f0 = fl(cr.minX - 4, z), a2 = { x: cr.minX - 4, y: f0 + 7, z, yaw: 0 }, b2 = { x: cr.maxX + 4, y: f0 + 9.7, z, yaw: 0, crouched: false };
+    const gw = { levels: {} }; startArena(gw, { map: 'yard', bots: 0 }, 1e10); gw.arena.map = 'dust2'; /* deathmatch rules, Dust II's crates */ arenaApply(gw, { type: 'loadout', primary: 'ak' }, 'Ann', [], 1e10);
+    const rr = combatApply(gw, { type: 'hit', target: 'b', weapon: 'ak', zone: 'stomach', n: 5 }, 'Ann', [{ id: 'a', name: 'Ann', pose: { ...a2, y: f0 + 9.7 } }, { id: 'b', name: 'Bo', pose: b2 }], 'a', 1e10 + 10);
     ok('host: a wallbang through a crate does less than an open shot', rr.dmg > 0 && rr.dmg < Math.round(36 * 1.25), JSON.stringify(rr)); } }
 
 // ── Kill feed marks (CS2): no-scope / airborne / blind from the shooter, wallbang and distance from the host ──
@@ -86,7 +89,7 @@ msg = arenaApply(g, { type: 'pickup', id: dg.id, swap: true }, 'Bo', P, t + 5200
   const f2 = gk.combat.feed[0]; ok('feed: a no-scope mark only for scoped guns', f2 && f2.wid === 'ak' && !f2.how?.noscope, JSON.stringify(f2)); }
 
 // ── Defuse: purchases, team guns, new-round ammo ──
-let td = 8e9; const d = { levels: {} }; startArena(d, { map: 'dune', kind: 'defuse', bots: 0 }, td); const M = ARENA_MAPS.dune, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7, z: ARENA.cz + z, yaw: 0 });
+let td = 8e9; const d = { levels: {} }; startArena(d, { map: 'dust2', kind: 'defuse', bots: 0 }, td); const M = ARENA_MAPS.dust2, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7 + (M.nav ? M.nav.floorAt(x, z) || 0 : 0), z: ARENA.cz + z, yaw: 0 });
 const DP = [{ id: 't1', name: 'Tess', pose: at(M.t[0]) }, { id: 'c1', name: 'Cal', pose: at(M.ct[0]) }]; arenaTick(d, DP, .05, td += 50);
 ok('starting pistols: Glock for T, USP-S for CT', arenaArsenalOf(d, 'Tess').includes('pistol') && arenaArsenalOf(d, 'Cal').includes('usps'));
 assert.throws(() => arenaApply(d, { type: 'loadout', primary: 'm4' }, 'Tess', DP, td), /Counter-Terrorist weapon/); n++;
@@ -118,7 +121,7 @@ ok('winner keeps the AK, refilled to 30 / 90', loadoutOf(d, 'Tess').primary === 
 ok('the dead start again: USP-S full, no rifle, no armor', !loadoutOf(d, 'Cal').primary && loadoutOf(d, 'Cal').secondary === 'usps' && JSON.stringify(ammoOf(d, 'Cal', 'usps')) === '[12,24]' && armorOf(d, 'Cal').kevlar === 0);
 ok('nobody is down at the new round', !isDown(d, 'Cal', td) && hpOf(d, 'Cal') === MAX_HP);
 // Team-mate head shot: friendly fire, not an instant kill.
-{ const f = { levels: {} }; startArena(f, { map: 'dune', kind: 'defuse', bots: 0 }, 9e9); const FP = [{ name: 'T1', pose: at(M.t[0]) }, { name: 'C1', pose: at(M.ct[0]) }, { name: 'T2', pose: at(M.t[1]) }]; arenaTick(f, FP, .05, 9e9 + 50);
+{ const f = { levels: {} }; startArena(f, { map: 'dust2', kind: 'defuse', bots: 0 }, 9e9); const FP = [{ name: 'T1', pose: at(M.t[0]) }, { name: 'C1', pose: at(M.ct[0]) }, { name: 'T2', pose: at(M.t[1]) }]; arenaTick(f, FP, .05, 9e9 + 50);
   const team = f.combat.d.teams; const [x, y] = Object.keys(team).filter(k => team[k] === team.t1); if (y) { applyHit(f, x, y, weaponById('ak'), 'head', 10, 1, 9e9 + DEFUSE.freezeMs + 200); ok('a team mate’s head shot does not kill', !isDown(f, y, 9e9 + DEFUSE.freezeMs + 300)); } }
 
 // ── Walk-over pickups: an empty slot fills itself, an occupied one never; one claim; your own drop waits ──

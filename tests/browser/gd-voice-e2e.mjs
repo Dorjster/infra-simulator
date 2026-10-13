@@ -16,7 +16,7 @@ async function open(who, url) { const bw = await launch(); browsers.push(bw); co
   await p.addInitScript(n => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-name', n); localStorage.setItem('infra-face-name', n); }, who);
   await p.goto(url); await p.waitForFunction(() => globalThis.__infra?.lab && globalThis.__voice, null, { timeout: 60000 }); await p.waitForTimeout(1000); return p; }
 const ann = await open('Ann', base + '/');
-await ann.evaluate(() => document.querySelector('[data-start=arena]').click()); await ann.waitForTimeout(400); await ann.selectOption('#ss-ar-kind', 'defuse'); await ann.selectOption('#ss-ar-map', 'dune'); await ann.selectOption('#ss-ar-bots', '0');
+await ann.evaluate(() => document.querySelector('[data-start=arena]').click()); await ann.waitForTimeout(400); await ann.selectOption('#ss-ar-kind', 'defuse'); await ann.selectOption('#ss-ar-map', 'dust2'); await ann.selectOption('#ss-ar-bots', '0');
 await ann.evaluate(() => document.getElementById('ss-ar-host').click());
 await ann.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.world.operations.game.combat?.d, null, { timeout: 30000 });
 const code = await ann.evaluate(() => __infra.lab.lan.roomCode);

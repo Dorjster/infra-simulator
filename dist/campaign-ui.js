@@ -3,7 +3,7 @@
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
 import { getVolumes, setVolumes } from './spatial-audio.js';
-import { ARENA_MAPS } from './arena-maps.js';
+import { ARENA_MAPS, MAP_LIST } from './arena-maps.js';
 import * as THREE from './three.module.js';
 import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
 import {TICKETS} from './tickets.js';
@@ -188,7 +188,7 @@ export function createCampaignUI(ctx) {
       const go = async host => {
         if (busy) return; busy = true; el.querySelectorAll('#ss-ar-solo,#ss-ar-host').forEach(b => b.disabled = true); status.hidden = false; status.textContent = 'Starting…';
         const kind = el.querySelector('#ss-ar-kind').value, map = el.querySelector('#ss-ar-map').value, bots = +el.querySelector('#ss-ar-bots').value;
-        if (!ARENA_MAPS[map] || ARENA_MAPS[map].kind !== kind) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
+        if (!MAP_LIST.some(m => m.id === map && m.kind === kind)) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
         const before = lan.epoch;
         if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); if (h?.rebound && lan.connected) { status.textContent = 'Opening the room to your network…'; if (!(await lan.whenReady(12000, before))) return fail('The room did not come back after opening it to the LAN. Check the firewall and try Host again.'); } } catch (e) { return fail(e.message); } }
         if (!(await joinLocalRoom())) return fail('The arena runs on this computer’s room · start the game from the desktop app or the room server');
@@ -200,7 +200,7 @@ export function createCampaignUI(ctx) {
         busy = false; notify('Global Defensive · ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + ARENA_MAPS[map].name + (host ? ' · hosting on your network' : '')); begin();
       };
       // Maps for the chosen mode (deathmatch: Freight Yard, Old Town · defuse: Dune, Plaza, Hamlet).
-      const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === k).map(([id, m]) => `<option value="${id}">${m.name}</option>`).join(''); };
+      const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = MAP_LIST.filter(m => m.kind === k).map(({ id, ...m }) => `<option value="${id}">${m.name}</option>`).join(''); };
       el.querySelector('#ss-ar-kind').addEventListener('change', maps); maps();
       el.querySelector('#ss-ar-solo').addEventListener('click', () => go(false));
       el.querySelector('#ss-ar-host')?.addEventListener('click', () => go(true));
@@ -407,7 +407,7 @@ export function createCampaignUI(ctx) {
      <h3>Controls</h3><div class="cp-row ctl-tabs">${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
      <input id="ctl-search" class="ctl-search" placeholder="Search controls…" value="${esc(ctlFilter)}"><table class="ctl"><tbody><tr><td><kbd>Mouse</kbd></td><td>Look</td><td></td></tr>${actionsIn(ctlCtx).filter(a => !ctlFilter || a.label.toLowerCase().includes(ctlFilter.toLowerCase())).map(a => `<tr><td><button class="ctl-key${capturing === a.id ? ' wait' : ''}" data-rebind="${a.id}">${capturing === a.id ? 'Press a key… (Esc cancels)' : esc(labelOf(ctlCtx, a.id))}</button></td><td>${esc(a.label)}</td><td><button class="ctl-x" data-unbind="${a.id}" title="Unbind">×</button></td></tr>`).join('')}<tr><td><kbd>Esc</kbd></td><td>Menu (fixed)</td><td></td></tr></tbody></table>
      <div class="cp-row"><button data-ctl="reset">Reset ${esc(CONTEXTS[ctlCtx].split(' (')[0])}</button><button data-ctl="reset-all">Reset all</button><button data-ctl="export">Export controls</button><button data-ctl="import">Import controls</button></div><p class="cp-muted">Controls are saved on this computer only. Joining a LAN room never changes them.</p>
-     <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
+     <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label><label class="chk"><input type="checkbox" data-set="viewBob" ${p.viewBob !== false ? 'checked' : ''}> Gun bob while moving <small>(default: on)</small></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
      ${crosshairEditorHTML(loadCrosshair())}
      <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. The desktop app also finds them by itself in a Steam install of CS 1.6. Without them the arena uses the built-in Terrorist / Counter-Terrorist gear.</p>
      <h3>Audio</h3><div class="set-grid">${(() => { const v = getVolumes(); return [['master', 'Master'], ['effects', 'Game effects'], ['voice', 'Team voice'], ['music', 'Music'], ['ui', 'Interface']].map(([k, l]) => `<label>${l} · ${Math.round(v[k] * 100)}%<input type="range" data-vol="${k}" id="vol-${k}" min="0" max="1" step=".05" value="${v[k]}"></label>`).join(''); })()}</div>

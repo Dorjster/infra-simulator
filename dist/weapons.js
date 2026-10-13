@@ -19,7 +19,7 @@
 import * as THREE from './three.module.js';
 import { audioCtx, outAt } from './spatial-audio.js';
 import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, zoneAt, HIT_GROUPS, isFirearm, sprayAt, moveInaccuracy, pelletPattern, KNIFE, fullAmmo, THROW, RECOIL } from './weapons-data.js';
-import { loadSounds, reloadSound } from './sound-bank.js';
+import { loadSounds, reloadSound, fx as rec } from './sound-bank.js';
 import { loadFP, fpFor } from './fp-view.js';
 import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT } from './weapon-models.js';
 import { rayBoxes, bulletPath } from './arena-maps.js';
@@ -53,7 +53,13 @@ let actx = null;
 function tick(freq = 1800, len = .05, vol = .25, type = 'square', at = null) { try { actx = audioCtx(); const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * .4, t + len); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len); o.connect(g).connect(outAt(actx, at, 'handling')); o.start(t); o.stop(t + len + .02); } catch {} }
 export function warmTicks() { try { actx = audioCtx(); } catch {} }
 // `at`: where the sound happens (another player / bot); left out = your own sound. `id`: the weapon.
-export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kind === 'knife') tick(1800, .07, .1, 'sawtooth', at); else if (w?.kind === 'nade') tick(2600, .03, .1, 'square', at); else reloadSound(2, id, at) || tick(900, .05, .2, 'square', at); }, slash: (at, heavy = false) => { tick(heavy ? 220 : 300, heavy ? .18 : .12, .25, 'sawtooth', at); setTimeout(() => tick(heavy ? 140 : 180, .08, .15, 'sawtooth', at), 40); }, dry: at => tick(2400, .04, .18, 'square', at), scope: () => tick(3200, .025, .12, 'square'), pin: at => { tick(2900, .03, .14, 'square', at); setTimeout(() => tick(1900, .04, .1, 'triangle', at), 90); }, magOut: (at, id) => reloadSound(0, id, at) || tick(420, .09, .3, 'triangle', at), magIn: (at, id) => reloadSound(1, id, at) || tick(620, .07, .35, 'triangle', at), bolt: (at, id) => reloadSound(2, id, at) || (tick(900, .05, .3, 'square', at), setTimeout(() => tick(1300, .04, .25, 'square', at), 70)) };
+// Recorded handling (sound-bank fx: draw, knife, dry fire, scope, pin), the synthesized ticks if not loaded yet.
+export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kind === 'knife') rec('knifedraw', { at, volume: .5, kind: 'handling' }) || tick(1800, .07, .1, 'sawtooth', at); else if (w?.kind === 'nade') tick(2600, .03, .1, 'square', at); else rec('draw', { at, volume: .7, rate: w?.kind === 'pistol' ? 1.08 : .95, kind: 'handling' }) || reloadSound(2, id, at) || tick(900, .05, .2, 'square', at); },
+  slash: (at, heavy = false) => rec('slash', { at, volume: heavy ? .9 : .7, rate: heavy ? .85 : 1.05, kind: 'handling' }) || (tick(heavy ? 220 : 300, heavy ? .18 : .12, .25, 'sawtooth', at), setTimeout(() => tick(heavy ? 140 : 180, .08, .15, 'sawtooth', at), 40)),
+  stab: (at, heavy = false) => rec('stab', { at, volume: heavy ? 1 : .8, rate: heavy ? .9 : 1, kind: 'handling' }),
+  dry: at => rec('dry', { at, volume: .7, kind: 'handling' }) || tick(2400, .04, .18, 'square', at), scope: () => rec('scope', { volume: .5, rate: 1.2, kind: 'handling' }) || tick(3200, .025, .12, 'square'),
+  pin: at => rec('pin', { at, volume: .8, kind: 'handling' }) || (tick(2900, .03, .14, 'square', at), setTimeout(() => tick(1900, .04, .1, 'triangle', at), 90)),
+  magOut: (at, id) => reloadSound(0, id, at) || tick(420, .09, .3, 'triangle', at), magIn: (at, id) => reloadSound(1, id, at) || tick(620, .07, .35, 'triangle', at), bolt: (at, id) => reloadSound(2, id, at) || (tick(900, .05, .3, 'square', at), setTimeout(() => tick(1300, .04, .25, 'square', at), 70)) };
 
 // Options: scene, camera, effects (fun-pistol), arsenal() ids, targets() [{ id, feet, crouched }], report(hit),
 // canFire(), blind() 0…1 (flashed), aim() { pitch, yaw }, boxes() map boxes, move() { speed, max, onGround, landedAgo, ducked },
@@ -115,6 +121,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     let best = null; for (const tgt of targets()) { const t = rayCapsule(o, d, tgt.feet, tgt.crouched ? BODY_H * .7 : BODY_H); if (t !== null && t <= K.range && t < wall && (!best || t < best.t)) best = { t, tgt }; }
     // A little aim assist for the knife: a body just beside the crosshair still counts (CS2's swing is wide).
     if (!best) for (const tgt of targets()) { const c = tgt.feet.clone().setY(tgt.feet.y + 6), to = c.clone().sub(o), dist = to.length(); if (dist < K.range + 1.5 && to.normalize().dot(d) > .93 && dist < wall && (!best || dist < best.t)) best = { t: dist, tgt }; }
+    if (best) sounds.stab(null, knife.kind === 'heavy');
     if (best) report({ type: 'hit', target: best.tgt.id, weapon: current.id, attack: knife.kind, zone: zoneAt(o.y + d.y * best.t - best.tgt.feet.y) === 'head' ? 'head' : 'chest' });
   }
   // Grenades: press = pull the pin (and hold); release = throw. Left alone: long throw; right alone: short underhand;

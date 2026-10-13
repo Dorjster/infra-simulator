@@ -52,3 +52,12 @@ Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and p
 - Reloads: ["Gun Reload Sounds" by SpringySpringo](https://opengameart.org/content/gun-reload-sounds) — CC0.
 - Footsteps, breaking glass, grenade bounces, brass casings, bullet and body impacts: [Kenney "Impact Sounds"](https://kenney.nl/assets/impact-sounds) — CC0.
 - Explosions (HE, flashbang, bomb) and the molotov burn: [Kenney "Sci-Fi Sounds"](https://kenney.nl/assets/sci-fi-sounds) — CC0.
+- Epidemic Sound recordings (October 2026, `tools/pack-epidemic.mjs`): the project owner's Epidemic Sound downloads, cut into each gun's close, second, third and distant takes, the per-class reload sequences, knife, grenades, hits, death, footsteps, landing and the freeze-time jazz. **Licence for redistribution in a public repository or a downloadable app has not been confirmed**; the GitHub repository is public.
+
+## Classic Defuse maps (`dist/cs-maps/`, built by `tools/maps/extract-nav.mjs`)
+
+Full notices: `dist/cs-maps/LICENSES.md`.
+
+- Heights, floors, place names and connections: [awpy](https://github.com/pnxenopoulos/awpy) navigation data, commit a5434abc06 — MIT, Peter Xenopoulos.
+- Floor / wall / cover outline: radar overviews from [boltobserv](https://github.com/boltgolt/boltobserv) — Ancient and Anubis MIT (Lexogrine); Dust II, Mirage, Inferno, Nuke, Cache and Train under the repository's **GPL-3.0** (whether the sampled masks must follow GPL-3.0 is unresolved).
+- The layouts are Valve's Counter-Strike designs; the reference data is derived from Valve's game files.

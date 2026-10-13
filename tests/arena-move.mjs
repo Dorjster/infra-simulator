@@ -26,6 +26,7 @@ const crate = { minX: -5, maxX: 5, minZ: -50, maxZ: -10, y0: 0, y1: 6 }, cont = 
 { const s = run(at(0, 10), { ...fwd, weapon: 'knife' }, { boxes: [], others: [{ x: 0, z: 0, y: 0 }] }, 1); check('Another player blocks you', s.z > 2 * MOVE.radius - .01 && s.z < 3, s.z.toFixed(2)); }
 { const s = run(at(.5, 0), { ...fwd, weapon: 'knife' }, { boxes: [], others: [{ x: 0, z: 0, y: 0 }] }, 1); check('Spawned inside another player: you can walk out', s.z < -10, s.z.toFixed(2)); }
 { const s = run(at(10, 0), { wish: [-1, 0], weapon: 'knife' }, { boxes: [], others: [{ x: 0, z: 0, y: 0 }, { x: 0, z: 2.6, y: 0 }] }, 1); check('Two players side by side block like a wall', s.x > 2 * MOVE.radius - .01, s.x.toFixed(2)); }
+{ const s = at(0, 0); s.y = MOVE.height + 6; s.onGround = false; run(s, { wish: [0, 0], weapon: 'knife' }, { boxes: [], others: [{ x: 0, z: 0, y: 0 }] }, 1); check('You can stand on another player’s head', s.onGround && Math.abs(s.y - MOVE.height) < 1e-6, s.y.toFixed(2)); }
 const still = at(), runner = run(at(), { ...fwd, weapon: 'ak' }, open, 2), air = Object.assign(at(), { onGround: false });
 check('Standing still is accurate', moveSpread(still, 'ak') === 1);
 check('Running is inaccurate, the air far more', moveSpread(runner, 'ak') > 3 && moveSpread(air, 'ak') > moveSpread(runner, 'ak'), moveSpread(runner, 'ak').toFixed(2));

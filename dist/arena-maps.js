@@ -1,10 +1,14 @@
-// Arena maps as plain data (original layouts). Shared by the game (3D build, collision) and the host (bot line of
+// Arena maps as plain data (deathmatch: original layouts; Defuse: the classic maps, cs-mapbuild.js). Shared by the game (3D build, collision) and the host (bot line of
 // sight, spawns). Coordinates are game units relative to the arena centre (ARENA.cx, ARENA.cz); 1 unit ≈ 16.5 cm,
 // so a wall 24 high is ~4 m, a crate 6 high is waist-high cover, eye height is 9.7.
 // Each solid: [x, z, w, d, h, material, y0?]. Materials: sand, plaster, concrete, brick, wood, crate, metal-red,
 // metal-blue, metal-green, roof, stone. kind: 'dm' (deathmatch) or 'defuse' (bomb sites A / B, T / CT spawns, bot routes).
 import { DRESS } from './arena-maps-more.js';
-import { CLASSIC } from './arena-maps-classic.js';
+import { buildCsMap } from './cs-mapbuild.js';
+import { THEMES, CS_MAP_IDS } from './cs-maps/themes.js';
+import dust2 from './cs-maps/dust2-nav.js'; import mirage from './cs-maps/mirage-nav.js'; import inferno from './cs-maps/inferno-nav.js'; import nuke from './cs-maps/nuke-nav.js';
+import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js'; import train from './cs-maps/train-nav.js';
+const NAV = { dust2, mirage, inferno, nuke, cache, anubis, ancient, train };
 const B = (x, z, w, d, h, m, y0 = 0) => [x, z, w, d, h, m, y0];
 // Windows painted on the face of a solid block (decoration: shutters and frames on a wall you can't enter).
 // (windows() — painted windows on solid blocks — lives in arena-mapkit.js.)
@@ -52,11 +56,21 @@ export const ARENA_MAPS = {
     spawns: [[-70, -70], [70, -70], [-70, 70], [70, 70], [0, -95], [0, 95], [-95, -30], [95, 30], [-40, 15], [40, -15]],
   },
 };
-// The Defuse maps: classic-flow grid maps (arena-maps-classic.js).
-for (const [id, make] of Object.entries(CLASSIC)) ARENA_MAPS[id] = make();
+// The Defuse maps: the classic Counter-Strike maps, rebuilt at true scale from their navigation areas and overviews
+// (cs-mapbuild.js). Each is built the first time it is used (a fraction of a second) and kept.
+for (const id of CS_MAP_IDS) Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() {
+  const m = buildCsMap(id, NAV[id], THEMES[id]); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } });
+// Every map's id, name and kind without building any (menus, settings).
+export const MAP_LIST = [...Object.keys(ARENA_MAPS).filter(id => !CS_MAP_IDS.includes(id)).map(id => ({ id, name: ARENA_MAPS[id].name, kind: ARENA_MAPS[id].kind })), ...CS_MAP_IDS.map(id => ({ id, name: THEMES[id].name, kind: 'defuse' }))];
+// In a team's buy zone? (dx, dz relative to the arena centre.) Classic maps: within reach of any of the team's spawn
+// points (their spawn areas are large); others: around the spawns' centre.
+export function inBuyZone(m, side, dx, dz, radius) { const sp = side === 'ct' ? m.ct : m.t; if (!sp?.length) return true;
+  if (m.classic) return sp.some(([x, z]) => Math.hypot(dx - x, dz - z) <= radius * .9);
+  const cx = sp.reduce((a, q) => a + q[0], 0) / sp.length, cz = sp.reduce((a, q) => a + q[1], 0) / sp.length; return Math.hypot(dx - cx, dz - cz) <= radius; }
+export const mapMeta = id => MAP_LIST.find(m => m.id === id) || null;
 // The older maps get their props, windows and callouts (arena-maps-more.js).
-for (const [id, dress] of Object.entries(DRESS)) { if (ARENA_MAPS[id]?.grid) continue; const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
-for (const m of Object.values(ARENA_MAPS)) if (m.kind === 'defuse') m.spawns = [...m.t, ...m.ct];
+for (const [id, dress] of Object.entries(DRESS)) { if (CS_MAP_IDS.includes(id) || !Object.getOwnPropertyDescriptor(ARENA_MAPS, id)?.value || ARENA_MAPS[id]?.grid) continue; const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
+
 // Solids as world-space boxes: { minX, maxX, minZ, maxZ, y0, y1, mat }.
 export function mapBoxes(map, cx, cz) { return map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk }; }); }
 // The highest walk-on floor (raised floor, stair) under (x, z) whose top is at most `below` (0 if none).
@@ -125,8 +139,11 @@ const slotCache = new Map();
 export function spawnSlots(map, side) {
   const k = (map.name || '') + ':' + side; if (slotCache.has(k)) return slotCache.get(k);
   const base = side === 't' ? map.t : side === 'ct' ? map.ct : map.spawns, boxes = mapBoxes(map, 0, 0), [sw, sd] = map.size, bounds = { minX: -sw / 2, maxX: sw / 2, minZ: -sd / 2, maxZ: sd / 2 }, out = [];
-  const free = (x, z) => walkable(boxes, bounds, x, z, 1.8) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
+  // Classic maps: a spot on the spawn's own floor with floor all round it (their columns know the levels).
+  const nav = map.nav, levelOf = (x, z) => nav ? nav.floorAt(x, z) : 0;
+  const ground = (x, z, level) => !nav ? walkable(boxes, bounds, x, z, 1.8) : [[0, 0], [1.8, 0], [-1.8, 0], [0, 1.8], [0, -1.8]].every(([dx, dz]) => { const f = nav.floorAt(x + dx, z + dz, level); return Number.isFinite(f) && Math.abs(f - level) < 2.8; });
+  const free = (x, z, level = levelOf(x, z)) => ground(x, z, level) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
   for (const [x, z] of base) if (free(x, z)) out.push([x, z]);
-  for (const r of [6.5, 13]) for (const [x, z] of base) for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz)) out.push([+px.toFixed(2), +pz.toFixed(2)]); }
+  for (const r of [6.5, 13]) for (const [x, z] of base) { const level = levelOf(x, z); for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz, level)) out.push([+px.toFixed(2), +pz.toFixed(2)]); } }
   slotCache.set(k, out); return out;
 }

@@ -4,7 +4,7 @@
 // or fixed (north up). The map image is drawn once per map; each frame only the dots move (and only 15× a second).
 import { ARENA_MAPS, mapBoxes } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
-import { clearView } from './arena-nades.js';
+import { clearView, smokeBlocks } from './arena-nades.js';
 import { weaponById } from './weapons-data.js';
 import { isQuiet } from './sound-bank.js';
 import { radarImage, locationOf } from './gd-radar-art.js';
@@ -17,7 +17,7 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-radar" hidden><canvas width="420" height="420"></canvas><small></small></div>');
   const el = document.getElementById('gd-radar'), cv = el.querySelector('canvas'), x = cv.getContext('2d'), label = el.querySelector('small');
   let mode = (() => { try { return localStorage.getItem(PREF) === 'fixed' ? 'fixed' : 'rotate'; } catch { return 'rotate'; } })();
-  let img = null, imgMap = null, scale = 1, at = 0, big = false, span = SPAN; const seen = new Map(), lastShots = new Map(), why = new Map();
+  let img = null, imgMap = null, boxMap = null, boxes = [], scale = 1, at = 0, big = false, span = SPAN; const seen = new Map(), lastShots = new Map(), why = new Map();
   // The map, drawn once: floor, walls (dark), low cover (mid), raised floors / roofs (light outline), sites.
   // The map picture (CS-overview style, gd-radar-art.js), drawn once per map.
   function drawMap(id) { const r = radarImage(ARENA_MAPS[id], id, 2); img = r.canvas; scale = r.scale; imgMap = id; }
@@ -34,13 +34,13 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
       const G = world.operations.game, on = G.mode === 'arena' && !!G.arena && active(); if (el.hidden === on) el.hidden = !on; if (!on) return;
       const now = performance.now(); if (now - at < 66) return; at = now;
       const A = G.arena, m = ARENA_MAPS[A.map]; if (!m) return; if (imgMap !== A.map) drawMap(A.map);
-      const me = key(name()), d = G.combat?.d, myTeam = d?.teams?.[me] || null, p = where(), [w, dd] = m.size, cx = ARENA.cx, cz = ARENA.cz, boxes = mapBoxes(m, cx, cz);
+      const me = key(name()), d = G.combat?.d, myTeam = d?.teams?.[me] || null, p = where(), [w, dd] = m.size, cx = ARENA.cx, cz = ARENA.cz; if (boxMap !== A.map) { boxMap = A.map; boxes = m.nav ? [] : mapBoxes(m, cx, cz); }   /* once per map, not per frame */
       // Everyone we know of: [{ k, name, x, z, yaw, dead, bot, shotN, weapon }].
-      const people = []; for (const pl of lan.players || []) { if (!pl.pose || key(pl.name) === me) continue; people.push({ k: key(pl.name), x: pl.pose.x, z: pl.pose.z, yaw: pl.pose.yaw, dead: (G.combat?.down?.[key(pl.name)]?.until || 0) > Date.now(), shot: pl.pose.shot?.n, weapon: pl.pose.weapon }); }
+      const people = []; for (const pl of lan.players || []) { if (!pl.pose || key(pl.name) === me) continue; people.push({ k: key(pl.name), x: pl.pose.x, y: pl.pose.y, z: pl.pose.z, yaw: pl.pose.yaw, dead: (G.combat?.down?.[key(pl.name)]?.until || 0) > Date.now(), shot: pl.pose.shot?.n, weapon: pl.pose.weapon }); }
       // Revealed enemies: seen by any living team mate (or you), or heard firing (unsuppressed) within 90 units.
-      const eyes = [{ x: p.x, z: p.z }, ...people.filter(o => !o.dead && !isFoe(G, me, o.k) && d).map(o => ({ x: o.x, z: o.z }))];
+      const eyes = [{ x: p.x, y: p.y ?? 9.7, z: p.z }, ...people.filter(o => !o.dead && !isFoe(G, me, o.k) && d).map(o => ({ x: o.x, y: o.y ?? 9.7, z: o.z }))];
       for (const o of people) { if (!isFoe(G, me, o.k)) { seen.delete(o.k); continue; } if (o.dead) continue;
-        const eye = eyes.find(e => Math.hypot(e.x - o.x, e.z - o.z) < 220 && clearView(G, boxes, e.x, e.z, o.x, o.z)); if (eye) { seen.set(o.k, now); why.set(o.k, 'seen from ' + Math.round(eye.x) + ',' + Math.round(eye.z)); }
+        const eye = eyes.find(e => Math.hypot(e.x - o.x, e.z - o.z) < (m.nav ? 500 : 220) && (m.nav ? m.nav.sight(e.x - cx, e.y, e.z - cz, o.x - cx, o.y ?? 9.7, o.z - cz) && !smokeBlocks(G, e.x, e.y, e.z, o.x, o.y ?? 9.7, o.z) : clearView(G, boxes, e.x, e.z, o.x, o.z)));   /* classic maps: a real 3D line through the map, at eye heights */ if (eye) { seen.set(o.k, now); why.set(o.k, 'seen from ' + Math.round(eye.x) + ',' + Math.round(eye.z)); }
         const ls = lastShots.get(o.k); if (ls !== undefined && o.shot !== ls && !isQuiet(o.weapon) && Math.hypot(p.x - o.x, p.z - o.z) < 90) { seen.set(o.k, now); why.set(o.k, 'heard'); } lastShots.set(o.k, o.shot); }
       // Draw.
       const run = Math.min(1, (speed() || 0) / 40), want = SPAN * Math.max(1, Math.max(w, dd) / 420) * (1 + run * .3); span += (want - span) * .2;   /* dynamic zoom: wider on bigger maps and while running */

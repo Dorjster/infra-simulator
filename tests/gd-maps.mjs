@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { ARENA_MAPS, mapBoxes, walkable, spawnSlots, lineOfSight } from '../dist/arena-maps.js';
 let n = 0; const ok = (name, c, d = '') => { n++; assert(c, name + (d ? ' · ' + d : '')); };
-for (const [id, M] of Object.entries(ARENA_MAPS)) {
+for (const [id, M] of Object.entries(ARENA_MAPS)) { if (M.classic) { ok(id + ': every box has a size', M.solids.every(s => s[2] > 0 && s[3] > 0 && s[4] > 0)); continue; }   // classic maps (3D, stacked levels): tests/gd-classic-maps.mjs
   const [sw, sd] = M.size, boxes = mapBoxes(M, 0, 0), bounds = { minX: -sw / 2, maxX: sw / 2, minZ: -sd / 2, maxZ: sd / 2 }, W = (x, z) => walkable(boxes, bounds, x, z, 1.3);
   ok(id + ': every box has a size', M.solids.every(s => s[2] > 0 && s[3] > 0 && s[4] > 0), JSON.stringify(M.solids.find(s => !(s[2] > 0 && s[3] > 0 && s[4] > 0))));
   ok(id + ': everything inside the map', boxes.every(b => b.minX >= bounds.minX - 3 && b.maxX <= bounds.maxX + 3 && b.minZ >= bounds.minZ - 3 && b.maxZ <= bounds.maxZ + 3));
@@ -37,7 +37,7 @@ for (const [id, M] of Object.entries(ARENA_MAPS)) {
 // Heights (grid maps): every floor can be walked to from both spawns without a ledge higher than a step (18 HU), the
 // spawns are on the ground, and roofs leave head room above the floor.
 { const STEP = 18 * 2.54 / 16.5, HEAD = 72 * 2.54 / 16.5;
-  for (const [id, M] of Object.entries(ARENA_MAPS)) { if (!M.grid?.heights) continue; const { cols, rows, cell, cells } = M.grid, W = cols * cell, D = rows * cell, X = c => -W / 2 + (c + .5) * cell, Z = r => -D / 2 + (r + .5) * cell, open = (c, r) => c >= 0 && r >= 0 && c < cols && r < rows && cells[r * cols + c] === 1;
+  for (const [id, M] of Object.entries(ARENA_MAPS)) { if (!M.grid?.heights || M.classic) continue; const { cols, rows, cell, cells } = M.grid, W = cols * cell, D = rows * cell, X = c => -W / 2 + (c + .5) * cell, Z = r => -D / 2 + (r + .5) * cell, open = (c, r) => c >= 0 && r >= 0 && c < cols && r < rows && cells[r * cols + c] === 1;
     const reachFrom = ([sx, sz]) => { const c0 = Math.floor((sx + W / 2) / cell), r0 = Math.floor((sz + D / 2) / cell), seen = new Uint8Array(cols * rows), q = [[c0, r0]]; seen[r0 * cols + c0] = 1;
       while (q.length) { const [c, r] = q.pop(); for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const cc = c + dc, rr = r + dr; if (!open(cc, rr) || seen[rr * cols + cc]) continue; const ex = (X(c) + X(cc)) / 2, ez = (Z(r) + Z(rr)) / 2, ha = M.floorAt(ex - dc * .05, ez - dr * .05), hb = M.floorAt(ex + dc * .05, ez + dr * .05);
           if (Math.abs(ha - hb) <= STEP + 1e-6 || hb < ha) { if (hb > ha + STEP + 1e-6) continue; seen[rr * cols + cc] = 1; q.push([cc, rr]); } } } return seen; };

@@ -60,7 +60,7 @@ assert.match(arenaApply(g3, { type: 'pickup', id: g3.combat.ground[0].id }, 'Bo'
   const crate = [{ minX: -6, maxX: 6, minZ: -6, maxZ: 6, y0: 0, y1: 6 }], top = fireCells(crate, 0, 0, 6); assert(top.length && top.every(([x, z]) => Math.abs(x) < 6.1 && Math.abs(z) < 6.1), 'fire on a crate stays on the crate'); }
 assert(NADES.smoke.radius ** 2 >= (144 * 2.54 / 16.5) ** 2 * 3.9, 'smoke covers ~4× the old area');
 // No throwing in the freeze time (Defuse).
-{ const gd = { levels: {} }; startArena(gd, { map: 'dune', kind: 'defuse', bots: 0 }, 9e9); const sp = ARENA_MAPS.dune.t[0], ann = [{ name: 'Ann', pose: { x: ARENA.cx + sp[0], y: 9.7, z: ARENA.cz + sp[1], yaw: 0 } }]; arenaTick(gd, ann, .05, 9e9); arenaApply(gd, { type: 'buy-nade', kind: 'he' }, 'Ann', ann, 9e9);
+{ const gd = { levels: {} }; startArena(gd, { map: 'dust2', kind: 'defuse', bots: 0 }, 9e9); const sp = ARENA_MAPS.dust2.t[0], ann = [{ name: 'Ann', pose: { x: ARENA.cx + sp[0], y: 9.7, z: ARENA.cz + sp[1], yaw: 0 } }]; arenaTick(gd, ann, .05, 9e9); arenaApply(gd, { type: 'buy-nade', kind: 'he' }, 'Ann', ann, 9e9);
   assert.throws(() => arenaApply(gd, { type: 'throw', kind: 'he', x: 0, y: 9.7, z: 0, dx: 0, dy: 0, dz: -1 }, 'Ann', ann, 9e9 + 10), /throw now/); assert(arenaArsenalOf(gd, 'Ann').includes('he'), 'and the grenade is kept'); }
 // ── Smoke as a volume, HE holes, smoke vs fire (one shared state) ──
 { const T0 = 5e9, R = NADES.smoke.radius, sm = { id: 's1', kind: 'smoke', phase: 'smoke', x: 0, y: 0, z: 0, firedAt: T0 }, gs = { combat: { nades: [sm], clock: T0 + 4000 } }, now = T0 + 4000, eye = 9.7;

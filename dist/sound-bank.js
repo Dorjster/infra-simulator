@@ -1,19 +1,19 @@
-// Recorded sounds (dist/sounds/, CC0 — see tools/pack-sounds.mjs and tools/pack-gunshots.mjs): gunshots per weapon, reload handling, footsteps
-// per surface. Decoded once in the background when the sound engine starts; until then (or if a file is missing)
+// Recorded sounds (dist/sounds/: tools/pack-epidemic.mjs from the owner's Epidemic Sound library; the rest CC0 — see
+// MODEL-SOURCES.md): gunshots per weapon, reloads and handling, grenades, knife, hits, footsteps per surface, music. Decoded once in the background when the sound engine starts; until then (or if a file is missing)
 // play() returns false and callers fall back to their synthesized sounds.
-import { audioCtx, outAt, reverb, listenerAt } from './spatial-audio.js';
+import { audioCtx, outAt, reverb, listenerAt, musicBus } from './spatial-audio.js';
 import { weaponById } from './weapons-data.js';
 const DIR = new URL('./sounds/', import.meta.url).href;
 const GUNS = ['pistol', 'usps', 'p250', 'fiveseven', 'deagle', 'cannon', 'mac10', 'mp7', 'smg', 'mp9', 'p90', 'ump45', 'shotgun', 'xm1014', 'ak', 'galil', 'sg553', 'famas', 'm4', 'm4s', 'aug', 'ssg08', 'sniper', 'lmg'];
-const NAMES = [...GUNS.flatMap(id => ['shot-' + id, 'shot-' + id + '-far']), 'reload-rifle-0', 'reload-rifle-1', 'reload-pistol-0', 'reload-pistol-1', 'reload-pump-0'];
+const NAMES = [...GUNS.flatMap(id => ['shot-' + id, 'shot-' + id + '-b', 'shot-' + id + '-c', 'shot-' + id + '-far']), ...['rifle', 'smg', 'lmg', 'pistol', 'bolt', 'pump'].flatMap(k => ['grab', 0, 1, 2].map(p => `reload-${k}-${p}`)), 'music-freeze'];
 const STEPS = ['concrete', 'wood', 'grass', 'carpet', 'metal'];
-// Effects (tools/pack-effects.mjs): name → number of takes (fx-<name>-<take>.ogg).
-const FX = { he: 3, low: 1, bomb: 1, bomblow: 1, flash: 1, fire: 1, glass: 3, bounce: 3, wall: 3, flesh: 3, casing: 4 };
+// Effects: name → number of takes (fx-<name>-<take>.wav, or .ogg for the older CC0 ones).
+const FX = { he: 3, low: 1, bomb: 1, bomblow: 1, flash: 1, fire: 1, glass: 3, bounce: 3, wall: 3, flesh: 3, casing: 4, smoke: 2, poof: 2, stab: 3, slash: 3, knifedraw: 1, kill: 2, death: 1, land: 2, draw: 2, pickup: 1, dry: 1, scope: 1, pin: 1 };
 const buffers = new Map(); let loading = null;
 export function loadSounds() {
   if (typeof fetch !== 'function' || typeof AudioContext === 'undefined') return Promise.resolve(0);
-  return loading ??= (async () => { const c = audioCtx(), files = [...NAMES.map(n => n + '.wav'), ...Object.entries(FX).flatMap(([n, k]) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}.ogg`)), ...STEPS.flatMap(s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}.ogg`))];
-    await Promise.all(files.map(async f => { try { const r = await fetch(DIR + f); if (!r.ok) return; buffers.set(f.replace(/\.\w+$/, ''), await c.decodeAudioData(await r.arrayBuffer())); } catch {} }));
+  return loading ??= (async () => { const c = audioCtx(), names = [...NAMES, ...Object.entries(FX).flatMap(([n, k]) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}`)), ...STEPS.flatMap(s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}`))];
+    await Promise.all(names.map(async n => { for (const ext of ['.wav', '.ogg']) { try { const r = await fetch(DIR + n + ext); if (!r.ok) continue; buffers.set(n, await c.decodeAudioData(await r.arrayBuffer())); return; } catch {} } }));
     return buffers.size; })();
 }
 // Play a sound; `at` = where it happens ({x, y, z}, 3D) or null for your own. Returns false if not loaded.
@@ -35,12 +35,14 @@ const SHOT = Object.fromEntries(GUNS.map(id => [id, [id, 1, ['m4s', 'usps', 'smg
 // A gunshot, mixed like a game: the recording, plus a low thump (body), a supersonic crack (rifles, snipers), the
 // action's click for your own gun, and the shared reverb. Far shots lose their highs, gain more echo and a late slap
 // off the walls, so you hear where and how far. Suppressed guns: muffled, no crack, almost no echo.
-const LAYER_ID = { ssg08: [.6, 1, .7, .4], deagle: [.75, .35, .55, .3], m4s: [0, 0, .5, .05], usps: [0, 0, .5, .05], smg: [0, 0, .5, .05] };   // guns with their own character (SSG: sharp crack, little boom; AWP keeps the heavy boom)
-const LAYER = { pistol: [.45, 0, .5, .22], smg: [.4, .15, .45, .25], rifle: [.7, .45, .55, .3], lmg: [.75, .4, .5, .32], shotgun: [.95, 0, .6, .34], sniper: [1.15, .8, .65, .5] };   // [thump, crack, click, reverb]
+// Layers on top of the real recording: [thump, crack, click, reverb]. The recordings carry the body and the crack,
+// so the synthesized thump / crack stay faint (a little punch on your own big guns); the click is your own action.
+const LAYER_ID = { m4s: [0, 0, .4, .05], usps: [0, 0, .4, .05], smg: [0, 0, .4, .05] };
+const LAYER = { pistol: [.08, 0, .35, .18], smg: [.06, 0, .3, .2], rifle: [.12, .05, .35, .24], lmg: [.14, .05, .3, .26], shotgun: [.18, 0, .4, .28], sniper: [.25, .1, .45, .4] };
 let noise = null; const noiseBuf = c => { if (noise) return noise; noise = c.createBuffer(1, c.sampleRate, c.sampleRate); const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return noise; };
 function burst(c, t, out, { type, freq, q = .8, dur, gain }) { const n = c.createBufferSource(); n.buffer = noiseBuf(c); const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q; const g = c.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur); n.connect(f).connect(g).connect(out); n.start(t, Math.random() * .5); n.stop(t + dur + .02); }
 export function shotSound(id, { at = null, volume = 1 } = {}) {
-  const [file, rate, quiet] = SHOT[id] || ['pistol', 1], buf = buffers.get('shot-' + file); if (!buf) { loadSounds(); return false; }
+  const [file, rate, quiet] = SHOT[id] || ['pistol', 1], take = 'abc'[Math.random() * 3 | 0], buf = buffers.get('shot-' + file + (take === 'a' ? '' : '-' + take)) || buffers.get('shot-' + file); if (!buf) { loadSounds(); return false; }   // one of three real takes
   try {
     const c = audioCtx(), t = c.currentTime, L = LAYER_ID[id] || LAYER[weaponById(id)?.kind] || LAYER.pistol, out = outAt(c, at, 'gun'), vol = volume * (quiet ? .4 : 1);
     const me = listenerAt(), dist = at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0, far = Math.min(1, dist / 260);
@@ -65,8 +67,16 @@ export function shotSound(id, { at = null, volume = 1 } = {}) {
 }
 export const isQuiet = id => !!SHOT[id]?.[2];
 // Reload parts per weapon: magazine out, magazine in, bolt / slide / pump.
-const RELOAD = { rifle: ['reload-rifle-0', 'reload-rifle-1', 'reload-pistol-1'], pistol: ['reload-pistol-0', 'reload-pistol-1', 'reload-rifle-0'], shotgun: [null, 'reload-pistol-0', 'reload-pump-0'] };
-const kindOf = id => ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'shotgun' : 'rifle';
-export function reloadSound(part, id, at = null) { const name = RELOAD[kindOf(id)][part]; return name === null ? true : play(name, { at, volume: .9, rate: .96 + Math.random() * .08, kind: 'handling' }); }
+// Reload sets per weapon class: [mag out, mag in, bolt / slide / pump]; the class's handling grab plays with the mag
+// out, so a reload is heard as one sequence (grab, out, in, charge) over its whole CS2 length.
+const kindOf = id => { const k = weaponById(id)?.kind; return ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : id === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
+export function reloadSound(part, id, at = null) { const k = kindOf(id), r = .97 + Math.random() * .06; if (part === 0) play(`reload-${k}-grab`, { at, volume: .55, rate: r, kind: 'handling' }); return play(`reload-${k}-${part}`, { at, volume: .9, rate: r, delay: part === 0 ? .12 : 0, kind: 'handling' }); }
 // Footstep on a surface (concrete, wood, grass, carpet, metal); a random take each step.
 export const stepSound = (surface, at = null, volume = .6) => play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12, kind: 'step' });
+
+// Freeze-time music (CS2: a calm cue while everyone waits at spawn): the jazz loop on the music bus, soft, fading in
+// and out. on: true starts (no-op if playing), false fades out.
+let music = null;
+export function freezeMusic(on) { try { const c = audioCtx(), buf = buffers.get('music-freeze'); if (!buf) { if (on) loadSounds(); return; }
+  if (on && !music) { const src = c.createBufferSource(), g = c.createGain(), t = c.currentTime; src.buffer = buf; src.loop = true; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.16, t + 1.5); src.connect(g).connect(musicBus(c)); src.start(t, Math.random() * buf.duration * .6); music = { src, g }; }
+  else if (!on && music) { const { src, g } = music, t = c.currentTime; music = null; g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + 1.2); src.stop(t + 1.3); } } catch {} }

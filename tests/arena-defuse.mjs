@@ -8,8 +8,8 @@ import { ARENA_MAPS } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
 import { weaponById, MAX_HP } from '../dist/weapons-data.js';
 let seed = 11; Math.random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-const M = ARENA_MAPS.dune, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7, z: ARENA.cz + z, yaw: 0 });
-let t = 7e9; const g = { levels: {} }; startArena(g, { map: 'dune', kind: 'defuse', bots: 0 }, t);
+const M = ARENA_MAPS.dust2, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7 + (M.nav ? M.nav.floorAt(x, z) || 0 : 0), z: ARENA.cz + z, yaw: 0 });   // standing on the floor there (true-scale maps have heights)
+let t = 7e9; const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 0 }, t);
 assert(isDefuse(g)); const d = g.combat.d;
 // Two players join: one per team; they spawn at their team's spawn.
 const players = [{ name: 'Ann', pose: at(M.t[0]) }, { name: 'Cy', pose: at(M.ct[0]) }];
@@ -28,7 +28,7 @@ tick(DEFUSE.freezeMs); assert.equal(d.round.phase, 'live');
 assert.throws(() => arenaApply(g, { type: 'loadout', primary: 'smg' }, 'Ann', players, t + DEFUSE.buyMs + 100), /Buy time is over/);
 // Plant: only on a site, standing still for 3.2 s.
 assert.throws(() => arenaApply(g, { type: 'plant', hold: true }, 'Ann', players, t), /site A or B/);
-players[0].pose = at(M.sites.A.slice(0, 2)); arenaApply(g, { type: 'plant', hold: true }, 'Ann', players, t);
+players[0].pose = at(M.siteGoals?.A || M.sites.A.slice(0, 2)); arenaApply(g, { type: 'plant', hold: true }, 'Ann', players, t);
 tick(1500); assert.equal(d.round.phase, 'live', 'not yet'); tick(1800); assert.equal(d.round.phase, 'planted'); assert.equal(d.bomb.carrier, null); assert.equal(d.round.planted.site, 'A');
 // Defuse: a CT next to the bomb, with a kit: 5 s.
 assert.throws(() => arenaApply(g, { type: 'defuse', hold: true }, 'Cy', players, t), /closer/);
@@ -45,7 +45,7 @@ assert(isDown(g, 'Cy', t)); tick(100); assert.equal(d.round.winner, 't'); assert
 assert(isDown(g, 'Cy', t + 60000), 'no respawn until the next round');
 tick(DEFUSE.overMs + 100); assert(!isDown(g, 'Cy', t), 'back next round'); assert.equal(g.arena.loadout.cy.primary, null);
 // Friendly fire: ⅓ damage; a team kill costs $300 and no kill.
-const g2 = { levels: {} }; startArena(g2, { map: 'dune', kind: 'defuse', bots: 0 }, t); const pl2 = [{ name: 'A1', pose: at(M.t[0]) }, { name: 'B1', pose: at(M.ct[0]) }, { name: 'A2', pose: at(M.t[1]) }, { name: 'B2', pose: at(M.ct[1]) }];
+const g2 = { levels: {} }; startArena(g2, { map: 'dust2', kind: 'defuse', bots: 0 }, t); const pl2 = [{ name: 'A1', pose: at(M.t[0]) }, { name: 'B1', pose: at(M.ct[0]) }, { name: 'A2', pose: at(M.t[1]) }, { name: 'B2', pose: at(M.ct[1]) }];
 arenaTick(g2, pl2, .05, t + 50); assert.equal(teamOf(g2, 'A2'), 't'); arenaTick(g2, pl2, .05, t + DEFUSE.freezeMs + 60); t += DEFUSE.freezeMs + 60; const full = applyHit({ levels: {}, mode: 'arena', arena: {}, combat: { hp: {}, down: {}, kills: {}, deaths: {}, feed: [] } }, 'x', 'y', weaponById('ak'), 'chest', 10).dmg;
 const ff = applyHit(g2, 'A1', 'A2', weaponById('ak'), 'chest', 10, 1, t + 100).dmg; assert.equal(ff, Math.round(full * .33), 'friendly fire is a third');
 g2.combat.d.money.a1 = 1000; for (let i = 0; i < 12 && !isDown(g2, 'A2', t + 200); i++) applyHit(g2, 'A1', 'A2', weaponById('ak'), 'head', 10, 1, t + 200 + i * 200);
@@ -58,12 +58,12 @@ const ct = { name: 'B1', pose: { ...carrier.pose } }, tt = pl2.find(p => p.name 
 assert.throws(() => arenaApply(g2, { type: 'pickup', id: bombIt.id }, 'B1', [ct], t + 9200), /Only Terrorists/);
 if (!isDown(g2, tt.name, t + 9300)) { assert.match(arenaApply(g2, { type: 'pickup', id: bombIt.id }, tt.name, [tt], t + 9300), /bomb/); assert.equal(g2.combat.d.bomb.carrier, tt.name.toLowerCase()); }
 // The bomb explodes after 40 s: Terrorists win, everyone near is killed.
-const g3 = { levels: {} }; startArena(g3, { map: 'dune', kind: 'defuse', bots: 0 }, t); const pl3 = [{ name: 'T1', pose: at(M.t[0]) }, { name: 'C1', pose: at(M.ct[0]) }];
+const g3 = { levels: {} }; startArena(g3, { map: 'dust2', kind: 'defuse', bots: 0 }, t); const pl3 = [{ name: 'T1', pose: at(M.t[0]) }, { name: 'C1', pose: at(M.ct[0]) }];
 let t3 = t; const tick3 = ms => { for (let i = 0; i < ms / 50; i++) { t3 += 50; arenaTick(g3, pl3, .05, t3); } }; tick3(DEFUSE.freezeMs + 100);
-pl3[0].pose = at(M.sites.B.slice(0, 2)); arenaApply(g3, { type: 'plant', hold: true }, 'T1', pl3, t3); tick3(3400); assert.equal(g3.combat.d.round.phase, 'planted');
-pl3[1].pose = at([M.sites.B[0] + 5, M.sites.B[1]]); tick3(DEFUSE.bombMs + 100); assert.equal(g3.combat.d.round.winner, 't'); assert.equal(g3.combat.d.round.reason, 'bomb'); assert(isDown(g3, 'C1', t3), 'the CT next to it died');
+pl3[0].pose = at(M.siteGoals?.B || M.sites.B.slice(0, 2)); arenaApply(g3, { type: 'plant', hold: true }, 'T1', pl3, t3); tick3(3400); assert.equal(g3.combat.d.round.phase, 'planted');
+pl3[1].pose = at([(M.siteGoals?.B || M.sites.B)[0] + 2, (M.siteGoals?.B || M.sites.B)[1]]); tick3(DEFUSE.bombMs + 100); assert.equal(g3.combat.d.round.winner, 't'); assert.equal(g3.combat.d.round.reason, 'bomb'); assert(isDown(g3, 'C1', t3), 'the CT next to it died');
 // Time runs out without a plant: CTs win. Twelve rounds, then sides swap ($800 again); first to 13 ends the match.
-const g4 = { levels: {} }; startArena(g4, { map: 'hamlet', kind: 'defuse', bots: 0 }, t); const pl4 = [{ name: 'P', pose: at(ARENA_MAPS.hamlet.t[0]) }, { name: 'Q', pose: at(ARENA_MAPS.hamlet.ct[0]) }];
+const g4 = { levels: {} }; startArena(g4, { map: 'cache', kind: 'defuse', bots: 0 }, t); const pl4 = [{ name: 'P', pose: at(ARENA_MAPS.cache.t[0]) }, { name: 'Q', pose: at(ARENA_MAPS.cache.ct[0]) }];
 let t4 = t; const round4 = () => { for (let i = 0; i < (DEFUSE.freezeMs + DEFUSE.roundMs + DEFUSE.overMs + 300) / 50; i++) { t4 += 50; arenaTick(g4, pl4, .05, t4); } };
 round4(); assert.equal(g4.combat.d.round.n ?? g4.combat.d.n, 2); assert.equal(g4.combat.d.score.ct, 1, 'time-out: CT win');
 for (let r = 1; r < 12; r++) round4(); assert.equal(teamOf(g4, 'P'), 'ct', 'sides swapped after 12 rounds'); assert.equal(g4.combat.d.money.p, 800); assert.deepEqual(g4.combat.d.score, { t: 12, ct: 0 }, 'scores follow the teams');

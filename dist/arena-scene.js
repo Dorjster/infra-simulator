@@ -3,7 +3,9 @@
 // size on every wall. One merged mesh per material keeps the whole map to a dozen draw calls.
 import * as THREE from './three.module.js';
 import { ARENA } from './facility-layout.js';
-import { ARENA_MAPS, mapBoxes, walkable } from './arena-maps.js';
+import { ARENA_MAPS, MAP_LIST, mapBoxes, walkable } from './arena-maps.js';
+import { THEMES } from './cs-maps/themes.js';
+import { buildColumnMeshes } from './cs-mesh.js';
 import { buildProps, propWarmMeshes } from './arena-props.js';
 
 function tex(draw, size = 256) {
@@ -36,7 +38,9 @@ const LOOK = {
 const mats = new Map();
 function material(name) {
   if (mats.has(name)) return mats.get(name); const [draw] = LOOK[name] || LOOK.concrete, map = tex(draw);
-  const m = new THREE.MeshStandardMaterial({ map, color: map ? 0xffffff : 0x999999, roughness: name.startsWith('metal') ? .55 : .9, metalness: name.startsWith('metal') ? .35 : 0 }); if (name === 'tunnelroof') m.emissive.setHex(0x1c140c); /* never pitch black from below */ m.userData.shared = true; mats.set(name, m); return m;
+  // Map surfaces: Lambert (diffuse) lighting — the walls and floors cover the whole screen, and at Retina resolution the
+  // physically based shader cost a few ms a frame for no visible gain on rough plaster, sand and stone.
+  const m = name.startsWith('metal') ? new THREE.MeshStandardMaterial({ map, color: map ? 0xffffff : 0x999999, roughness: .55, metalness: .35 }) : new THREE.MeshLambertMaterial({ map, color: map ? 0xffffff : 0x999999 }); if (name === 'tunnelroof') m.emissive.setHex(0x1c140c); /* never pitch black from below */ m.userData.shared = true; mats.set(name, m); return m;
 }
 // A box with world-scaled UVs (each face tiles its texture by its own size).
 function boxGeometry(b, tile) {
@@ -59,7 +63,7 @@ const SITE_GEO = new THREE.PlaneGeometry(1, 1); SITE_GEO.userData.shared = true;
 // One small box per arena material (every map), for the graphics warm-up: compiles their shaders and uploads
 // their textures before anyone enters the arena.
 export function arenaWarmMeshes() {
-  const names = new Set(); for (const m of Object.values(ARENA_MAPS)) { names.add(m.floor); for (const s of m.solids) names.add(s[5]); }
+  const names = new Set(['crate', 'metal-blue']); for (const { id } of MAP_LIST) { const T = THEMES[id]; if (T) { for (const k of ['wall', 'floor', 'indoorWall', 'indoorFloor', 'car']) if (T[k]) names.add(T[k]); continue; } const m = ARENA_MAPS[id]; names.add(m.floor); for (const s of m.solids) names.add(s[5]); }   /* classic maps: their theme's materials (no build needed) */
   return [...propWarmMeshes(), ...[...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; }), ...Object.values(SITE_MAT).map(m => new THREE.Mesh(SITE_GEO, m))];
 }
 export function createArenaScene(scene, { pickables = [] } = {}) {
@@ -70,9 +74,12 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   function build(id) {
     if (current === id) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id;
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
+    if (map.columns) { for (const mesh of buildColumnMeshes(map, material, m => (LOOK[m] || LOOK.concrete)[1], cx, cz)) group.add(mesh);   // classic maps: drawn from their columns (not aim-raycast: shots and the arena use the collision boxes)
+      for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; const g = map.siteGoals?.[L] || [x, z], fy = map.nav.floorAt(g[0], g[1]); s.position.set(cx + g[0], (Number.isFinite(fy) ? fy : 0) + .08, cz + g[1]); s.scale.setScalar(Math.min(r, 30) * 1.2); s.renderOrder = 1; group.add(s); }
+      return; }
     const byMat = new Map(); for (const b of boxes) { if (b.prop) continue; const [, tile] = LOOK[b.mat] || LOOK.concrete; (byMat.get(b.mat) || byMat.set(b.mat, []).get(b.mat)).push(boxGeometry(b, tile)); }
     const floor = { minX: bounds.minX, maxX: bounds.maxX, minZ: bounds.minZ, maxZ: bounds.maxZ, y0: -1, y1: 0 }; (byMat.get(map.floor) || byMat.set(map.floor, []).get(map.floor)).push(boxGeometry(floor, (LOOK[map.floor] || LOOK.concrete)[1]));
-    for (const [mat, geos] of byMat) { const mesh = new THREE.Mesh(merge(geos), material(mat)); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.arena = true; group.add(mesh); pickables.push(mesh); }
+    for (const [mat, geos] of byMat) { const mesh = new THREE.Mesh(merge(geos), material(mat)); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.arena = true; group.add(mesh); }   // not aim-raycast (the facility's per-frame pick ray): the arena uses its collision boxes
     { const P = buildProps(map, cx, cz); for (const m of P.meshes) { m.userData.arena = true; group.add(m); } for (const l of P.lights.slice(0, 4)) { const pl = new THREE.PointLight(0xffd9a0, 6, 45, 2); pl.position.set(l.x, l.y, l.z); group.add(pl); } }   // props as their own shapes, lamps lit (at most 4 real lights: every map then shares the same shader programs, and the per-pixel cost stays fixed)
     for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; s.position.set(cx + x, .06, cz + z); s.scale.setScalar(r * 1.6); s.renderOrder = 1; group.add(s); }
   }

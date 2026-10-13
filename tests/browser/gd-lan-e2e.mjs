@@ -17,18 +17,18 @@ const host = await open('Host'), guest = await open('Guest', 1100, 700);
 const G = p => p.evaluate(() => { const g = __infra.lab.world.operations.game, d = g.combat?.d; return { mode: g.mode, kind: g.arena?.kind, map: g.arena?.map, lobby: g.arena?.lobby, teams: d?.teams, phase: d?.round?.phase, n: d?.n, score: d?.score }; });
 const act = (p, a) => p.evaluate(a => __infra.lab.lan.act({ type: 'arena', action: a }), a);
 // Host: Defuse · Dune · 2 bots · Host on LAN → lobby.
-await host.evaluate(() => document.querySelector('[data-start=arena]').click()); await host.waitForTimeout(400); await host.selectOption('#ss-ar-kind', 'defuse'); await host.selectOption('#ss-ar-map', 'dune'); await host.selectOption('#ss-ar-bots', '2');
+await host.evaluate(() => document.querySelector('[data-start=arena]').click()); await host.waitForTimeout(400); await host.selectOption('#ss-ar-kind', 'defuse'); await host.selectOption('#ss-ar-map', 'dust2'); await host.selectOption('#ss-ar-bots', '2');
 await host.evaluate(() => document.getElementById('ss-ar-host').click());
 await host.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.arenaScene?.inArena(__infra.camera.position.z) && __infra.lab.world.operations.game.combat?.d, null, { timeout: 30000 });
-let s = await G(host); check('first attempt: Defuse on Dune (not deathmatch)', s.mode === 'arena' && s.kind === 'defuse' && s.map === 'dune' && s.phase === 'warmup', JSON.stringify({ kind: s.kind, map: s.map, phase: s.phase }));
+let s = await G(host); check('first attempt: Defuse on Dune (not deathmatch)', s.mode === 'arena' && s.kind === 'defuse' && s.map === 'dust2' && s.phase === 'warmup', JSON.stringify({ kind: s.kind, map: s.map, phase: s.phase }));
 check('a two-minute lobby is open', s.lobby && !s.lobby.started && s.lobby.until - Date.now() > 100000, JSON.stringify(s.lobby));
 await host.waitForTimeout(400);
-check('lobby panel: confirmed mode + map and a countdown', await host.evaluate(() => /LOBBY · DEFUSE · Dune/.test(document.getElementById('ar-lobby').textContent) && /Match starts in (2:00|1:5\d)/.test(document.getElementById('ar-lobby').textContent)), await host.evaluate(() => document.getElementById('ar-lobby').textContent.slice(0, 120)));
+check('lobby panel: confirmed mode + map and a countdown', await host.evaluate(() => /LOBBY · DEFUSE · Dust II/.test(document.getElementById('ar-lobby').textContent) && /Match starts in (2:00|1:5\d)/.test(document.getElementById('ar-lobby').textContent)), await host.evaluate(() => document.getElementById('ar-lobby').textContent.slice(0, 120)));
 check('the top bar is not covered by the host invite bar', await host.evaluate(() => { const a = document.getElementById('lan-invite'); return !a || a.hidden || getComputedStyle(a).display === 'none'; }));
 const code = await host.evaluate(() => __infra.lab.lan.roomCode);
 await guest.evaluate(() => document.querySelector('[data-start=join]').click()); await guest.waitForSelector('#ss-code'); await guest.fill('#ss-jname', 'Guest'); await guest.fill('#ss-code', code); await guest.evaluate(() => document.getElementById('ss-join').click());
 await guest.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.world.operations.game.combat?.d?.teams?.guest && __infra.lab.arenaScene?.inArena(__infra.camera.position.z), null, { timeout: 30000 });
-const sg = await G(guest); check('the guest lands in the same lobby: Defuse · Dune · warmup', sg.kind === 'defuse' && sg.map === 'dune' && sg.phase === 'warmup');
+const sg = await G(guest); check('the guest lands in the same lobby: Defuse · Dune · warmup', sg.kind === 'defuse' && sg.map === 'dust2' && sg.phase === 'warmup');
 await host.waitForTimeout(800); check('the guest is listed in the host lobby', await host.evaluate(() => /Guest/.test(document.getElementById('ar-lobby').textContent)));
 const gid = await host.evaluate(() => (__infra.lab.lan.players || []).find(p => p.name === 'Guest')?.id);
 const warm = await host.evaluate(id => __infra.lab.lan.combat({ type: 'hit', target: id, weapon: 'pistol', zone: 'chest', n: 1 }), gid);
@@ -59,7 +59,7 @@ check('buying a second pistol drops the first (with its rounds)', !b1?.error && 
 const g1 = await host.evaluate(() => __infra.lab.world.operations.game.combat.ground.find(x => x.item === 'p250'));
 check('…the P250 is on the ground, full', g1 && g1.ammo?.[0] === 13 && g1.ammo?.[1] === 26, JSON.stringify(g1));
 // The guest walks to it (teleport next to it), opens B and sees it as a nearby drop; picks it up from the menu.
-await guest.evaluate(it => { __infra.lab.enter(); __infra.camera.position.x = it.x + 2; __infra.camera.position.z = it.z; }, g1); await guest.waitForTimeout(800);
+await guest.evaluate(it => { __infra.lab.look(it.x + 2, it.z, it.x, (it.y || 0) + 2, it.z); }, g1);   // stands next to it, on that floor await guest.waitForTimeout(800);
 await guest.evaluate(() => __infra.lab.arenaUI.buy(true)); await guest.waitForTimeout(300);
 check('guest B menu: Nearby dropped weapons lists the P250 (dropped by Host)', await guest.evaluate(() => /NEARBY DROPPED/.test(document.getElementById('ar-buy').textContent) && /P250/.test(document.querySelector('#ar-buy .near')?.textContent || '') && /Host/.test(document.querySelector('#ar-buy .near')?.textContent || '')));
 await guest.evaluate(() => [...document.querySelectorAll('#ar-buy [data-ground]')].find(b => /P250/.test(b.textContent))?.click()); await guest.waitForTimeout(900);
@@ -87,15 +87,22 @@ await guest.keyboard.press('Escape');
 // M: the guest asks to switch side → next round.
 const tm = await act(guest, { type: 'team', team: s.teams.guest === 't' ? 'ct' : 't' });
 check('M during a match: change at the next round', /next round/.test(String(tm)) || /too many/.test(tm?.error || ''), JSON.stringify(tm));
-// Host changes the map: both clients land on Plaza, round 1, same state.
+// Host changes the map: both clients land on Mirage, round 1, same state.
 await host.evaluate(() => __infra.lab.arenaUI.teamMenu(true)); await host.waitForTimeout(300);
 check('M menu: host map / bots / difficulty controls', await host.evaluate(() => !!document.querySelector('#ar-team #ar-mapsel') && !!document.querySelector('#ar-team #ar-botn')));
-await host.evaluate(() => { document.getElementById('ar-mapsel').value = 'plaza'; document.querySelector('[data-map-go]').click(); }); await host.waitForTimeout(500);
-await guest.waitForFunction(() => __infra.lab.world.operations.game.arena?.map === 'plaza' && __infra.lab.arenaScene.map === 'plaza', null, { timeout: 15000 }).catch(() => {});
+await host.evaluate(() => { document.getElementById('ar-mapsel').value = 'mirage'; document.querySelector('[data-map-go]').click(); }); await host.waitForTimeout(500);
+await guest.waitForFunction(() => __infra.lab.world.operations.game.arena?.map === 'mirage' && __infra.lab.arenaScene.map === 'mirage', null, { timeout: 15000 }).catch(() => {});
 await host.waitForTimeout(1500);
 const hm = await host.evaluate(() => ({ map: __infra.lab.arenaScene.map, boxes: __infra.lab.arenaScene.boxes.length, kind: __infra.lab.world.operations.game.arena.kind, n: __infra.lab.world.operations.game.combat.d?.n, inArena: __infra.lab.arenaScene.inArena(__infra.camera.position.z) }));
 const gm = await guest.evaluate(() => ({ map: __infra.lab.arenaScene.map, boxes: __infra.lab.arenaScene.boxes.length, kind: __infra.lab.world.operations.game.arena.kind, n: __infra.lab.world.operations.game.combat.d?.n, inArena: __infra.lab.arenaScene.inArena(__infra.camera.position.z) }));
-check('map change: host and guest both on Plaza (geometry built), Defuse round 1', hm.map === 'plaza' && gm.map === 'plaza' && hm.boxes === gm.boxes && hm.boxes > 10 && hm.n === 1 && gm.n === 1 && hm.inArena && gm.inArena, JSON.stringify([hm, gm]));
-await guest.screenshot({ path: path.join(out, 'lan-plaza-guest.png') });
+check('map change: host and guest both on Mirage (geometry built), Defuse round 1', hm.map === 'mirage' && gm.map === 'mirage' && hm.boxes === gm.boxes && hm.boxes > 10 && hm.n === 1 && gm.n === 1 && hm.inArena && gm.inArena, JSON.stringify([hm, gm]));
+await guest.screenshot({ path: path.join(out, 'lan-mirage-guest.png') });
+// Host match rules panel: a preset chosen mid-match is queued for the next match, on both clients; this match keeps its rules.
+await host.evaluate(() => __infra.lab.arenaUI.teamMenu(true)); await host.waitForTimeout(300);
+await host.evaluate(() => { const s = document.getElementById('ar-preset'); s.value = 'short'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+const ru = await guest.waitForFunction(() => { const G = __infra.lab.world.operations.game; return G.arena?.rulesNext?.win === 9 && G.combat.d?.rules?.win === 13 && JSON.stringify(G.arena.rulesNext); }, null, { timeout: 5000 }).then(h => h.jsonValue()).catch(() => null);
+check('rules panel: Short preset mid-match → first to 9 from the next match (guest sees it; this match stays first to 13)', !!ru, ru);
+await host.evaluate(() => __infra.lab.arenaUI.teamMenu(true)); await host.waitForTimeout(300);
+check('rules panel: the host sees "next match" and the queued values', await host.evaluate(() => /next match/.test(document.getElementById('ar-team').innerText) && document.getElementById('ar-win').value === '9'));
 check('no page errors', errs.length === 0, errs.slice(0, 4).join(' | '));
 console.log(ok + '/' + n); for (const bw of browsers) await bw.close(); server.kill(); process.exit(ok === n ? 0 : 1);

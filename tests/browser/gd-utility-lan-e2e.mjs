@@ -15,7 +15,7 @@ const host = await open('Host'), guest = await open('Guest', 1100, 700);
 const G = p => p.evaluate(() => { const g = __infra.lab.world.operations.game, d = g.combat?.d; return { mode: g.mode, kind: g.arena?.kind, map: g.arena?.map, lobby: g.arena?.lobby, teams: d?.teams, phase: d?.round?.phase, n: d?.n, score: d?.score }; });
 const act = (p, a) => p.evaluate(a => __infra.lab.lan.act({ type: 'arena', action: a }), a);
 // Host: Defuse · Dune · no bots · Host on LAN; the guest joins; the host starts the match.
-await host.evaluate(() => document.querySelector('[data-start=arena]').click()); await host.waitForTimeout(400); await host.selectOption('#ss-ar-kind', 'defuse'); await host.selectOption('#ss-ar-map', 'dune'); await host.selectOption('#ss-ar-bots', '0');
+await host.evaluate(() => document.querySelector('[data-start=arena]').click()); await host.waitForTimeout(400); await host.selectOption('#ss-ar-kind', 'defuse'); await host.selectOption('#ss-ar-map', 'dust2'); await host.selectOption('#ss-ar-bots', '0');
 await host.evaluate(() => document.getElementById('ss-ar-host').click());
 await host.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.world.operations.game.combat?.d, null, { timeout: 30000 });
 const code = await host.evaluate(() => __infra.lab.lan.roomCode);
@@ -25,11 +25,11 @@ await act(host, { type: 'start-match' }); await host.waitForFunction(() => __inf
 const buy = (p, kind) => p.evaluate(k => __infra.lab.lan.act({ type: 'arena', action: { type: 'buy-nade', kind: k } }), kind);
 const b1 = await buy(host, 'smoke'), b2 = await buy(host, 'he'), b3 = await buy(guest, 'molotov'); check('bought a smoke and an HE (host) and a molotov (guest)', ![b1, b2, b3].some(r => r?.error), JSON.stringify([b1, b2, b3]));
 await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 30000 });
-// Both in the open "outside" yard, 80 units apart on one line; utility lands between them.
-const spot = await host.evaluate(async () => { const { ARENA } = await import('/facility-layout.js'), { ARENA_MAPS } = await import('/arena-maps.js'), M = ARENA_MAPS.dune, c = M.callouts.find(x => x.name === 'Outside'); return { x: ARENA.cx + c.x, z: ARENA.cz + c.z }; });
-const place = (p, dx) => p.evaluate(([s, dx]) => __infra.lab.look(s.x + dx, s.z, s.x - dx, 9, s.z), [spot, dx]);
+// Both on Long A, 80 units apart along the street; utility lands between them.
+const spot = await host.evaluate(async () => { const { ARENA } = await import('/facility-layout.js'), { ARENA_MAPS } = await import('/arena-maps.js'), M = ARENA_MAPS.dust2, c = M.callouts.find(x => x.name === 'Long A'); return { x: ARENA.cx + c.x, z: ARENA.cz + c.z, y: M.nav.floorAt(c.x, c.z) }; });   // Long A: a long straight street (true-scale Dust II)
+const place = (p, dz) => p.evaluate(([s, dz]) => __infra.lab.look(s.x, s.z + dz, s.x, s.y + 9, s.z - dz), [spot, dz]);
 await place(host, -40); await place(guest, 40); await host.waitForTimeout(800);
-const thr = (p, kind) => p.evaluate(([k, s]) => __infra.lab.lan.act({ type: 'arena', action: { type: 'throw', kind: k, x: s.x, y: 3, z: s.z, dx: 0, dy: -1, dz: 0.001, strength: 'short' } }), [kind, spot]);
+const thr = (p, kind) => p.evaluate(([k, s]) => __infra.lab.lan.act({ type: 'arena', action: { type: 'throw', kind: k, x: s.x, y: s.y + 3, z: s.z, dx: 0, dy: -1, dz: 0.001, strength: 'short' } }), [kind, spot]);
 const state = p => p.evaluate(() => (__infra.lab.world.operations.game.combat.nades || []).map(n => ({ id: n.id, kind: n.kind, phase: n.phase, holes: (n.holes || []).map(h => h.at) })));
 check('the guest’s molotov burns', !(await thr(guest, 'molotov'))?.error && await guest.waitForFunction(() => __infra.lab.world.operations.game.combat.nades?.some(n => n.kind === 'molotov' && n.phase === 'fire'), null, { timeout: 6000 }).then(() => true).catch(() => false));
 await thr(host, 'smoke');
@@ -42,7 +42,7 @@ await thr(host, 'he');
 const holes = await Promise.all([host, guest].map(p => p.waitForFunction(() => (__infra.lab.world.operations.game.combat.nades || []).some(n => n.kind === 'smoke' && n.holes?.length), null, { timeout: 6000 }).then(() => p.evaluate(() => (__infra.lab.world.operations.game.combat.nades || []).find(n => n.kind === 'smoke').holes.map(h => [h.at, Math.round(h.x), Math.round(h.z)]))).catch(() => null)));
 check('the HE opens the same hole in the smoke on both screens (same place, same moment)', holes[0] && holes[1] && JSON.stringify(holes[0]) === JSON.stringify(holes[1]), JSON.stringify(holes));
 await host.waitForTimeout(3500);   // the hole closes
-await guest.evaluate(s => __infra.lab.look(s.x, s.z, s.x + 30, 9, s.z), spot); await guest.waitForTimeout(900);
+await guest.evaluate(s => __infra.lab.look(s.x, s.z, s.x, s.y + 9, s.z - 30), spot); await guest.waitForTimeout(900);
 check('standing in the smoke fills the guest’s view', await guest.evaluate(() => +document.getElementById('gd-smokeveil').style.opacity > .8), await guest.evaluate(() => document.getElementById('gd-smokeveil').style.opacity));
 await guest.screenshot({ path: path.join(out_dir, 'in-smoke.png') }); await place(guest, 70); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out_dir, 'outside-smoke.png') });
 check('outside the smoke the view is clear', await guest.evaluate(() => +document.getElementById('gd-smokeveil').style.opacity < .05));

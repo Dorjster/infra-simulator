@@ -13,7 +13,7 @@ for (const [w, h] of [[1920, 1080], [1280, 720]]) {
   if (w !== 1920) { await p.setViewportSize({ width: w, height: h }); await p.waitForTimeout(800); } else {
   if (w === 1920) await p.addInitScript(() => { localStorage.setItem('infra-name', 'Rada'); localStorage.setItem('infra-face-name', 'Rada'); localStorage.setItem('infra-face', 'smile'); localStorage.removeItem('gd-radar-mode'); });
   if (w === 1920) { await p.goto(base + '/'); await p.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 60000 }); await p.waitForTimeout(1000); }
-  await p.evaluate(() => document.querySelector('[data-start=arena]').click()); await p.waitForTimeout(400); await p.selectOption('#ss-ar-kind', 'defuse'); await p.selectOption('#ss-ar-map', 'dune'); await p.selectOption('#ss-ar-bots', '4'); await p.evaluate(() => document.getElementById('ss-ar-solo').click());
+  await p.evaluate(() => document.querySelector('[data-start=arena]').click()); await p.waitForTimeout(400); await p.selectOption('#ss-ar-kind', 'defuse'); await p.selectOption('#ss-ar-map', 'dust2'); await p.selectOption('#ss-ar-bots', '4'); await p.evaluate(() => document.getElementById('ss-ar-solo').click());
   await p.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.arenaScene?.inArena(__infra.camera.position.z) && __infra.lab.world.operations.game.combat?.d?.round, null, { timeout: 40000 });
   await p.evaluate(() => __infra.lab.enter()); await p.waitForTimeout(1500); }
   check(w + 'p: the radar is shown', await p.evaluate(() => !document.getElementById('gd-radar').hidden));

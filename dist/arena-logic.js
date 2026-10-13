@@ -12,8 +12,8 @@ import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol } from './combat-logic.js';
-import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire } from './arena-nades.js';
-import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE, newRound, freeSpot } from './arena-defuse.js';
+import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks } from './arena-nades.js';
+import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS } from './arena-defuse.js';
 import { hurt } from './combat-logic.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
@@ -31,11 +31,12 @@ const BOT_GUNS = ['ak', 'm4', 'ak', 'smg', 'm4', 'shotgun', 'ak', 'sniper'];
 export const LOBBY_MS = 120000, LOBBY_MORE_MS = 30000, DIFFICULTY = { easy: { skill: .35, react: 800, head: .03, aim: .5 }, normal: { skill: .55, react: 480, head: .06, aim: 1 }, hard: { skill: .8, react: 260, head: .12, aim: 1.4 } };
 export const TIMER_LIMITS = { warmup: [0, 600], freeze: [0, 60] };   // seconds (host settings)
 const clampS = (v, [lo, hi], dflt) => { const n = Math.round(+v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
-export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs = 0, difficulty = 'normal', freezeS = 15, warmupS = null } = {}, now = Date.now()) {
+export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs = 0, difficulty = 'normal', freezeS = 15, warmupS = null, rules = null } = {}, now = Date.now()) {
   if (!ARENA_MAPS[map]) throw Error('Unknown arena map');
   if (ARENA_MAPS[map].kind !== kind) throw Error(ARENA_MAPS[map].name + ' is not a ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' map');
   game.mode = 'arena'; game.payday = false;
   game.arena = { kind, map, startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null, difficulty: DIFFICULTY[difficulty] ? difficulty : 'normal', lobby: lobbyMs > 0 ? { until: now + lobbyMs, started: false, ready: {}, note: '' } : null, freezeMs: clampS(freezeS, TIMER_LIMITS.freeze, 15) * 1000, warmupS: Math.round(lobbyMs / 1000), nextMap: null };
+  game.arena.rules = cleanRules(rules || {});   // Defuse match rules (host settings), fixed for this match
   game.combat = { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: 0, nades: [], nadeSeq: 0 };
   for (let i = 0; i < bots; i++) addBot(game, now);
   if (kind === 'defuse') startDefuse(game, now);
@@ -43,13 +44,23 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs 
 const geo = game => { const map = ARENA_MAPS[game.arena.map], [sw, sd] = map.size; return { map, boxes: mapBoxes(map, ARENA.cx, ARENA.cz), bounds: { minX: ARENA.cx - sw / 2, maxX: ARENA.cx + sw / 2, minZ: ARENA.cz - sd / 2, maxZ: ARENA.cz + sd / 2 } }; };
 let cache = { map: null, g: null }; const G = game => cache.map === game.arena.map ? cache.g : (cache = { map: game.arena.map, g: geo(game) }).g;
 
+// Bot movement and sight. Classic maps (map.nav): the bot walks the map's columns — up steps and stairs, down ledges,
+// on its own level of stacked floors — and keeps its feet height (bot.y); it sees along a real 3D line. Other maps:
+// the flat checks against the boxes.
+const feetOf = (g, bot) => { if (!g.map.nav) return 0; if (!Number.isFinite(bot.y)) { const f = g.map.nav.floorAt(bot.x - ARENA.cx, bot.z - ARENA.cz); bot.y = Number.isFinite(f) ? f : 0; } return bot.y; };
+function tryMove(g, bot, nx, nz) { const nav = g.map.nav; if (!nav) { if (!walkable(g.boxes, g.bounds, nx, nz)) return false; bot.x = nx; bot.z = nz; return true; }
+  const y = nav.step(bot.x - ARENA.cx, bot.z - ARENA.cz, feetOf(g, bot), nx - ARENA.cx, nz - ARENA.cz); if (!Number.isFinite(y)) return false; bot.x = nx; bot.z = nz; bot.y = y; return true; }
+const standable = (g, x, z, nearY = Infinity) => g.map.nav ? Number.isFinite(g.map.nav.floorAt(x - ARENA.cx, z - ARENA.cz, nearY)) : walkable(g.boxes, g.bounds, x, z);
+// Can a (eye at ay) see b (eye at by)? Walls, levels and smoke block.
+const sees = (game, g, ax, ay, az, bx, by, bz) => g.map.nav ? g.map.nav.sight(ax - ARENA.cx, ay, az - ARENA.cz, bx - ARENA.cx, by, bz - ARENA.cz) && !smokeBlocks(game, ax, ay, az, bx, by, bz) : clearView(game, g.boxes, ax, az, bx, bz);
 // One bot step towards heading h (steering round obstacles); true when it moved.
-function botStep(g, bot, h, step) { for (const turn of [0, .5, -.5, 1, -1, 1.5, -1.5]) { const hh = h + turn, nx = bot.x + Math.sin(hh) * step, nz = bot.z + Math.cos(hh) * step; if (walkable(g.boxes, g.bounds, nx, nz)) { bot.x = nx; bot.z = nz; return true; } } return false; }
+function botStep(g, bot, h, step) { for (const turn of [0, .5, -.5, 1, -1, 1.5, -1.5]) { const hh = h + turn, nx = bot.x + Math.sin(hh) * step, nz = bot.z + Math.cos(hh) * step; if (tryMove(g, bot, nx, nz)) return true; } return false; }
 // The nearest walkable spot (within 20 units, reachable in a straight line) that a wall or crate hides from `from`.
 function findCover(g, bot, from) {
   let best = null, bd = Infinity;
-  for (let a = 0; a < 12; a++) for (const r of [5, 10, 15, 20]) { const h = a / 12 * Math.PI * 2, x = bot.x + Math.sin(h) * r, z = bot.z + Math.cos(h) * r; if (r >= bd || !walkable(g.boxes, g.bounds, x, z)) continue;
-    if (lineOfSight(g.boxes, from.x, from.z, x, z, 9)) continue; let clear = true; for (let t = .25; t < 1; t += .25) if (!walkable(g.boxes, g.bounds, bot.x + (x - bot.x) * t, bot.z + (z - bot.z) * t)) { clear = false; break; } if (clear) { best = { x, z }; bd = r; } }
+  const fy = feetOf(g, bot);
+  for (let a = 0; a < 12; a++) for (const r of [5, 10, 15, 20]) { const h = a / 12 * Math.PI * 2, x = bot.x + Math.sin(h) * r, z = bot.z + Math.cos(h) * r; if (r >= bd || !standable(g, x, z, fy + 2.8)) continue;
+    if (g.map.nav ? g.map.nav.sight(from.x - ARENA.cx, (from.y ?? EYE), from.z - ARENA.cz, x - ARENA.cx, fy + EYE, z - ARENA.cz) : lineOfSight(g.boxes, from.x, from.z, x, z, 9)) continue; let clear = true; for (let t = .25; t < 1; t += .25) if (!standable(g, bot.x + (x - bot.x) * t, bot.z + (z - bot.z) * t, fy + 2.8)) { clear = false; break; } if (clear) { best = { x, z }; bd = r; } }
   return best;
 }
 // A bot's gun with its rounds (finite like everyone's): full unless `ammo` [magazine, reserve] is given.
@@ -81,12 +92,13 @@ function alive(game, players, but) {
 // A gun keeps its rounds on the ground ([magazine, reserve]); `by` and their team are shown to whoever finds it.
 function dropItem(game, item, x, z, y, by, now, ammo = null) {
   const C = game.combat; C.ground ??= []; C.groundSeq = (C.groundSeq || 0) + 1;
-  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(40, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null });
+  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(250, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null });
   while (C.ground.length > GROUND_MAX) { const i = C.ground.findIndex(it => it.item !== 'c4'); C.ground.splice(i < 0 ? 0 : i, 1); }
   return 'g' + C.groundSeq;
 }
 // The floor a bot stands on (raised floors and stairs of grid maps).
-const botFloor = (game, b) => floorAt(ARENA_MAPS[game.arena?.map], ARENA.cx, ARENA.cz, b.x, b.z);
+const botFloor = (game, b) => Number.isFinite(b.y) ? b.y : floorAt(ARENA_MAPS[game.arena?.map], ARENA.cx, ARENA.cz, b.x, b.z);
+// Rules changed before the match: the warmup round has no clock, so nothing to retime (kept for clarity).
 // This round's purchases per player (for refunds), newest last.
 function bought(game, name, b) { const d = game.combat.d; ((d.bought ??= {})[key(name)] ??= []).push(b); }
 // Take a gun out of a player's hands onto the ground (with its rounds); forgets their ammo for it.
@@ -114,6 +126,12 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     if (a.type === 'restart-round') { if (d.matchOver) throw Error('The match is over'); A.restarting = true; newRound(game, players, now); return 'Round restarted'; }
     if (a.type === 'move-spec') { const k = key(a.name); if (!d.teams[k]) throw Error('No such player'); applyTeam(game, k, 'spec', players, now); return a.name + ' is now a spectator'; } }
   if (a.type === 'settings') { if (!perm.isHost) throw Error('Only the host changes match settings');
+    // Match rules: a preset and / or single fields. Before the match starts (lobby / warmup) they apply now; during a
+    // match, from the next match (a running match never changes its rules mid-way).
+    if (a.preset !== undefined || a.rules !== undefined) { if (a.preset !== undefined && !MATCH_PRESETS[a.preset]) throw Error('Unknown preset');
+      const next = cleanRules({ ...(A.rulesNext || A.rules || {}), ...(MATCH_PRESETS[a.preset] || {}), ...(a.rules || {}) }), live = !!game.combat?.d && !(A.lobby && !A.lobby.started);
+      if (live) A.rulesNext = next; else { A.rules = next; delete A.rulesNext; if (game.combat?.d) game.combat.d.rules = { ...next }; }
+      return 'Rules: first to ' + next.win + ' · ' + next.roundS + ' s rounds · $' + next.start + ' start · friendly fire ' + (next.ff ? 'on' : 'off') + ' · ' + { sudden: 'sudden death', draw: 'draws allowed', mr3: 'MR3 overtime' }[next.ot] + (live ? ' · from the next match' : ''); }
     if (a.freeze !== undefined) { const v = clampS(a.freeze, TIMER_LIMITS.freeze, 15) * 1000, live = !!game.combat?.d && !(A.lobby && !A.lobby.started); if (live) A.freezeNext = v; else A.freezeMs = v; }
     if (a.warmup !== undefined && A.lobby && !A.lobby.started) { A.warmupS = clampS(a.warmup, TIMER_LIMITS.warmup, 120); A.lobby.until = A.startedAt + A.warmupS * 1000; }
     if (a.difficulty !== undefined) { if (!DIFFICULTY[a.difficulty]) throw Error('Unknown difficulty'); A.difficulty = a.difficulty; }
@@ -171,7 +189,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     const team = teamOf(game, name), buys = [['primary', primary], ['secondary', secondary]].filter(([, it]) => it !== undefined), l = loadoutOf(game, name), dropped = [];
     if (isDefuse(game)) { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); let cost = 0;
       for (const [, it] of buys) { const w = it && weaponById(it); if (w?.team && team && w.team !== team) throw Error(w.name + ' is a ' + (w.team === 't' ? 'Terrorist' : 'Counter-Terrorist') + ' weapon'); cost += it ? PRICE[it] : 0; }
-      if ((game.combat.d.money[key(name)] ?? DEFUSE.start) < cost) throw Error('Not enough money ($' + cost + ')'); for (const [, it] of buys) if (it) pay(game, name, it); }   // all or nothing: never charged without the gun
+      if ((game.combat.d.money[key(name)] ?? rulesOf(game).start) < cost) throw Error('Not enough money ($' + cost + ')'); for (const [, it] of buys) if (it) pay(game, name, it); }   // all or nothing: never charged without the gun
     const p = poseOf(players, name) || (a.x !== undefined ? { x: +a.x, z: +a.z, y: +a.y } : null);
     for (const [slot, item] of buys) { const old = l[slot], had = old && ammoOf(game, name, old); let ground = null;
       if (old && item) { if (p) ground = dropFrom(game, name, old, p.x, p.z, Math.max(0, (p.y ?? EYE) - EYE), now); else if (game.combat.ammo?.[key(name)]) delete game.combat.ammo[key(name)][old]; dropped.push(weaponById(old).name); }
@@ -194,7 +212,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   if (a.type === 'throw') { if (isDown(game, name, now)) throw Error('You are dead'); return throwNade(game, name, a.kind, a, now); }
   if (a.type === 'add-bot') { const n = Math.max(1, Math.min(MAX_BOTS, Math.floor(+a.count || 1))); let added = 0; for (let i = 0; i < n && A.bots.length < MAX_BOTS; i++, added++) addBot(game, now, players); return added ? 'Added ' + added + ' bot' + (added > 1 ? 's' : '') : 'The arena is full of bots'; }
   if (a.type === 'remove-bot') { const b = removeBot(game); if (!b) throw Error('No bots to remove'); return 'Removed ' + b.name; }
-  if (a.type === 'restart') { if (a.map && !ARENA_MAPS[a.map]) throw Error('That map is not available'); const map = a.map && ARENA_MAPS[a.map]?.kind === A.kind ? a.map : A.map; startArena(game, { map, kind: A.kind, bots: A.bots.length, difficulty: A.difficulty }, now); return 'New match · ' + ARENA_MAPS[game.arena.map].name; }
+  if (a.type === 'restart') { if (a.map && !ARENA_MAPS[a.map]) throw Error('That map is not available'); const map = a.map && ARENA_MAPS[a.map]?.kind === A.kind ? a.map : A.map; startArena(game, { map, kind: A.kind, bots: A.bots.length, difficulty: A.difficulty, rules: A.rulesNext || A.rules }, now); return 'New match · ' + ARENA_MAPS[game.arena.map].name; }
   throw Error('Unknown arena action');
 }
 
@@ -249,10 +267,10 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
   // nothing is duplicated. Deathmatch: you respawn with your loadout, nothing drops.
   A.deathDrops ??= {};
   for (const [k, d] of Object.entries(C.down || {})) { const tag = (C.deaths?.[k] || 0) + ':' + d.until; if (A.deathDrops[k] === tag) continue; A.deathDrops[k] = tag;
-    if (C.d?.bomb?.carrier === k) { const bt = A.bots.find(b => key(b.name) === k) || players.find(x => key(x.name) === k)?.pose; if (bt) dropItem(game, 'c4', bt.x, bt.z, 0, k, now); C.d.bomb.carrier = null; changed = true; }
+    if (C.d?.bomb?.carrier === k) { const bb = A.bots.find(b => key(b.name) === k), bt = bb || players.find(x => key(x.name) === k)?.pose; if (bt) dropItem(game, 'c4', bt.x, bt.z, bb ? botFloor(game, bb) : Math.max(0, (bt.y ?? EYE) - EYE), k, now); C.d.bomb.carrier = null; changed = true; }   // where they fell, on their floor
     if (!C.d) continue;
     const bot = A.bots.find(b => key(b.name) === k), p = bot ? null : players.find(x => key(x.name) === k), at = bot || p?.pose; if (!at) continue;
-    if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, 0, bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve]); bot.weapon = null; changed = true; } continue; }
+    if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, botFloor(game, bot), bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve]); bot.weapon = null; changed = true; } continue; }
     const l = A.loadout[k] || {}, slot = l.primary ? 'primary' : l.secondary ? 'secondary' : null;
     if (slot) dropFrom(game, p.name, l[slot], at.x, at.z, Math.max(0, (at.y || 0) - EYE), now);
     // Everything else is gone with them right away (pistol, grenades, armor, kit), so nothing old shows while dead or
@@ -278,18 +296,18 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     if (A.lobby && !A.lobby.started) continue;   // lobby: no fighting
     const team = C.d ? C.d.teams[key(bot.name)] : null;
     // Defuse: the bomb carrier on a site plants straight away (even under fire) and keeps at it.
-    if (C.d && team === 't' && C.d.bomb.carrier === key(bot.name) && C.d.round.phase === 'live') { if (C.d.round.plant?.by === key(bot.name)) continue; if (!C.d.round.plant) { const site = siteAt(game, bot); if (site) { C.d.round.plant = { by: key(bot.name), start: now, x: bot.x, z: bot.z, y: 0, site }; changed = true; continue; } } }
+    if (C.d && team === 't' && C.d.bomb.carrier === key(bot.name) && C.d.round.phase === 'live') { if (C.d.round.plant?.by === key(bot.name)) continue; if (!C.d.round.plant) { const site = siteAt(game, { x: bot.x, z: bot.z, y: feetOf(g, bot) + EYE }); if (site) { C.d.round.plant = { by: key(bot.name), start: now, x: bot.x, z: bot.z, y: feetOf(g, bot), site }; changed = true; continue; } } }
     const wpn = weaponById(bot.weapon), foes = alive(game, players, bot.name).filter(f => !team || C.d.teams[key(f.name)] !== team), DF = DIFFICULTY[A.difficulty] || DIFFICULTY.normal;
     // Grenades: run from a live HE close by; never stand in fire.
     { const danger = (C.nades || []).find(n => (n.phase === 'air' && n.kind === 'he' && Math.hypot(n.x - bot.x, n.z - bot.z) < 40) || (n.phase === 'fire' && Math.hypot(n.x - bot.x, n.z - bot.z) < NADES.molotov.radius + 2 && inFire(fireCells(g.boxes, n.x, n.z, n.y), bot.x, bot.z)));
       if (danger && botStep(g, bot, Math.atan2(bot.x - danger.x, bot.z - danger.z), 34 * dt)) { changed = true; continue; } }
     // Nearest visible enemy within range.
-    let tgt = null, td = Infinity; for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && clearView(game, g.boxes, bot.x, bot.z, f.x, f.z)) { tgt = f; td = d; } }   // walls and smoke block
+    let tgt = null, td = Infinity; for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && sees(game, g, bot.x, feetOf(g, bot) + EYE, bot.z, f.x, f.y ?? EYE, f.z)) { tgt = f; td = d; } }   // walls and smoke block
     if (tgt) {
       if (bot.target !== tgt.name) { bot.target = tgt.name; bot.seenAt = now; }
       const want = Math.atan2(-(tgt.x - bot.x), -(tgt.z - bot.z)), diff = Math.atan2(Math.sin(want - bot.yaw), Math.cos(want - bot.yaw)); bot.yaw += Math.sign(diff) * Math.min(Math.abs(diff), dt * 6);
       // Strafe while fighting (side to side, changing direction every ~0.7 s), never into walls.
-      { const side = Math.floor(now / 700 + bot.shotN * .37 + (+bot.id.slice(4) || 0)) % 2 ? 1 : -1, sx = Math.cos(bot.yaw) * side, sz = -Math.sin(bot.yaw) * side, st = 14 * dt, nx = bot.x + sx * st, nz = bot.z + sz * st; if (walkable(g.boxes, g.bounds, nx, nz)) { bot.x = nx; bot.z = nz; changed = true; } }
+      { const side = Math.floor(now / 700 + bot.shotN * .37 + (+bot.id.slice(4) || 0)) % 2 ? 1 : -1, sx = Math.cos(bot.yaw) * side, sz = -Math.sin(bot.yaw) * side, st = 14 * dt, nx = bot.x + sx * st, nz = bot.z + sz * st; if (tryMove(g, bot, nx, nz)) changed = true; }
       const react = DF.react + (1 - bot.skill) * 300;
       // Cover: while reloading, or hurt, step behind the nearest wall or crate that hides you from the target.
       if ((now < bot.reloadUntil || hpOf(game, bot.name) < 40) && !bot.noCover) { if (!bot.cover || now > bot.cover.until) bot.cover = { at: findCover(g, bot, tgt), until: now + 1500 }; const cv = bot.cover.at; if (cv && Math.hypot(cv.x - bot.x, cv.z - bot.z) > 1.5 && botStep(g, bot, Math.atan2(cv.x - bot.x, cv.z - bot.z), 30 * dt)) changed = true; }
@@ -311,11 +329,11 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
     // Wander: walk towards a spawn point used as a waypoint; steer round obstacles; pick another when stuck.
     if (bot.wp < 0 || Math.hypot(...wp(g, bot.wp).map((v, i) => v - (i ? bot.z : bot.x))) < 6) bot.wp = Math.floor(Math.random() * g.map.spawns.length);
     const [wx, wz] = wp(g, bot.wp), head = Math.atan2(wx - bot.x, wz - bot.z), step = 26 * dt;
-    let moved = false; for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (walkable(g.boxes, g.bounds, nx, nz)) { bot.x = nx; bot.z = nz; bot.yaw = h + Math.PI; moved = true; break; } }
+    let moved = false; for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (tryMove(g, bot, nx, nz)) { bot.yaw = h + Math.PI; moved = true; break; } }
     if (!moved) bot.wp = -1;
   }
   // The host scheduled another map for the next match: switch when this one ends (people keep their side).
-  if (C.d?.matchOver && A.nextMap && now - C.d.matchOver.at > DEFUSE.matchOverMs) { const id = A.nextMap, m = ARENA_MAPS[id], teams = { ...C.d.teams }; startArena(game, { map: id, kind: m.kind, bots: A.bots.length, difficulty: A.difficulty, freezeS: (A.freezeMs ?? 15000) / 1000 }, now); if (game.combat.d) for (const [k, t] of Object.entries(teams)) if (!/^bot /.test(k)) game.combat.d.teams[k] = t; return true; }
+  if (C.d?.matchOver && A.nextMap && now - C.d.matchOver.at > DEFUSE.matchOverMs) { const id = A.nextMap, m = ARENA_MAPS[id], teams = { ...C.d.teams }; startArena(game, { map: id, kind: m.kind, bots: A.bots.length, difficulty: A.difficulty, freezeS: (A.freezeMs ?? 15000) / 1000, rules: A.rulesNext || A.rules }, now); if (game.combat.d) for (const [k, t] of Object.entries(teams)) if (!/^bot /.test(k)) game.combat.d.teams[k] = t; return true; }
   if (C.d) { if (defuseTick(game, players, now, { hurtAll: (x, z, y, dmg, R) => { for (const t of alive(game, players, '')) { const dd = Math.hypot(t.x - x, t.z - z); if (dd < R) hurt(game, 'C4', t.name, { id: 'c4', name: 'C4' }, Math.round(dmg * Math.pow(1 - dd / R, 1.4)), 'chest', now); } }, posOf: k => { const b = A.bots.find(b => key(b.name) === k); if (b) return b; const p = players.find(x => key(x.name) === k)?.pose; return p || null; } })) changed = true; return changed; }
   if (!A.over && now > A.endsAt) { const kills = C.kills || {}, top = Object.entries(kills).sort((a, b) => b[1] - a[1])[0]; A.over = { at: now, winner: top ? top[0] : null }; changed = true; }
   if (A.over && now - A.over.at > 12000) { startArena(game, { map: A.map, bots: A.bots.length }, now); changed = true; }
@@ -330,13 +348,19 @@ function defuseBot(game, bot, team, g, dt, now) {
   if (r.phase === 'planted' && team === 'ct' && !bot.retake) { bot.retake = true; bot.path = [...bot.path.slice(bot.pi), [r.planted.x, r.planted.z]]; bot.pi = 0; }
   // At the bomb: defuse. At the site with the bomb: plant.
   if (team === 'ct' && r.phase === 'planted' && Math.hypot(bot.x - r.planted.x, bot.z - r.planted.z) < 5) { if (!r.defuse) { r.defuse = { by: k, start: now, ms: d.kits[k] ? DEFUSE.kitMs : DEFUSE.defuseMs, x: bot.x, z: bot.z }; return true; } return false; }
-  if (team === 't' && d.bomb.carrier === k && r.phase === 'live' && !r.plant) { const site = siteAt(game, bot); if (site) { r.plant = { by: k, start: now, x: bot.x, z: bot.z, y: 0, site }; return true; } }
+  if (team === 't' && d.bomb.carrier === k && r.phase === 'live' && !r.plant) { const site = siteAt(game, { x: bot.x, z: bot.z, y: feetOf(g, bot) + EYE }); if (site) { r.plant = { by: k, start: now, x: bot.x, z: bot.z, y: feetOf(g, bot), site }; return true; } }
   if (r.plant?.by === k) return false;   // standing still while planting
   // A Terrorist without the bomb picks it up if it lies near.
   if (team === 't' && !d.bomb.carrier) { const i = (game.combat.ground || []).findIndex(it => it.item === 'c4' && Math.hypot(it.x - bot.x, it.z - bot.z) < 4); if (i >= 0) { game.combat.ground.splice(i, 1); d.bomb.carrier = k; return true; } }
   if (bot.pi >= bot.path.length) return false; const [wx, wz] = bot.path[bot.pi]; if (Math.hypot(wx - bot.x, wz - bot.z) < 4) { bot.pi++; return true; }
-  const head = Math.atan2(wx - bot.x, wz - bot.z), step = 26 * dt;
-  for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (walkable(g.boxes, g.bounds, nx, nz)) { bot.x = nx; bot.z = nz; bot.yaw = h + Math.PI; return true; } }
+  const head0 = Math.atan2(wx - bot.x, wz - bot.z), step = 26 * dt;
+  // No progress for a second: sidestep for half a second (out of a corner between two obstacles), then carry on.
+  if (Math.hypot(bot.x - (bot.lastX ?? 1e9), bot.z - (bot.lastZ ?? 1e9)) > 1.5) { bot.lastX = bot.x; bot.lastZ = bot.z; bot.stillSince = now; }
+  const stuckFor = now - (bot.stillSince ?? now), head = stuckFor > 1000 && stuckFor % 1500 < 500 ? head0 + (Math.floor(stuckFor / 1500) % 2 ? 2.2 : -2.2) : head0;
+  for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (tryMove(g, bot, nx, nz)) { bot.yaw = h + Math.PI; return true; } }
+  // Stuck: on classic maps walk a fresh route from here to where this one ends (at most every 2 s); else skip the waypoint.
+  if (m.nav && now - (bot.replanAt || 0) > 2000) { bot.replanAt = now; const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz);
+    if (fresh.length) { bot.path = fresh.map(([x, z]) => [cx + x, cz + z]); bot.pi = 0; return true; } }
   bot.pi++; return true;   // stuck: skip this waypoint
 }
 const wp = (g, i) => { const [x, z] = g.map.spawns[i]; return [ARENA.cx + x, ARENA.cz + z]; };
