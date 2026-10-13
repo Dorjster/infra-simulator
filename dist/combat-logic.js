@@ -12,6 +12,7 @@ import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFir
 import { defuseDamage, defuseKill } from './arena-defuse.js';
 import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
+import { smokeBlocks } from './arena-nades.js';   /* kill-feed mark: shot through smoke (only used at call time: no load-order issue) */
 
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const state = game => game.combat ??= { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [] };
@@ -65,14 +66,15 @@ export function poseAmmo(game, name, shot, weapon) {
 
 // ── Damage ──────────────────────────────────────────────────────────────────────────────────────────────────
 // Damage one player (or bot) with a weapon hit: armor and the head-shot rule apply (weapons-data.js hitDamage).
-export function applyHit(game, shooter, targetName, wpn, zone, dist, pellets = 1, now = Date.now(), base = null) {
+export function applyHit(game, shooter, targetName, wpn, zone, dist, pellets = 1, now = Date.now(), base = null, how = null) {
   const C = state(game), tk = key(targetName), arm = C.armor?.[tk] || null, r = hitDamage(wpn, zone, dist, pellets, arm, base);
   if (arm && r.armor) { arm.kevlar = Math.max(0, arm.kevlar - r.armor); if (!arm.kevlar) arm.helmet = false; }
-  return hurt(game, shooter, targetName, wpn, r.hp, zone, now, r.headKill);
+  return hurt(game, shooter, targetName, wpn, r.hp, zone, now, r.headKill, how);
 }
 // Take `dmg` HP (grenades and fire pass their own damage); knocks out at 0 with a kill-feed line; assists for
 // anyone else who did 41+ damage to the victim in this life (CS2).
-export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = Date.now(), headKill = false) {
+// `how`: CS2 kill-feed marks { wallbang, smoke, noscope, air, blind, far (metres) }.
+export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = Date.now(), headKill = false, how = null) {
   if (game.combat?.d && !headKill) dmg = defuseDamage(game, shooter, targetName, wpn, dmg);   // friendly fire: reduced, not off
   else if (game.combat?.d && headKill && friendly(game, shooter, targetName)) dmg = Math.round(defuseDamage(game, shooter, targetName, wpn, damageCap(wpn)));   // a team mate's head shot is not an instant kill
   const c = state(game), me = key(shooter), tk = key(targetName); if (isDown(game, targetName, now) || dmg <= 0) return { message: 'Already down', dmg: 0, hp: hpOf(game, targetName) };
@@ -86,7 +88,7 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   if (me !== tk && !teamKill) c.kills[me] = (c.kills[me] || 0) + 1; c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
   let assist = null; for (const [a, n] of Object.entries(c.dmg?.[tk] || {})) if (a !== me && a !== tk && n >= 41 && !(c.d && c.d.teams[a] === c.d.teams[tk])) { (c.assists ??= {})[a] = (c.assists[a] || 0) + 1; assist = c.names?.[a] || a; }
   if (c.dmg) delete c.dmg[tk];
-  c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head', assist }); c.feed.length = Math.min(c.feed.length, 6);
+  c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head', assist, ...(how ? { how } : {}) }); c.feed.length = Math.min(c.feed.length, 6);
   return { message: 'Killed ' + targetName + (zone === 'head' ? ' · head shot' : ''), dmg: shown, hp: 0, down: true, zone, head: zone === 'head' };
 }
 const friendly = (game, a, b) => { const t = game.combat?.d?.teams; return !!t && key(a) !== key(b) && !!t[key(a)] && t[key(a)] === t[key(b)]; };
@@ -147,7 +149,9 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
   const pellets = wpn.pellets ? Math.max(1, Math.min(wpn.pellets, Math.floor(Number(a.pellets) || 1))) : 1;
   const dist = from && to ? Math.hypot(from.x - to.x, from.y - to.y, from.z - to.z) : 0;
   // Damage is computed here from the real distance and what the bullet went through, never trusted from the shooter.
-  return applyHit(game, name, target.name, wpn, zone, dist, pellets, now, through < 1 ? Math.max(1, Math.round(damageFor(wpn, zone, dist, pellets) * through)) : null);
+  // Kill-feed marks: wallbang and through smoke are the host's own findings; no-scope, airborne and blind come from the shooter.
+  const eyeA = from ? (from.y ?? 9.7) : 0, eyeB = to ? (to.y ?? 9.7) - 1.5 : 0, how = { wallbang: through < 1, smoke: !!(from && to && smokeBlocks(game, from.x, eyeA, from.z, to.x, eyeB, to.z, now)), noscope: !!a.noscope && !!wpn.zoom, air: !!a.air, blind: !!a.blind, far: Math.round(dist * .165) };
+  return applyHit(game, name, target.name, wpn, zone, dist, pellets, now, through < 1 ? Math.max(1, Math.round(damageFor(wpn, zone, dist, pellets) * through)) : null, how);
 }
 // Respawn knocked-out players (deathmatch) with full HP and full ammo. Returns true when something changed.
 export function combatTick(game, now = Date.now()) {

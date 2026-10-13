@@ -64,7 +64,7 @@ export function newRound(game, players, now) {
   if (!warmup(game) && !A.restarting) d.n++; A.restarting = false; const firstOfHalf = d.n <= 1 || d.n === DEFUSE.half + 1;
   // The dead lose everything (gun, grenades, armor, kit) and start again with their team's pistol.
   for (const k of Object.keys(C.down || {})) { delete (C.armor ??= {})[k]; if (!A.bots.some(b => key(b.name) === k)) { A.loadout[k] = { primary: null, secondary: defaultPistol(d.teams[k]), nades: [] }; delete d.kits[k]; } else { const b = A.bots.find(b => key(b.name) === k); b.weapon = null; } }
-  C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {};
+  C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {}; d.bought = {};
   for (const [k, t] of Object.entries(d.teams)) if (t === 'spec') C.down[k] = { until: 4e15, by: '', weapon: 'spectating' };   // spectators watch
   for (const mem of members(game, players)) { if (!d.teams[mem.k]) assignTeam(game, mem.name, players); if (firstOfHalf) d.money[mem.k] ??= DEFUSE.start; }
   // Every member gets their own spawn spot on their side (no two in the same place, any team size).
@@ -106,7 +106,7 @@ export function pay(game, name, item) { const d = game.combat.d, k = key(name), 
 export function defuseApply(game, a, name, pose, now) {
   const d = game.combat.d, r = d.round, k = key(name), t = d.teams[k]; if (!r) throw Error('No round'); if (d.paused && !['buy', 'loadout', 'buy-nade', 'buy-armor'].includes(a.type)) throw Error('The match is paused');
   if ((game.combat.down || {})[k]) throw Error('You are dead');
-  if (a.type === 'buy-kit') { const e = buyError(game, name, pose, now); if (e) throw Error(e); if (t !== 'ct') throw Error('Only CTs use a defuse kit'); if (d.kits[k]) throw Error('You have a kit'); pay(game, name, 'kit'); d.kits[k] = true; return 'Bought a defuse kit'; }
+  if (a.type === 'buy-kit') { const e = buyError(game, name, pose, now); if (e) throw Error(e); if (t !== 'ct') throw Error('Only CTs use a defuse kit'); if (d.kits[k]) throw Error('You have a kit'); pay(game, name, 'kit'); d.kits[k] = true; ((d.bought ??= {})[k] ??= []).push({ kind: 'kit', item: 'kit', price: PRICE.kit }); return 'Bought a defuse kit'; }
   if (a.type === 'plant') {
     if (!a.hold) { if (r.plant?.by === k) r.plant = null; return 'Stopped planting'; }
     if (r.phase !== 'live') throw Error('Not now'); if (d.bomb.carrier !== k) throw Error('You don’t have the bomb');

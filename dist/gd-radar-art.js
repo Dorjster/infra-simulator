@@ -37,6 +37,13 @@ export function radarImage(m, id = m.name, px = 2) {
   const Dt = reach(G, m.t || []), Dc = reach(G, m.ct || []), warm = [138, 118, 74], cool = [46, 104, 116], midc = [86, 98, 96];
   for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const v = G.cells[r * G.cols + c]; if (!v) continue; const i = r * G.cols + c, a = Dt[i], b = Dc[i], t = isFinite(a) && isFinite(b) ? Math.max(-1, Math.min(1, (b - a) / Math.max(8, (a + b) * .25))) : 0;
     const mix = t > 0 ? warm.map((q, j) => midc[j] + (q - midc[j]) * t) : cool.map((q, j) => midc[j] + (q - midc[j]) * -t); g.fillStyle = v === 2 ? 'rgb(170,176,170)' : `rgb(${mix.map(Math.round).join(',')})`; g.fillRect(G.ox * 0 + c * cs, r * cs, Math.ceil(cs), Math.ceil(cs)); }
+  // Heights (grid maps): higher floors lighter, roofed tunnels dark and hatched, stairs as rungs across the climb.
+  if (G.heights) { for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const i = r * G.cols + c, h = G.heights[i]; if (G.cells[i] && h > 0) { g.fillStyle = `rgba(255,255,255,${Math.min(.16, h * .028)})`; g.fillRect(c * cs, r * cs, Math.ceil(cs), Math.ceil(cs)); } }
+    g.save(); for (const [c0, r0, c1, r1] of G.roofs || []) { g.beginPath(); for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (G.cells[r * G.cols + c]) g.rect(c * cs, r * cs, Math.ceil(cs), Math.ceil(cs)); g.fillStyle = 'rgba(0,0,0,.38)'; g.fill(); g.save(); g.clip();
+      g.strokeStyle = 'rgba(255,255,255,.07)'; g.lineWidth = Math.max(1, px * .5); g.beginPath(); for (let k = -(r1 - r0 + 1) * cs; k < (c1 - c0 + 1) * cs; k += 5 * px) { g.moveTo(c0 * cs + k, r0 * cs); g.lineTo(c0 * cs + k + (r1 - r0 + 1) * cs, (r1 + 1) * cs); } g.stroke(); g.restore(); }
+    g.strokeStyle = 'rgba(255,255,255,.28)'; g.lineWidth = Math.max(1, px * .6); g.beginPath();
+    for (const [c0, r0, c1, r1, dir, y0, y1] of G.ramps || []) { const n = Math.max(1, Math.ceil(Math.abs(y1 - y0) / 1.5)), ns = dir === 'n' || dir === 's'; for (let k = 1; k < n; k++) { const f = k / n; if (ns) { const y = (r0 + f * (r1 - r0 + 1)) * cs; g.moveTo(c0 * cs + 2, y); g.lineTo((c1 + 1) * cs - 2, y); } else { const x = (c0 + f * (c1 - c0 + 1)) * cs; g.moveTo(x, r0 * cs + 2); g.lineTo(x, (r1 + 1) * cs - 2); } } }
+    g.stroke(); g.restore(); }
   // Floor edges: a light rim where floor meets wall (reads like the overview's outline).
   g.strokeStyle = 'rgba(230,240,235,.28)'; g.lineWidth = Math.max(1, px * .6); g.beginPath();
   for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { if (!G.cells[r * G.cols + c]) continue; const x0 = c * cs, y0 = r * cs, wall = (cc, rr) => cc < 0 || rr < 0 || cc >= G.cols || rr >= G.rows || !G.cells[rr * G.cols + cc];

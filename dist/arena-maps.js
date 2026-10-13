@@ -58,11 +58,15 @@ for (const [id, make] of Object.entries(CLASSIC)) ARENA_MAPS[id] = make();
 for (const [id, dress] of Object.entries(DRESS)) { if (ARENA_MAPS[id]?.grid) continue; const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
 for (const m of Object.values(ARENA_MAPS)) if (m.kind === 'defuse') m.spawns = [...m.t, ...m.ct];
 // Solids as world-space boxes: { minX, maxX, minZ, maxZ, y0, y1, mat }.
-export function mapBoxes(map, cx, cz) { return map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null }; }); }
-// Can a player stand at (x, z)? (radius r, ignores roofs and things above head height)
+export function mapBoxes(map, cx, cz) { return map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk }; }); }
+// The highest walk-on floor (raised floor, stair) under (x, z) whose top is at most `below` (0 if none).
+export function floorTop(boxes, x, z, below = Infinity) { let y = 0; for (const b of boxes) if (b.walk && b.y1 <= below && b.y1 > y && x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) y = b.y1; return y; }
+// The floor under a world point (raised floors and ramps of grid maps; 0 elsewhere).
+export const floorAt = (map, cx, cz, x, z) => map?.floorAt ? map.floorAt(x - cx, z - cz) : 0;
+// Can a player stand at (x, z)? (radius r, ignores roofs, raised floors and stairs (walked on) and things above head height)
 export function walkable(boxes, bounds, x, z, r = 1.3) {
   if (x < bounds.minX + r || x > bounds.maxX - r || z < bounds.minZ + r || z > bounds.maxZ - r) return false;
-  for (const b of boxes) if (b.y0 < 10 && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return false;
+  for (const b of boxes) if (b.y0 < 10 && !b.walk && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return false;
   return true;
 }
 // Line of sight at eye height between two points (segment vs boxes that cover y = 8…10).

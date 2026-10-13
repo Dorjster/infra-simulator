@@ -25,6 +25,8 @@ const PEN = { rifle: 7, sniper: 11, lmg: 8, smg: 3.5, pistol: 3.5, shotgun: 1.5 
 
 const G = (o) => ({ team: null, mode: 'semi', pellets: 0, suppressed: false, zoom: null, unscoped: 0, model: o.id, sound: o.id, ...o, auto: o.mode === 'auto', move: { ...ACC[o.kind], ...(o.move || {}) }, recover: o.recover ?? RECOVER[o.kind], cat: { rifle: 'Rifle', sniper: 'Sniper rifle', smg: 'SMG', shotgun: 'Shotgun', pistol: 'Pistol', lmg: 'Machine gun' }[o.kind] });
 
+// Automatic guns' sprays at CS2 proportions: each gun's own shape (above), opened wider sideways and a little taller.
+export const SPRAY_SCALE = { pitch: 1.3, yaw: 1.9 };
 export const WEAPONS = [
   // Pistols (slot 2). T start with the Glock-18, CTs with the USP-S.
   G({ id: 'pistol', name: 'Glock-18', kind: 'pistol', team: 't', price: 200, reward: 300, dmg: 30, ap: .47, rangeMod: .85, rateMs: 150, mag: 20, reserve: 120, reloadMs: 2270, speed: 240, range: 450, pattern: kick(20, .55, .12), model: 'pistol', desc: 'Terrorist starting pistol. Big magazine, fast fire, weak against armor.' }),
@@ -55,7 +57,7 @@ export const WEAPONS = [
   G({ id: 'sniper', name: 'AWP', kind: 'sniper', price: 4750, reward: 100, dmg: 115, ap: .975, rangeMod: .99, rateMs: 1470, mode: 'bolt', mag: 5, reserve: 30, reloadMs: 3600, speed: 200, scopedSpeed: 100, range: 1000, zoom: [40, 10], unscoped: .07, pattern: kick(5, 4, .2), desc: 'One body shot kills. Slow to move and to fire; useless unscoped.' }),
   // Machine gun.
   G({ id: 'lmg', name: 'M249', kind: 'lmg', price: 5200, reward: 300, dmg: 32, ap: .8, rangeMod: .97, rateMs: 80, mode: 'auto', mag: 100, reserve: 200, reloadMs: 5700, speed: 195, range: 550, pattern: spray(100, [[0, 0, 0], [1, .45, 0], [6, 3, .4], [12, 4.6, -.8], [20, 5.2, 1.2], [30, 5.6, -1.3], [45, 5.9, 1], [60, 6.1, -.9], [80, 6.3, .8], [99, 6.4, 0]]), desc: '100 rounds of suppressing fire. Slow to move and to reload.' }),
-].map(w => ({ ...w, usd: w.price, spread: w.pelletSpread || .004, pen: w.pen ?? PEN[w.kind] }));
+].map(w => ({ ...w, usd: w.price, spread: w.pelletSpread || .004, pen: w.pen ?? PEN[w.kind], pattern: w.mode === 'auto' && !w.pellets ? w.pattern.map(([p, y]) => [+(p * SPRAY_SCALE.pitch).toFixed(3), +(y * SPRAY_SCALE.yaw).toFixed(3)]) : w.pattern }));
 export const WEAPON_IDS = WEAPONS.map(w => w.id);
 // Darja's chrome hand cannon (old Payday saves only; not used in Global Defensive).
 export const DARJA_GUN = { ...WEAPONS.find(w => w.id === 'deagle'), id: 'cannon', name: "Darja's Hand Cannon", price: 0, reward: 300 };

@@ -10,7 +10,11 @@
 //   mat:  [[c0, r0, c1, r1, material, h?], …]  wall material / height by area (default: wall / h)
 //   cover: [[c0, r0, c1, r1, h, material], …]  boxes standing on the floor (crates, low walls: h < 10 is cover)
 //   T, C: [c0, r0, c1, r1]  spawn areas · A, B: [c0, r0, c1, r1] bomb sites · mid: [c, r] (bots' mid route goal)
-//   callouts: [[name, c, r], …]  · props: [[type, c, r, rot, extra], …] (arena-mapkit props at cell centres) }
+//   callouts: [[name, c, r], …]  · props, props2: [[type, c, r, rot, extra], …] (arena-mapkit props at cell centres)
+//   lift: [[c0, r0, c1, r1, y], …]   raised floor (walk on it; reach it by a ramp, or drop off it)
+//   ramp: [[c0, r0, c1, r1, dir, y0, y1], …]  stairs climbing towards dir ('n' −z, 's' +z, 'e' +x, 'w' −x) from y0 to y1
+//   roof: [[c0, r0, c1, r1, y], …]   a ceiling at height y over those cells (tunnels, halls) }
+// Heights: map.floorAt(x, z) gives the floor under a point (map coordinates); bots and spawns stand on it.
 import { B, prop } from './arena-mapkit.js';
 
 const inside = (c, r, [c0, r0, c1, r1]) => c >= c0 && c <= c1 && r >= r0 && r <= r1;
@@ -26,8 +30,34 @@ export function gridMap(S) {
     let c1 = c; while (c1 + 1 < cols && same(c1 + 1, r)) c1++; let r1 = r; grow: while (r1 + 1 < rows) { for (let cc = c; cc <= c1; cc++) if (!same(cc, r1 + 1)) break grow; r1++; }
     for (let rr = r; rr <= r1; rr++) for (let cc = c; cc <= c1; cc++) used[rr * cols + cc] = 1;
     solids.push(B((X(c) + X(c1)) / 2, (Z(r) + Z(r1)) / 2, (c1 - c + 1) * cell, (r1 - r + 1) * cell, h, m)); }
-  for (const [c0, r0, c1, r1, h, m] of S.cover || []) { const inset = m === 'crate' ? 4 : .4; solids.push(B((X(c0) + X(c1)) / 2, (Z(r0) + Z(r1)) / 2, (c1 - c0 + 1) * cell - inset, (r1 - r0 + 1) * cell - inset, h, m));   /* crates a little smaller than their cells (CS-size, shot through by rifles) */ for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (g[r * cols + c]) g[r * cols + c] = 2; }
-  const props = []; for (const [type, c, r, rot = 0, extra = {}] of S.props || []) { const P = prop(type, X(c), Z(r), rot, extra); solids.push(...P.solids); props.push(P.visual); for (const b of P.solids) for (let rr = 0; rr < rows; rr++) for (let cc = 0; cc < cols; cc++) if (g[rr * cols + cc] === 1 && Math.abs(X(cc) - b[0]) < b[2] / 2 + cell / 2 && Math.abs(Z(rr) - b[1]) < b[3] / 2 + cell / 2) g[rr * cols + cc] = 3; }   /* a prop's cells: blocked for the routes, floor on the radar */
+  // Floor heights per cell (lifts, ramps: see below); cover and props stand on them.
+  const hg = new Float32Array(cols * rows), rampOf = new Int16Array(cols * rows).fill(-1), RISE = 1.5;
+  for (const [c0, r0, c1, r1, y] of S.lift || []) for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) hg[r * cols + c] = y;
+  (S.ramp || []).forEach(([c0, r0, c1, r1, dir, y0, y1], k) => { for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { rampOf[r * cols + c] = k; hg[r * cols + c] = (y0 + y1) / 2; } });
+  const onFloor = (c0, r0, c1, r1) => { let y = 0; for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (rampOf[r * cols + c] < 0) y = Math.max(y, hg[r * cols + c] || 0); return y; };
+  for (const [c0, r0, c1, r1, h, m] of S.cover || []) { const inset = m === 'crate' ? 4 : .4; solids.push(B((X(c0) + X(c1)) / 2, (Z(r0) + Z(r1)) / 2, (c1 - c0 + 1) * cell - inset, (r1 - r0 + 1) * cell - inset, h, m, onFloor(c0, r0, c1, r1)));   /* crates a little smaller than their cells (CS-size, shot through by rifles) */ for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (g[r * cols + c]) g[r * cols + c] = 2; }
+  // Floors: lifts and ramps are boxes you walk on (walk: true; the walk checks and the radar ignore them), merged like walls.
+  { const done = new Uint8Array(cols * rows); for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const i = r * cols + c, y = hg[i]; if (!g[i] || done[i] || !(y > 0) || rampOf[i] >= 0) continue;
+      const same = (cc, rr) => g[rr * cols + cc] && !done[rr * cols + cc] && rampOf[rr * cols + cc] < 0 && hg[rr * cols + cc] === y; let c1 = c; while (c1 + 1 < cols && same(c1 + 1, r)) c1++; let r1 = r; grow: while (r1 + 1 < rows) { for (let cc = c; cc <= c1; cc++) if (!same(cc, r1 + 1)) break grow; r1++; }
+      for (let rr = r; rr <= r1; rr++) for (let cc = c; cc <= c1; cc++) done[rr * cols + cc] = 1; const b = B((X(c) + X(c1)) / 2, (Z(r) + Z(r1)) / 2, (c1 - c + 1) * cell, (r1 - r + 1) * cell, y, S.raised || S.floor || 'stone'); b.walk = true; solids.push(b); } }
+  for (const [c0, r0, c1, r1, dir, y0, y1] of S.ramp || []) { const roofed = (S.roof || []).some(R => c0 >= R[0] && c1 <= R[2] && r0 >= R[1] && r1 <= R[3]), [x0, x1, z0, z1] = [X(c0) - cell / 2, X(c1) + cell / 2, Z(r0) - cell / 2, Z(r1) + cell / 2], along = dir === 'n' || dir === 's', len = along ? z1 - z0 : x1 - x0, n = Math.max(1, Math.ceil(Math.abs(y1 - y0) / RISE)), run = len / n;
+    for (let i = 0; i < n; i++) { const top = y0 + (y1 - y0) * (i + 1) / n, f = dir === 'n' || dir === 'w' ? 1 - (i + .5) / n : (i + .5) / n, cx = along ? (x0 + x1) / 2 : x0 + f * len, cz = along ? z0 + f * len : (z0 + z1) / 2; if (top <= 0) continue;
+      const b = B(cx, cz, along ? x1 - x0 : run, along ? run : z1 - z0, top, roofed ? 'tunnelfloor' : S.raised || S.floor || 'stone'); b.walk = true; b.stair = true; solids.push(b); } }
+  // Roofs: a timbered ceiling, dim liners on the walls under it and a worn floor (merged runs: few boxes).
+  const LT = .3;
+  for (const [c0, r0, c1, r1, y] of S.roof || []) { solids.push(B((X(c0) + X(c1)) / 2, (Z(r0) + Z(r1)) / 2, (c1 - c0 + 1) * cell, (r1 - r0 + 1) * cell, 3, S.roofMat || 'tunnelroof', y));
+    const open = (c, r) => c >= 0 && r >= 0 && c < cols && r < rows && g[r * cols + c] !== 0, fl = (c, r) => rampOf[r * cols + c] >= 0 ? 0 : hg[r * cols + c];
+    for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) { const alongC = dr !== 0;   // a face on the north / south side runs along columns
+      for (let a = alongC ? r0 : c0; a <= (alongC ? r1 : c1); a++) { let run = null; const flush = () => { if (!run) return; const [s0, s1, y0] = run, n = s1 - s0 + 1, h = y - y0;
+          if (alongC) { const zc = Z(a) + dr * (cell / 2 - LT / 2); solids.push(B((X(s0) + X(s1)) / 2, zc, n * cell, LT, h, 'tunnel', y0)); } else { const xc = X(a) + dc * (cell / 2 - LT / 2); solids.push(B(xc, (Z(s0) + Z(s1)) / 2, LT, n * cell, h, 'tunnel', y0)); } run = null; };
+        for (let b = alongC ? c0 : r0; b <= (alongC ? c1 : r1); b++) { const c = alongC ? b : a, r = alongC ? a : b, face = open(c, r) && !open(c + dc, r + dr), y0 = open(c, r) ? fl(c, r) : 0;
+          if (face && run && run[2] === y0 && run[1] === b - 1) run[1] = b; else { flush(); if (face) run = [b, b, y0]; } } flush(); } }
+    for (let r = r0; r <= r1; r++) { let run = null; const flush = () => { if (run) { const f = B((X(run[0]) + X(run[1])) / 2, Z(r), (run[1] - run[0] + 1) * cell, cell, .06, 'tunnelfloor', run[2]); f.walk = true; solids.push(f); } run = null; };
+      for (let c = c0; c <= c1; c++) { const ok = open(c, r) && rampOf[r * cols + c] < 0, y0 = hg[r * cols + c]; if (ok && run && run[2] === y0 && run[1] === c - 1) run[1] = c; else { flush(); if (ok) run = [c, c, y0]; } } flush(); } }
+  const floorAt = (x, z) => { const c = Math.floor((x + W / 2) / cell), r = Math.floor((z + D / 2) / cell); if (c < 0 || r < 0 || c >= cols || r >= rows) return 0; const i = r * cols + c, k = rampOf[i]; if (k < 0) return hg[i];
+    const [c0, r0, c1, r1, dir, y0, y1] = S.ramp[k], t = dir === 'n' ? ((Z(r1) + cell / 2) - z) / ((r1 - r0 + 1) * cell) : dir === 's' ? (z - (Z(r0) - cell / 2)) / ((r1 - r0 + 1) * cell) : dir === 'e' ? (x - (X(c0) - cell / 2)) / ((c1 - c0 + 1) * cell) : ((X(c1) + cell / 2) - x) / ((c1 - c0 + 1) * cell);
+    return y0 + (y1 - y0) * Math.max(0, Math.min(1, t)); };
+  const props = []; for (const [type, c, r, rot = 0, extra = {}] of [...(S.props || []), ...(S.props2 || [])]) { const P = prop(type, X(c), Z(r), rot, extra.y === undefined && onFloor(c, r, c, r) ? { ...extra, y: onFloor(c, r, c, r) } : extra); solids.push(...P.solids); props.push(P.visual); for (const b of P.solids) for (let rr = 0; rr < rows; rr++) for (let cc = 0; cc < cols; cc++) if (g[rr * cols + cc] === 1 && Math.abs(X(cc) - b[0]) < b[2] / 2 + cell / 2 && Math.abs(Z(rr) - b[1]) < b[3] / 2 + cell / 2) g[rr * cols + cc] = 3; }   /* a prop's cells: blocked for the routes, floor on the radar */
   // Spawn points (5 per side, spread over the area), sites (centre + radius), callouts in game units.
   const area = ([c0, r0, c1, r1]) => [(X(c0) + X(c1)) / 2, (Z(r0) + Z(r1)) / 2, (c1 - c0 + 1) * cell / 2, (r1 - r0 + 1) * cell / 2];
   const spawns = R => { const [x, z, hw, hd] = area(R), ox = Math.min(14, hw - 4), oz = Math.min(8, hd - 4); return [[x, z], [x - ox, z], [x + ox, z], [x - ox / 2, z - oz], [x + ox / 2, z + oz]].map(([a, b]) => [+a.toFixed(1), +b.toFixed(1)]); };
@@ -49,5 +79,5 @@ export function gridMap(S) {
   for (const [side, R] of Object.entries(routes)) for (const [k, pts] of Object.entries(R)) if (!pts.length) throw Error(S.name + ': no walk from the ' + side + ' spawn to ' + k);
   return { name: S.name, kind: 'defuse', size: [W, D], floor: S.floor || 'sand', sky: S.sky || 0xbcd6ec, sun: S.sun || 0xfff0d0, look: S.look, solids, props, decor: S.decor || [],
     t: T, ct: CT, sites: { A: site(S.A), B: site(S.B) }, routes, callouts: (S.callouts || []).map(([name, c, r]) => ({ name, x: +X(c).toFixed(1), z: +Z(r).toFixed(1) })),
-    grid: { cols, rows, cell, cells: g, T: S.T, C: S.C, A: S.A, B: S.B }, scaled: true };
+    grid: { cols, rows, cell, cells: g, T: S.T, C: S.C, A: S.A, B: S.B, heights: hg, roofs: S.roof || [], ramps: S.ramp || [] }, floorAt, scaled: true };
 }

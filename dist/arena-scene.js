@@ -26,12 +26,17 @@ const LOOK = {
   'metal-green': [g => { g.fillStyle = '#3d6236'; g.fillRect(0, 0, 256, 256); for (let x = 0; x < 256; x += 16) { g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x, 0, 5, 256); g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(x + 6, 0, 3, 256); } }, 10],
   adobe: [g => { speckle(g, 256, '#c9a97c', .18, 5000); for (let i = 0; i < 18; i++) { g.strokeStyle = `rgba(90,60,30,${.1 + rnd() * .15})`; g.lineWidth = 1; g.beginPath(); let x = rnd() * 256, y = rnd() * 256; g.moveTo(x, y); for (let k = 0; k < 4; k++) { x += (rnd() - .5) * 40; y += rnd() * 30; g.lineTo(x, y); } g.stroke(); } g.fillStyle = 'rgba(70,45,20,.12)'; g.fillRect(0, 230, 256, 26); }, 26],
   metal: [g => { speckle(g, 256, '#5a6168', .1, 1500); }, 10],
+  // Inside roofed tunnels and halls: dim walls, a darker worn floor and a timbered ceiling (dark by themselves, so the
+  // tunnel reads as one on every graphics preset, with or without shadows).
+  tunnel: [g => { speckle(g, 256, '#6a5641', .2, 5000); g.strokeStyle = 'rgba(30,20,10,.35)'; for (let y = 0; y < 256; y += 48) { g.beginPath(); g.moveTo(0, y + rnd() * 6); g.lineTo(256, y + rnd() * 6); g.stroke(); } }, 22],
+  tunnelfloor: [g => { speckle(g, 256, '#7a6448', .2, 5000); for (let i = 0; i < 30; i++) { g.fillStyle = `rgba(40,28,15,${rnd() * .18})`; g.fillRect(rnd() * 256, rnd() * 256, 20 + rnd() * 50, 10 + rnd() * 30); } }, 20],
+  tunnelroof: [g => { g.fillStyle = '#3e3022'; g.fillRect(0, 0, 256, 256); for (let x = 0; x < 256; x += 64) { g.fillStyle = '#2a1f15'; g.fillRect(x, 0, 18, 256); g.fillStyle = 'rgba(255,220,170,.06)'; g.fillRect(x + 18, 0, 3, 256); } speckle(g, 256, 'rgba(0,0,0,0)', .1, 1500); }, 16],
   roof: [g => { speckle(g, 256, '#6d5f52', .15); for (let y = 0; y < 256; y += 20) { g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(0, y, 256, 3); } }, 14],
 };
 const mats = new Map();
 function material(name) {
   if (mats.has(name)) return mats.get(name); const [draw] = LOOK[name] || LOOK.concrete, map = tex(draw);
-  const m = new THREE.MeshStandardMaterial({ map, color: map ? 0xffffff : 0x999999, roughness: name.startsWith('metal') ? .55 : .9, metalness: name.startsWith('metal') ? .35 : 0 }); m.userData.shared = true; mats.set(name, m); return m;
+  const m = new THREE.MeshStandardMaterial({ map, color: map ? 0xffffff : 0x999999, roughness: name.startsWith('metal') ? .55 : .9, metalness: name.startsWith('metal') ? .35 : 0 }); if (name === 'tunnelroof') m.emissive.setHex(0x1c140c); /* never pitch black from below */ m.userData.shared = true; mats.set(name, m); return m;
 }
 // A box with world-scaled UVs (each face tiles its texture by its own size).
 function boxGeometry(b, tile) {

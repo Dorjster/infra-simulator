@@ -12,7 +12,8 @@
 //    floor it landed on (walls and drops stop it); burns anyone standing in it.
 import { EYE } from './weapons-data.js';
 import { hurt, isDown, recording, statOf } from './combat-logic.js';
-import { lineOfSight, segmentClear } from './arena-maps.js';
+import { lineOfSight, segmentClear, ARENA_MAPS, floorAt } from './arena-maps.js';
+import { ARENA } from './facility-layout.js';
 
 const HU = 2.54 / 16.5;
 export const NADES = {
@@ -74,7 +75,7 @@ export function predictThrow(kind, a, boxes = [], bounds = null) {
   return pts;
 }
 const people = (game, players) => { const out = []; for (const p of players) if (p.pose && !isDown(game, p.name)) out.push({ name: p.name, x: p.pose.x, z: p.pose.z, y: (p.pose.y || EYE) - EYE });
-  for (const b of game.arena?.bots || []) if (!isDown(game, b.name)) out.push({ name: b.name, x: b.x, z: b.z, y: 0, bot: b }); return out; };
+  for (const b of game.arena?.bots || []) if (!isDown(game, b.name)) out.push({ name: b.name, x: b.x, z: b.z, y: floorAt(ARENA_MAPS[game.arena?.map], ARENA.cx, ARENA.cz, b.x, b.z), bot: b }); return out; };
 // ── Smoke, one shared model (host rules, bots, radar, flashes and every client's view use it) ──
 // A smoke is a volume: an ellipsoid column lifted a little off the ground, growing over SMOKE.grow ms after it pops
 // and thinning over its last SMOKE.fade ms. Density is 1 in the core (inside 0.7 R), falling to 0 at the edge. An HE

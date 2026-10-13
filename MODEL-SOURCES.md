@@ -45,8 +45,10 @@ Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and p
 - Default knife and fallbacks: original procedural models (`dist/weapon-models.js`).
 - Player models: original (the game's own character in T / CT gear, `dist/gd-soldiers.js`). Counter-Strike 1.6 characters are never shipped: they are Valve's, and only load from a copy the player imports on their own computer.
 
-## Arena sounds (`dist/sounds/`, built by `tools/pack-sounds.mjs`)
+## Arena sounds (`dist/sounds/`, built by `tools/pack-gunshots.mjs`, `tools/pack-effects.mjs` and `tools/pack-sounds.mjs`)
 
-- Gunshots: ["The Free Firearm Sound Library"](https://opengameart.org/content/the-free-firearm-sound-library) — CC0. AK-47, AR-15 (M4, M249), Nova, Walther PPQ (pistol, MP5), 1911 (Desert Eagle), Savage 10 (AWP); one shot cut from each recording.
+- Gunshots: ["The Free Firearm Sound Library"](https://opengameart.org/content/the-free-firearm-sound-library) — CC0. Every weapon has its own real gun, recorded close up and from mid distance: Glock → Walther PPQ, USP-S → Bersa .380, P250 → S&W 642, Five-SeveN → Ruger Mark III, Desert Eagle → 1911, revolver → Ruger Single Six, MAC-10 / MP7 / MP5 → Carl Gustav M45, MP9 / P90 / UMP-45 → PPSh, Nova → Nova, XM1014 → Charles Daly, AK-47 / Galil → AK-47, SG 553 → SKS, FAMAS → AR-15, M4A4 → Savage .300 Blackout, M4A1-S → Model 1894, AUG → Marlin 336, SSG 08 → Tikka, AWP → Mosin-Nagant, M249 → Springfield 1917 (guns sharing a firearm use different takes).
+- The shipped files are the project owner's enhanced versions of all of these (October 2026: "enhanced-sound-effects", "upgraded-sound-effects", "upgraded-footsteps"); running the pack tools again would replace them with the plain cuts.
 - Reloads: ["Gun Reload Sounds" by SpringySpringo](https://opengameart.org/content/gun-reload-sounds) — CC0.
-- Footsteps: [Kenney "Impact Sounds"](https://kenney.nl/assets/impact-sounds) — CC0.
+- Footsteps, breaking glass, grenade bounces, brass casings, bullet and body impacts: [Kenney "Impact Sounds"](https://kenney.nl/assets/impact-sounds) — CC0.
+- Explosions (HE, flashbang, bomb) and the molotov burn: [Kenney "Sci-Fi Sounds"](https://kenney.nl/assets/sci-fi-sounds) — CC0.

@@ -1,26 +1,37 @@
-// Recorded sounds (dist/sounds/, CC0 — see tools/pack-sounds.mjs): gunshots per weapon, reload handling, footsteps
+// Recorded sounds (dist/sounds/, CC0 — see tools/pack-sounds.mjs and tools/pack-gunshots.mjs): gunshots per weapon, reload handling, footsteps
 // per surface. Decoded once in the background when the sound engine starts; until then (or if a file is missing)
 // play() returns false and callers fall back to their synthesized sounds.
 import { audioCtx, outAt, reverb, listenerAt } from './spatial-audio.js';
 import { weaponById } from './weapons-data.js';
 const DIR = new URL('./sounds/', import.meta.url).href;
-const NAMES = [...['ak', 'm4', 'shotgun', 'pistol', 'deagle', 'sniper', 'smg', 'lmg'].map(id => 'shot-' + id), 'reload-rifle-0', 'reload-rifle-1', 'reload-pistol-0', 'reload-pistol-1', 'reload-pump-0'];
+const GUNS = ['pistol', 'usps', 'p250', 'fiveseven', 'deagle', 'cannon', 'mac10', 'mp7', 'smg', 'mp9', 'p90', 'ump45', 'shotgun', 'xm1014', 'ak', 'galil', 'sg553', 'famas', 'm4', 'm4s', 'aug', 'ssg08', 'sniper', 'lmg'];
+const NAMES = [...GUNS.flatMap(id => ['shot-' + id, 'shot-' + id + '-far']), 'reload-rifle-0', 'reload-rifle-1', 'reload-pistol-0', 'reload-pistol-1', 'reload-pump-0'];
 const STEPS = ['concrete', 'wood', 'grass', 'carpet', 'metal'];
+// Effects (tools/pack-effects.mjs): name → number of takes (fx-<name>-<take>.ogg).
+const FX = { he: 3, low: 1, bomb: 1, bomblow: 1, flash: 1, fire: 1, glass: 3, bounce: 3, wall: 3, flesh: 3, casing: 4 };
 const buffers = new Map(); let loading = null;
 export function loadSounds() {
   if (typeof fetch !== 'function' || typeof AudioContext === 'undefined') return Promise.resolve(0);
-  return loading ??= (async () => { const c = audioCtx(), files = [...NAMES.map(n => n + '.wav'), ...STEPS.flatMap(s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}.ogg`))];
+  return loading ??= (async () => { const c = audioCtx(), files = [...NAMES.map(n => n + '.wav'), ...Object.entries(FX).flatMap(([n, k]) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}.ogg`)), ...STEPS.flatMap(s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}.ogg`))];
     await Promise.all(files.map(async f => { try { const r = await fetch(DIR + f); if (!r.ok) return; buffers.set(f.replace(/\.\w+$/, ''), await c.decodeAudioData(await r.arrayBuffer())); } catch {} }));
     return buffers.size; })();
 }
 // Play a sound; `at` = where it happens ({x, y, z}, 3D) or null for your own. Returns false if not loaded.
-export function play(name, { at = null, volume = 1, rate = 1, kind = 'effect' } = {}) {
+// `delay`: seconds from now; `wet`: how much goes to the shared reverb; `loop`: seconds to loop for (returns a stop()).
+export function play(name, { at = null, volume = 1, rate = 1, kind = 'effect', delay = 0, wet = 0, lowpass = 0, loop = 0 } = {}) {
   const buf = buffers.get(name); if (!buf) { loadSounds(); return false; }
-  try { const c = audioCtx(), src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = volume; src.connect(g).connect(outAt(c, at, kind)); src.start(); return true; } catch { return false; }
+  try { const c = audioCtx(), t = c.currentTime + delay, src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = volume;
+    let head = src; if (lowpass) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lowpass; src.connect(f); head = f; } head.connect(g).connect(outAt(c, at, kind));
+    if (wet) { const w = c.createGain(); w.gain.value = wet; g.connect(w).connect(reverb(c)); }
+    if (loop) { src.loop = true; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(volume, t + .4); g.gain.setValueAtTime(volume, t + Math.max(.5, loop - 1)); g.gain.linearRampToValueAtTime(0, t + loop); src.start(t, Math.random() * buf.duration * .5); src.stop(t + loop + .05);
+      return { stop() { try { const n = c.currentTime; g.gain.cancelScheduledValues(n); g.gain.setValueAtTime(g.gain.value, n); g.gain.linearRampToValueAtTime(0, n + .35); src.stop(n + .4); } catch {} } }; }
+    src.start(t); return true; } catch { return false; }
 }
-// Gunshot per weapon: [recording, playback rate, suppressed]. Guns without their own recording use the closest one,
-// pitched so each still sounds different; suppressed guns are muffled (low-pass) and quieter.
-const SHOT = { ak: ['ak', 1], galil: ['ak', 1.07], sg553: ['ak', .94], m4: ['m4', 1], famas: ['m4', 1.09], aug: ['m4', .93], m4s: ['m4', 1.05, true], ssg08: ['sniper', 1.22], sniper: ['sniper', 1], mac10: ['smg', 1.14], mp9: ['smg', 1.08], mp7: ['smg', .95], smg: ['smg', 1, true], ump45: ['smg', .84], p90: ['smg', 1.18], shotgun: ['shotgun', 1], xm1014: ['shotgun', 1.12], pistol: ['pistol', 1], cannon: ['pistol', .9], usps: ['pistol', 1.04, true], p250: ['pistol', .9], fiveseven: ['pistol', 1.1], deagle: ['deagle', 1], lmg: ['lmg', 1] };
+// A random take of an effect (FX): fx('he', { at }) …
+export const fx = (name, opts) => play(`fx-${name}-${Math.random() * (FX[name] || 1) | 0}`, opts);
+// Gunshot per weapon: every gun has its own real firearm recording (tools/pack-gunshots.mjs), close up and from mid
+// distance: [recording, playback rate, suppressed]. Suppressed guns are muffled (low-pass) and quieter.
+const SHOT = Object.fromEntries(GUNS.map(id => [id, [id, 1, ['m4s', 'usps', 'smg'].includes(id)]]));
 // A gunshot, mixed like a game: the recording, plus a low thump (body), a supersonic crack (rifles, snipers), the
 // action's click for your own gun, and the shared reverb. Far shots lose their highs, gain more echo and a late slap
 // off the walls, so you hear where and how far. Suppressed guns: muffled, no crack, almost no echo.
@@ -33,8 +44,11 @@ export function shotSound(id, { at = null, volume = 1 } = {}) {
   try {
     const c = audioCtx(), t = c.currentTime, L = LAYER_ID[id] || LAYER[weaponById(id)?.kind] || LAYER.pistol, out = outAt(c, at, 'gun'), vol = volume * (quiet ? .4 : 1);
     const me = listenerAt(), dist = at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0, far = Math.min(1, dist / 260);
-    const src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate * (.97 + Math.random() * .06); g.gain.value = vol * 1.1;
-    const tone = c.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = quiet ? 1300 : Math.max(1100, 17000 * Math.exp(-dist / 120)); src.connect(tone).connect(g).connect(out); src.start(t);
+    const g = c.createGain(), pr = rate * (.98 + Math.random() * .04);
+    const tone = c.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = quiet ? 1300 : Math.max(1100, 17000 * Math.exp(-dist / 160)); tone.connect(g).connect(out); g.gain.value = vol * 1.1;
+    // Close up the near recording; from about 40 m the mid-distance one fades in (the real gun heard from afar).
+    const farBuf = buffers.get('shot-' + file + '-far'), mix = farBuf && !quiet ? Math.min(1, Math.max(0, (dist - 40) / 110)) : 0;
+    for (const [b, k] of [[buf, 1 - mix], [farBuf, mix]]) if (k > .01) { const src = c.createBufferSource(), sg = c.createGain(); src.buffer = b; src.playbackRate.value = pr; sg.gain.value = Math.sqrt(k); src.connect(sg).connect(tone); src.start(t); }
     // Echo: more the further away; a late slap off distant walls; suppressed guns barely ring.
     const wet = c.createGain(); wet.gain.value = vol * (quiet ? .05 : L[3] + far * .45); g.connect(wet).connect(reverb(c));
     if (!quiet && dist > 90) { const d = c.createDelay(1); d.delayTime.value = .12 + far * .25; const dg = c.createGain(); dg.gain.value = vol * .28 * far; g.connect(d).connect(dg).connect(reverb(c)); }
@@ -44,6 +58,8 @@ export function shotSound(id, { at = null, volume = 1 } = {}) {
     // Crack: supersonic rounds snap (close only); click: your own gun's action.
     if (L[1] && dist < 180) burst(c, t, out, { type: 'highpass', freq: 3800, dur: .018, gain: vol * L[1] * (1 - far) });
     if (!at) burst(c, t + .004, out, { type: 'bandpass', freq: 3200, q: 2.5, dur: .02, gain: vol * L[2] * .5 });
+    // The spent case hitting the floor (heard close by only; shotgun shells are duller).
+    if (dist < 25 && Math.random() < .85) { const sg = weaponById(id)?.kind === 'shotgun'; fx('casing', { at: at || (me && { x: me.x + .4, y: me.y - 1.5, z: me.z }), volume: .16 * volume * (1 - dist / 25), rate: (sg ? 1.05 : 1.6) + Math.random() * .25, delay: .32 + Math.random() * .18, kind: 'handling' }); }
     return true;
   } catch { return false; }
 }
