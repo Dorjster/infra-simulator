@@ -4,7 +4,7 @@
 // In Payday, engineers can also buy guns (weapons.js) and shots at other engineers take HP (combat-logic.js).
 // The model is an original chrome "hand cannon" (long slide, black grip), not a copy of any real product.
 import * as THREE from './three.module.js';
-import { shotSound } from './sound-bank.js';
+import { shotSound, fx as rec } from './sound-bank.js';
 import { audioCtx, outAt } from './spatial-audio.js';
 
 export const isDarja = name => /^\s*darja\s*$/i.test(String(name || ''));
@@ -98,7 +98,9 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
     for (const e of ends) { if (e.mark) { impact({ point: e.point, normal: e.normal }); continue; } const d = e.point.clone().sub(origin), dist = d.length(); if (dist < 1e-3) continue; d.divideScalar(dist); const mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(e.point); scene.add(mesh);
       pellets.push({ mesh, from: origin.clone(), dir: d, dist, travelled: 0, hit: e.flesh ? { point: e.point, normal: null, flesh: true } : { point: e.point, normal: e.normal } }); }
   }
+  let heardAt = 0; const heard = () => { const n = performance.now(); if (n - heardAt < 35) return false; heardAt = n; return true; };   // one impact sound per 35 ms (shotgun pellets)
   function impact({ point, normal, flesh }) {
+    if (heard()) rec(flesh ? 'flesh' : 'wall', { at: { x: point.x, y: point.y, z: point.z }, volume: flesh ? .55 : .35, rate: .9 + Math.random() * .25, kind: 'step' });
     if (flesh) { for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(sparkGeo, fleshMat); m.position.copy(point); scene.add(m); sparks.push({ m, v: new THREE.Vector3((Math.random() - .5) * 8, Math.random() * 6, (Math.random() - .5) * 8), t: 0 }); } return; }
     if (!normal) return;
     for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(sparkGeo, sparkMat); m.position.copy(point); scene.add(m); sparks.push({ m, v: normal.clone().multiplyScalar(4 + Math.random() * 4).add(new THREE.Vector3((Math.random() - .5) * 6, Math.random() * 4, (Math.random() - .5) * 6)), t: 0 }); }

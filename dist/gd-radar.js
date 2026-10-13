@@ -12,7 +12,7 @@ import { radarImage, locationOf } from './gd-radar-art.js';
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const PREF = 'gd-radar-mode', SPAN = 170;   // game units shown across the radar (rotating mode)
 export function createRadar({ world, lan, name, yaw, where, active, speed = () => 0, pings = () => [] }) {
-  const css = document.createElement('style'); css.textContent = `#gd-radar{position:fixed;left:14px;top:14px;z-index:36;width:var(--rs);height:var(--rs);border-radius:10px;overflow:hidden;background:#0d1419d9;border:1px solid #ffffff33;box-shadow:0 2px 10px #0008;pointer-events:none;--rs:min(210px,26vh)}#gd-radar[hidden]{display:none}#gd-radar.big{--rs:min(64vh,640px);z-index:47;border-color:#ffffff55}#gd-radar canvas{width:100%;height:100%;display:block}#gd-radar small{position:absolute;left:0;right:0;bottom:4px;text-align:center;font:800 11px system-ui;color:#fff;letter-spacing:.06em;text-shadow:0 1px 2px #000,0 0 4px #000}`;
+  const css = document.createElement('style'); css.textContent = `#gd-radar{position:fixed;left:14px;top:14px;z-index:36;width:var(--rs);height:var(--rs);border-radius:10px;overflow:hidden;background:#0d1419d9;border:1px solid #ffffff33;box-shadow:0 2px 10px #0008;pointer-events:none;--rs:min(210px,26vh)}#gd-radar[hidden]{display:none}#gd-radar.big{--rs:min(60vh,36vw,620px);z-index:47;border-color:#ffffff55}body.gd-mapopen #ar-board{padding-left:calc(min(60vh,36vw,620px) + 30px);box-sizing:border-box}body.gd-mapopen #ar-board>div{width:min(1040px,calc(100vw - min(60vh,36vw,620px) - 54px))}#gd-radar canvas{width:100%;height:100%;display:block}#gd-radar small{position:absolute;left:0;right:0;bottom:4px;text-align:center;font:800 11px system-ui;color:#fff;letter-spacing:.06em;text-shadow:0 1px 2px #000,0 0 4px #000}`;
   (document.head || document.body).append?.(css);
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-radar" hidden><canvas width="420" height="420"></canvas><small></small></div>');
   const el = document.getElementById('gd-radar'), cv = el.querySelector('canvas'), x = cv.getContext('2d'), label = el.querySelector('small');
@@ -24,7 +24,7 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
   const isFoe = (G, me, other) => { const t = G.combat?.d?.teams; return !t || !t[me] || t[other] !== t[me]; };
   return {
     // Hold Tab (with the scoreboard): the whole map, north up, at a large size.
-    expand(on) { on = !!on; if (on === big) return; big = on; el.classList.toggle('big', on); at = 0; },
+    expand(on) { on = !!on; if (on === big) return; big = on; el.classList.toggle('big', on); document.body.classList.toggle('gd-mapopen', on); at = 0; },   // Tab: the map sits beside the scoreboard, never over it
     toggle() { mode = mode === 'rotate' ? 'fixed' : 'rotate'; try { localStorage.setItem(PREF, mode); } catch {} return mode; },
     get mode() { return mode; },
     // Enemies shown right now (tests): their keys.
