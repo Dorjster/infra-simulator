@@ -10,7 +10,7 @@ const b = await chromium.launch({ executablePath: process.env.CHROME || '/Applic
 const p = await b.newPage({ viewport: { width: 1280, height: 800 } }); const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('dialog', d => d.accept());
 let ok = 0, n = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (d !== '' ? ' · ' + String(d).slice(0, 220) : '')); };
 await p.addInitScript(() => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-name', 'Darja'); localStorage.setItem('infra-face-name', 'Darja');
-  globalThis.__lf = []; let last = 0; const tick = t => { const hidden = id => { const e = document.getElementById(id); return !e || e.hidden; }; if (last && hidden('ar-load') && hidden('start-screen') && t - last > 50) __lf.push(Math.round(t - last)); last = t; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
+  globalThis.__lf = []; let last = 0; const tick = t => { const hidden = id => { const e = document.getElementById(id); return !e || e.hidden; }; if (last && !(performance.now() < (globalThis.__pause || 0)) && hidden('ar-load') && hidden('start-screen') && t - last > 50) __lf.push(Math.round(t - last)); last = t; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
 await p.goto(base + '/'); await p.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 60000 }); await p.waitForTimeout(1200);
 const G = () => p.evaluate(() => { const g = __infra.lab.world.operations.game, d = g.combat?.d; return { kind: g.arena?.kind, map: g.arena?.map, team: d?.teams?.darja, money: d?.money?.darja, phase: d?.round?.phase, n: d?.n, carrier: d?.bomb?.carrier, winner: d?.round?.winner, reason: d?.round?.reason, score: d?.score }; });
 await p.evaluate(() => document.querySelector('[data-start=arena]').click()); await p.waitForTimeout(400);
@@ -19,7 +19,9 @@ await p.waitForFunction(() => document.getElementById('ar-load')?.hidden !== fal
 let s = await G(); check('Defuse on Dune started; you are a Terrorist with $800', s.kind === 'defuse' && s.map === 'dune' && s.team === 't' && s.money === 800, JSON.stringify(s));
 check('Team HUD (T score · clock · CT score) and money shown', await p.evaluate(() => /T/.test(document.getElementById('ar-top').textContent) && /CT/.test(document.getElementById('ar-top').textContent) && /\$ 800/.test(document.getElementById('ar-money').textContent)));
 check('You carry the bomb (slot 5)', s.carrier === 'darja');
-await p.screenshot({ path: path.join(out, 'defuse-freeze.png') });
+// Screenshots stall the page's rendering (a test artefact): frames around them aren't counted.
+const snap = async o => { await p.evaluate(() => { globalThis.__pause = performance.now() + 1e9; }); await p.screenshot(o); await p.evaluate(() => { globalThis.__pause = performance.now() + 400; }); };
+await snap({ path: path.join(out, 'defuse-freeze.png') });
 await p.evaluate(() => __infra.lab.enter()); await p.waitForTimeout(300);
 const pos = () => p.evaluate(() => [__infra.camera.position.x, __infra.camera.position.z]);
 let a0 = await pos(); await p.keyboard.down('KeyW'); await p.waitForTimeout(700); await p.keyboard.up('KeyW'); let a1 = await pos();
@@ -41,11 +43,11 @@ await p.waitForTimeout(2300); await p.mouse.up(); await p.waitForTimeout(500);
 s = await G(); check('Bomb planted on A', s.phase === 'planted', JSON.stringify(s));
 check('"THE BOMB HAS BEEN PLANTED" banner', await p.evaluate(() => /BOMB HAS BEEN PLANTED/.test(document.getElementById('ar-banner').textContent) && !document.getElementById('ar-banner').hidden));
 check('Bomb model on the ground', await p.evaluate(() => { let n = 0; __infra.lab.arenaScene.group.traverse(o => { if (o.userData.ground) n++; }); return n >= 1; }));
-await p.screenshot({ path: path.join(out, 'defuse-planted.png') });
+await snap({ path: path.join(out, 'defuse-planted.png') });
 await p.waitForFunction(() => __infra.lab.world.operations.game.combat.d.round.phase === 'over', null, { timeout: 50000 });
 s = await G(); check('The bomb went off: Terrorists win (target bombed)', s.winner === 't' && s.reason === 'bomb' && s.score.t === 1, JSON.stringify(s));
 check('"TERRORISTS WIN" banner', await p.evaluate(() => /TERRORISTS WIN/.test(document.getElementById('ar-banner').textContent)));
-await p.screenshot({ path: path.join(out, 'defuse-twin.png') });
+await snap({ path: path.join(out, 'defuse-twin.png') });
 await p.evaluate(() => __infra.lab.lan.send({ type: 'arena', action: { type: 'add-bot' } })); await p.waitForFunction(() => __infra.lab.world.operations.game.combat.d.n === 2, null, { timeout: 15000 });
 s = await G(); const botTeam = await p.evaluate(() => { const d = __infra.lab.world.operations.game.combat.d; return Object.entries(d.teams).find(([k]) => k.startsWith('bot'))?.[1]; });
 check('Round 2: the bot joined the Counter-Terrorists', s.n === 2 && botTeam === 'ct', botTeam);

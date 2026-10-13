@@ -44,14 +44,14 @@ export function createVoice({ lan, world, name, notify = () => {} }) {
   // ── Peers (one RTCPeerConnection per team mate) ──
   const queue = (to, signal) => { const list = outbox.get(to) || []; list.push(signal); outbox.set(to, list); flushTimer ??= setTimeout(flush, 90); };   // ICE candidates batched (the room rate-limits requests)
   function flush() { flushTimer = null; for (const [to, list] of outbox) { outbox.delete(to); lan.voiceSend?.(to, list.length === 1 ? list[0] : { type: 'batch', list }).catch(() => {}); } }
-  function closePeer(id, bye = true) { const p = peers.get(id); if (!p) return; peers.delete(id); try { p.pc.close(); } catch {} p.audio?.remove(); p.meter?.disconnect(); if (bye) lan.voiceSend?.(id, { type: 'bye' }).catch(() => {}); }
+  function closePeer(id, bye = true) { const p = peers.get(id); if (!p) return; peers.delete(id); try { p.pc.close(); } catch {} p.audio?.remove(); p.meter?.disconnect(); if (bye) lan.voiceSend?.(id, { type: 'bye' }).catch(() => setTimeout(() => lan.voiceSend?.(id, { type: 'bye' }).catch(() => {}), 400)); }   // retried once (the room rate-limits requests)
   function makePeer(id, pname) {
     const pc = new RTCPeerConnection({ iceServers: [] }), p = { pc, id, name: pname, level: 0, speakingAt: 0, sender: null, audio: null, meter: null, made: performance.now() };
     p.sender = pc.addTrack(track, dest.stream);
     pc.onicecandidate = e => { if (e.candidate) queue(id, { type: 'ice', c: e.candidate.toJSON() }); };
     pc.ontrack = e => { const rs = e.streams[0] || new MediaStream([e.track]); p.audio?.remove(); const a = document.createElement('audio'); a.autoplay = true; a.srcObject = rs; a.volume = Math.min(1, prefs.volume * outVol()); a.muted = prefs.muted.includes(key(pname)); a.style.display = 'none'; document.body.append(a); if (prefs.outputId && a.setSinkId) a.setSinkId(prefs.outputId).catch(() => {}); a.play?.().catch(() => {}); p.audio = a;
       try { p.meter = Object.assign(ctx.createAnalyser(), { fftSize: 1024 }); ctx.createMediaStreamSource(rs).connect(p.meter); } catch {} };
-    pc.onconnectionstatechange = () => { if (['failed', 'closed'].includes(pc.connectionState)) closePeer(id, false); };
+    pc.onconnectionstatechange = () => { if (['failed', 'closed'].includes(pc.connectionState)) closePeer(id, false); else if (pc.connectionState === 'disconnected') p.discAt = performance.now(); else p.discAt = 0; };
     peers.set(id, p); return p;
   }
   async function call(p) { try { const o = await p.pc.createOffer(); await p.pc.setLocalDescription(o); queue(p.id, { type: 'offer', sdp: o.sdp }); } catch {} }
@@ -75,6 +75,7 @@ export function createVoice({ lan, world, name, notify = () => {} }) {
     const team = status === 'on' ? myTeam() : null, me = lan.selfID, want = new Map();
     if (team && me) for (const pl of lan.players || []) if (pl.id !== me && teamOf(pl.name) === team) want.set(pl.id, pl.name);
     for (const id of [...peers.keys()]) if (!want.has(id)) closePeer(id, true);
+    for (const [id, p] of [...peers]) if (p.discAt && p.pc.connectionState === 'disconnected' && performance.now() - p.discAt > 3000) closePeer(id, false);   // the other side went away (voice off, closed the game, network): drop it
     for (const [id, n] of want) { const p = peers.get(id); if (!p && String(me) < String(id)) call(makePeer(id, n)); else if (p && p.pc.connectionState === 'new' && performance.now() - p.made > 8000 && String(me) < String(id)) { closePeer(id, false); } }
   }
 

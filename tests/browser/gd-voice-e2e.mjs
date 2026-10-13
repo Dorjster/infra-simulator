@@ -36,7 +36,7 @@ check('Cy (enemy) has no voice connection to anyone', await cy.evaluate(() => __
 await ann.evaluate(() => __voice.talk(true));
 const hears = (p, nm, want = true) => p.waitForFunction(([nm, want]) => __voice.speaking(nm) === want, [nm, want], { timeout: 6000 }).then(() => true).catch(() => false);
 check('push to talk: Bo hears Ann (indicator from the received audio level)', await hears(bo, 'Ann'), await bo.evaluate(() => JSON.stringify(__voice.peers)));
-check('…and Ann’s own indicator shows she is sending sound', await ann.evaluate(() => __voice.speaking('Ann')));
+check('…and Ann’s own indicator shows she is sending sound', await hears(ann, 'Ann'));   // the fake microphone beeps about once a second: wait for a beep
 check('Cy hears nothing from Ann', !(await cy.evaluate(() => __voice.speaking('Ann'))));
 await ann.evaluate(() => __voice.talk(false));
 check('releasing the key stops the sound (Bo’s indicator goes off)', await hears(bo, 'Ann', false));
@@ -50,7 +50,8 @@ check('after the team change Bo’s connection to Ann closes at once', gone && a
 check('…and Ann ↔ Cy (new team mates) connect', await connected(ann, 'Cy') && await connected(cy, 'Ann'));
 await ann.evaluate(() => __voice.talk(true)); check('Cy now hears Ann; Bo (now an enemy) does not', await hears(cy, 'Ann') && !(await bo.evaluate(() => __voice.speaking('Ann')))); await ann.evaluate(() => __voice.talk(false));
 await ann.evaluate(() => __voice.disable()); await ann.waitForTimeout(800);
-check('turning voice off closes every connection and stops the microphone', await ann.evaluate(() => __voice.peers.length === 0 && __voice.status === 'off') && await cy.waitForFunction(() => !__voice.peers.some(x => x.name === 'Ann'), null, { timeout: 5000 }).then(() => true).catch(() => false));
+const offA = await ann.evaluate(() => __voice.peers.length === 0 && __voice.status === 'off'), offC = await cy.waitForFunction(() => !__voice.peers.some(x => x.name === 'Ann'), null, { timeout: 8000 }).then(() => true).catch(() => false);
+check('turning voice off closes every connection and stops the microphone', offA && offC, JSON.stringify({ ann: await ann.evaluate(() => [__voice.status, __voice.peers]), cy: await cy.evaluate(() => __voice.peers) }));
 check('the match carried on throughout (round state intact)', await ann.evaluate(() => !!__infra.lab.world.operations.game.combat?.d?.round));
 check('no page errors', errs.length === 0, errs.slice(0, 4).join(' | '));
 console.log(ok + '/' + n); for (const b of browsers) await b.close(); server.kill(); process.exit(ok === n ? 0 : 1);
