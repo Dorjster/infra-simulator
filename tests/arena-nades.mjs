@@ -22,6 +22,7 @@ assert.equal(slotOf('molotov'), 'nades');
 // HE thrown along the lane: flies, lands, explodes after 1.6 s; Bo (near) is hurt, Cy behind the containers is not.
 const world = { boxes: [], bounds: null }; const tickAll = (players, ms) => { for (let i = 0; i < ms / 50; i++) { t += 50; arenaTick(g, players, .05, t); } };
 let players = [P('Ann', cx - 40, cz), P('Bo', cx - 10, cz), P('Cy', cx - 10, cz - 60)];
+tickAll(players, 2100);   // everyone in play past the deathmatch spawn protection
 assert.match(arenaApply(g, { type: 'throw', kind: 'he', x: cx - 16, y: 9.7, z: cz, dx: .3, dy: -1, dz: 0, strength: 'short' }, 'Ann', players, t), /Threw/);   // tossed down at Bo's feet
 assert(!arenaArsenalOf(g, 'Ann').includes('he'), 'the HE is used up'); assert.equal(g.combat.nades.length, 1);
 tickAll(players, 300); const fly = g.combat.nades[0]; assert(fly.phase === 'air' && fly.x > cx - 16, 'in flight');
@@ -36,6 +37,7 @@ assert.equal(g.combat.nades.find(n => n.kind === 'smoke')?.phase, 'smoke'); asse
 tickAll(players, 18200); assert(clearView(g, [], cx - 30, cz, cx + 30, cz), 'smoke gone after 18 s');
 // Molotov: fire where it lands; Dee standing in it burns; it goes out after 7 s.
 players = [P('Ann', cx - 90, cz), P('Dee', cx - 20, cz)];   // Ann well clear of her own fire
+tickAll(players, 2100);   // Dee just joined: past her deathmatch spawn protection
 arenaApply(g, { type: 'throw', kind: 'molotov', x: cx - 20, y: 9.7, z: cz, dx: 0, dy: -1, dz: 0, strength: 'short' }, 'Ann', players, t); tickAll(players, 600);
 const fire = g.combat.nades.find(n => n.kind === 'molotov'); assert.equal(fire?.phase, 'fire'); const hp0 = hpOf(g, 'Dee'); tickAll(players, 1000); assert(hpOf(g, 'Dee') <= hp0 - 30, 'about 40 HP a second in the fire: ' + hpOf(g, 'Dee'));
 tickAll(players, 7000); assert(!g.combat.nades.some(n => n.kind === 'molotov'), 'fire out');

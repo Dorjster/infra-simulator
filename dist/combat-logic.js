@@ -29,6 +29,9 @@ export const ownedWeapons = (game, name) => game.mode === 'arena' ? arenaArsenal
 // Guns exist only in Global Defensive (the arena): never in Campaign, Free Build, Challenges or Payday.
 export const combatOn = game => game.mode === 'arena';
 // Defuse: the dead stay down until the next round (arena-defuse.js clears them).
+// Deathmatch spawn protection: no damage for this long after a (re)spawn, or until you fire (our own value; you could be
+// shot while still choosing a gun at your spawn).
+export const SPAWN_SAFE_MS = 2000;
 const respawnMs = game => game.mode === 'arena' ? (game.arena?.kind === 'defuse' ? 4e15 : game.arena?.respawnMs ?? 2500) : RESPAWN_MS;
 
 // ── Ammo ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -43,6 +46,7 @@ export function refillAll(game, name) { const C = state(game), k = key(name), ow
 export const recording = game => !!game.combat?.d && !(game.arena?.lobby && !game.arena.lobby.started) && game.combat.d.round?.phase !== 'warmup';
 export const statOf = (game, name) => ((game.combat.stats ??= {})[key(name)] ??= { shots: 0, hits: 0, hsHits: 0, hsKills: 0, dmg: 0, util: 0, flashed: 0, blindMs: 0, plants: 0, defuses: 0 });
 export function takeShots(game, name, n, id) {
+  if (game.combat?.safe) delete game.combat.safe[key(name)];   // firing ends your spawn protection
   const C = state(game), k = key(name), s = (C.shots ??= {})[k] ??= { n: null, r: null, dry: [] }; n = Math.floor(+n);
   if (!Number.isFinite(n)) return s; if (s.n === null || n < s.n - 1e6 || n > s.n + 500) { s.n = n; return s; }   // first contact (or a client restart): sync, take nothing
   const w = weaponById(id); if (!isFirearm(w)) { s.n = Math.max(s.n, n); return s; }
@@ -75,6 +79,7 @@ export function applyHit(game, shooter, targetName, wpn, zone, dist, pellets = 1
 // anyone else who did 41+ damage to the victim in this life (CS2).
 // `how`: CS2 kill-feed marks { wallbang, smoke, noscope, air, blind, far (metres) }.
 export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = Date.now(), headKill = false, how = null) {
+  if (!game.combat?.d && (game.combat?.safe?.[key(targetName)] || 0) > now) return { message: 'Spawn protection', dmg: 0, hp: hpOf(game, targetName), safe: true };   // deathmatch: just (re)spawned
   if (game.combat?.d && !headKill) dmg = defuseDamage(game, shooter, targetName, wpn, dmg);   // friendly fire: reduced, not off
   else if (game.combat?.d && headKill && friendly(game, shooter, targetName)) dmg = Math.round(defuseDamage(game, shooter, targetName, wpn, damageCap(wpn)));   // a team mate's head shot is not an instant kill
   const c = state(game), me = key(shooter), tk = key(targetName); if (isDown(game, targetName, now) || dmg <= 0) return { message: 'Already down', dmg: 0, hp: hpOf(game, targetName) };
@@ -156,7 +161,7 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
 // Respawn knocked-out players (deathmatch) with full HP and full ammo. Returns true when something changed.
 export function combatTick(game, now = Date.now()) {
   const c = game.combat; if (!c) return false; let changed = false;
-  for (const [k, d] of Object.entries(c.down)) if (d.until <= now) { delete c.down[k]; c.hp[k] = MAX_HP; c.respawns[k] = (c.respawns[k] || 0) + 1; (c.respawnedAt ??= {})[k] = now; if (game.mode === 'arena') refillAll(game, c.names?.[k] || k); changed = true; }
+  for (const [k, d] of Object.entries(c.down)) if (d.until <= now) { delete c.down[k]; c.hp[k] = MAX_HP; c.respawns[k] = (c.respawns[k] || 0) + 1; (c.respawnedAt ??= {})[k] = now; if (game.mode === 'arena' && !c.d) (c.safe ??= {})[k] = now + SPAWN_SAFE_MS; if (game.mode === 'arena') refillAll(game, c.names?.[k] || k); changed = true; }
   return changed;
 }
 export { HEAD_KILL_HP };

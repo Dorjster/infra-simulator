@@ -4,6 +4,7 @@
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
 import { getVolumes, setVolumes } from './spatial-audio.js';
 import { ARENA_MAPS, MAP_LIST } from './arena-maps.js';
+import { APP_VERSION } from './version.js';
 import * as THREE from './three.module.js';
 import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
 import {TICKETS} from './tickets.js';
@@ -19,6 +20,7 @@ import {RACK_PADS, DELIVERY, PROCUREMENT, ROOM} from './facility-layout.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SAVE_KEY = 'infra-local-campaign-v20';
+const gdMode = () => typeof document !== 'undefined' && document.body?.classList.contains('gd-mode');   // in a Global Defensive match
 const TABS = [['objective', 'Objective', 'J'], ['inventory', 'Inventory & orders', 'I'], ['map', 'Map', 'M'], ['laptop', 'Laptop', 'L'], ['team', 'Team', 'T'], ['settings', 'Settings', '']];
 
 export function createCampaignUI(ctx) {
@@ -44,7 +46,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.9</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small id="ss-version">v${APP_VERSION}</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
@@ -100,7 +102,7 @@ export function createCampaignUI(ctx) {
     inviteBar.innerHTML = `<span style="color:#7fe3f2;font-size:11px;letter-spacing:.12em">HOSTING · FRIENDS JOIN WITH</span><span>${invite.addrs.length ? invite.addrs.map(a => `<code style="font-size:15px">${esc(a)}</code>`).join(' or ') : '<em>this computer\'s address</em>'}</span><span>passcode <code style="font-size:15px">${esc(invite.code)}</code></span>`;
   }
   async function roomInfo() { try { const r = await fetch('/api/room'); if (!r.ok || !r.headers.get('content-type')?.includes('json')) return null; const d = await r.json(); return d.protocol === 'infra-lan-v1' ? d : null; } catch { return null; } }
-  function showStart(yes = true) { startOpen = yes; $('start-screen').hidden = !yes; document.body.classList.toggle('at-start', yes); if (yes) { close(); $('ss-sub').hidden = true; renderStart(); if (document.pointerLockElement) document.exitPointerLock(); } }
+  function showStart(yes = true) { startOpen = yes; $('start-screen').hidden = !yes; document.body.classList.toggle('at-start', yes); if (yes) {  close(); $('ss-sub').hidden = true; renderStart(); if (document.pointerLockElement) document.exitPointerLock(); } }
   function begin() { showStart(false); close(); document.body.classList.add('in-game'); enter(); if (levels() && g().emptySite && !g().racks.length && !g().orders.length) ctx.place?.(-22, 10, -38, 12); render(); }
   function subPanel(html, bind) { sub = html; const el = $('ss-sub'); el.hidden = false; el.innerHTML = html; bind?.(el); el.scrollIntoView?.({ block: 'nearest' }); }
   const titlePicker = (id = 'ss-title') => `<label>Engineer title<select id="${id}"><option value="field">Field Engineer</option><option value="operations">Operations Engineer</option></select><small>Both titles can do every task.</small></label>`;
@@ -177,7 +179,7 @@ export function createCampaignUI(ctx) {
   async function startArena() {
     const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
     subPanel(`<h2>Global Defensive</h2>
-     <div class="ss-form"><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label><label>Warmup (s)<input id="ss-ar-warm" type="number" min="0" max="600" step="5" value="120" title="LAN lobby before the match · 0 starts at once"></label><label>Freeze time (s)<input id="ss-ar-freeze" type="number" min="0" max="60" step="1" value="15" title="Buy time at the start of every round · 0–60"></label><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div><p id="ss-ar-status" class="ss-note" hidden role="status"></p>
+     <div class="ss-form"><label>Your name<input id="ss-ar-name" maxlength="20" autocomplete="nickname" placeholder="Player" value="${esc((() => { try { const n = localStorage.getItem('infra-name'); return n && n !== 'Engineer' ? n : ''; } catch { return ''; } })())}"></label><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label><label>Warmup (s)<input id="ss-ar-warm" type="number" min="0" max="600" step="5" value="120" title="LAN lobby before the match · 0 starts at once"></label><label>Freeze time (s)<input id="ss-ar-freeze" type="number" min="0" max="60" step="1" value="15" title="Buy time at the start of every round · 0–60"></label><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div><p id="ss-ar-status" class="ss-note" hidden role="status"></p>
      <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B), respawn in 2.5 s, most kills in 10 minutes. <b>Defuse</b>: Terrorists vs Counter-Terrorists with CS2 money and rounds — plant the bomb on A or B (5, hold click) or defuse it (E); first to 13, friendly fire on. Knife on 3 — Darja carries her ruby karambit. Bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
       // Start: the chosen mode and map are sent once and confirmed from the room's own state before anyone enters.
       // Opening the room to the LAN restarts its listener; we wait for the reconnect instead of sending into the gap
@@ -187,6 +189,8 @@ export function createCampaignUI(ctx) {
       let busy = false;
       const go = async host => {
         if (busy) return; busy = true; el.querySelectorAll('#ss-ar-solo,#ss-ar-host').forEach(b => b.disabled = true); status.hidden = false; status.textContent = 'Starting…';
+        // Your name (Global Defensive has no face / engineer picker): saved, and used for the room and the scoreboard.
+        { const nm = (el.querySelector('#ss-ar-name')?.value || '').trim() || 'Player'; try { localStorage.setItem('infra-name', nm); } catch {} dispatchEvent(new CustomEvent('gd-name', { detail: nm })); }
         const kind = el.querySelector('#ss-ar-kind').value, map = el.querySelector('#ss-ar-map').value, bots = +el.querySelector('#ss-ar-bots').value;
         if (!MAP_LIST.some(m => m.id === map && m.kind === kind)) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
         const before = lan.epoch;
@@ -283,7 +287,18 @@ export function createCampaignUI(ctx) {
   });
 
   // ---- Panel ---------------------------------------------------------------------------------------------
-  function panel(which = 'objective') { if (engineering.busy && which !== 'objective' && which !== 'settings') { notify('Put the item down first · G'); } tab = which; open = true; engineering.close(); kit.hide(); officeUI?.close?.(); if (document.pointerLockElement) document.exitPointerLock(); $('campaign-panel').hidden = false; document.body.classList.add('cp-open'); render(); }
+  // Global Defensive's own menu (Esc in a match): Resume, Settings, Leave match. Leaving a match you play alone ends
+  // it (back to the start screen); with other players in the room it only takes you to the start screen.
+  const gdMenuOpen = () => !document.getElementById('gd-menu')?.hidden && !!document.getElementById('gd-menu');
+  function gdMenu(on) {
+    let m = document.getElementById('gd-menu');
+    if (!m) { document.body.insertAdjacentHTML('beforeend', '<div id="gd-menu" hidden role="dialog" aria-label="Global Defensive menu"><div class="gm-card"><h2>GLOBAL DEFENSIVE</h2><p class="gm-sub"></p><button data-gm="resume">Resume <small>Esc</small></button><button data-gm="settings">Settings</button><button data-gm="leave">Leave match</button></div></div>'); m = document.getElementById('gd-menu');
+      m.addEventListener('click', async e => { const b = e.target.closest('[data-gm]'); if (!b) return; const act = b.dataset.gm; gdMenu(false);
+        if (act === 'resume') enter(); else if (act === 'settings') panel('settings');
+        else if (act === 'leave') { const humans = (lan.players || []).filter(p => !p.bot && p.role !== 'bot').length; if (humans <= 1 && (!lan.connected || lan.canManageWorld)) await send({ type: 'mode', mode: 'free' }).catch(() => null); showStart(true); } }); }
+    m.hidden = !on; document.body.classList.toggle('gd-menu-open', !!on); if (!on) return; const A = g().arena; m.querySelector('.gm-sub').textContent = (A ? (A.kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + (MAP_LIST.find(x => x.id === A.map)?.name || A.map) : '') + ((lan.players || []).filter(p => !p.bot && p.role !== 'bot').length > 1 ? ' · LAN' : ''); if (document.pointerLockElement) document.exitPointerLock(); m.querySelector('[data-gm=resume]').focus(); }
+  function panel(which = 'objective') { if (gdMode()) which = 'settings';   // Global Defensive: the settings, nothing of the campaign
+    if (engineering.busy && which !== 'objective' && which !== 'settings') { notify('Put the item down first · G'); } tab = which; open = true; engineering.close(); kit.hide(); officeUI?.close?.(); if (document.pointerLockElement) document.exitPointerLock(); $('campaign-panel').hidden = false; document.body.classList.add('cp-open'); render(); }
   function close() { open = false; $('campaign-panel').hidden = true; document.body.classList.remove('cp-open'); }
   $('cp-close').onclick = () => { close(); if (!startOpen) enter(); };
 
@@ -391,10 +406,10 @@ export function createCampaignUI(ctx) {
   addEventListener('mousedown', e => { if (!capturing || e.target.closest?.('[data-rebind]')) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture('Mouse' + e.button); }, true);
   addEventListener('wheel', e => { if (!capturing || Math.abs(e.deltaY) < 1) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture(e.deltaY > 0 ? 'WheelDown' : 'WheelUp'); }, { capture: true, passive: false });
   function settingsView() {
-    const p = settings;
+    const p = settings, gd = gdMode(); if (gd) ctlCtx = 'arena';   // Global Defensive: its own settings only (no walking pace, guidance or Infra controls)
     return `<h2>Settings</h2><div class="set-grid">
      <label>Mouse sensitivity<input data-set="look" type="range" min="0.3" max="2.5" step="0.1" value="${p.look}"></label>
-     <label>Walk speed<input data-set="speed" type="range" min="0.7" max="1.5" step="0.05" value="${p.speed}"></label>
+     ${gd ? '' : `<label>Walk speed<input data-set="speed" type="range" min="0.7" max="1.5" step="0.05" value="${p.speed}"></label>`}
      <label>Field of view · ${p.fov}°<input data-set="fov" type="range" min="60" max="100" value="${p.fov}"></label>
      <label>Text size<select data-set="uiScale">${[1, 1.15, 1.3].map(v => `<option ${p.uiScale === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
      <label title="Performance: fastest · Balanced: sharp and smooth · Quality: reflections, shadows and glow">Graphics mode<select data-set="graphics">${[['Low', 'Performance'], ['Medium', 'Balanced'], ['High', 'Quality'], ['Ultra', 'Ultra (desktop GPU)']].map(([v, t]) => `<option value="${v}" ${p.graphics === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -402,9 +417,9 @@ export function createCampaignUI(ctx) {
      <label>Shadows &amp; glow<select data-set="effects">${[['auto', 'Auto (Quality modes)'], ['on', 'On'], ['off', 'Off (faster)']].map(([v, t]) => `<option value="${v}" ${(p.effects || 'auto') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
      <label>Resolution scale<select data-set="resolutionScale">${[[1, '100 %'], [.85, '85 %'], [.7, '70 % (fastest)']].map(([v, t]) => `<option value="${v}" ${+(p.resolutionScale ?? 1) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
      <label>Frame rate limit<select data-set="fpsCap">${[[0, 'Auto · 60, 30 in menus'], [120, '120 FPS'], [60, '60 FPS'], [30, '30 FPS (battery)']].map(([v, t]) => `<option value="${v}" ${+(p.fpsCap || 0) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-     <label>Guidance<select data-set="assistance">${['Off', 'Minimal hints', 'Guided'].map(v => `<option ${p.assistance === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-     ${['toggleSprint', 'toggleCrouch', 'headBob', 'invertY', 'showFPS', 'showControls'].map(k => `<label class="chk"><input type="checkbox" data-set="${k}" ${p[k] ? 'checked' : ''}> ${({ toggleSprint: 'Toggle run', toggleCrouch: 'Toggle crouch', headBob: 'Head bob', invertY: 'Invert mouse Y', showFPS: 'Show FPS', showControls: 'Show control hints' })[k]}</label>`).join('')}</div>
-     <h3>Controls</h3><div class="cp-row ctl-tabs">${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
+     ${gd ? '' : `<label>Guidance<select data-set="assistance">${['Off', 'Minimal hints', 'Guided'].map(v => `<option ${p.assistance === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`}
+     ${(gd ? ['invertY', 'showFPS', 'showControls'] : ['toggleSprint', 'toggleCrouch', 'headBob', 'invertY', 'showFPS', 'showControls']).map(k => `<label class="chk"><input type="checkbox" data-set="${k}" ${p[k] ? 'checked' : ''}> ${({ toggleSprint: 'Toggle run', toggleCrouch: 'Toggle crouch', headBob: 'Head bob', invertY: 'Invert mouse Y', showFPS: 'Show FPS', showControls: 'Show control hints' })[k]}</label>`).join('')}</div>
+     <h3>Controls</h3><div class="cp-row ctl-tabs"${gd ? ' hidden' : ''}>${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
      <input id="ctl-search" class="ctl-search" placeholder="Search controls…" value="${esc(ctlFilter)}"><table class="ctl"><tbody><tr><td><kbd>Mouse</kbd></td><td>Look</td><td></td></tr>${actionsIn(ctlCtx).filter(a => !ctlFilter || a.label.toLowerCase().includes(ctlFilter.toLowerCase())).map(a => `<tr><td><button class="ctl-key${capturing === a.id ? ' wait' : ''}" data-rebind="${a.id}">${capturing === a.id ? 'Press a key… (Esc cancels)' : esc(labelOf(ctlCtx, a.id))}</button></td><td>${esc(a.label)}</td><td><button class="ctl-x" data-unbind="${a.id}" title="Unbind">×</button></td></tr>`).join('')}<tr><td><kbd>Esc</kbd></td><td>Menu (fixed)</td><td></td></tr></tbody></table>
      <div class="cp-row"><button data-ctl="reset">Reset ${esc(CONTEXTS[ctlCtx].split(' (')[0])}</button><button data-ctl="reset-all">Reset all</button><button data-ctl="export">Export controls</button><button data-ctl="import">Import controls</button></div><p class="cp-muted">Controls are saved on this computer only. Joining a LAN room never changes them.</p>
      <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label><label class="chk"><input type="checkbox" data-set="viewBob" ${p.viewBob !== false ? 'checked' : ''}> Gun bob while moving <small>(default: on)</small></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
@@ -417,9 +432,11 @@ export function createCampaignUI(ctx) {
 
   function render() {
     if (!open) return; setTimeout(() => { if (document.getElementById('vc-in')) fillVoice(); });
+    if (gdMode()) tab = 'settings';
     $('cp-title').textContent = levels() ? 'CAMPAIGN · ' + g().name : g().mode === 'free' ? 'FREE BUILD' : g().mode === 'challenge' ? 'CHALLENGE' : 'CAMPAIGN';
     $('cp-context').textContent = (lan.connected ? 'LAN · ' + (lan.canManageWorld ? 'host' : 'guest') : 'Solo') + ' · ' + usdMoney(g().budget);
     $('cp-nav').innerHTML = TABS.map(([id, name, key]) => `<button data-tab="${id}" aria-pressed="${tab === id}">${name}${key ? ` <kbd>${key}</kbd>` : ''}</button>`).join('') + '<button data-tab="advanced" class="cp-adv">Advanced ▸</button>';
+    if (gdMode()) { $('cp-title').textContent = 'SETTINGS'; $('cp-context').textContent = 'Global Defensive'; $('cp-nav').innerHTML = ''; }   // no campaign tabs, money or room
     const body = { objective, inventory, map: mapView, laptop, team, settings: settingsView }[tab], el = $('cp-body');
     // Keep what the player opened or chose (sections, cable lengths, scroll) across the live refresh.
     const keep = {}; el.querySelectorAll?.('[data-key]').forEach(x => keep[x.dataset.key] = x.tagName === 'DETAILS' ? x.open : x.value); const scroll = el.scrollTop, same = el.dataset.tab === tab;
@@ -519,6 +536,7 @@ export function createCampaignUI(ctx) {
     if (k === 'i' || k === 'tab') { open && tab === 'inventory' ? (close(), enter()) : panel('inventory'); return true; }
     if (k === 'm') { open && tab === 'map' ? (close(), enter()) : panel('map'); return true; }
     if (k === 'h' && levels()) { const L = C.status()?.level; if (L) { hintTier[L.id] = Math.min(3, (hintTier[L.id] || 0) + 1); const tier = hintTier[L.id], st = C.status(); notify('Hint ' + tier + ' · ' + (tier < 3 ? L.hints[tier - 1] : st.next ? st.next.label + ': ' + st.next.detail + (st.next.fix ? ' · ' + st.next.fix : '') : 'Everything passes')); if (open) render(); } return true; }
+    if (k === 'escape' && gdMode()) { if (open) { close(); enter(); } else gdMenu(!gdMenuOpen()); return true; }   // Global Defensive: its own menu
     if (k === 'escape') { open ? (close(), enter()) : panel(levels() ? 'objective' : 'settings'); return true; }
     return false;
   }

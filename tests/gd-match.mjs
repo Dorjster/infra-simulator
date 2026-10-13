@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { startArena, arenaApply, arenaTick, LOBBY_MS } from '../dist/arena-logic.js';
 import { DEFUSE, teamOf } from '../dist/arena-defuse.js';
-import { combatApply, isDown, applyHit, takeShots, hurt } from '../dist/combat-logic.js';
+import { combatApply, isDown, applyHit, takeShots, hurt, SPAWN_SAFE_MS } from '../dist/combat-logic.js';
 import { buildReport } from '../dist/gd-report.js';
 import { ARENA_MAPS, mapBoxes, walkable } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
@@ -124,5 +124,16 @@ const spread = pts => { let m = Infinity; for (let i = 0; i < pts.length; i++) f
   const R = buildReport(g), A = R.players.find(p => p.k === 'ann');
   ok('report: result, rounds, ADR (dmg / rounds), accuracy, HS%, plants', R.winner === 't' && R.rounds.length === 2 && A.adr === 50 && A.acc === 17 && A.hs === 100 && A.plants === 1 && A.kills === 1, JSON.stringify(A));
   ok('report: MVP is a real player', R.players.some(p => p.k === R.mvp)); }
+
+// ── Deathmatch spawn protection: no damage for 2 s after a (re)spawn, unless you fire first ──
+{ let t = 5e10; const g = { levels: {} }; startArena(g, { map: 'yard', bots: 0 }, t); const P = [{ id: 'a', name: 'Ann', pose: { x: 0, y: 9.7, z: -800 } }, { id: 'b', name: 'Bo', pose: { x: 5, y: 9.7, z: -800 } }];
+  arenaTick(g, P, .05, t += 50); const ak = weaponById('ak');
+  ok('deathmatch: a player who just spawned takes no damage', applyHit(g, 'Bo', 'Ann', ak, 'chest', 10, 1, t + 500).dmg === 0);
+  ok('…and is hurt again after 2 s', applyHit(g, 'Bo', 'Ann', ak, 'chest', 10, 1, t + SPAWN_SAFE_MS + 10).dmg > 0);
+  hurt(g, 'Bo', 'Ann', ak, 500, 'head', t + 3000, true); ok('Ann down', isDown(g, 'Ann', t + 3001));
+  t += 3000 + 3000; const { combatTick } = await import('../dist/combat-logic.js'); combatTick(g, t); arenaTick(g, P, .05, t += 50);   // the tick respawns her
+  ok('respawned', !isDown(g, 'Ann', t)); ok('protected after the respawn', applyHit(g, 'Bo', 'Ann', ak, 'chest', 10, 1, t + 100).dmg === 0);
+  g.combat.ammo = { ann: { ak: [30, 90] } }; takeShots(g, 'Ann', 1, 'ak'); ok('firing ends the protection at once', applyHit(g, 'Bo', 'Ann', ak, 'chest', 10, 1, t + 200).dmg > 0);
+  const gd = { levels: {} }; startArena(gd, { map: 'dust2', kind: 'defuse', bots: 0 }, t); ok('Defuse has no spawn protection (no respawns)', !gd.combat.safe); }
 
 console.log('PASS: Global Defensive match flow · ' + n + ' checks (unique spawns for 12, one-attempt plant / defuse with stale positions, one outcome, lobby window + start rules, team changes + balance + spectator, host settings, map changes, no Defuse → Deathmatch fallback)');

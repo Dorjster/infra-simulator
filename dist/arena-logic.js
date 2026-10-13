@@ -11,7 +11,7 @@
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
-import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol } from './combat-logic.js';
+import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
 import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks } from './arena-nades.js';
 import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS } from './arena-defuse.js';
 import { hurt } from './combat-logic.js';
@@ -265,7 +265,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
   // Spawn orders for players who just respawned (their client moves them there).
   for (const [k, at] of Object.entries(C.respawnedAt || {})) { if (C.spawnTo[k]?.at === at) continue; const p = players.find(x => key(x.name) === k); if (!p) continue; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at, x: s.x, z: s.z }; changed = true; }
   // Deathmatch: a player seen for the first time gets a spot of their own too (not the client's guess).
-  if (!C.d) for (const p of players) { const k = key(p.name); if (p.bot || C.spawnTo[k]) continue; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at: now, x: s.x, z: s.z }; changed = true; }
+  if (!C.d) for (const p of players) { const k = key(p.name); if (p.bot || C.spawnTo[k]) continue; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at: now, x: s.x, z: s.z }; (C.safe ??= {})[k] = now + SPAWN_SAFE_MS; changed = true; }
   // Defuse: the dead drop their best gun (with its rounds) and the bomb where they fell; it leaves their hands, so
   // nothing is duplicated. Deathmatch: you respawn with your loadout, nothing drops.
   A.deathDrops ??= {};
@@ -317,7 +317,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
       if (now < bot.reloadUntil || now < (bot.blindUntil || 0)) continue;   // reloading, or blinded by a flashbang
       if (bot.ammo <= 0) { if (botReload(game, bot)) { bot.reloadUntil = now + wpn.reloadMs; bot.reloadN = (bot.reloadN || 0) + 1; } changed = true; continue; }
       if (Math.abs(diff) < .12 && now - bot.seenAt > react && now - bot.lastShot > wpn.rateMs * (wpn.auto ? 1.6 : 1.1)) {
-        bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true;
+        bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true; if (C.safe) delete C.safe[key(bot.name)];   // firing ends spawn protection
         // Difficulty: accuracy, head-shot share and reaction time (easy · normal · hard, host setting).
         const pHit = Math.max(.05, Math.min(.9, bot.skill * DF.aim * (1 - td / (wpn.range * 1.3)) * (wpn.kind === 'shotgun' && td > 40 ? .3 : 1)));
         if (Math.random() < pHit) { const r = Math.random(), zone = r < DF.head ? 'head' : r < .55 ? 'chest' : r < .8 ? 'stomach' : 'legs'; applyHit(game, bot.name, tgt.name, wpn, zone, td, wpn.pellets ? 1 + Math.floor(Math.random() * wpn.pellets * .6) : 1, now); }
