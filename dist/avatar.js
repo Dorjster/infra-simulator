@@ -229,6 +229,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   function update(dt, st = {}) {
     s.t += dt; s.speed += ((st.speed || 0) - s.speed) * Math.min(1, dt * 8);
     s.crouch += ((st.crouch ? 1 : 0) - s.crouch) * Math.min(1, dt * 10);
+    s.reload = (s.reload || 0) + ((st.act === 'reload' ? 1 : 0) - (s.reload || 0)) * Math.min(1, dt * 9); s.throwA = (s.throwA || 0) + ((st.act === 'throw' ? 1 : 0) - (s.throwA || 0)) * Math.min(1, dt * 14);   // Global Defensive actions seen by others
     s.laptop += ((st.laptop ? 1 : 0) - s.laptop) * Math.min(1, dt * 8); laptop.visible = s.laptop > .5;
     const carrying = st.carry === 'box' || st.carry === 'rack'; s.carry += ((carrying ? 1 : 0) - s.carry) * Math.min(1, dt * 9); s.cable += ((st.carry === 'cable' ? 1 : 0) - s.cable) * Math.min(1, dt * 9); s.point += ((st.point ? 1 : 0) - s.point) * Math.min(1, dt * 10); s.gun += ((st.gun ? 1 : 0) - s.gun) * Math.min(1, dt * 10);
     carton.visible = s.carry > .4; if (carton.visible) carton.scale.setScalar(st.carry === 'rack' ? 1.35 : 1); coil.visible = s.cable > .4; pistol.visible = s.gun > .3;
@@ -250,7 +251,8 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     // Pointing (team ping): right arm straight forward and slightly up.
     if (s.point > .01) { const p = s.point, r = aim(-.05, .15, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, .12, 1), p); }
     // Holding the pistol: right arm straight out at shoulder height.
-    if (s.gun > .01) { const p = s.gun, r = aim(-.08, .02, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, 0, 1), p); }
+    if (s.gun > .01) { const p = s.gun, r = aim(-.08 - .6 * s.reload, .02 + .35 * s.reload, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, .25 * s.reload, 1), p); }   // reloading: the gun dips down and in
+    if (s.throwA > .01) { const r = aim(1.1, .2, 1); aR = mix(aR, r, s.throwA); bR = mix(bR, fore(r, 0, .3, 1), s.throwA); }   // throwing: an overhand swing
     let lL = -sw, lR = sw, lLz = 0, lRz = 0, hT = [breathe - .05 * s.laptop * 3, 0, 0], tT = [moving * .08, 0, 0], lift = Math.abs(Math.cos(s.phase)) * .22 * moving, fT = 0;
     // Emote pose, blended in/out.
     if (e) {

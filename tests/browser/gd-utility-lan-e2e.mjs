@@ -33,6 +33,7 @@ const thr = (p, kind) => p.evaluate(([k, s]) => __infra.lab.lan.act({ type: 'are
 const state = p => p.evaluate(() => (__infra.lab.world.operations.game.combat.nades || []).map(n => ({ id: n.id, kind: n.kind, phase: n.phase, holes: (n.holes || []).map(h => h.at) })));
 check('the guest’s molotov burns', !(await thr(guest, 'molotov'))?.error && await guest.waitForFunction(() => __infra.lab.world.operations.game.combat.nades?.some(n => n.kind === 'molotov' && n.phase === 'fire'), null, { timeout: 6000 }).then(() => true).catch(() => false));
 await thr(host, 'smoke');
+check('third person: the guest sees the host throw (arm swing)', await guest.waitForFunction(() => [...__infra.lab.lan.models.values()].some(m => /host/i.test(m.name || '') && m.act === 'throw' && performance.now() < m.actUntil), null, { timeout: 2000 }).then(() => true).catch(() => false));
 const out = await Promise.all([host, guest].map(p => p.waitForFunction(() => { const n = __infra.lab.world.operations.game.combat.nades || []; return n.some(x => x.kind === 'smoke' && x.phase === 'smoke') && !n.some(x => x.kind === 'molotov' && x.phase === 'fire'); }, null, { timeout: 8000 }).then(() => true).catch(() => false)));
 check('the smoke puts the fire out on both screens', out[0] && out[1], JSON.stringify(await state(guest)));
 await host.waitForTimeout(2600);   // the smoke grows to full size
@@ -45,5 +46,7 @@ await guest.evaluate(s => __infra.lab.look(s.x, s.z, s.x + 30, 9, s.z), spot); a
 check('standing in the smoke fills the guest’s view', await guest.evaluate(() => +document.getElementById('gd-smokeveil').style.opacity > .8), await guest.evaluate(() => document.getElementById('gd-smokeveil').style.opacity));
 await guest.screenshot({ path: path.join(out_dir, 'in-smoke.png') }); await place(guest, 70); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out_dir, 'outside-smoke.png') });
 check('outside the smoke the view is clear', await guest.evaluate(() => +document.getElementById('gd-smokeveil').style.opacity < .05));
+await host.evaluate(() => { __infra.lab.pistol.equip(__infra.lab.pistol.fallback() || 'usps'); }); await host.waitForTimeout(900); await host.evaluate(() => { const P = __infra.lab.pistol; P.button(0, true); P.button(0, false); }); await host.waitForTimeout(300); await host.evaluate(() => __infra.lab.pistol.reload());
+check('third person: the guest sees the host reload (gun dips for the reload time)', await guest.waitForFunction(() => [...__infra.lab.lan.models.values()].some(m => /host/i.test(m.name || '') && m.act === 'reload' && performance.now() < m.actUntil), null, { timeout: 3000 }).then(() => true).catch(() => false));
 check('no page errors', errs.length === 0, errs.slice(0, 4).join(' | '));
 console.log(ok + '/' + n); for (const b of browsers) await b.close(); server.kill(); process.exit(ok === n ? 0 : 1);
