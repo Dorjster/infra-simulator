@@ -183,8 +183,10 @@ Existing (v43): scoreboard, spectate, match report.
 | Item | Status | Evidence / gap |
 |---|---|---|
 | Dust II stress (Retina, High, 9 bots) | Verified | avg 16.7 ms, p99 24.5 ms after removing an aim raycast over the map mesh and per-frame box copies in the radar |
-| Every map measured | Missing | Only Dust II so far |
+| Every map measured | Verified | Retina ×2, High, 9 bots, smoke / HE / flash / molotov, 12 s of fire: avg 16.7–16.9 ms (60 fps) on all eight; p99 20.4–24.2 ms. Found and fixed: one 45–52 ms frame on Ancient (and once on Inferno) — the Infra world (racks, cables, labels, casino) was still drawn behind the arena and its shaders compiled mid-match; GD now draws only its own objects (re-measured: no frame over 33 ms in 6 runs) |
+| GD separate from the Infra world (3D) | Verified | In a match the frame's draw keeps only lights, the camera and GD objects (452 Infra objects skipped); leaving brings the hall back · `arena-e2e` 21/21 |
 | Map-change memory | Missing | |
+| Shaders compiled mid-match | Partial | A handful still compile on first sight (bot skins and post effects not in the warm-up); none caused a slow frame in the measured runs |
 
 ## Test runs (2026-10-13, one Mac, Chrome 141 via Playwright, simulated LAN clients on 127.0.0.1)
 

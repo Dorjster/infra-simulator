@@ -67,7 +67,7 @@ export function arenaWarmMeshes() {
   return [...propWarmMeshes(), ...[...names].map((n, i) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material(n)); m.position.x = i * 2; m.castShadow = m.receiveShadow = true; return m; }), ...Object.values(SITE_MAT).map(m => new THREE.Mesh(SITE_GEO, m))];
 }
 export function createArenaScene(scene, { pickables = [] } = {}) {
-  const group = new THREE.Group(); group.name = 'arena'; group.visible = false; scene.add(group);
+  const group = new THREE.Group(); group.name = 'arena'; group.userData.gd = true; group.visible = false; scene.add(group);
   let current = null, boxes = [], bounds = null, savedBg = null, savedFog = null;
   function clearMap() { for (const o of [...group.children]) { if (o.userData.ground) continue;   // dropped guns: arena-ui owns them
     group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }

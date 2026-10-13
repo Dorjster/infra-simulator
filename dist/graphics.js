@@ -73,6 +73,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     scene.traverse(o => { const m = o.material; if (!m || Array.isArray(m) || !m.isMeshStandardMaterial || (m.metalness ?? 0) < .4) return;
       if (full) { if (shiny.has(m)) { m.envMap = null; m.needsUpdate = true; shiny.delete(m); } } else if (!m.envMap) { m.envMap = envTexture; m.envMapIntensity = m.userData.envI ??= Math.min(m.envMapIntensity ?? 1, .9); m.needsUpdate = true; shiny.add(m); } }); }
   // Light pool (see top). Point lights created later (casino, office) are picked up by the periodic rescan.
+  const KEEP = [];   // the frame's drawn top-level objects when filtered (reused)
   const POOL = 4, pool = Array.from({ length: POOL }, () => { const l = new THREE.PointLight(0xffffff, 0, 1, 2); l.userData.pooled = true; scene.add(l); return l; });
   const sources = new Set(), wp = new THREE.Vector3(); let poolAt = 0, scanAt = 0;
   function scanLights() { scene.traverse(o => { if (o.isPointLight && !o.userData.pooled && !o.userData.noPool && !sources.has(o)) { sources.add(o); o.visible = false; } }); }
@@ -95,7 +96,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     const job = warm(objs, reveal, key === 'main'); warmed.set(key, job); return job;
   }
   async function warm(objs, reveal, whole) {
-    performance.mark?.('warm:start'); apply();
+    performance.mark?.('warm:start'); apply(); scanLights();   // the lights as play has them (lamps folded into the pool): a shader's light count is part of it, so a warm-up with more lights on compiled variants play never uses (Ancient: a 45 ms frame)
     const g = new THREE.Group(); g.position.set(0, -500, 0); objs.forEach(o => g.add(o)); scene.add(g); metalShine(); if (fxOn) flagShadows(); g.visible = false;
     const frame = () => new Promise(r => requestAnimationFrame(r));
     // Compile a couple of objects per frame (shader linking can block the main thread on some GPUs). The set's
@@ -120,7 +121,13 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     get post() { return !!composer && fxOn; },
     get passes() { return composer?.passes || []; },
     setSize(w, h) { if (composer) { const s = renderer.getDrawingBufferSize(new THREE.Vector2()); composer.setSize(w, h); composer.setPixelRatio?.(renderer.getPixelRatio()); bloom?.resolution.set(s.x / 2, s.y / 2); } },
+    // scene.userData.renderOnly(o): draw only the top-level objects it keeps (Global Defensive hides the Infra world this
+    // way: the children list is swapped for the frame's draw and put back, so no module ever sees a change).
     render() {
+      const only = scene.userData.renderOnly; if (only) { const all = scene.children; KEEP.length = 0; for (let i = 0; i < all.length; i++) if (only(all[i])) KEEP.push(all[i]); scene.children = KEEP; try { draw(); } finally { scene.children = all; } } else draw();
+    },
+  };
+  function draw() {
       apply(); frame++; updatePool(performance.now());
       if (jobs) jobs.add('metal-shine', metalShine, 3000); else if (frame % 180 === 2) metalShine();
       if (fxOn) {
@@ -129,6 +136,5 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
         sun.target.position.set(camera.position.x, 0, camera.position.z); sun.position.copy(sun.target.position).add(sunOffset.clone().setLength(LIGHT_DIST));   // just under the ceilings, so they don't shade the rooms
         composer.render();
       } else renderer.render(scene, camera);
-    }
-  };
+  }
 }

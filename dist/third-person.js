@@ -12,7 +12,7 @@ export function createThirdPerson({ scene, camera, look, state }) {
     const l = look(), k = [l.color, l.skin, l.hat, l.outfit].join();
     if (model && k === lookKey) { if (l.face !== model.style) model.setStyle(l.face); return model; }
     if (model) { scene.remove(model.g); model.dispose?.(); }
-    lookKey = k; model = createAvatar({ ...l, name: '' }); if (model.label) model.label.visible = false; scene.add(model.g); return model;
+    lookKey = k; model = createAvatar({ ...l, name: '' }); if (model.label) model.label.visible = false; model.g.userData.gd = true; scene.add(model.g); return model;
   }
   // Keep the camera inside the hall or the casino, whichever the engineer stands in.
   function clampToRoom(p, eye) {

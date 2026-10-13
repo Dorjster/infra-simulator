@@ -94,7 +94,7 @@ const away = at => { const me = listenerAt(); return at && me ? Math.hypot(at.x 
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
 
 export function createNadeView({ scene, camera, world, boxes = () => [], quality = () => 'Medium', hostNow = () => Date.now() }) {
-  const group = new THREE.Group(); group.name = 'nades'; scene.add(group); const FXP = FXS = createFxSystem(group, quality);
+  const group = new THREE.Group(); group.name = 'nades'; group.userData.gd = true; scene.add(group); const FXP = FXS = createFxSystem(group, quality);
   const FM = new THREE.Matrix4(), FQ = new THREE.Quaternion(), FV = new THREE.Vector3(), FS = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
   const live = new Map(), dir = new THREE.Vector3(); let flashUntil = 0, flashPeak = 0, flashAt = 0, path = null, landRing = null;
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-flash" style="position:fixed;inset:0;z-index:39;background:#fff;opacity:0;pointer-events:none"></div>');
