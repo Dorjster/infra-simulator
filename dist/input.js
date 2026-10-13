@@ -59,6 +59,7 @@ export const ACTIONS = [
   { id: 'a-third', label: 'First / third person', legacy: 'p', def: ['KeyP'], ctx: ['arena'] },
   { id: 'a-team', label: 'Change team', legacy: 'team', def: ['KeyM'], ctx: ['arena'] },
   { id: 'a-radar', label: 'Radar: rotate / fixed', legacy: 'radar', def: ['KeyN'], ctx: ['arena'] },
+  { id: 'a-voice', label: 'Team voice: push to talk (hold)', legacy: 'voice', def: ['KeyK'], ctx: ['arena'], hold: true },
   { id: 'a-chat', label: 'Chat', legacy: 't', def: ['KeyY'], ctx: ['arena'] },
 ];
 export const CONTEXTS = { infra: 'Infrastructure (Campaign, Free Build, Challenges)', payday: 'Payday', arena: 'Global Defensive (arena)' };

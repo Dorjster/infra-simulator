@@ -21,6 +21,19 @@ const SAVE_KEY = 'infra-local-campaign-v20';
 const TABS = [['objective', 'Objective', 'J'], ['inventory', 'Inventory & orders', 'I'], ['map', 'Map', 'M'], ['laptop', 'Laptop', 'L'], ['team', 'Team', 'T'], ['settings', 'Settings', '']];
 
 export function createCampaignUI(ctx) {
+  // Settings → Team voice (voice.js): on / off, devices, levels, microphone test. Team mates only.
+  const voiceHTML = () => { const v = ctx.voice?.(); if (!v) return ''; const P = v.prefs, on = v.status === 'on';
+    const state = on ? '<b style="color:#7dff8e">On</b> · hold <kbd>K</kbd> to talk (change it in Controls)' : v.status === 'starting' ? 'Asking for the microphone…' : v.status === 'error' ? '<b style="color:#ff8a7a">' + esc(v.error) + '</b>' : 'Off';
+    return `<h3>Team voice</h3><p class="cp-muted">${state}${!v.secure ? '<br>This page is not secure, so the browser will not give it the microphone. Open <code>' + esc(v.httpsHint()) + '</code> (accept the certificate once) or use the desktop app.' : ''}</p>
+     <div class="cp-row"><button data-vc="toggle">${on ? 'Turn off' : 'Turn on'}</button><button data-vc="test" ${on ? '' : 'disabled'}>Test microphone (hear yourself 5 s)</button><label class="chk"><input type="checkbox" data-vcm="mute" ${P.micMuted ? 'checked' : ''}> Mute my microphone</label></div>
+     <div class="set-grid"><label>Microphone<select id="vc-in" data-vcsel="in"><option value="">Default</option></select></label>${v.canPickOutput ? '<label>Speakers / headset<select id="vc-out" data-vcsel="out"><option value="">Default</option></select></label>' : ''}
+     <label>Microphone volume · ${Math.round(P.micGain * 100)}%<input id="vc-gain" data-vcr="gain" type="range" min="0" max="2.5" step=".05" value="${P.micGain}"></label><label>Team mates’ voices · ${Math.round(P.volume * 100)}%<input id="vc-vol" data-vcr="volume" type="range" min="0" max="1" step=".05" value="${P.volume}"></label></div>
+     <div style="height:6px;border-radius:3px;background:#ffffff22;overflow:hidden;margin:6px 0"><i id="vc-level" style="display:block;height:100%;width:0;background:#7dff8e"></i></div>
+     <p class="cp-muted">Only your team mates hear you (spectators hear spectators; dead players still talk to their team). No voice in Deathmatch. Mute someone from the scoreboard (Tab).</p>`; };
+  const fillVoice = async () => { const v = ctx.voice?.(), inSel = document.getElementById('vc-in'), outSel = document.getElementById('vc-out'); if (!v || !inSel) return; const d = await v.devices();
+    const opt = (list, cur) => '<option value="">Default</option>' + list.filter(x => x.deviceId && x.deviceId !== 'default').map((x, i) => `<option value="${esc(x.deviceId)}" ${x.deviceId === cur ? 'selected' : ''}>${esc(x.label || ('Device ' + (i + 1)))}</option>`).join('');
+    inSel.innerHTML = opt(d.inputs, v.prefs.inputId); if (outSel) outSel.innerHTML = opt(d.outputs, v.prefs.outputId);
+    const meter = () => { const el = document.getElementById('vc-level'); if (!el) return; el.style.width = Math.min(100, (ctx.voice?.().micLevel || 0) * 900) + '%'; requestAnimationFrame(meter); }; meter(); };
   const { world, lan, kit, engineering, officeUI, camera, scene, byId, racks, enter, exit, settings } = ctx;
   const ops = world.operations, C = world.campaign, $ = id => document.getElementById(id);
   let open = false, tab = 'objective', startOpen = true, hintTier = {}, lastHUD = 0, sub = '';
@@ -77,10 +90,10 @@ export function createCampaignUI(ctx) {
   inviteBar.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:37;background:#0d2231f0;border:1px solid #3fb5c9;border-radius:10px;padding:6px 14px;color:#e8f6fa;font:600 13px system-ui;display:flex;gap:12px;align-items:center;box-shadow:0 4px 16px #0006';
   async function setInvite(hosted) {
     const i = await roomInfo().catch(() => null), code = hosted?.roomCode || i?.roomCode || lan.roomCode || '', addrs = hosted?.addresses || i?.addresses || [];
-    invite = code ? { code, addrs } : null; renderInvite();
+    invite = code ? { code, addrs, securePort: hosted?.securePort || i?.securePort || 0 } : null; renderInvite();
   }
   // (the arena shows these in its lobby and scoreboard: the bar would sit on the round clock)
-  const inviteText = () => invite && lan.connected && lan.canManageWorld ? { addrs: invite.addrs, code: invite.code } : null;
+  const inviteText = () => invite && lan.connected && lan.canManageWorld ? { addrs: invite.addrs, code: invite.code, voice: invite.securePort ? invite.addrs.map(a => 'https://' + a.split(':')[0] + ':' + invite.securePort) : [] } : null;
   function renderInvite() {
     const on = !!invite && lan.connected && lan.canManageWorld; inviteBar.hidden = !on; if (!on) return;
     inviteBar.innerHTML = `<span style="color:#7fe3f2;font-size:11px;letter-spacing:.12em">HOSTING · FRIENDS JOIN WITH</span><span>${invite.addrs.length ? invite.addrs.map(a => `<code style="font-size:15px">${esc(a)}</code>`).join(' or ') : '<em>this computer\'s address</em>'}</span><span>passcode <code style="font-size:15px">${esc(invite.code)}</code></span>`;
@@ -237,6 +250,7 @@ export function createCampaignUI(ctx) {
           const reachable = await fetch(url.origin + '/api/room', { mode: 'no-cors', signal: ctl.signal }).then(() => true, () => false); clearTimeout(timer);
           if (!reachable) { status.innerHTML = `<b>Can't reach ${esc(url.host)}.</b> Use the address and port in the host's invite bar (top of their screen), be on the same network, and on the host allow Infra Simulator through the firewall (private networks).`; return; }
           try { localStorage.setItem('infra-last-lan', JSON.stringify({ addr: url.host, code, at: Date.now() })); } catch {}
+          if (desktop && url.protocol === 'http:') { url.protocol = 'https:'; url.port = String((+url.port || 8080) + 1); }   // the desktop joins the host's https twin (a secure origin: team voice works)
           url.pathname = '/'; url.search = '?join=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name); location.href = url.href; return;
         }
         engineering.setRole(el.querySelector('#ss-jtitle').value);
@@ -395,11 +409,12 @@ export function createCampaignUI(ctx) {
      <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
      ${crosshairEditorHTML(loadCrosshair())}
      <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. The desktop app also finds them by itself in a Steam install of CS 1.6. Without them the arena uses the built-in Terrorist / Counter-Terrorist gear.</p>
+     ${voiceHTML()}
      <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
   }
 
   function render() {
-    if (!open) return;
+    if (!open) return; setTimeout(() => { if (document.getElementById('vc-in')) fillVoice(); });
     $('cp-title').textContent = levels() ? 'CAMPAIGN · ' + g().name : g().mode === 'free' ? 'FREE BUILD' : g().mode === 'challenge' ? 'CHALLENGE' : 'CAMPAIGN';
     $('cp-context').textContent = (lan.connected ? 'LAN · ' + (lan.canManageWorld ? 'host' : 'guest') : 'Solo') + ' · ' + usdMoney(g().budget);
     $('cp-nav').innerHTML = TABS.map(([id, name, key]) => `<button data-tab="${id}" aria-pressed="${tab === id}">${name}${key ? ` <kbd>${key}</kbd>` : ''}</button>`).join('') + '<button data-tab="advanced" class="cp-adv">Advanced ▸</button>';
@@ -433,6 +448,12 @@ export function createCampaignUI(ctx) {
     else if (go === 'diagnostics') { const text = JSON.stringify(globalThis.__infraDiagnostics?.() || {}, null, 2); navigator.clipboard?.writeText(text).then(() => notify('Diagnostics copied · paste them into your message'), () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = 'infra-diagnostics.json'; a.click(); notify('Diagnostics saved as infra-diagnostics.json'); }); }
     else if (go === 'inspect') { close(); document.body.classList.remove('in-game'); exit(); }
   });
+  $('campaign-panel').addEventListener('click', e => { const vb = e.target.closest?.('[data-vc]'), v = ctx.voice?.(); if (!vb || !v) return;
+    if (vb.dataset.vc === 'toggle') { if (v.status === 'on') { v.disable(); render(); } else { render(); v.enable().then(() => render()); } }
+    if (vb.dataset.vc === 'test') v.test(); });
+  $('campaign-panel').addEventListener('change', e => { const v = ctx.voice?.(), t = e.target; if (!v || !t.dataset) return;
+    if (t.dataset.vcm === 'mute') v.setMicMuted(t.checked); if (t.dataset.vcsel === 'in') v.setInput(t.value); if (t.dataset.vcsel === 'out') v.setOutput(t.value); });
+  $('campaign-panel').addEventListener('input', e => { const v = ctx.voice?.(), t = e.target; if (!v || !t.dataset?.vcr) return; if (t.dataset.vcr === 'gain') v.setMicGain(t.value); else v.setVolume(t.value); const lab = t.closest('label'); if (lab) lab.firstChild.textContent = (t.dataset.vcr === 'gain' ? 'Microphone volume · ' : 'Team mates’ voices · ') + Math.round(t.value * 100) + '%'; });
   $('campaign-panel').addEventListener('click', e => {
     const imp = e.target.closest?.('[data-csimp]');
     if (imp) { const team = imp.dataset.csimp, chars = ctx.characters; if (!chars) return;
