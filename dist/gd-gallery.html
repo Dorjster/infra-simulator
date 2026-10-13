@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GD Weapon Gallery</title><link rel="icon" href="data:,">
+<!-- Developer gallery (spec §8): every weapon's representations side by side — the 3D model the game draws (rendered
+     with the game's own loader), the buy / HUD icon, the first-person rig, the gunshot recordings and the stats — so
+     a wrong or shared model, icon or sound shows at a glance. Open /gd-gallery.html on a running game server. -->
+<style>
+:root { --bg: #0d1217; --card: #151d25; --line: #263441; --text: #e6edf2; --muted: #8fa1ae; --accent: #f0b232; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 20px 16px 40px; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: .06em; }
+p.sub { margin: 0 0 18px; color: var(--muted); }
+#grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 8px; }
+.card h2 { margin: 0; font-size: 16px; display: flex; justify-content: space-between; gap: 8px; }
+.card h2 small { color: var(--muted); font-weight: 600; font-size: 12px; }
+.views { display: grid; grid-template-columns: 1fr 96px; gap: 8px; align-items: center; }
+.views figure { margin: 0; background: #0a0f13; border: 1px solid var(--line); border-radius: 6px; display: grid; place-items: center; min-height: 96px; }
+.views figure img { max-width: 100%; display: block; }
+.views figcaption { font-size: 11px; color: var(--muted); padding: 2px 0 4px; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 12px; }
+dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+.snd { display: flex; gap: 6px; flex-wrap: wrap; }
+.snd button { background: #1e2a35; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 9px; font: 600 12px system-ui; cursor: pointer; }
+.snd button:hover { border-color: var(--accent); }
+.bad { color: #ff7b6b; font-weight: 700; }
+#status { color: var(--muted); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<h1>GLOBAL DEFENSIVE · WEAPON GALLERY</h1>
+<p class="sub">Developer view: each weapon's model, icon, first-person rig, gunshots and stats, as the game uses them.</p>
+<div id="status">Loading models…</div>
+<div id="grid"></div>
+<script type="module">
+import * as THREE from './three.module.js';
+import { WEAPONS, KNIVES, GRENADES, C4 } from './weapons-data.js';
+import { weaponModel, loadRealWeapons, hasReal, REAL_FIT, QGUNS, VARIANTS } from './weapon-models.js';
+import { fpInfo } from './fp-view.js';
+const $ = id => document.getElementById(id), esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+await loadRealWeapons();
+// One renderer, each model drawn once into a picture (side view, lit like the buy menu's icons).
+const W = 320, H = 150, renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); renderer.setSize(W, H); renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene(); scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new (await import('./post/RoomEnvironment.js')).RoomEnvironment(), .04).texture;   // reflections, as in the game and the icon renderer (metal reads as metal)
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6)); const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(2, 3, 4); scene.add(sun);
+const cam = new THREE.PerspectiveCamera(30, W / H, .01, 100);
+function picture(id) { const m = weaponModel(id, 1); scene.add(m); m.rotation.y = Math.PI / 2; m.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(m), c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()), r = Math.max(s.x, s.y * W / H, s.z) * .62 / Math.tan(cam.fov * Math.PI / 360) + s.z;
+  cam.position.set(c.x, c.y, c.z + r); cam.lookAt(c); renderer.render(scene, cam); const url = renderer.domElement.toDataURL('image/png'); scene.remove(m); return url; }
+const source = id => REAL_FIT[id] ? 'model (' + id + ')' : QGUNS[id] ? 'gun pack · ' + QGUNS[id].file : VARIANTS[id] ? 'variant of ' + VARIANTS[id].base : id === 'knife' || id === 'karambit' ? 'drawn in code' : null;
+const items = [...WEAPONS, ...KNIVES, ...GRENADES, C4];
+const shots = id => ['', '-b', '-c', '-far'].map(s => `<button data-snd="sounds/shot-${id}${s}.wav" title="shot-${id}${s}">${s ? s.slice(1) : 'close'}</button>`).join('');
+$('grid').innerHTML = items.map(w => { const src = source(w.id), fp = fpInfo(w.id), gun = !!w.mag;
+  return `<article class="card"><h2>${esc(w.name)} <small>${esc(w.id)} · ${esc(w.kind)}${w.team ? ' · ' + w.team.toUpperCase() : ''}</small></h2>
+    <div class="views"><figure><img alt="model of ${esc(w.name)}" data-model="${esc(w.id)}" width="${W}" height="${H}"><figcaption>3D model · ${src ? esc(src) : '<span class="bad">generic fallback</span>'}${hasReal(w.id) ? '' : src?.startsWith('variant') ? '' : ''}</figcaption></figure>
+    <figure>${gun ? `<img alt="icon of ${esc(w.name)}" src="icons/w-${esc(w.id)}.png" width="96"><figcaption>buy / HUD icon</figcaption>` : '<figcaption>no icon (drawn as a shape)</figcaption>'}</figure></div>
+    <dl><dt>First person</dt><dd>${fp ? esc(fp.pack) + ' arms' + (fp.onehand ? ' · one hand' : '') : '<span class="bad">none</span>'}</dd>
+    ${gun ? `<dt>Price</dt><dd>$${w.price.toLocaleString('en-US')}</dd><dt>Damage</dt><dd>${w.dmg} · armor pen. ${Math.round(w.ap * 100)}%</dd><dt>Fire rate</dt><dd>${Math.round(60000 / w.rateMs)} rpm · ${esc(w.mode)}</dd><dt>Magazine</dt><dd>${w.mag} / ${w.reserve}</dd>` : ''}</dl>
+    ${gun ? `<div class="snd">${shots(w.id)}</div>` : ''}</article>`; }).join('');
+// Pictures: a few per frame so the page stays responsive.
+const imgs = [...document.querySelectorAll('img[data-model]')]; let i = 0;
+(function next() { for (let k = 0; k < 3 && i < imgs.length; k++, i++) { try { imgs[i].src = picture(imgs[i].dataset.model); } catch (e) { imgs[i].alt = 'failed: ' + e.message; } } $('status').textContent = i < imgs.length ? `Rendering ${i} / ${imgs.length}…` : `${items.length} items · models, icons, first-person rigs and gunshots`; if (i < imgs.length) requestAnimationFrame(next); })();
+let audio = null; document.addEventListener('click', e => { const b = e.target.closest('[data-snd]'); if (!b) return; audio?.pause(); audio = new Audio(b.dataset.snd); audio.play().catch(() => {}); });
+</script>
+</body>
+</html>

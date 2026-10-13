@@ -106,7 +106,7 @@ Last updated: 2026-10-13.
 |---|---|---|
 | A distinct model per gun | Verified | v44 icons rendered from the models; the USP-S, Five-SeveN and Deagle fallback bug was fixed |
 | Duplicate-mapping test | Verified | `gd-assets.mjs` (401 checks): every gun, knife, grenade and the bomb has a model source of its own (never the generic fallback), no two guns look the same, AWP ≠ SSG 08, an icon of its own, four gunshot files of its own and not the same take as another gun's, a first-person rig. Found and fixed: UMP-45 / MP9 and P90 / MP7 shared a distant gunshot file, the SG 553's third take was a copy of its first, and the USP-S's distant take was the MP5-SD's |
-| Developer gallery | Missing | |
+| Developer gallery | Verified | `dist/gd-gallery.html` (open /gd-gallery.html on a running game): every weapon's model (drawn by the game's loader with the game's reflections), buy / HUD icon, first-person rig, model source, gunshots (playable) and stats side by side · `gd-gallery-e2e` (30 cards, 30 different models, no fallback). Seen there: the Glock-18 uses the detailed pistol model, which looks like a Makarov (brown grip), not CS2's polymer Glock; the MAC-10 and MP9 are different models with similar compact silhouettes |
 | Karambit hand rig | Missing | |
 | CS 1.6 imported assets | Existing | Optional, imported on the player's own computer only |
 
