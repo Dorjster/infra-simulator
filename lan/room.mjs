@@ -1,6 +1,8 @@
 // LAN room: the authoritative shared world, HTTP API, server-sent world frames and campaign autosave.
 // Used by `node lan/server.mjs` (web package) and in-process by the desktop app (Electron main).
 import http from 'node:http';
+import https from 'node:https';
+import {selfSigned} from './selfsigned.mjs';
 import {readFile,stat,writeFile,rename,copyFile,mkdir} from 'node:fs/promises';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
@@ -19,6 +21,7 @@ const viewFor=(base,p)=>base.operations?.casino?{...base,operations:{...base.ope
 const {modelForSKU}=await import(pathToFileURL(path.join(root,'enterprise-models.js')));
 const {combatApply,combatTick,ownedWeapons,poseAmmo}=await import(pathToFileURL(path.join(root,'combat-logic.js')));let combatDirty=false;
 const {arenaTick,botRoster}=await import(pathToFileURL(path.join(root,'arena-logic.js')));
+const {radioCall,chatRecipients}=await import(pathToFileURL(path.join(root,'gd-radio.js')));const {locationOf}=await import(pathToFileURL(path.join(root,'gd-radar-art.js')));const {ARENA_MAPS:MAPS}=await import(pathToFileURL(path.join(root,'arena-maps.js')));
 const {hostActionError,EMOTE_IDS,FACE_IDS,SKIN_IDS,HAT_IDS,OUTFIT_IDS,CARRY_IDS,cleanName}=await import(pathToFileURL(path.join(root,'play-rules.js')));
 const {physicalOffline,physicalLinkDown,CATALOG}=await import(pathToFileURL(path.join(root,'operations.js')));
 const {createNetwork}=await import(pathToFileURL(path.join(root,'network-sim.js')));
@@ -53,13 +56,29 @@ function broadcast(type,data){const frame=`event: ${type}\ndata: ${JSON.stringif
 function worldEvent(message){events.unshift(message);events.length=Math.min(events.length,8);const base=world.snapshotFor();for(const p of players.values())send(p,'world',{revision,world:viewFor(base,p),events});}
 function remove(id){const p=players.get(id);if(!p)return;p.stream?.end();players.delete(id);let changed=false;for(const s of world.operations.game.stock){if(s.holders.includes(p.id)){s.holders=s.holders.filter(id=>id!==p.id);s.floor={x:p.pose.x,z:p.pose.z};changed=true;}}if(changed){revision++;worldEvent('Carried equipment released after engineer left');persist();}broadcast('players',roster());}
 async function body(req){let length=0,chunks=[];for await(const chunk of req){length+=chunk.length;if(length>32768)throw new Error('Request too large');chunks.push(chunk);}return JSON.parse(Buffer.concat(chunks).toString()||'{}');}
-const server=http.createServer(async(req,res)=>{try{
- const url=new URL(req.url,'http://'+req.headers.host);if(req.headers.origin&&req.headers.origin!=='http://'+req.headers.host){json(res,403,{error:'Use this server address directly'});return;}
- if(url.pathname==='/api/room'&&req.method==='GET'){const localHost=loopback(req)&&![...players.values()].some(p=>p.isHost);json(res,200,{protocol:'infra-lan-v1',app:'infra-simulator',name:[...players.values()].find(p=>p.isHost)?.name||'',mode:(g=>g?.payday?'Payday':g?.mode==='campaign'?'Campaign':g?.mode||'')(world.operations?.game),hosting:host!=='127.0.0.1',locked:true,players:players.size,maxPlayers:12,localHost,...localHost?{roomCode,hostKey,addresses:lanAddresses()}:{},...loopback(req)?{campaign:world.operations.campaignSummary(),payday:world.operations.paydaySummary()}:{}});return;}
+const handler=async(req,res)=>{try{
+ const url=new URL(req.url,'http://'+req.headers.host);if(req.headers.origin&&req.headers.origin!=='http://'+req.headers.host&&req.headers.origin!=='https://'+req.headers.host){json(res,403,{error:'Use this server address directly'});return;}
+ if(url.pathname==='/api/room'&&req.method==='GET'){const localHost=loopback(req)&&![...players.values()].some(p=>p.isHost);json(res,200,{protocol:'infra-lan-v1',app:'infra-simulator',name:[...players.values()].find(p=>p.isHost)?.name||'',mode:(g=>g?.payday?'Payday':g?.mode==='campaign'?'Campaign':g?.mode||'')(world.operations?.game),hosting:host!=='127.0.0.1',locked:true,players:players.size,maxPlayers:12,localHost,...localHost?{roomCode,hostKey,addresses:lanAddresses(),securePort}:{},...loopback(req)?{campaign:world.operations.campaignSummary(),payday:world.operations.paydaySummary()}:{}});return;}
  if(url.pathname==='/api/players-check'&&req.method==='GET'){json(res,players.has(url.searchParams.get('token'))?200:401,{ok:players.has(url.searchParams.get('token'))});return;}
  if(url.pathname==='/api/join'&&req.method==='POST'){const data=await body(req);if(data.code!==roomCode){json(res,403,{error:'Incorrect passcode. Ask the host.'});return;}if(players.size>=12){json(res,409,{error:'Room full (12/12).'});return;}const isHost=typeof data.hostKey==='string'&&data.hostKey===hostKey;if(data.hostKey&&!isHost){json(res,403,{error:'Incorrect host key. Guests should leave it empty.'});return;}if(isHost&&[...players.values()].some(p=>p.isHost)){json(res,409,{error:'The host is already connected.'});return;}const token=randomBytes(16).toString('hex'),id=randomBytes(8).toString('hex'),used=new Set([...players.values()].map(p=>p.color)),color=[0x6bd9ff,0xffc875,0xaf98ff,0x82e5aa,0xff879e,0xe2e779,0x7ca1ff,0xc5a27d,0x94d8d3,0xe19df5,0xe2b7a5,0xb4c4d4].find(c=>!used.has(c));const p={id,token,isHost,role:'field',name:cleanName(data.name),color,pose:{x:-3+players.size*2,y:9.7,z:11,yaw:0,crouched:false,active:false},seen:Date.now(),stream:null,count:0,window:Date.now()};players.set(token,p);json(res,200,{id,token,isHost,revision,world:viewFor(world.snapshotFor(),p),players:roster(),events});broadcast('players',roster());return;}
  if(url.pathname.startsWith('/api/')){const id=req.headers['x-player-token']||url.searchParams.get('token'),p=players.get(id);if(!p){json(res,401,{error:'Join the room first.'});return;}p.seen=Date.now();if(Date.now()-p.window>1000){p.window=Date.now();p.count=0;}if(++p.count>35){json(res,429,{error:'Too many updates'});return;}
  if(url.pathname==='/api/events'&&req.method==='GET'){p.stream?.end();res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive','X-Accel-Buffering':'no'});res.write(': connected\n\n');p.stream=res;send(p,'players',roster());send(p,'world',{revision,world:viewFor(world.snapshotFor(),p),events});res.on('close',()=>{if(p.stream===res)p.stream=null;});return;}
+ // Team voice signalling (WebRTC offer / answer / ICE), relayed only between current team mates; the audio itself
+ // goes peer to peer and never through the room or the game state.
+ if(url.pathname==='/api/voice'&&req.method==='POST'){const d=await body(req),q=players.get([...players.keys()].find(t=>players.get(t).id===d.to));const sig=d.signal;if(!q||q===p){json(res,404,{error:'No such player'});return;}
+   if(!sig||typeof sig!=='object'||JSON.stringify(sig).length>16000){json(res,400,{error:'Bad voice message'});return;}const a=voiceTeam(p.name),b=voiceTeam(q.name);if(sig.type!=='bye'&&(!a||a!==b)){json(res,403,{error:'Voice is team only'});return;}
+   send(q,'voice',{from:p.id,signal:sig});json(res,200,{ok:true});return;}
+ // Global Defensive comms: all / team chat and quick radio. The room decides who reads it (gd-radio.js), builds radio
+ // lines itself (no free text), adds the sender's callout, and rate-limits (chat 0.7 s, radio 1 s).
+ if(url.pathname==='/api/comms'&&req.method==='POST'){const d=await body(req),g=world.operations?.game;if(g?.mode!=='arena'){json(res,409,{error:'Comms work in Global Defensive'});return;}
+   const k=vkey(p.name),D=g.combat?.d,team=D?.teams?.[k]||null,down=(g.combat?.down?.[k]?.until||0)>Date.now(),live=!!D&&['live','planted'].includes(D.round?.phase),deadOrSpec=down||team==='spec';
+   const kind=d.kind==='radio'?'radio':'say',gap=kind==='radio'?1000:700;if(Date.now()-(p.lastComms?.[kind]||0)<gap){json(res,429,{error:'Wait a moment before sending again'});return;}
+   const toTeam=!!d.team&&!!team;let text='',ping=null;if(kind==='radio'){const call=radioCall(team,d.cmd);if(!call||down){json(res,400,{error:down?'The dead can’t use the radio':'Unknown radio call'});return;}text=call[1];if(call[2]&&p.pose)ping={x:+p.pose.x.toFixed(1),z:+p.pose.z.toFixed(1)};}
+   else{text=String(d.text||'').replace(/\s+/g,' ').trim().slice(0,120);if(!text){json(res,400,{error:'Type a message'});return;}}
+   const M=MAPS[g.arena?.map],callout=M&&p.pose?locationOf(M,p.pose.x-ARENA.cx,p.pose.z-ARENA.cz):'';(p.lastComms??={})[kind]=Date.now();
+   const msg={from:p.id,name:p.name,team,kind,toTeam:kind==='radio'?true:toTeam,text,callout,ping,dead:deadOrSpec,at:Date.now()};
+   for(const q of players.values()){const qk=vkey(q.name),qd=(g.combat?.down?.[qk]?.until||0)>Date.now(),qt=D?.teams?.[qk]||null;if(chatRecipients({team,toTeam:msg.toTeam,deadOrSpec,live},{team:qt,deadOrSpec:qd||qt==='spec'}))send(q,'comms',msg);}
+   json(res,200,{ok:true});return;}
  if(url.pathname==='/api/name'&&req.method==='POST'){const d=await body(req);p.name=cleanName(d.name);broadcast('players',roster());json(res,200,{ok:true,name:p.name});return;}
  if(url.pathname==='/api/role'&&req.method==='POST'){const d=await body(req);if(!['field','operations'].includes(d.role))throw Error('Unknown engineer role');p.role=d.role;broadcast('players',roster());json(res,200,{ok:true});return;}
  if(url.pathname==='/api/chat'&&req.method==='POST'){const d=await body(req);if(typeof d.text!=='string'||!d.text.trim()||d.text.length>200)throw Error('Message must contain 1–200 characters');if(Date.now()-(p.lastChat||0)<700)throw Error('Please wait before sending another message');p.lastChat=Date.now();broadcast('chat',{player:p.id,name:'ENGINEER-0'+([0x6bd9ff,0xffc875,0xaf98ff,0x82e5aa,0xff879e,0xe2e779,0x7ca1ff,0xc5a27d,0x94d8d3,0xe19df5,0xe2b7a5,0xb4c4d4].indexOf(p.color)+1),color:p.color,text:d.text.trim(),at:Date.now()});json(res,200,{ok:true});return;}
@@ -71,19 +90,31 @@ const server=http.createServer(async(req,res)=>{try{
  if(url.pathname==='/api/leave'&&req.method==='POST'){remove(p.token);json(res,200,{ok:true});return;}json(res,404,{error:'Not found'});return;
  }
  if(req.method!=='GET'&&req.method!=='HEAD'){res.writeHead(405);res.end();return;}const pathname=decodeURIComponent(url.pathname);if(pathname.startsWith('/lan/')){res.writeHead(403);res.end();return;}const file=path.resolve(root,'.'+(pathname==='/'?'/index.html':pathname));if(!file.startsWith(root+path.sep)||pathname.split('/').some(s=>s.startsWith('.'))){res.writeHead(403);res.end();return;}const ext=path.extname(file);const mime={'.gltf':'model/gltf+json','.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.glb':'model/gltf-binary','.jpg':'image/jpeg','.bin':'application/octet-stream','.wav':'audio/wav','.ogg':'audio/ogg','.txt':'text/plain','.obj':'text/plain','.mtl':'text/plain','.json':'application/json'}[ext];if(!mime){res.writeHead(404);res.end();return;}const info=await stat(file);if(!info.isFile()){res.writeHead(404);res.end();return;}res.writeHead(200,{'Content-Type':mime,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(req.method==='HEAD'?undefined:await readFile(file));
- }catch(e){if(!res.headersSent)json(res,e.code==='ENOENT'?404:400,{error:e.message});else res.end();}});
+ }catch(e){if(!res.headersSent)json(res,e.code==='ENOENT'?404:400,{error:e.message});else res.end();}};
+const server=http.createServer(handler);
+// HTTPS twin (the next port up): a secure origin for players on other computers — browsers only let a page use the
+// microphone (team voice) on https or localhost. Self-signed (lan/selfsigned.mjs), kept with the save, renewed when
+// this computer's LAN addresses change.
+const tlsFile=path.join(path.dirname(campaignPath),'lan-tls.json'),ipList=()=>lanAddresses().map(a=>a.split(':')[0]).sort().join(',');let tls=null;
+try{const t=JSON.parse(await readFile(tlsFile,'utf8'));if(t.key&&t.cert)tls=t;}catch{}
+if(!tls||tls.ips!==ipList()){tls={...selfSigned(ipList().split(',').filter(Boolean)),ips:ipList()};await writeFile(tlsFile,JSON.stringify(tls)).catch(()=>{});}
+const secureServer=https.createServer({key:tls.key,cert:tls.cert},handler);let securePort=0;
+// Team voice: who may talk to whom — current team mates in a Defuse match only (spectators with spectators; dead
+// players still talk to their team, as in CS2). Deathmatch has no team mates, so no voice.
+const vkey=n=>String(n||'').trim().toLowerCase().slice(0,40),voiceTeam=name=>{const g=world.operations?.game;if(g?.mode!=='arena')return null;return g.combat?.d?.teams?.[vkey(name)]||null;};
 let lastRosterJSON='';let lastOperationsTick=0;const tick=setInterval(()=>{if(Date.now()-lastOperationsTick>1000){lastOperationsTick=Date.now();if(!mutating&&[world.operations.tick(),world.office.tick()].some(Boolean)){revision++;worldEvent('Facility state updated');persist();}} // Arena: bots and respawns run 20× a second; HP, kills and spawn orders stream on the small 'combat' channel.
  if(world.operations?.game?.mode==='arena'&&!mutating){const g=world.operations.game,now=Date.now();const changed=[arenaTick(g,roster(),.05,now),combatTick(g,now),combatDirty].some(Boolean),loadouts=!!g.arena?.dirty;if(changed||loadouts){combatDirty=false;if(loadouts)delete g.arena.dirty;/* loadouts changed (a death, a new round, the match start): they ride along on the small combat frame, so nobody keeps seeing old guns or grenades */const frame=loadouts?{...g.combat,loadout:g.arena.loadout}:g.combat;for(const q of players.values())send(q,'combat',frame);}}
  for(const p of players.values())if(Date.now()-p.seen>30000)remove(p.token);const list=roster(),encoded=JSON.stringify(list);if(encoded!==lastRosterJSON){lastRosterJSON=encoded;broadcast('players',list);}},50);   // 20 position updates a second
 // The world tick runs for the room's lifetime; rebind() closes and reopens only the listener.
-function listen(p,b){return new Promise((resolve,reject)=>{const fail=e=>{server.off('listening',ok);reject(e);},ok=()=>{server.off('error',fail);resolve(server.address().port);};server.once('error',fail);server.once('listening',ok);server.listen(p,b);});}
-port=await listen(port,host);
-const api={get port(){return port;},get bind(){return host;},get roomCode(){return roomCode;},
+function listen(p,b,srv=server){return new Promise((resolve,reject)=>{const fail=e=>{srv.off('listening',ok);reject(e);},ok=()=>{srv.off('error',fail);resolve(srv.address().port);};srv.once('error',fail);srv.once('listening',ok);srv.listen(p,b);});}
+const listenSecure=b=>listen(port?port+1:0,b,secureServer).catch(()=>listen(0,b,secureServer)).catch(()=>0);
+port=await listen(port,host);securePort=await listenSecure(host);
+const api={get port(){return port;},get securePort(){return securePort;},get bind(){return host;},get roomCode(){return roomCode;},
  // The host's own passcode (4–12 letters or digits): new players must type it; players already in stay.
  async setCode(code){const c=String(code||'').trim().toUpperCase();if(!/^[A-Z0-9]{4,12}$/.test(c))throw Error('Passcode: 4–12 letters or digits');roomCode=c;await writeFile(roomFile,roomCode).catch(()=>{});return roomCode;},hostKey,world,addresses:lanAddresses,get players(){return players.size;},savePath:campaignPath,
  // Switch between local-only (127.0.0.1) and LAN hosting (0.0.0.0) without losing the world. Connected
  // clients reconnect on their own (their SSE stream drops and the client rejoins).
- async rebind(bind,newPort=port){for(const p of players.values())p.stream?.end();await new Promise(r=>server.close(()=>r()));server.closeAllConnections?.();host=bind;port=await listen(newPort,bind);return port;},
- async close(){clearInterval(tick);for(const p of players.values())p.stream?.end();await persistQueue;await new Promise(r=>server.close(()=>r()));server.closeAllConnections?.();}};
+ async rebind(bind,newPort=port){for(const p of players.values())p.stream?.end();await new Promise(r=>server.close(()=>r()));server.closeAllConnections?.();await new Promise(r=>secureServer.close(()=>r()));secureServer.closeAllConnections?.();host=bind;port=await listen(newPort,bind);securePort=await listenSecure(bind);return port;},
+ async close(){clearInterval(tick);for(const p of players.values())p.stream?.end();await persistQueue;await new Promise(r=>server.close(()=>r()));server.closeAllConnections?.();await new Promise(r=>secureServer.close(()=>r()));secureServer.closeAllConnections?.();}};
 return api;
 }

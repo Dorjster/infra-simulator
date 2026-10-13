@@ -11,7 +11,7 @@
 //  · Molotov: bursts on landing (or after 2.2 s) · 7 s of fire over up to 37 units around, spreading only over the
 //    floor it landed on (walls and drops stop it); burns anyone standing in it.
 import { EYE } from './weapons-data.js';
-import { hurt, isDown } from './combat-logic.js';
+import { hurt, isDown, recording, statOf } from './combat-logic.js';
 import { lineOfSight, segmentClear } from './arena-maps.js';
 
 const HU = 2.54 / 16.5;
@@ -46,7 +46,7 @@ export const throwStart = a => ({ x: +a.x || 0, y: (+a.y || EYE) + ((POWER[a.str
 export function throwNade(game, name, kind, a, now = Date.now()) {
   const l = game.arena.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, list = l.nades ??= [], i = list.indexOf(kind);
   if (!NADES[kind]) throw Error('Unknown grenade'); if (i < 0) throw Error('You have no ' + NADES[kind].name);
-  const r = game.combat?.d?.round; if (r && ['freeze', 'over', 'warmup'].includes(r.phase) || game.arena?.lobby && !game.arena.lobby.started) throw Error('You can’t throw now');
+  const r = game.combat?.d?.round; if (r && ['freeze', 'over', 'warmup'].includes(r.phase) || game.arena?.lobby && !game.arena.lobby.started || game.combat?.d?.paused) throw Error('You can’t throw now');
   list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1; const v = launch(a);
   C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), ...throwStart(a), ...v, at: now, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long' });
   return 'Threw a ' + NADES[kind].name;
@@ -75,10 +75,39 @@ export function predictThrow(kind, a, boxes = [], bounds = null) {
 }
 const people = (game, players) => { const out = []; for (const p of players) if (p.pose && !isDown(game, p.name)) out.push({ name: p.name, x: p.pose.x, z: p.pose.z, y: (p.pose.y || EYE) - EYE });
   for (const b of game.arena?.bots || []) if (!isDown(game, b.name)) out.push({ name: b.name, x: b.x, z: b.z, y: 0, bot: b }); return out; };
-// Smoke on the line between two points? (2D at chest height, the cloud's core)
-const smoked = (game, ax, az, bx, bz) => { for (const s of game.combat?.nades || []) if (s.phase === 'smoke') { const dx = bx - ax, dz = bz - az, L = dx * dx + dz * dz || 1, t = Math.max(0, Math.min(1, ((s.x - ax) * dx + (s.z - az) * dz) / L)); if (Math.hypot(ax + dx * t - s.x, az + dz * t - s.z) < NADES.smoke.radius * .8) return true; } return false; };
+// ── Smoke, one shared model (host rules, bots, radar, flashes and every client's view use it) ──
+// A smoke is a volume: an ellipsoid column lifted a little off the ground, growing over SMOKE.grow ms after it pops
+// and thinning over its last SMOKE.fade ms. Density is 1 in the core (inside 0.7 R), falling to 0 at the edge. An HE
+// blast inside punches a hole (holeR) that is clear for holeOpen ms, then closes again over holeClose ms (the holes
+// live in the host's grenade state, so every client opens the same hole at the same place and time). A sightline is
+// blocked when it crosses more than SMOKE.block units of dense smoke — the same rule from outside, at the edge and
+// from inside: deep inside you can't see out; at the edge you can.
+export const SMOKE = { lift: .42, vert: .62, grow: 1800, fade: 3000, holeR: 15, holeOpen: 900, holeClose: 1600, block: 14 };
+export function smokeShape(s, now) { const t = now - (s.firedAt || now), grow = 1 - Math.pow(1 - Math.min(1, Math.max(0, t) / SMOKE.grow), 3), fade = Math.max(0, Math.min(1, (NADES.smoke.lasts - t) / SMOKE.fade));
+  return { r: NADES.smoke.radius * (.35 + .65 * grow), dens: fade, cy: (s.y || 0) + NADES.smoke.radius * SMOKE.lift }; }
+// How open the smoke's HE holes are at a point: 0 (untouched) … 1 (fully cleared).
+export function holeOpen(s, x, y, z, now) { let cut = 0; for (const h of s.holes || []) { const age = now - h.at, open = age < SMOKE.holeOpen ? 1 : age < SMOKE.holeOpen + SMOKE.holeClose ? 1 - (age - SMOKE.holeOpen) / SMOKE.holeClose : 0; if (open <= 0) continue;
+    const d = Math.hypot(x - h.x, (y - h.y) * .8, z - h.z); if (d < SMOKE.holeR) cut = Math.max(cut, open * (1 - (d / SMOKE.holeR) ** 2)); } return cut; }
+// Smoke density at a point (0 … 1, summed over clouds, capped).
+export const hostNow = game => game?.combat?.clock ?? Date.now();   // the host's clock (stamped each tick; clients keep an offset)
+export function smokeDensity(game, x, y, z, now = hostNow(game)) { let d = 0; for (const s of game.combat?.nades || []) { if (s.phase !== 'smoke') continue; const S = smokeShape(s, now), q = Math.hypot(x - s.x, z - s.z, (y - S.cy) / SMOKE.vert) / S.r; if (q >= 1) continue;
+    d += (q < .7 ? 1 : (1 - q) / .3) * S.dens * (1 - holeOpen(s, x, y, z, now)); if (d >= 1) return 1; } return d; }
+// Units of dense smoke between two points (3D), sampled every 1.5 units where the segment passes a cloud.
+export function smokeDepth(game, ax, ay, az, bx, by, bz, now = hostNow(game)) {
+  let depth = 0; const dx = bx - ax, dy = by - ay, dz = bz - az, L = Math.hypot(dx, dy, dz) || 1;
+  for (const s of game.combat?.nades || []) { if (s.phase !== 'smoke') continue; const S = smokeShape(s, now), t = Math.max(0, Math.min(1, ((s.x - ax) * dx + (S.cy - ay) * dy + (s.z - az) * dz) / (L * L)));
+    if (Math.hypot(ax + dx * t - s.x, (ay + dy * t - S.cy) / SMOKE.vert, az + dz * t - s.z) > S.r) continue;   // misses this cloud
+    const n = Math.ceil(L / 1.5); for (let i = 0; i <= n; i++) { const u = i / n, x = ax + dx * u, y = ay + dy * u, z = az + dz * u, q = Math.hypot(x - s.x, z - s.z, (y - S.cy) / SMOKE.vert) / S.r; if (q < 1) depth += (q < .7 ? 1 : (1 - q) / .3) * S.dens * (1 - holeOpen(s, x, y, z, now)) * L / n; } }
+  return depth;
+}
+export const smokeBlocks = (game, ax, ay, az, bx, by, bz, now = hostNow(game)) => smokeDepth(game, ax, ay, az, bx, by, bz, now) > SMOKE.block;
+const smoked = (game, ax, az, bx, bz, y = 8, now = hostNow(game)) => smokeBlocks(game, ax, y, az, bx, y, bz, now);
 // Is the line between two points (at chest height) clear of walls and smoke?
-export function clearView(game, boxes, ax, az, bx, bz, y = 8) { return lineOfSight(boxes, ax, az, bx, bz, y) && !smoked(game, ax, az, bx, bz); }
+export function clearView(game, boxes, ax, az, bx, bz, y = 8, now = hostNow(game)) { return lineOfSight(boxes, ax, az, bx, bz, y) && !smoked(game, ax, az, bx, bz, y, now); }
+// Fire and smoke: a smoke that pops over a fire puts the fire out; a molotov that lands in smoke fizzles. A put-out
+// fire stays in the state as 'out' briefly (steam), then leaves; nothing re-ignites it.
+const covers = (s, f) => Math.hypot(s.x - f.x, s.z - f.z) < NADES.smoke.radius + NADES.molotov.radius * .4 && Math.abs((s.y || 0) - (f.y || 0)) < 8;
+export function putOut(f, now) { f.phase = 'out'; f.outAt = now; f.firedAt = now; }
 // Where a molotov burns: 3-unit cells within its radius, on the surface it landed on, reachable from the centre
 // without crossing a wall (flood fill). Deterministic, so every client draws exactly the host's fire.
 const fireCache = new Map();
@@ -94,7 +123,7 @@ export function fireCells(boxes, x, z, y = 0) {
 export const inFire = (cells, x, z) => cells.some(([cx, cz]) => Math.abs(cx - x) < 2.2 && Math.abs(cz - z) < 2.2);
 // One host tick: move, bounce, set off, burn, clean up. Returns true when anything changed.
 export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } = {}) {
-  const C = game.combat; if (!C?.nades?.length) return false; let changed = false;
+  const C = game.combat; if (C) C.clock = now; if (!C?.nades?.length) return false; let changed = false;
   for (const g of C.nades) {
     const N = NADES[g.kind], age = now - g.at;
     if (g.phase === 'air') {
@@ -102,8 +131,14 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
       if (!goesOff(g, hitFloor, age)) continue;
       g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', molotov: 'fire' }[g.kind]; g.firedAt = now; g.vx = g.vy = g.vz = 0;
       if (g.kind === 'molotov' || g.kind === 'smoke') g.y = groundUnder(boxes, g.x, g.z, g.y);
+      if (g.kind === 'molotov' && C.nades.some(s => s.phase === 'smoke' && covers(s, g))) putOut(g, now);   // into smoke: it fizzles
+      if (g.kind === 'smoke') for (const f of C.nades) if (f.phase === 'fire' && covers(g, f)) putOut(f, now);   // smoke over fire: out
+      if (g.kind === 'he') for (const s of C.nades) if (s.phase === 'smoke' && Math.hypot(s.x - g.x, s.z - g.z) < smokeShape(s, now).r + SMOKE.holeR * .6) { s.holes = [...(s.holes || []), { x: +g.x.toFixed(2), y: +g.y.toFixed(2), z: +g.z.toFixed(2), at: now }].slice(-3); }   // a blast opens the smoke for a moment
       if (g.kind === 'he') for (const t of people(game, players)) { const d = Math.hypot(t.x - g.x, t.z - g.z, t.y + 5 - g.y); if (d > N.radius || !(segmentClear(boxes, g.x, g.y + .5, g.z, t.x, t.y + 5, t.z) || segmentClear(boxes, g.x, g.y + .5, g.z, t.x, t.y + 9, t.z))) continue;
         hurt(game, g.by, t.name, { id: 'he', name: N.name }, Math.round(N.dmg * Math.pow(1 - d / N.radius, 1.3)), 'chest', now); }
+      // Flash statistics: enemies it blinded (people: from where they look; bots: as the bots themselves react).
+      if (g.kind === 'flash' && recording(game)) { const tm = game.combat.d?.teams || {}, mine = tm[key(g.by)]; for (const p of players) { if (!p.pose || isDown(game, p.name, now) || !mine || tm[key(p.name)] === mine) continue; const yaw = +p.pose.yaw || 0, pit = +p.pose.shot?.pitch || 0, a = flashAmount(boxes, g.x, g.y, g.z, p.pose.x, p.pose.y ?? EYE, p.pose.z, -Math.sin(yaw) * Math.cos(pit), Math.sin(pit), -Math.cos(yaw) * Math.cos(pit), game); if (a > .4) { const st = statOf(game, g.by); st.flashed++; st.blindMs += Math.round(600 + 3400 * a); } }
+        for (const b of game.arena?.bots || []) if (!isDown(game, b.name, now) && mine && tm[key(b.name)] !== mine && Math.hypot(b.x - g.x, b.z - g.z) < N.radius && segmentClear(boxes, g.x, Math.max(1, g.y), g.z, b.x, 9.7, b.z) && !smoked(game, g.x, g.z, b.x, b.z)) { const st = statOf(game, g.by); st.flashed++; st.blindMs += 2500; } }
       if (g.kind === 'flash') for (const t of people(game, players)) if (t.bot && Math.hypot(t.x - g.x, t.z - g.z) < N.radius && segmentClear(boxes, g.x, Math.max(1, g.y), g.z, t.x, 9.7, t.z) && !smoked(game, g.x, g.z, t.x, t.z)) t.bot.blindUntil = now + 2500;
     } else if (g.phase === 'fire') {
       // Burning: damage in steps of a quarter second to everyone standing in the flames (only where it burns).
@@ -111,7 +146,7 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
     }
   }
   const n = C.nades.length;
-  C.nades = C.nades.filter(g => g.phase === 'air' || now - g.firedAt < ({ boom: 1200, pop: 1200, smoke: NADES.smoke.lasts, fire: NADES.molotov.lasts }[g.phase] || 0));
+  C.nades = C.nades.filter(g => g.phase === 'air' || now - g.firedAt < ({ boom: 1200, pop: 1200, smoke: NADES.smoke.lasts, fire: NADES.molotov.lasts, out: 900 }[g.phase] || 0));
   return changed || C.nades.length !== n;
 }
 function groundUnder(boxes, x, z, y) { let g = 0; for (const b of boxes) if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ && b.y1 <= y + 1 && b.y1 > g) g = b.y1; return g; }
@@ -119,7 +154,7 @@ function groundUnder(boxes, x, z, y) { let g = 0; for (const b of boxes) if (x >
 // at it; nothing through walls (3D, from the eye) or smoke. dirX/Y/Z: where the viewer looks.
 export function flashAmount(boxes, fx, fy, fz, x, y, z, dirX, dirY, dirZ, game = null) {
   const dx = fx - x, dy = fy - y, dz = fz - z, d = Math.hypot(dx, dy, dz); if (d > NADES.flash.radius) return 0;
-  if (!segmentClear(boxes, x, y, z, fx, Math.max(.6, fy), fz) || (game && smoked(game, x, z, fx, fz))) return 0;
+  if (!segmentClear(boxes, x, y, z, fx, Math.max(.6, fy), fz) || (game && smokeBlocks(game, x, y, z, fx, Math.max(.6, fy), fz))) return 0;
   const facing = (dx * dirX + dy * dirY + dz * dirZ) / (d || 1), look = facing > .75 ? 1 : facing > .3 ? .8 : facing > -.2 ? .45 : .12;
   return Math.max(0, Math.min(1, look * (1 - Math.pow(d / NADES.flash.radius, 1.4)) * (d < 25 ? 1.15 : 1)));
 }

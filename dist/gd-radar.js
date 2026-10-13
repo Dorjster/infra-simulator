@@ -7,29 +7,24 @@ import { ARENA } from './facility-layout.js';
 import { clearView } from './arena-nades.js';
 import { weaponById } from './weapons-data.js';
 import { isQuiet } from './sound-bank.js';
+import { radarImage, locationOf } from './gd-radar-art.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const PREF = 'gd-radar-mode', SPAN = 170;   // game units shown across the radar (rotating mode)
-export function createRadar({ world, lan, name, yaw, where, active }) {
-  const css = document.createElement('style'); css.textContent = `#gd-radar{position:fixed;left:14px;top:14px;z-index:36;width:var(--rs);height:var(--rs);border-radius:10px;overflow:hidden;background:#0d1419d9;border:1px solid #ffffff33;box-shadow:0 2px 10px #0008;pointer-events:none;--rs:min(210px,26vh)}#gd-radar[hidden]{display:none}#gd-radar canvas{width:100%;height:100%;display:block}#gd-radar small{position:absolute;right:6px;bottom:3px;font:700 9px system-ui;color:#ffffff88;letter-spacing:.08em}`;
+export function createRadar({ world, lan, name, yaw, where, active, speed = () => 0, pings = () => [] }) {
+  const css = document.createElement('style'); css.textContent = `#gd-radar{position:fixed;left:14px;top:14px;z-index:36;width:var(--rs);height:var(--rs);border-radius:10px;overflow:hidden;background:#0d1419d9;border:1px solid #ffffff33;box-shadow:0 2px 10px #0008;pointer-events:none;--rs:min(210px,26vh)}#gd-radar[hidden]{display:none}#gd-radar.big{--rs:min(64vh,640px);z-index:47;border-color:#ffffff55}#gd-radar canvas{width:100%;height:100%;display:block}#gd-radar small{position:absolute;left:0;right:0;bottom:4px;text-align:center;font:800 11px system-ui;color:#fff;letter-spacing:.06em;text-shadow:0 1px 2px #000,0 0 4px #000}`;
   (document.head || document.body).append?.(css);
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-radar" hidden><canvas width="420" height="420"></canvas><small></small></div>');
   const el = document.getElementById('gd-radar'), cv = el.querySelector('canvas'), x = cv.getContext('2d'), label = el.querySelector('small');
   let mode = (() => { try { return localStorage.getItem(PREF) === 'fixed' ? 'fixed' : 'rotate'; } catch { return 'rotate'; } })();
-  let img = null, imgMap = null, scale = 1, at = 0; const seen = new Map(), lastShots = new Map(), why = new Map();
+  let img = null, imgMap = null, scale = 1, at = 0, big = false, span = SPAN; const seen = new Map(), lastShots = new Map(), why = new Map();
   // The map, drawn once: floor, walls (dark), low cover (mid), raised floors / roofs (light outline), sites.
-  function drawMap(id) {
-    const m = ARENA_MAPS[id], [w, d] = m.size, px = 4, c = document.createElement('canvas'); c.width = Math.ceil(w * px / 2); c.height = Math.ceil(d * px / 2); const g = c.getContext('2d'), s = px / 2; scale = s;
-    g.fillStyle = '#3a4248'; g.fillRect(0, 0, c.width, c.height);
-    const boxes = mapBoxes(m, 0, 0).sort((a, b) => a.y1 - b.y1), X = v => (v + w / 2) * s, Z = v => (v + d / 2) * s;
-    for (const b of boxes) { const h = b.y1 - b.y0, roof = b.y0 >= 10, wall = h >= 12 && !roof;
-      g.fillStyle = roof ? 'rgba(160,170,178,.18)' : wall ? '#141a1f' : h >= 5 ? '#59636b' : '#4a5258'; g.fillRect(X(b.minX), Z(b.minZ), (b.maxX - b.minX) * s, (b.maxZ - b.minZ) * s);
-      if (roof) { g.strokeStyle = 'rgba(200,210,218,.35)'; g.lineWidth = 1; g.strokeRect(X(b.minX), Z(b.minZ), (b.maxX - b.minX) * s, (b.maxZ - b.minZ) * s); } }
-    for (const [L, [sx, sz, r]] of Object.entries(m.sites || {})) { g.fillStyle = 'rgba(255,214,90,.18)'; g.strokeStyle = 'rgba(255,214,90,.75)'; g.lineWidth = 2; g.beginPath(); g.arc(X(sx), Z(sz), r * s, 0, Math.PI * 2); g.fill(); g.stroke(); g.fillStyle = '#ffd65a'; g.font = `900 ${Math.round(r * s * .9)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(L, X(sx), Z(sz)); }
-    img = c; imgMap = id;
-  }
+  // The map picture (CS-overview style, gd-radar-art.js), drawn once per map.
+  function drawMap(id) { const r = radarImage(ARENA_MAPS[id], id, 2); img = r.canvas; scale = r.scale; imgMap = id; }
   const isFoe = (G, me, other) => { const t = G.combat?.d?.teams; return !t || !t[me] || t[other] !== t[me]; };
   return {
+    // Hold Tab (with the scoreboard): the whole map, north up, at a large size.
+    expand(on) { on = !!on; if (on === big) return; big = on; el.classList.toggle('big', on); at = 0; },
     toggle() { mode = mode === 'rotate' ? 'fixed' : 'rotate'; try { localStorage.setItem(PREF, mode); } catch {} return mode; },
     get mode() { return mode; },
     // Enemies shown right now (tests): their keys.
@@ -48,11 +43,12 @@ export function createRadar({ world, lan, name, yaw, where, active }) {
         const eye = eyes.find(e => Math.hypot(e.x - o.x, e.z - o.z) < 220 && clearView(G, boxes, e.x, e.z, o.x, o.z)); if (eye) { seen.set(o.k, now); why.set(o.k, 'seen from ' + Math.round(eye.x) + ',' + Math.round(eye.z)); }
         const ls = lastShots.get(o.k); if (ls !== undefined && o.shot !== ls && !isQuiet(o.weapon) && Math.hypot(p.x - o.x, p.z - o.z) < 90) { seen.set(o.k, now); why.set(o.k, 'heard'); } lastShots.set(o.k, o.shot); }
       // Draw.
-      const W = cv.width, R = W / 2, view = mode === 'rotate' ? SPAN : Math.max(w, dd), k = W / view / scale, ang = mode === 'rotate' ? (yaw() || 0) : 0;
-      x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, W, W); x.fillStyle = '#20282e'; x.fillRect(0, 0, W, W);
+      const run = Math.min(1, (speed() || 0) / 40), want = SPAN * Math.max(1, Math.max(w, dd) / 420) * (1 + run * .3); span += (want - span) * .2;   /* dynamic zoom: wider on bigger maps and while running */
+      const full = big || mode !== 'rotate', W = cv.width, R = W / 2, view = full ? Math.max(w, dd) * 1.02 : span, k = W / view / scale, ang = full ? 0 : (yaw() || 0);
+      x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, W, W); x.fillStyle = '#0b0f12'; x.fillRect(0, 0, W, W);
       const toMap = (wx, wz) => [(wx - cx + w / 2) * scale, (wz - cz + dd / 2) * scale];
       x.save(); x.translate(R, R); x.rotate(ang); x.scale(k, k);
-      const [mx, mz] = mode === 'rotate' ? toMap(p.x, p.z) : [w / 2 * scale, dd / 2 * scale]; x.translate(-mx, -mz); x.drawImage(img, 0, 0);
+      const [mx, mz] = !full ? toMap(p.x, p.z) : [w / 2 * scale, dd / 2 * scale]; x.translate(-mx, -mz); x.drawImage(img, 0, 0);
       const dot = (wx, wz, color, r = 5, ring = null) => { const [ax, az] = toMap(wx, wz); x.save(); x.translate(ax, az); x.scale(1 / k, 1 / k); x.beginPath(); x.arc(0, 0, r, 0, Math.PI * 2); x.fillStyle = color; x.fill(); if (ring) { x.lineWidth = 2; x.strokeStyle = ring; x.stroke(); } x.restore(); };
       const arrow = (wx, wz, yw, color) => { const [ax, az] = toMap(wx, wz); x.save(); x.translate(ax, az); x.rotate(-yw); x.scale(1 / k, 1 / k); x.beginPath(); x.moveTo(0, -11); x.lineTo(7, 7); x.lineTo(0, 3); x.lineTo(-7, 7); x.closePath(); x.fillStyle = color; x.fill(); x.lineWidth = 1.5; x.strokeStyle = '#000'; x.stroke(); x.restore(); };
       // The bomb: planted (blinking), on the ground (Terrorists see it), carried by a team mate.
@@ -61,11 +57,13 @@ export function createRadar({ world, lan, name, yaw, where, active }) {
       for (const o of people) { const foe = isFoe(G, me, o.k), team = d?.teams?.[o.k];
         if (!foe) { if (o.dead) { const [ax, az] = toMap(o.x, o.z); x.save(); x.translate(ax, az); x.scale(1 / k, 1 / k); x.strokeStyle = '#ffffff88'; x.lineWidth = 2; x.beginPath(); x.moveTo(-4, -4); x.lineTo(4, 4); x.moveTo(4, -4); x.lineTo(-4, 4); x.stroke(); x.restore(); } else { dot(o.x, o.z, team === 'ct' ? '#5b9be8' : '#e8a53f', 5, d?.bomb?.carrier === o.k ? '#ff3030' : '#000'); } continue; }
         if (!o.dead && now - (seen.get(o.k) || -1e9) < 2000) dot(o.x, o.z, '#ff4040', 5, '#000'); }
+      // Radio pings from team mates (their own position), pulsing for 3 s.
+      for (const pg of pings()) { const [ax, az] = toMap(pg.x, pg.z), t = (performance.now() - pg.at) / 3000; x.save(); x.translate(ax, az); x.scale(1 / k, 1 / k); x.strokeStyle = `rgba(255,214,90,${1 - t})`; x.lineWidth = 2.5; for (const r of [6 + (t * 26) % 26, 6 + ((t * 26) + 13) % 26]) { x.beginPath(); x.arc(0, 0, r, 0, Math.PI * 2); x.stroke(); } x.restore(); }
       x.restore();
       // You: centre (rotating: pointing up) or on the map (fixed).
-      if (mode === 'rotate') { x.save(); x.translate(R, R); x.beginPath(); x.moveTo(0, -13); x.lineTo(8, 9); x.lineTo(0, 4); x.lineTo(-8, 9); x.closePath(); x.fillStyle = '#ffffff'; x.fill(); x.lineWidth = 1.5; x.strokeStyle = '#000'; x.stroke(); x.restore(); }
+      if (!full) { x.save(); x.translate(R, R); x.beginPath(); x.moveTo(0, -13); x.lineTo(8, 9); x.lineTo(0, 4); x.lineTo(-8, 9); x.closePath(); x.fillStyle = '#ffffff'; x.fill(); x.lineWidth = 1.5; x.strokeStyle = '#000'; x.stroke(); x.restore(); }
       else { x.save(); x.translate(R, R); x.scale(k, k); x.translate(-mx, -mz); arrow(p.x, p.z, yaw() || 0, '#ffffff'); x.restore(); }
-      const lt = mode === 'rotate' ? 'ROTATING · N' : 'FIXED · N'; if (label.textContent !== lt) label.textContent = lt;
+      const lt = (locationOf(m, p.x - cx, p.z - cz) || '').toUpperCase(); if (label.textContent !== lt) label.textContent = lt;   /* where you are, by callout (CS) */
     },
   };
 }

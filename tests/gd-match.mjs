@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { startArena, arenaApply, arenaTick, LOBBY_MS } from '../dist/arena-logic.js';
 import { DEFUSE, teamOf } from '../dist/arena-defuse.js';
-import { combatApply, isDown, applyHit } from '../dist/combat-logic.js';
+import { combatApply, isDown, applyHit, takeShots, hurt } from '../dist/combat-logic.js';
+import { buildReport } from '../dist/gd-report.js';
 import { ARENA_MAPS, mapBoxes, walkable } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
 import { weaponById } from '../dist/weapons-data.js';
@@ -15,7 +16,7 @@ const throws = (f, re, name) => { n++; assert.throws(f, re, name); };
 const spread = pts => { let m = Infinity; for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) m = Math.min(m, Math.hypot(pts[i].x - pts[j].x, pts[i].z - pts[j].z)); return m; };
 
 // ── Spawns: 10 people + 2 bots in Defuse, everyone on their own spot, all walkable ──
-{ let t = 1e10; const g = { levels: {} }; startArena(g, { map: 'dune', kind: 'defuse', bots: 2 }, t); const M = ARENA_MAPS.dune, boxes = mapBoxes(M, ARENA.cx, ARENA.cz), bounds = { minX: ARENA.cx - 150, maxX: ARENA.cx + 150, minZ: ARENA.cz - 150, maxZ: ARENA.cz + 150 };
+{ let t = 1e10; const g = { levels: {} }; startArena(g, { map: 'dune', kind: 'defuse', bots: 2 }, t); const M = ARENA_MAPS.dune, boxes = mapBoxes(M, ARENA.cx, ARENA.cz), bounds = { minX: ARENA.cx - M.size[0] / 2, maxX: ARENA.cx + M.size[0] / 2, minZ: ARENA.cz - M.size[1] / 2, maxZ: ARENA.cz + M.size[1] / 2 };
   const P = Array.from({ length: 10 }, (_, i) => ({ id: 'p' + i, name: 'P' + i, pose: { x: ARENA.cx, y: 9.7, z: ARENA.cz } }));
   for (let i = 0; i < 4; i++) arenaTick(g, P, .05, t += 50);
   // Apply the spawn orders like clients do, then finish the round so a new one places everyone.
@@ -92,4 +93,36 @@ const spread = pts => { let m = Infinity; for (let i = 0; i < pts.length; i++) f
 // ── The mode never falls back: Defuse on a Defuse map, an error for a mismatch ──
 { const g = { levels: {} }; throws(() => startArena(g, { map: 'yard', kind: 'defuse' }), /not a Defuse map/, 'Defuse on a deathmatch map is an error, not deathmatch');
   for (let i = 0; i < 5; i++) { const h = { levels: {} }; startArena(h, { map: 'yard', kind: 'dm', bots: 2 }); startArena(h, { map: ['dune', 'plaza', 'hamlet'][i % 3], kind: 'defuse', bots: 3 }); ok('after a deathmatch, Defuse starts as Defuse (' + h.arena.map + ')', h.arena.kind === 'defuse' && !!h.combat.d?.round); } }
+// ── Host timers and administration (host only; live changes wait for the next round; pause stops every clock) ──
+{ const g = { levels: {} }; let t = 3e11; const P = [{ name: 'Host', pose: { x: ARENA.cx, y: 9.7, z: ARENA.cz } }, { name: 'Gus', pose: { x: ARENA.cx + 5, y: 9.7, z: ARENA.cz } }]; const H = { isHost: true }, G = { isHost: false };
+  startArena(g, { map: 'dune', kind: 'defuse', bots: 0, lobbyMs: 30000, freezeS: 5 }, t); for (let i = 0; i < 3; i++) arenaTick(g, P, .05, t += 50);
+  ok('host timers: freeze 5 s and warmup 30 s confirmed in the state', g.arena.freezeMs === 5000 && g.arena.warmupS === 30, JSON.stringify([g.arena.freezeMs, g.arena.warmupS]));
+  assert.throws(() => arenaApply(g, { type: 'pause', on: true }, 'Gus', P, t, G), /Only the host/); assert.throws(() => arenaApply(g, { type: 'settings', freeze: 1 }, 'Gus', P, t, G), /Only the host/); n += 2;
+  arenaApply(g, { type: 'settings', warmup: 0 }, 'Host', P, t, H); ok('warmup set to 0 in the lobby: the match starts on the next tick', g.arena.lobby.until <= t); for (let i = 0; i < 3; i++) arenaTick(g, P, .05, t += 50);
+  const r1 = g.combat.d.round; ok('round 1 freeze is the host’s 5 s', r1.phase === 'freeze' && Math.abs(r1.freezeUntil - r1.at - 5000) < 5, JSON.stringify({ phase: r1.phase, f: r1.freezeUntil - r1.at }));
+  arenaApply(g, { type: 'settings', freeze: 0 }, 'Host', P, t, H); ok('a freeze change during the match waits for the next round (this countdown untouched)', g.combat.d.round.freezeUntil === r1.freezeUntil && g.arena.freezeNext === 0);
+  arenaApply(g, { type: 'pause', on: true }, 'Host', P, t, H); const before = g.combat.d.round.freezeUntil; for (let i = 0; i < 40; i++) arenaTick(g, P, .05, t += 250);
+  ok('paused: the round clock stands still (still in freeze after 10 s)', g.combat.d.round.phase === 'freeze');
+  arenaApply(g, { type: 'pause', on: false }, 'Host', P, t, H); ok('resumed: the countdown continues where it stopped', g.combat.d.round.freezeUntil === before + 10000, g.combat.d.round.freezeUntil - before);
+  const n0 = g.combat.d.n; arenaApply(g, { type: 'restart-round' }, 'Host', P, t, H); ok('restart round: same round number, new freeze (0 s from the next round on: live at once)', g.combat.d.n === n0 && g.combat.d.round.phase === 'live');
+  arenaApply(g, { type: 'move-spec', name: 'Gus' }, 'Host', P, t, H); ok('host moves a player to spectator', g.combat.d.teams.gus === 'spec');
+  arenaApply(g, { type: 'next-map', map: 'temple' }, 'Host', P, t, H); g.combat.d.matchOver = { at: t - 20000, winner: 't' }; arenaTick(g, P, .05, t += 50);
+  ok('the next match starts on the scheduled map, sides kept', g.arena.map === 'temple' && g.combat.d.teams.host !== undefined, g.arena.map); }
+
+// ── Match statistics (post-match report) from the host's own events ──
+{ const g = { levels: {} }; let t = 4e11; const P = [{ name: 'Ann', pose: { x: ARENA.cx, y: 9.7, z: ARENA.cz } }, { name: 'Bo', pose: { x: ARENA.cx + 5, y: 9.7, z: ARENA.cz } }, { name: 'Cy', pose: { x: ARENA.cx + 9, y: 9.7, z: ARENA.cz } }];
+  startArena(g, { map: 'dune', kind: 'defuse', bots: 0, lobbyMs: 5000 }, t); for (let i = 0; i < 3; i++) arenaTick(g, P, .05, t += 50); g.combat.d.teams = { ann: 't', bo: 'ct', cy: 't' };
+  g.arena.loadout.ann = { primary: 'ak', secondary: 'pistol', nades: [] }; takeShots(g, 'Ann', 100, 'ak'); takeShots(g, 'Ann', 103, 'ak');
+  ok('warmup / lobby: nothing recorded', !(g.combat.stats?.ann?.shots));
+  g.arena.lobby.until = t; for (let i = 0; i < 3; i++) arenaTick(g, P, .05, t += 50); const d = g.combat.d; d.teams = { ann: 't', bo: 'ct', cy: 't' }; d.round.phase = 'live'; g.combat.stats = {};
+  g.combat.ammo = { ann: { ak: [30, 90] } }; takeShots(g, 'Ann', 110, 'ak'); takeShots(g, 'Ann', 115, 'ak');
+  applyHit(g, 'Ann', 'Bo', weaponById('ak'), 'chest', 10, 1, t); hurt(g, 'Ann', 'Bo', weaponById('ak'), 500, 'head', t, true);   // 36ish, then a head shot that kills (capped at the HP left)
+  hurt(g, 'Cy', 'Ann', weaponById('ak'), 20, 'chest', t);   // team damage: not in the report
+  const st = g.combat.stats.ann; ok('shots counted once each (12 fired after the match went live)', st.shots === 12, st.shots); ok('hits, head-shot kill', st.hits === 2 && st.hsKills === 1 && st.hsHits === 1, JSON.stringify(st));
+  ok('damage capped at the HP the victim had (100 in all)', st.dmg === 100, st.dmg); ok('team damage not counted', !g.combat.stats.cy?.dmg);
+  d.round.phase = 'over'; d.history = [{ n: 1, winner: 't', reason: 'elimination', at: t, score: { t: 1, ct: 0 } }, { n: 2, winner: 't', reason: 'bomb', at: t, score: { t: 2, ct: 0 } }]; g.combat.stats.ann.plants = 1; d.score = { t: 13, ct: 0 }; d.matchOver = { at: t, winner: 't' };
+  const R = buildReport(g), A = R.players.find(p => p.k === 'ann');
+  ok('report: result, rounds, ADR (dmg / rounds), accuracy, HS%, plants', R.winner === 't' && R.rounds.length === 2 && A.adr === 50 && A.acc === 17 && A.hs === 100 && A.plants === 1 && A.kills === 1, JSON.stringify(A));
+  ok('report: MVP is a real player', R.players.some(p => p.k === R.mvp)); }
+
 console.log('PASS: Global Defensive match flow · ' + n + ' checks (unique spawns for 12, one-attempt plant / defuse with stale positions, one outcome, lobby window + start rules, team changes + balance + spectator, host settings, map changes, no Defuse → Deathmatch fallback)');

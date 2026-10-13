@@ -62,6 +62,7 @@ const d2 = s2 && Math.hypot(s2.x - lane.x, s2.z - lane.z), d3 = s3 && Math.hypot
 check('full ≫ medium ≫ short (left / both / right)', (d1 > d2 * 1.4 || d1 > lane.L - 30) && d2 > d3 * 1.5 && d3 > 8, [d1, d2, d3].map(v => v?.toFixed(0)).join(' / '));
 check('a full throw goes far (most of a lane)', d1 > Math.min(150, lane.L - 10), d1?.toFixed(0) + ' of ' + lane.L);
 // Molotov: the fire covers its area (many burning cells).
+await p.waitForFunction(() => !(__infra.lab.world.operations.game.combat.nades || []).some(n => n.phase === 'smoke'), null, { timeout: 30000 }).catch(() => {});   // a molotov into smoke fizzles (CS2): wait for the lane to clear
 await buy('molotov'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150);   // a medium throw well away from us (standing in it would burn us)
 await p.evaluate(() => { __infra.lab.pistol.button(0, true); __infra.lab.pistol.button(2, true); }); await p.waitForTimeout(400); await p.evaluate(() => { __infra.lab.pistol.button(0, false); __infra.lab.pistol.button(2, false); }); await p.waitForTimeout(2400);
 const cells = await p.evaluate(() => { let c = 0; __infra.scene.getObjectByName('nades').traverse(o => { if (o.isInstancedMesh && o.material.blending === 2 && o.count > c) c = o.count; }); return c; });

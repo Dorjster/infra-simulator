@@ -4,26 +4,45 @@
 let ctx = null;
 export function audioCtx() { ctx ??= new AudioContext(); if (ctx.state === 'suspended') ctx.resume(); return ctx; }
 // Where to connect a sound: the speakers directly (your own sounds) or a panner at `at` ({x, y, z}).
-// The mix: everything goes through one bus — a gentle compressor (gunfire hits hard without clipping, quiet things
-// stay audible) — plus a shared outdoor reverb (a generated impulse: early slap off the walls, then a ~1.3 s tail).
-let bus = null, verb = null;
-export function master(c) {
-  if (bus) return bus;
-  const comp = c.createDynamicsCompressor(); comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = .002; comp.release.value = .18;
-  const make = c.createGain(); make.gain.value = 1.25; bus = c.createGain(); bus.connect(comp).connect(make).connect(c.destination); return bus;
+// The mix. Buses: effects (the game world: shots, steps, grenades) → master; UI (hit markers, menus) → master; music
+// → master; the master runs through a gentle compressor (gunfire hits hard without clipping) to the speakers. Each
+// has its own volume (Settings → Audio, saved on this computer); team voice follows master × voice (voice.js).
+const VOLS_KEY = 'infra-audio', VOL_DEFAULT = { master: 1, effects: 1, voice: 1, music: .7, ui: .9 };
+export function getVolumes() { try { return { ...VOL_DEFAULT, ...JSON.parse(localStorage.getItem(VOLS_KEY) || '{}') }; } catch { return { ...VOL_DEFAULT }; } }
+let vols = getVolumes(), bus = null, verb = null, masterG = null, busUI = null, busMusic = null;
+export function setVolumes(v) { vols = { ...vols, ...v }; for (const k of Object.keys(vols)) vols[k] = Math.max(0, Math.min(1, +vols[k] || 0)); try { localStorage.setItem(VOLS_KEY, JSON.stringify(vols)); } catch {} if (masterG) { masterG.gain.value = vols.master; bus.gain.value = vols.effects; busUI.gain.value = vols.ui; busMusic.gain.value = vols.music; } globalThis.dispatchEvent?.(new CustomEvent('infra-volume', { detail: vols })); return vols; }
+function buses(c) {
+  if (bus) return; const comp = c.createDynamicsCompressor(); comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = .002; comp.release.value = .18;
+  const make = c.createGain(); make.gain.value = 1.25; masterG = c.createGain(); masterG.gain.value = vols.master; comp.connect(make).connect(masterG).connect(c.destination);
+  bus = c.createGain(); bus.gain.value = vols.effects; bus.connect(comp); busUI = c.createGain(); busUI.gain.value = vols.ui; busUI.connect(comp); busMusic = c.createGain(); busMusic.gain.value = vols.music; busMusic.connect(comp);
 }
+export function master(c) { buses(c); return bus; }
+export function uiBus(c) { buses(c); return busUI; }
+export function musicBus(c) { buses(c); return busMusic; }
+// A shared outdoor reverb, used sparingly: a short early slap off the walls and a ~1.2 s tail.
 export function reverb(c) {
   if (verb) return verb;
-  const len = Math.ceil(c.sampleRate * 1.4), ir = c.createBuffer(2, len, c.sampleRate);
-  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) { const t = i / c.sampleRate; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2) * (t < .012 ? 0 : 1) * .55; }
-    for (const [at, g] of [[.023, .8], [.041, .55], [.067, .45], [.11, .3]]) { const i = Math.floor((at + ch * .004) * c.sampleRate); if (i < len) d[i] += g; } }
-  const conv = c.createConvolver(); conv.buffer = ir; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 180; const g = c.createGain(); g.gain.value = .5;
+  const len = Math.ceil(c.sampleRate * 1.2), ir = c.createBuffer(2, len, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) { const t = i / c.sampleRate; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.6) * (t < .012 ? 0 : 1) * .45; }
+    for (const [at, g] of [[.023, .7], [.041, .45], [.067, .35]]) { const i = Math.floor((at + ch * .004) * c.sampleRate); if (i < len) d[i] += g; } }
+  const conv = c.createConvolver(); conv.buffer = ir; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 220; const g = c.createGain(); g.gain.value = .32;
   verb = hp; hp.connect(conv).connect(g).connect(master(c)); return verb;
 }
-export function outAt(c, at) {
+// How far each kind of sound carries (game units; a player is 11 tall). Footsteps fade to nothing by ~175 units
+// (about CS's footstep range), handling noises (reloads, bolts, pins, knife swings) by ~70, gunfire carries across
+// the map but quieter and duller with distance (sound-bank), explosions furthest.
+export const RANGE = { effect: ['inverse', 10, 1.3, 700], step: ['linear', 6, 1, 175], handling: ['linear', 4, 1, 70], gun: ['inverse', 14, 1.1, 900], explosion: ['inverse', 20, .8, 1200], beep: ['inverse', 10, 1.2, 320] };
+// Walls between you and a sound muffle it (quieter, fewer highs): the game sets how blocked a point is (0 … 1).
+let occlusion = null; export const setOcclusion = fn => { occlusion = fn; };
+// Where to connect a sound: the effects bus directly (your own sounds: never distance-muffled) or a panner at `at`.
+export function outAt(c, at, kind = 'effect') {
   if (!at) return master(c);
-  const p = c.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 10; p.rolloffFactor = 1.3; p.maxDistance = 700;
-  p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z; p.connect(master(c)); return p;
+  const [model, ref, roll, max] = RANGE[kind] || RANGE.effect, p = c.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = model; p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = max;
+  p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z;
+  let occ = 0; try { occ = occlusion ? Math.max(0, Math.min(1, +occlusion(at) || 0)) : 0; } catch {}
+  if (occ > 0) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 18000 - occ * 17200; const g = c.createGain(); g.gain.value = 1 - occ * .5; p.connect(f).connect(g).connect(master(c)); }
+  else p.connect(master(c));
+  return p;
 }
 const fwd = { x: 0, y: 0, z: -1 };
 // The listener's position (for distance-dependent sound: muffling, echo).
@@ -44,6 +63,6 @@ export function footstep(at, volume = .5) {
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 4);
     const src = c.createBufferSource(); src.buffer = buf; src.playbackRate.value = .85 + Math.random() * .3;
     const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 520 + Math.random() * 260; bp.Q.value = 1.1;
-    const g = c.createGain(); g.gain.value = volume; src.connect(bp).connect(g).connect(outAt(c, at)); src.start(t);
+    const g = c.createGain(); g.gain.value = volume; src.connect(bp).connect(g).connect(outAt(c, at, 'step')); src.start(t);
   } catch {}
 }

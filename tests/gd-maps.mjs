@@ -4,7 +4,7 @@
 // awnings) sitting on a real wall face — nothing floating, no invisible walls (all collision is the boxes the scene
 // draws, by construction).
 import assert from 'node:assert/strict';
-import { ARENA_MAPS, mapBoxes, walkable, spawnSlots } from '../dist/arena-maps.js';
+import { ARENA_MAPS, mapBoxes, walkable, spawnSlots, lineOfSight } from '../dist/arena-maps.js';
 let n = 0; const ok = (name, c, d = '') => { n++; assert(c, name + (d ? ' · ' + d : '')); };
 for (const [id, M] of Object.entries(ARENA_MAPS)) {
   const [sw, sd] = M.size, boxes = mapBoxes(M, 0, 0), bounds = { minX: -sw / 2, maxX: sw / 2, minZ: -sd / 2, maxZ: sd / 2 }, W = (x, z) => walkable(boxes, bounds, x, z, 1.3);
@@ -16,6 +16,15 @@ for (const [id, M] of Object.entries(ARENA_MAPS)) {
   const C = 2, nx = Math.ceil(sw / C), nz = Math.ceil(sd / C), open = new Uint8Array(nx * nz); for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) open[i * nz + j] = W(-sw / 2 + (i + .5) * C, -sd / 2 + (j + .5) * C) ? 1 : 0;
   const cell = (x, z) => [Math.floor((x + sw / 2) / C), Math.floor((z + sd / 2) / C)], reach = (a, b) => { const [ai, aj] = cell(...a), [bi, bj] = cell(...b), seen = new Uint8Array(nx * nz), q = [[ai, aj]]; seen[ai * nz + aj] = 1;
     while (q.length) { const [i, j] = q.shift(); if (Math.abs(i - bi) <= 1 && Math.abs(j - bj) <= 1) return true; for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const a2 = i + di, b2 = j + dj; if (a2 < 0 || b2 < 0 || a2 >= nx || b2 >= nz) continue; const k = a2 * nz + b2; if (seen[k] || !open[k]) continue; seen[k] = 1; q.push([a2, b2]); } } return false; };
+  // Fair starts: no opposing spawn spot sees another, nor does any spot either team reaches in its first 1.5 s of
+  // running (knife speed) see the other team's early area — no instant spawn kills. And at least 280 units apart.
+  if (M.kind === 'defuse') { const T = spawnSlots(M, 't'), CT = spawnSlots(M, 'ct'); let los = 0, sep = Infinity; for (const a of T) for (const b of CT) { sep = Math.min(sep, Math.hypot(a[0] - b[0], a[1] - b[1])); if (lineOfSight(boxes, a[0], a[1], b[0], b[1], 9.7)) los++; }
+    ok(id + ': no line of sight between the two spawns', !los, los + ' pairs'); ok(id + ': spawns at least 280 units apart', sep >= 280, sep.toFixed(0));
+    const Rr = 250 * 2.54 / 16.5 * 1.5, dist = from => { const D = new Float32Array(nx * nz).fill(Infinity), q = []; for (const [x, z] of from) { const [i, j] = cell(x, z), k = i * nz + j; if (open[k] && D[k] === Infinity) { D[k] = 0; q.push(k); } }
+      for (let h = 0; h < q.length; h++) { const u = q[h], i = Math.floor(u / nz), j = u % nz; for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const a2 = i + di, b2 = j + dj; if (a2 < 0 || b2 < 0 || a2 >= nx || b2 >= nz) continue; const v = a2 * nz + b2; if (!open[v] || D[v] !== Infinity) continue; D[v] = D[u] + C; q.push(v); } } return D; };
+    const Dt = dist(T), Dc = dist(CT), early = d => { const out = []; for (let k = 0; k < nx * nz; k++) if (d[k] <= Rr) out.push([-sw / 2 + (Math.floor(k / nz) + .5) * C, -sd / 2 + (k % nz + .5) * C]); return out; }, Et = early(Dt), Ec = early(Dc);
+    let seen = null; for (const a of Et) { for (const b of Ec) if (lineOfSight(boxes, a[0], a[1], b[0], b[1], 9.7)) { seen = [a, b]; break; } if (seen) break; }
+    ok(id + ': no line of sight between the areas each team reaches in its first 1.5 s', !seen, JSON.stringify(seen)); }
   if (M.kind === 'defuse') {
     for (const [s, [x, z]] of Object.entries(M.sites)) { ok(id + ': site ' + s + ' walkable', W(x, z)); for (const side of ['t', 'ct']) ok(id + ': site ' + s + ' reachable from the ' + side.toUpperCase() + ' spawn', reach(M[side][0], [x, z])); }
     for (const side of ['t', 'ct']) for (const [r, pts] of Object.entries(M.routes[side])) { const start = M[side][0]; let prev = start; const legs = [];

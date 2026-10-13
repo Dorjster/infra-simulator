@@ -3,7 +3,7 @@
 // rebound to the LAN only while the player hosts. Saves live in the per-user app-data folder.
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readFile, writeFile, rename, copyFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, rename, copyFile, stat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
@@ -34,7 +34,10 @@ if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no du
 let win = null, room = null, hosting = false, inMatch = false, quitting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');
 const origin = () => 'http://127.0.0.1:' + room.port;
-// Private LAN hosts a player may join (http only, RFC 1918 + link-local + loopback).
+// Private LAN hosts a player may join (http or its https twin; RFC 1918 + link-local + loopback).
+// The LAN room's HTTPS twin uses a self-signed certificate (lan/selfsigned.mjs): trusted only on private LAN
+// addresses and only with our certificate name — anything else is refused as usual.
+app.on('certificate-error', (event, _wc, url, _error, cert, cb) => { let ok = false; try { const h = new URL(url).hostname; ok = lanHost(h) && /Infra Simulator LAN/.test(cert.subjectName || ''); } catch {} if (ok) { event.preventDefault(); cb(true); } else cb(false); });
 const lanHost = h => /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|localhost$)/.test(h);
 
 // The room always tries port 8080, so the address friends type is predictable (192.168.x.x:8080) and the
@@ -63,9 +66,13 @@ function createWindow() {
     dialog.showMessageBox(win, { type: 'warning', message: 'Could not reach the host', detail: `${new URL(url).host} did not answer (${desc}).\n\nCheck that:\n• both computers are on the same network (Wi-Fi / office LAN)\n• you typed the address and port shown in the host's invite bar\n• the host has started hosting and is still in the game\n• the host's firewall allows Infra Simulator on private networks` });
   });
   // Navigation stays on the local room or a LAN host; anything else opens in the system browser.
-  win.webContents.on('will-navigate', (e, url) => { const u = new URL(url); if (u.protocol === 'http:' && lanHost(u.hostname)) return; e.preventDefault(); if (u.protocol === 'https:') shell.openExternal(url); });
+  win.webContents.on('will-navigate', (e, url) => { const u = new URL(url); if ((u.protocol === 'http:' || u.protocol === 'https:') && lanHost(u.hostname)) return; e.preventDefault(); if (u.protocol === 'https:') shell.openExternal(url); });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
-  win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => cb(['pointerLock', 'fullscreen', 'clipboard-sanitized-write'].includes(permission)));
+  // Permissions, narrowly: pointer lock, fullscreen, clipboard writes — and the microphone (team voice) only: audio,
+  // never the camera, and only for the game's own pages (this computer or a LAN host).
+  const gamePage = u => { try { const x = new URL(u); return (x.protocol === 'http:' || x.protocol === 'https:') && lanHost(x.hostname); } catch { return false; } };
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, cb, details = {}) => { if (permission === 'media') { const t = details.mediaTypes || []; return cb(t.length > 0 && t.every(m => m === 'audio') && gamePage(details.requestingUrl || '')); } cb(['pointerLock', 'fullscreen', 'clipboard-sanitized-write'].includes(permission)); });
+  win.webContents.session.setPermissionCheckHandler((_wc, permission, origin, details = {}) => permission === 'media' ? details.mediaType !== 'video' && gamePage(origin || details.requestingUrl || '') : ['pointerLock', 'fullscreen', 'clipboard-sanitized-write'].includes(permission));
   // Browser downloads (Export campaign save) go through a save dialog.
   // Right-click in text fields and selected text: the standard editing menu.
   win.webContents.on('context-menu', (_e, p) => {
@@ -109,7 +116,7 @@ function listen() {
 }
 function startBeacon() {
   if (beacon) return; const sock = dgram.createSocket('udp4'); sock.bind(() => { try { sock.setBroadcast(true); } catch {} });
-  const send = () => { if (!room || !hosting) return; const msg = Buffer.from(JSON.stringify({ app: 'infra-simulator', version: app.getVersion(), name: beaconName || os.hostname(), port: room.port, locked: true, players: room.players, mode: (g => g?.payday ? 'Payday' : g?.mode === 'campaign' ? 'Campaign' : g?.mode || '')(room.world?.operations?.game) })); for (const a of broadcastAddresses()) sock.send(msg, DISCOVERY_PORT, a, () => {}); };
+  const send = () => { if (!room || !hosting) return; const msg = Buffer.from(JSON.stringify({ app: 'infra-simulator', version: app.getVersion(), name: beaconName || os.hostname(), port: room.port, securePort: room.securePort, locked: true, players: room.players, mode: (g => g?.payday ? 'Payday' : g?.mode === 'campaign' ? 'Campaign' : g?.mode || '')(room.world?.operations?.game) })); for (const a of broadcastAddresses()) sock.send(msg, DISCOVERY_PORT, a, () => {}); };
   beacon = { sock, timer: setInterval(send, 1000) }; send();
 }
 function stopBeacon() { if (!beacon) return; clearInterval(beacon.timer); try { beacon.sock.close(); } catch {} beacon = null; }
@@ -134,10 +141,30 @@ ipcMain.handle('desktop:host', async (_e, opts = {}) => {
   // Opening to the LAN restarts the listener: connected pages reconnect (`rebound` tells the page to wait for that).
   let rebound = false; if (!hosting) { const port = room.port; try { await room.rebind('0.0.0.0', port); } catch { await room.rebind('0.0.0.0', 0); } hosting = true; rebound = true; }
   startBeacon();
-  return { port: room.port, roomCode: room.roomCode, addresses: room.addresses(), hosting, rebound };
+  return { port: room.port, securePort: room.securePort, roomCode: room.roomCode, addresses: room.addresses(), hosting, rebound };
 });
 ipcMain.handle('desktop:stop-hosting', async () => { stopBeacon(); if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } return { hosting }; });
 ipcMain.handle('desktop:in-match', (_e, on) => { inMatch = !!on; return inMatch; });
+// Counter-Strike 1.6 player models from the player's own Steam install (never shipped with the game): the standard
+// Steam library and any extra library folders, on Windows, macOS and Linux. Returns the player .mdl files by side.
+const CS_T = ['terror', 'leet', 'arctic', 'guerilla', 'militia'], CS_CT = ['urban', 'gsg9', 'sas', 'gign', 'spetsnaz'];
+async function steamLibraries() {
+  const home = os.homedir(), roots = process.platform === 'win32' ? [process.env['ProgramFiles(x86)'] && path.join(process.env['ProgramFiles(x86)'], 'Steam'), process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Steam'), 'C:\\Steam', 'D:\\Steam', 'D:\\SteamLibrary', 'E:\\SteamLibrary']
+    : process.platform === 'darwin' ? [path.join(home, 'Library/Application Support/Steam')] : [path.join(home, '.steam/steam'), path.join(home, '.local/share/Steam'), path.join(home, '.var/app/com.valvesoftware.Steam/.local/share/Steam')];
+  const libs = new Set(roots.filter(Boolean));
+  for (const r of [...libs]) { try { const vdf = await readFile(path.join(r, 'steamapps', 'libraryfolders.vdf'), 'utf8'); for (const m of vdf.matchAll(/"path"\s+"([^"]+)"/g)) libs.add(m[1].replace(/\\\\/g, '\\')); } catch {} }
+  return [...libs];
+}
+ipcMain.handle('desktop:find-cs-models', async () => {
+  for (const lib of await steamLibraries()) {
+    const dir = path.join(lib, 'steamapps', 'common', 'Half-Life', 'cstrike', 'models', 'player'); let names; try { names = await readdir(dir); } catch { continue; }
+    const out = [];
+    for (const n of names) { const side = CS_T.includes(n.toLowerCase()) ? 't' : CS_CT.includes(n.toLowerCase()) ? 'ct' : null; if (!side) continue;
+      try { const f = path.join(dir, n, n + '.mdl'); const data = await readFile(f); out.push({ team: side, name: n + '.mdl', data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) }); } catch {} }
+    if (out.length) return { dir, models: out };
+  }
+  return { dir: null, models: [] };
+});
 ipcMain.handle('desktop:info', () => ({ version: app.getVersion(), platform: process.platform, hosting, port: room.port, savePath: savePath() }));
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });

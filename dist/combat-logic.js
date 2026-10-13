@@ -37,11 +37,15 @@ export function setAmmo(game, name, id, ammo) { if (!isFirearm(weaponById(id))) 
 export function refillAll(game, name) { const C = state(game), k = key(name), own = arenaArsenalOf(game, name), next = {}; for (const id of own) if (isFirearm(weaponById(id))) next[id] = fullAmmo(id); (C.ammo ??= {})[k] = next; C.shots ??= {}; }
 // Shots numbered by the client: take one round for each new number (from the gun named), in order.
 // Returns the set of shot numbers that had no round (their hits are refused).
+// Match statistics (the post-match report): recorded from the host's own events while a Defuse match is live (not in
+// warmup or the lobby). One hit is counted once, damage only up to the HP the victim had (CS2's ADR rule).
+export const recording = game => !!game.combat?.d && !(game.arena?.lobby && !game.arena.lobby.started) && game.combat.d.round?.phase !== 'warmup';
+export const statOf = (game, name) => ((game.combat.stats ??= {})[key(name)] ??= { shots: 0, hits: 0, hsHits: 0, hsKills: 0, dmg: 0, util: 0, flashed: 0, blindMs: 0, plants: 0, defuses: 0 });
 export function takeShots(game, name, n, id) {
   const C = state(game), k = key(name), s = (C.shots ??= {})[k] ??= { n: null, r: null, dry: [] }; n = Math.floor(+n);
   if (!Number.isFinite(n)) return s; if (s.n === null || n < s.n - 1e6 || n > s.n + 500) { s.n = n; return s; }   // first contact (or a client restart): sync, take nothing
   const w = weaponById(id); if (!isFirearm(w)) { s.n = Math.max(s.n, n); return s; }
-  while (s.n < n) { s.n++; const a = ammoOf(game, name, id); if (a[0] > 0) { a[0]--; setAmmo(game, name, id, a); } else { s.dry.push(s.n); if (s.dry.length > 24) s.dry.shift(); } }
+  while (s.n < n) { s.n++; const a = ammoOf(game, name, id); if (a[0] > 0) { a[0]--; setAmmo(game, name, id, a); if (recording(game)) statOf(game, name).shots++; } else { s.dry.push(s.n); if (s.dry.length > 24) s.dry.shift(); } }
   return s;
 }
 // A reload numbered by the client (pose shot.r): moves rounds from the reserve to the magazine, once per number.
@@ -75,6 +79,7 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   const before = hpOf(game, targetName), hp = Math.max(0, before - dmg); c.hp[tk] = hp; const nm = c.names ??= {}; nm[me] = String(shooter).slice(0, 40); nm[tk] = String(targetName).slice(0, 40);
   if (me !== tk) { const d = ((c.dmg ??= {})[tk] ??= {}); d[me] = (d[me] || 0) + Math.min(before, dmg); }
   const shown = Math.min(before, dmg);
+  if (me !== tk && recording(game) && !friendly(game, shooter, targetName)) { const st = statOf(game, shooter), util = wpn.id === 'he' || wpn.id === 'molotov'; st.dmg += shown; if (util) st.util += shown; else if (isFirearm(wpn)) { st.hits++; if (zone === 'head') st.hsHits++; } if (hp <= 0 && zone === 'head' && isFirearm(wpn)) st.hsKills++; }
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + shown + ' HP', dmg: shown, hp, zone, head: zone === 'head' };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name, wid: wpn.id, head: zone === 'head', at: now };
   const teamKill = c.d && c.d.teams[me] && c.d.teams[me] === c.d.teams[tk];
@@ -113,6 +118,7 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
   if (!combatOn(game)) throw Error('Guns are only in Global Defensive');
   const r = game.combat?.d?.round; if (r && (r.phase === 'freeze' || r.phase === 'over' && game.combat.d.matchOver)) throw Error('The round hasn’t started');   // defuse freeze time
   if (game.arena?.lobby && !game.arena.lobby.started) throw Error('Warmup · the match has not started');
+  if (game.combat?.d?.paused) throw Error('The match is paused');
   const c = state(game), me = key(name);
   if (a?.type !== 'hit') throw Error('Unknown combat action');
   const wpn = weaponById(a.weapon); if (!wpn || !ownedWeapons(game, name).includes(wpn.id)) throw Error('You do not own that weapon');

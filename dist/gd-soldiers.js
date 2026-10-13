@@ -15,7 +15,7 @@ export function makeSoldier(p, team) {
   let fall = 0;
   return {
     g: a.g, team,
-    update(dt, s) { a.update(dt, { speed: s.speed, crouch: s.crouch, gun: !!s.aim && !s.dead }); fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); a.g.rotation.x = -fall * Math.PI / 2; a.g.position.y = fall * 1.3; },
+    update(dt, s) { a.update(dt, { speed: s.speed, crouch: s.crouch, gun: !!s.aim && !s.dead, act: s.act }); fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); a.g.rotation.x = -fall * Math.PI / 2; a.g.position.y = fall * 1.3; },
     setWeapon(id) { a.setWeapon(id || 'cannon'); },
     dispose() { a.dispose(); },
   };

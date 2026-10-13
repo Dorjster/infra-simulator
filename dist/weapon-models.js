@@ -279,11 +279,11 @@ async function loadReal(id) {
 // file · grip (fraction of the length from the back, fraction of the height from the bottom) · parts to add.
 // The pack's units already match the game's (an AK is 5.4 long); muzzles point along +x and are turned to −z.
 export const QGUNS = {
-  p250: { file: 'Pistol_1', grip: [.3, .55] }, usps: { file: 'Pistol_2', grip: [.3, .55], suppressor: [.75, .06] }, fiveseven: { file: 'Pistol_3', grip: [.3, .55] }, deagle: { file: 'Pistol_6', grip: [.25, .55] },
-  mp9: { file: 'SubmachineGun_1', grip: [.38, .55] }, smg: { file: 'SubmachineGun_2', grip: [.45, .55], suppressor: [1.1, .09] }, mp7: { file: 'SubmachineGun_3', grip: [.45, .55] }, mac10: { file: 'SubmachineGun_4', grip: [.35, .55] }, ump45: { file: 'SubmachineGun_5', grip: [.45, .55] },
-  p90: { file: 'Bullpup_1', grip: [.5, .5] }, aug: { file: 'Bullpup_2', grip: [.55, .5], scope: true }, famas: { file: 'Bullpup_3', grip: [.55, .5] },
-  sg553: { file: 'AssaultRifle_3', grip: [.4, .55], scope: true }, galil: { file: 'AssaultRifle_4', grip: [.38, .55] }, m4s: { file: 'AssaultRifle2_2', grip: [.38, .55], suppressor: [1.15, .09] }, lmg: { file: 'AssaultRifle2_1', grip: [.38, .55], box: true, scale: 1.12 },
-  xm1014: { file: 'Shotgun_ShortStock', grip: [.33, .5] }, ssg08: { file: 'SniperRifle_4', grip: [.35, .5] },
+  p250: { file: 'Pistol_1', grip: [.3, .55], tint: 0x2a2a2a }, usps: { file: 'Pistol_2', grip: [.3, .55], suppressor: [.75, .06] }, fiveseven: { file: 'Pistol_3', grip: [.3, .55], tint: 0x8c7c5c }, deagle: { file: 'Pistol_6', grip: [.25, .55] },
+  mp9: { file: 'SubmachineGun_1', grip: [.38, .55], tint: 0x8a7a5a }, smg: { file: 'SubmachineGun_2', grip: [.45, .55], suppressor: [1.1, .09] }, mp7: { file: 'SubmachineGun_3', grip: [.45, .55] }, mac10: { file: 'SubmachineGun_4', grip: [.35, .55], scale: .82 }, ump45: { file: 'SubmachineGun_5', grip: [.45, .55] },
+  p90: { file: 'Bullpup_1', grip: [.5, .5], tint: 0x7a6e52, scale: .88, rail: true }, aug: { file: 'Bullpup_2', grip: [.55, .5], scope: true, tint: 0x56653a }, famas: { file: 'Bullpup_3', grip: [.55, .5], handle: true, tint: 0x2c3329 },
+  sg553: { file: 'AssaultRifle_3', grip: [.4, .55], scope: true, tint: 0x2b2b2b }, galil: { file: 'AssaultRifle_4', grip: [.38, .55] }, m4s: { file: 'AssaultRifle2_2', grip: [.38, .55], suppressor: [1.15, .09] }, lmg: { file: 'AssaultRifle2_1', grip: [.38, .55], box: true, bipod: true, scale: 1.12 },
+  xm1014: { file: 'Shotgun_ShortStock', grip: [.33, .5] }, ssg08: { file: 'SniperRifle_4', grip: [.35, .5], tint: 0x1d2024, slimScope: true },
 };
 const Q_DIR = new URL('./models/qguns/', import.meta.url).href;
 // Flat pack colours → our materials: dark parts gunmetal, browns wood, greens / tans polymer.
@@ -292,7 +292,7 @@ function qMaterial(m) { const c = m.color || new THREE.Color(.1, .1, .1), hsl = 
 async function loadQ(id) {
   const Q = QGUNS[id], mtl = await new MTLLoader().setPath(Q_DIR).loadAsync(Q.file + '.mtl'); mtl.preload();
   const obj = await new OBJLoader().setMaterials(mtl).setPath(Q_DIR).loadAsync(Q.file + '.obj'), mats = new Map();
-  obj.traverse(o => { if (!o.isMesh) return; o.material = [].concat(o.material).map(m => { if (!mats.has(m.uuid)) mats.set(m.uuid, qMaterial(m)); return mats.get(m.uuid); }); if (o.material.length === 1) o.material = o.material[0]; o.castShadow = true; o.geometry.userData.shared = true; });
+  obj.traverse(o => { if (!o.isMesh) return; o.material = [].concat(o.material).map(m => { if (!mats.has(m.uuid)) { const q = qMaterial(m); if (Q.tint !== undefined && q.metalness < .5) q.color.setHex(Q.tint); mats.set(m.uuid, q); } return mats.get(m.uuid); });   /* tint: the gun's own furniture colour (no two guns look alike) */ if (o.material.length === 1) o.material = o.material[0]; o.castShadow = true; o.geometry.userData.shared = true; });
   const box = new THREE.Box3().setFromObject(obj), L = box.max.x - box.min.x, H = box.max.y - box.min.y, gx = box.min.x + Q.grip[0] * L, gy = box.min.y + Q.grip[1] * H, gz = (box.min.z + box.max.z) / 2;
   // Muzzle: centre of the vertices at the very front (+x).
   let mx = 0, my = 0, mn = 0; obj.traverse(o => { if (!o.isMesh) return; const P = o.geometry.attributes.position; for (let i = 0; i < P.count; i++) if (P.getX(i) > box.max.x - .04) { my += P.getY(i); mn++; } });
@@ -308,6 +308,10 @@ function decorate(g, V, mz, len, top, bottom) {
   const cyl = (r, l) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, l, 18).rotateX(Math.PI / 2), decoMat); m.geometry.userData.shared = true; return m; };
   if (V.suppressor) { const [l, r] = V.suppressor, c = cyl(r, l); c.position.copy(mz).add(new THREE.Vector3(0, 0, -l / 2 + .02)); g.add(c); }
   if (V.scope) { const t = cyl(.08, len * .26); t.position.set(0, top + .1, mz.z + len * .55); g.add(t); for (const dz of [-.12, .12]) { const m = new THREE.Mesh(new THREE.BoxGeometry(.05, .12, .05), decoMat); m.geometry.userData.shared = true; m.position.set(0, top + .02, mz.z + len * .55 + dz); g.add(m); } }
+  if (V.handle) { const h = new THREE.Mesh(new THREE.BoxGeometry(.05, .1, len * .55), decoMat); h.geometry.userData.shared = true; h.position.set(0, top + .07, mz.z + len * .55); g.add(h); for (const dz of [-len * .24, len * .24]) { const m = new THREE.Mesh(new THREE.BoxGeometry(.05, .08, .06), decoMat); m.geometry.userData.shared = true; m.position.set(0, top + .02, mz.z + len * .55 + dz); g.add(m); } }   // FAMAS carry handle
+  if (V.rail) { const r = new THREE.Mesh(new THREE.BoxGeometry(.06, .03, len * .5), decoMat); r.geometry.userData.shared = true; r.position.set(0, top + .015, mz.z + len * .5); g.add(r); }
+  if (V.bipod) for (const sx of [-1, 1]) { const leg = cyl(.012, .32); leg.rotation.x = 0; leg.rotation.z = sx * .35; leg.geometry = leg.geometry.clone().rotateX(-Math.PI / 2); leg.position.set(sx * .06, bottom - .1, mz.z + len * .12); g.add(leg); }   // M249 bipod
+  if (V.slimScope) { const t = cyl(.045, len * .3); t.position.set(0, top + .07, mz.z + len * .55); g.add(t); const shade = cyl(.055, len * .06); shade.position.set(0, top + .07, mz.z + len * .38); g.add(shade); }   // SSG 08: a slim scope with a sunshade (the AWP's is bulky)
   if (V.box) { const b = new THREE.Mesh(new THREE.BoxGeometry(.3, .36, .4), decoMat); b.geometry.userData.shared = true; b.position.set(0, bottom + .1, mz.z + len * .62); g.add(b); }
 }
 export function loadRealWeapons() {
@@ -336,6 +340,10 @@ function variantModel(id, scale) {
   const cyl = (r, l) => new THREE.Mesh(new THREE.CylinderGeometry(r, r, l, 18).rotateX(Math.PI / 2), decoMat);
   if (V.suppressor) { const [l, r] = V.suppressor, c = cyl(r, l); c.position.copy(mz).add(new THREE.Vector3(0, 0, -l / 2 + .02)); g.add(c); }
   if (V.scope) { const t = cyl(.075, len * .32); t.position.set(mz.x, box.max.y + .07, mz.z + len * .62); g.add(t); for (const dz of [-.12, .12]) { const m = new THREE.Mesh(new THREE.BoxGeometry(.05, .1, .05), decoMat); m.position.set(mz.x, box.max.y + .01, mz.z + len * .62 + dz); g.add(m); } }
+  if (V.handle) { const h = new THREE.Mesh(new THREE.BoxGeometry(.05, .1, len * .55), decoMat); h.geometry.userData.shared = true; h.position.set(0, top + .07, mz.z + len * .55); g.add(h); for (const dz of [-len * .24, len * .24]) { const m = new THREE.Mesh(new THREE.BoxGeometry(.05, .08, .06), decoMat); m.geometry.userData.shared = true; m.position.set(0, top + .02, mz.z + len * .55 + dz); g.add(m); } }   // FAMAS carry handle
+  if (V.rail) { const r = new THREE.Mesh(new THREE.BoxGeometry(.06, .03, len * .5), decoMat); r.geometry.userData.shared = true; r.position.set(0, top + .015, mz.z + len * .5); g.add(r); }
+  if (V.bipod) for (const sx of [-1, 1]) { const leg = cyl(.012, .32); leg.rotation.x = 0; leg.rotation.z = sx * .35; leg.geometry = leg.geometry.clone().rotateX(-Math.PI / 2); leg.position.set(sx * .06, bottom - .1, mz.z + len * .12); g.add(leg); }   // M249 bipod
+  if (V.slimScope) { const t = cyl(.045, len * .3); t.position.set(0, top + .07, mz.z + len * .55); g.add(t); const shade = cyl(.055, len * .06); shade.position.set(0, top + .07, mz.z + len * .38); g.add(shade); }   // SSG 08: a slim scope with a sunshade (the AWP's is bulky)
   if (V.box) { const b = new THREE.Mesh(new THREE.BoxGeometry(.32, .38, .42), decoMat); b.position.set(mz.x, box.min.y + .12, mz.z + len * .62); g.add(b); }
   g.traverse(o => { if (o.geometry && o.material === decoMat) o.geometry.userData.shared = true; });
   const wrap = new THREE.Group(); g.scale.multiplyScalar(s); wrap.add(g); wrap.userData.muzzle = mz.clone().multiplyScalar(s).add(new THREE.Vector3(0, 0, V.suppressor ? -V.suppressor[0] * s : 0)).toArray(); wrap.scale.setScalar(scale); return wrap;

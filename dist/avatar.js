@@ -229,6 +229,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   function update(dt, st = {}) {
     s.t += dt; s.speed += ((st.speed || 0) - s.speed) * Math.min(1, dt * 8);
     s.crouch += ((st.crouch ? 1 : 0) - s.crouch) * Math.min(1, dt * 10);
+    s.reload = (s.reload || 0) + ((st.act === 'reload' ? 1 : 0) - (s.reload || 0)) * Math.min(1, dt * 9); s.throwA = (s.throwA || 0) + ((st.act === 'throw' ? 1 : 0) - (s.throwA || 0)) * Math.min(1, dt * 14);   // Global Defensive actions seen by others
     s.laptop += ((st.laptop ? 1 : 0) - s.laptop) * Math.min(1, dt * 8); laptop.visible = s.laptop > .5;
     const carrying = st.carry === 'box' || st.carry === 'rack'; s.carry += ((carrying ? 1 : 0) - s.carry) * Math.min(1, dt * 9); s.cable += ((st.carry === 'cable' ? 1 : 0) - s.cable) * Math.min(1, dt * 9); s.point += ((st.point ? 1 : 0) - s.point) * Math.min(1, dt * 10); s.gun += ((st.gun ? 1 : 0) - s.gun) * Math.min(1, dt * 10);
     carton.visible = s.carry > .4; if (carton.visible) carton.scale.setScalar(st.carry === 'rack' ? 1.35 : 1); coil.visible = s.cable > .4; pistol.visible = s.gun > .3;
@@ -250,7 +251,8 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     // Pointing (team ping): right arm straight forward and slightly up.
     if (s.point > .01) { const p = s.point, r = aim(-.05, .15, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, .12, 1), p); }
     // Holding the pistol: right arm straight out at shoulder height.
-    if (s.gun > .01) { const p = s.gun, r = aim(-.08, .02, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, 0, 1), p); }
+    if (s.gun > .01) { const p = s.gun, r = aim(-.08 - .6 * s.reload, .02 + .35 * s.reload, 1); aR = mix(aR, r, p); bR = mix(bR, fore(r, 0, .25 * s.reload, 1), p); }   // reloading: the gun dips down and in
+    if (s.throwA > .01) { const r = aim(1.1, .2, 1); aR = mix(aR, r, s.throwA); bR = mix(bR, fore(r, 0, .3, 1), s.throwA); }   // throwing: an overhand swing
     let lL = -sw, lR = sw, lLz = 0, lRz = 0, hT = [breathe - .05 * s.laptop * 3, 0, 0], tT = [moving * .08, 0, 0], lift = Math.abs(Math.cos(s.phase)) * .22 * moving, fT = 0;
     // Emote pose, blended in/out.
     if (e) {
@@ -278,7 +280,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     fall.rotation.x = -Math.PI / 2 * cur.fall; fall.position.y = 1.45 * cur.fall;
     if (label) label.position.y = (12.1 - s.crouch * 2.2) * (1 - cur.fall) + 5 * cur.fall;
   }
-  function dispose() { g.removeFromParent(); g.traverse(o => { if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose(); const m = o.material; if (m && m !== bodyMaterial && !m.userData?.shared) { m.map?.dispose(); m.dispose(); } }); }
+  function dispose() { g.removeFromParent(); g.traverse(o => { if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose(); for (const m of [].concat(o.material || [])) { if (!m || m === bodyMaterial || m.userData?.shared || typeof m.dispose !== 'function') continue; if (typeof m.map?.dispose === 'function' && !m.map.userData?.shared) m.map.dispose(); m.dispose(); } }); }   /* multi-materials too; never a shared texture */
   return { g, label, update, play, dispose, setName, setWeapon, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', hat, outfit, setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso, carton, coil, pistol } };
 }
 function mix(a, b, w) { return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w]; }

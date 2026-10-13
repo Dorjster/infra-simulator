@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('infraDesktop', {
   discover: () => ipcRenderer.invoke('desktop:discover'),
   stopHosting: () => ipcRenderer.invoke('desktop:stop-hosting'),
   inMatch: on => ipcRenderer.invoke('desktop:in-match', !!on),
-  info: () => ipcRenderer.invoke('desktop:info')
+  info: () => ipcRenderer.invoke('desktop:info'),
+  findCsModels: () => ipcRenderer.invoke('desktop:find-cs-models')
 });

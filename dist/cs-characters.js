@@ -1,5 +1,5 @@
-// Arena characters from Counter-Strike 1.6 player models the player imports from their own computer
-// (Settings → Arena characters). Files are kept in this browser / app's local storage (IndexedDB) and are never
+// Arena characters from Counter-Strike 1.6 player models on the player's own computer: found automatically in their
+// Steam install by the desktop app, or imported by hand (Settings → Arena characters). Never shipped with the game. Files are kept in this browser / app's local storage (IndexedDB) and are never
 // uploaded or shared. Each team (T, CT) gets the models imported for it; everyone in the arena is drawn with one.
 // Without imported models the arena keeps the normal engineer avatars.
 import { parseMdl, buildMdl } from './goldsrc-mdl.js';
@@ -49,6 +49,11 @@ export function createCharacters() {
       if (!ok.length) throw Error('No usable CS 1.6 player models (.mdl) found');
       await tx('readwrite', s => { for (const m of ok) s.put({ team, name: m.name, data: m.data }, team + '/' + m.name); });
       loading = load(); await loading; return ok.length;
+    },
+    // Models found in the player's own CS 1.6 install (desktop app, Steam): [{ team, name, data }]. Returns how many.
+    async importFound(models) {
+      const ok = (models || []).filter(m => ['t', 'ct'].includes(m.team) && m.data).filter(m => { try { parseMdl(m.data); return true; } catch { return false; } });
+      if (!ok.length) return 0; await tx('readwrite', st => { for (const m of ok) st.put({ team: m.team, name: m.name, data: m.data }, m.team + '/' + m.name); }); loading = load(); await loading; return ok.length;
     },
     async clear() { await tx('readwrite', s => s.clear()); built = { t: [], ct: [] }; version++; },
     // Team for a name in deathmatch (stable), unless the match gives one. Falls back to the side that has models.
