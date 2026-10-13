@@ -28,7 +28,7 @@ export function createReport({ notify = () => {} } = {}) {
 #gd-report .rounds{display:flex;flex-wrap:wrap;gap:6px}#gd-report .rd{width:64px;padding:6px 4px;border-radius:6px;text-align:center;background:#ffffff0c;border-bottom:3px solid}#gd-report .rd.t{border-color:#e8b25b}#gd-report .rd.ct{border-color:#6fb1ef}#gd-report .rd small{display:block;color:#93a6af;font-size:11px}
 #gd-report .row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}#gd-report .t{color:#e8b25b}#gd-report .ct{color:#6fb1ef}`;
   (document.head || document.body).append?.(css); document.body.insertAdjacentHTML('beforeend', '<div id="gd-report" hidden><div></div></div>');
-  const el = document.getElementById('gd-report'), box = el.firstElementChild; let rep = null, tab = 'overview', who = null, last = null;
+  const el = document.getElementById('gd-report'), box = el.firstElementChild || el; let rep = null, tab = 'overview', who = null, last = null;
   try { last = JSON.parse(sessionStorage.getItem('gd-last-report') || 'null'); } catch {}
   const table = (list, cols) => `<table><tr>${cols.map(([h, , n]) => `<th class="${n ? 'n' : ''}">${h}</th>`).join('')}</tr>${list.map(p => `<tr>${cols.map(([, f, n]) => `<td class="${n ? 'n' : ''}">${f(p)}</td>`).join('')}</tr>`).join('')}</table>`;
   const COLS = [['Player', p => `<span class="${p.team}">${esc(p.name)}</span>${p.k === rep.mvp ? ' ★' : ''}`], ['K', p => p.kills, 1], ['D', p => p.deaths, 1], ['A', p => p.assists, 1], ['ADR', p => p.adr, 1], ['HS%', p => p.kills ? p.hs + '%' : '–', 1], ['Accuracy', p => p.shots ? p.acc + '%' : '–', 1], ['Utility dmg', p => p.util, 1], ['Flashed', p => p.flashed, 1], ['Plants', p => p.plants, 1], ['Defuses', p => p.defuses, 1]];
@@ -46,8 +46,8 @@ export function createReport({ notify = () => {} } = {}) {
     if (tab === 'rounds') body = `<div class="rounds">${rep.rounds.map(r => `<div class="rd ${r.winner}" title="${esc(REASON[r.reason]?.[1] || r.reason)}"><b>${r.n}</b><small>${REASON[r.reason]?.[0] || '·'} ${r.winner.toUpperCase()}</small><small>${r.score.t}–${r.score.ct}</small></div>`).join('') || '<p class="sub">No rounds recorded.</p>'}</div><p class="sub" style="margin-top:10px">☠ eliminated · 💥 bomb exploded · ✂ bomb defused · ⏱ time ran out</p>`;
     box.innerHTML = `<div class="row"><div><h2 class="${W}">${SIDE[W].toUpperCase()} WIN ${rep.score[W]}–${rep.score[W === 't' ? 'ct' : 't']}</h2><div class="sub">${esc(rep.map)} · ${rep.rounds.length} rounds · ${new Date(rep.at).toLocaleTimeString()}</div></div><button class="close" data-rclose>Close (Esc)</button></div><nav>${nav}</nav>${body}`;
   }
-  box.addEventListener('click', e => { const b = e.target.closest('[data-rt]'); if (b) { tab = b.dataset.rt; draw(); } if (e.target.closest('[data-rclose]')) api.close(); });
-  box.addEventListener('change', e => { if (e.target.dataset.rwho !== undefined) { who = e.target.value; draw(); } });
+  box.addEventListener?.('click', e => { const b = e.target.closest('[data-rt]'); if (b) { tab = b.dataset.rt; draw(); } if (e.target.closest('[data-rclose]')) api.close(); });
+  box.addEventListener?.('change', e => { if (e.target.dataset.rwho !== undefined) { who = e.target.value; draw(); } });
   addEventListener('keydown', e => { if (e.key === 'Escape' && !el.hidden) { e.stopPropagation(); api.close(); } }, true);
   const api = {
     get open() { return !el.hidden; }, get last() { return last; },
