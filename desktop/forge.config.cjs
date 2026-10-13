@@ -10,7 +10,8 @@ function copyGame() {
   fs.rmSync(out, { recursive: true, force: true });
   fs.cpSync(path.join(root, 'dist'), path.join(out, 'dist'), { recursive: true });
   fs.mkdirSync(path.join(out, 'lan'), { recursive: true });
-  for (const f of ['room.mjs', 'server.mjs', 'world.json']) fs.copyFileSync(path.join(root, 'lan', f), path.join(out, 'lan', f));
+  // Every room module (room.mjs imports its neighbours, e.g. selfsigned.mjs) plus the starting world — never saves.
+  for (const f of [...fs.readdirSync(path.join(root, 'lan')).filter(f => f.endsWith('.mjs')), 'world.json']) fs.copyFileSync(path.join(root, 'lan', f), path.join(out, 'lan', f));
   fs.writeFileSync(path.join(out, 'package.json'), JSON.stringify({ type: 'module', private: true }));
 }
 
