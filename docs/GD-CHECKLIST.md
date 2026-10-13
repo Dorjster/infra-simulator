@@ -188,7 +188,7 @@ Existing (v43): scoreboard, spectate, match report.
 | Deathmatch spawn protection | Verified | 2 s after a (re)spawn, or until you fire — our own value, not a CS number (you could be shot while still choosing a gun at your spawn; `arena-e2e` failed 1 run in 4 on it) · `gd-match.mjs` |
 | Intermittent slow frame | Partial | `gd-nades-e2e` showed one 83 ms frame in about 4 of 30 runs on this Mac, not tied to any code change (old commits failed and passed alike, mostly under background indexing load); not reproduced in the last 12 runs |
 | GD separate from the Infra world (3D) | Verified | In a match the frame's draw keeps only lights, the camera and GD objects (452 Infra objects skipped); leaving brings the hall back · `arena-e2e` 21/21 |
-| Map-change memory | Missing | |
+| Map-change memory | Verified | `gd-mapchange-memory-e2e` 7/7: all eight maps twice by the host's map change. Each map is built once and kept (first lap: heap 138 → 201 MB, about 8 MB a map; map changes are then instant); the second lap stays flat (198–202 MB after GC), GPU geometries the same per map, textures 266 → 266 |
 | Shaders compiled mid-match | Partial | A handful still compile on first sight (bot skins and post effects not in the warm-up); none caused a slow frame in the measured runs |
 
 ## Test runs (2026-10-13, one Mac, Chrome 141 via Playwright, simulated LAN clients on 127.0.0.1)
