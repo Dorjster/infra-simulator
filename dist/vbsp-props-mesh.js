@@ -31,10 +31,12 @@ export function buildVbspProps(bsp, { toGame, textures, bounds = playBounds(bsp)
     for (const P of placed) P.m.lods[0].forEach((mesh, k) => { if (mesh.material !== path) return; const g = B.geoms.get(P.p.model + ':' + k), id = batch.addInstance(g.ids[0]); batch.setMatrixAt(id, P.M); batch.setColorAt(id, tmp.setRGB(P.tint[0], P.tint[1], P.tint[2]));   /* linear, like the lightmaps the walls get */
       const fade = Math.min(P.p.fadeMax > 0 ? P.p.fadeMax / 6.5 * 1.25 : Infinity, alphaTest ? FOLIAGE_FADE : Infinity), fadeOk = Number.isFinite(fade) ? fade : 0; inst.push({ id, x: P.M.elements[12], y: P.M.elements[13], z: P.M.elements[14], fade2: fadeOk * fadeOk, ids: g.ids, cur: 0, vis: true }); tris += g.tris; });
     // Before each draw: the level of detail by distance, hidden past the fade distance.
-    batch.onBeforeRender = (r, sc, cam) => { const cx = cam.matrixWorld.elements[12], cy = cam.matrixWorld.elements[13], cz = cam.matrixWorld.elements[14];
+    // (BatchedMesh builds its own draw list in onBeforeRender: ours runs first, then its own.)
+    const own = batch.onBeforeRender.bind(batch); batch.onBeforeRender = (r, sc, cam, geo, mat, grp) => { const cx = cam.matrixWorld.elements[12], cy = cam.matrixWorld.elements[13], cz = cam.matrixWorld.elements[14];
       for (let i = 0; i < inst.length; i++) { const I = inst[i], dx = I.x - cx, dy = I.y - cy, dz = I.z - cz, d2 = dx * dx + dy * dy + dz * dz, vis = !I.fade2 || d2 < I.fade2;
         if (vis !== I.vis) { batch.setVisibleAt(I.id, vis); I.vis = vis; } if (!vis || I.ids.length < 2) continue;
-        const lv = d2 > LOD_AT[1] * LOD_AT[1] ? 2 : d2 > LOD_AT[0] * LOD_AT[0] ? 1 : 0; if (lv !== I.cur) { batch.setGeometryIdAt(I.id, I.ids[lv]); I.cur = lv; } } };
+        const lv = d2 > LOD_AT[1] * LOD_AT[1] ? 2 : d2 > LOD_AT[0] * LOD_AT[0] ? 1 : 0; if (lv !== I.cur) { batch.setGeometryIdAt(I.id, I.ids[lv]); I.cur = lv; } }
+      own(r, sc, cam, geo, mat, grp); };
     batch.userData.arena = true; batch.userData.bsp = true; batch.userData.noShadow = true; batch.castShadow = batch.receiveShadow = false; meshes.push(batch); }
   return { meshes, props: placed.length, materials: byMat.size, tris };
 }
