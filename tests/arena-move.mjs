@@ -31,6 +31,9 @@ const still = at(), runner = run(at(), { ...fwd, weapon: 'ak' }, open, 2), air =
 check('Standing still is accurate', moveSpread(still, 'ak') === 1);
 check('Running is inaccurate, the air far more', moveSpread(runner, 'ak') > 3 && moveSpread(air, 'ak') > moveSpread(runner, 'ak'), moveSpread(runner, 'ak').toFixed(2));
 check('Walking is far more accurate than running', moveSpread(run(at(), { ...fwd, weapon: 'ak', walk: true }, open, 2), 'ak') < moveSpread(runner, 'ak') / 2);
+// No bunny hopping: landing faster than 1.1× top speed (from air strafing), the next jump trims you to it.
+{ const b = at(); b.vx = 0; b.vz = -400 * HU; moveStep(b, { wish: [0, -1], weapon: 'knife', jump: true }, open, dt); const sp = Math.hypot(b.vx, b.vz) / HU;
+  check('No bunny hopping: a jump at 400 u/s leaves at 1.1× the knife\'s 250 (275)', Math.abs(sp - 275) < 3 && !b.onGround, sp.toFixed(0)); }
 // Ladders: a ladder on the north face of a wall 30 units tall, with a ledge (the wall's top) to step onto.
 { const wall = { minX: -10, maxX: 10, minZ: -12, maxZ: -2, y0: 0, y1: 30 }, ladder = { minX: -2, maxX: 2, minZ: -2.1, maxZ: -1.8, y0: 0, y1: 30 }, world = { boxes: [wall], bounds: null, ladders: [ladder] };
   const up = { wish: [0, -1], weapon: 'knife', look: [0, -1], pitch: .2 }, s = at(0, 0);

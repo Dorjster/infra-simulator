@@ -3,7 +3,7 @@
 // CS2's, converted from Hammer units (1 HU ≈ 2.54 cm) to game units (1 unit ≈ 16.5 cm). Pure: the game and the
 // tests drive it with plain objects.
 export const HU = 2.54 / 16.5;
-export const MOVE = { friction: 5.2, stopspeed: 80 * HU, accelerate: 5.5, airaccelerate: 12, aircap: 30 * HU, gravity: 800 * HU, jump: 301.993 * HU, walk: .52, duck: .34, step: 18 * HU, height: 72 * HU, duckHeight: 54 * HU, radius: 1.3 };
+export const MOVE = { friction: 5.2, stopspeed: 80 * HU, accelerate: 5.5, airaccelerate: 12, aircap: 30 * HU, gravity: 800 * HU, jump: 301.993 * HU, walk: .52, duck: .34, step: 18 * HU, height: 72 * HU, duckHeight: 54 * HU, radius: 1.3, bhop: 1.1 };
 // Max running speed (HU/s) with each weapon drawn; scoped sniper 100.
 export const MAX_SPEED = { knife: 250, karambit: 250, pistol: 240, deagle: 230, cannon: 240, smg: 235, shotgun: 220, ak: 215, m4: 225, sniper: 200, lmg: 195 };
 export const maxSpeed = (weapon, scoped = false) => (weapon === 'sniper' && scoped ? 100 : MAX_SPEED[weapon] || 250) * HU;
@@ -79,6 +79,8 @@ export function moveStep(s, input, world, dt) {
   s.onLadder = climbing;
   if (climbing) { /* velocities set: no friction, acceleration or gravity this tick */ }
   else if (s.onGround && input.jump) {
+    // No bunny hopping (CS: sv_enablebunnyhopping 0): a jump trims horizontal speed to 1.1× the weapon's top speed.
+    const sp = Math.hypot(s.vx, s.vz), cap = maxSpeed(input.weapon, input.scoped) * MOVE.bhop; if (sp > cap) { s.vx *= cap / sp; s.vz *= cap / sp; }
     s.vy = MOVE.jump; s.onGround = false; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.jump);
   }
   if (s.onGround) {
