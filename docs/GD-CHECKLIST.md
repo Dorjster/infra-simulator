@@ -79,7 +79,8 @@ Last updated: 2026-10-13.
 | Item | Status | Evidence / gap |
 |---|---|---|
 | One player hull, standing / crouched heights | Existing | |
-| Ladders, vents | Missing | Ladder places exist in the reference data (Nuke, Mirage); no ladder movement yet |
+| Ladders | Verified | Map files' ladders (func_ladder: Nuke 7, Mirage 3, Cache 1, Inferno 1) are climbed CS-style (arena-move.js): no gravity, 200 HU/s, forward climbs up (looking down: down), strafe slides, the push at the top steps onto the ledge, jump pushes off. `arena-move.mjs` 7 checks, `gd-ladders-e2e` 6/6 on Nuke. Bots don't climb (their routes avoid ladders) |
+| Vents | Partial | Map files' vents are crouch-walked (floors under 54 HU of room); bots' routes avoid them |
 | Body-sized passages and drops | Verified | Routes refuse gaps and holes narrower than a body; drops off ledges allowed |
 | Grenade bounce and settling | Existing | |
 

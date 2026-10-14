@@ -5,7 +5,7 @@
 // metal-blue, metal-green, roof, stone. kind: 'dm' (deathmatch) or 'defuse' (bomb sites A / B, T / CT spawns, bot routes).
 import { DRESS } from './arena-maps-more.js';
 import { buildCsMap } from './cs-mapbuild.js';
-import { parseBsp } from './bsp30.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js'; import { compactVbsp } from './vbsp-compact.js';
+import { parseBsp } from './bsp30.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js'; import { compactVbsp } from './vbsp-compact.js'; import { indexBoxes, boxesNear, boxesAlong } from './box-grid.js';
 import { THEMES, CS_MAP_IDS } from './cs-maps/themes.js';
 import dust2 from './cs-maps/dust2-nav.js'; import mirage from './cs-maps/mirage-nav.js'; import inferno from './cs-maps/inferno-nav.js'; import nuke from './cs-maps/nuke-nav.js';
 import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js';
@@ -81,20 +81,29 @@ export const mapMeta = id => MAP_LIST.find(m => m.id === id) || null;
 for (const [id, dress] of Object.entries(DRESS)) { if (CS_MAP_IDS.includes(id) || !Object.getOwnPropertyDescriptor(ARENA_MAPS, id)?.value || ARENA_MAPS[id]?.grid) continue; const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
 
 // Solids as world-space boxes: { minX, maxX, minZ, maxZ, y0, y1, mat }.
-export function mapBoxes(map, cx, cz) { return map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk }; }); }
+// The map's collision boxes at (cx, cz), with a grid index for nearby queries (box-grid.js); the same list is handed
+// out again (read only) for the last few maps asked for.
+const BOX_CACHE = new Map();
+export function mapBoxes(map, cx, cz) {
+  const key = (map.id || '') + '@' + cx + ',' + cz, hit = BOX_CACHE.get(key); if (hit && hit.map === map) return hit.boxes;
+  const boxes = indexBoxes(map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk }; }));
+  BOX_CACHE.delete(key); BOX_CACHE.set(key, { map, boxes }); while (BOX_CACHE.size > 4) BOX_CACHE.delete(BOX_CACHE.keys().next().value); return boxes;
+}
 // The highest walk-on floor (raised floor, stair) under (x, z) whose top is at most `below` (0 if none).
-export function floorTop(boxes, x, z, below = Infinity) { let y = 0; for (const b of boxes) if (b.walk && b.y1 <= below && b.y1 > y && x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) y = b.y1; return y; }
+const FT = [];
+export function floorTop(boxes, x, z, below = Infinity) { let y = 0; for (const b of boxesNear(boxes, x, z, x, z, FT)) if (b.walk && b.y1 <= below && b.y1 > y && x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) y = b.y1; return y; }
 // The floor under a world point (raised floors and ramps of grid maps; 0 elsewhere).
 export const floorAt = (map, cx, cz, x, z) => map?.floorAt ? map.floorAt(x - cx, z - cz) : 0;
 // Can a player stand at (x, z)? (radius r, ignores roofs, raised floors and stairs (walked on) and things above head height)
 export function walkable(boxes, bounds, x, z, r = 1.3) {
   if (x < bounds.minX + r || x > bounds.maxX - r || z < bounds.minZ + r || z > bounds.maxZ - r) return false;
-  for (const b of boxes) if (b.y0 < 10 && !b.walk && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return false;
+  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, WK)) if (b.y0 < 10 && !b.walk && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return false;
   return true;
 }
 // Line of sight at eye height between two points (segment vs boxes that cover y = 8…10).
+const LS = [], SC = [], RB = [], WK = [], BP = [];   // nearby boxes per query (box-grid.js)
 export function lineOfSight(boxes, ax, az, bx, bz, y = 9) {
-  for (const b of boxes) { if (b.y0 > y || b.y1 < y) continue; let t0 = 0, t1 = 1; const dx = bx - ax, dz = bz - az;
+  for (const b of boxesAlong(boxes, ax, az, bx, bz, 0, LS)) { if (b.y0 > y || b.y1 < y) continue; let t0 = 0, t1 = 1; const dx = bx - ax, dz = bz - az;
     for (const [p, d, lo, hi] of [[ax, dx, b.minX, b.maxX], [az, dz, b.minZ, b.maxZ]]) { if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { t0 = 2; break; } continue; } let a = (lo - p) / d, c = (hi - p) / d; if (a > c) [a, c] = [c, a]; t0 = Math.max(t0, a); t1 = Math.min(t1, c); if (t0 > t1) break; }
     if (t0 <= t1 && t0 < 1 && t1 > 0) return false; }
   return true;
@@ -102,7 +111,7 @@ export function lineOfSight(boxes, ax, az, bx, bz, y = 9) {
 // Is the 3D segment a→b clear of every box? (slab test; used for bullets, knife, grenades and pickups)
 export function segmentClear(boxes, ax, ay, az, bx, by, bz) {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
-  for (const b of boxes) { let t0 = 0, t1 = 1, out = false;
+  for (const b of boxesAlong(boxes, ax, az, bx, bz, 0, SC)) { let t0 = 0, t1 = 1, out = false;
     for (const [p, d, lo, hi] of [[ax, dx, b.minX, b.maxX], [ay, dy, b.y0, b.y1], [az, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p <= lo || p >= hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 >= t1) { out = true; break; } }
@@ -112,7 +121,7 @@ export function segmentClear(boxes, ax, ay, az, bx, by, bz) {
 // Distance along a ray (origin o, unit direction d) to the first box it enters, or Infinity.
 export function rayBoxes(boxes, ox, oy, oz, dx, dy, dz, far = 2000) {
   let best = far;
-  for (const b of boxes) { let t0 = 0, t1 = best, out = false;
+  for (const b of boxesAlong(boxes, ox, oz, ox + dx * far, oz + dz * far, 0, RB)) { let t0 = 0, t1 = best, out = false;
     for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }
@@ -127,7 +136,7 @@ export const PEN_COST = { adobe: 2.6, metal: 1.6, crate: .8, wood: 1, door: .7, 
 const SOLID_THICK = 4;   // thicker than this, only crates and wood are crossed (a 15-unit container is not)
 export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0) {
   const hits = [];
-  for (const b of boxes) { let t0 = 0, t1 = far, out = false;
+  for (const b of boxesAlong(boxes, ox, oz, ox + dx * far, oz + dz * far, 0, BP)) { let t0 = 0, t1 = far, out = false;
     for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }

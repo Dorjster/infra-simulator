@@ -9,18 +9,27 @@ export const MAX_SPEED = { knife: 250, karambit: 250, pistol: 240, deagle: 230, 
 export const maxSpeed = (weapon, scoped = false) => (weapon === 'sniper' && scoped ? 100 : MAX_SPEED[weapon] || 250) * HU;
 // Stamina (CS:GO/CS2): a jump costs 8%, a landing 5%; speed is scaled by (100 − stamina)% until it recovers.
 const STAMINA = { max: 80, jump: .08 * 100, land: .05 * 100, recover: 60 };
+// Ladders (Source / CS): climbing speed, the push off when jumping from one, and how far round a ladder's volume you
+// still hold on (game units).
+export const LADDER = { climb: 200 * HU, jumpOff: 270 * HU, reach: .45, downPitch: -.4 };
+// The ladder the body is on (feet at s.y, `h` tall), or null.
+function ladderAt(list, s, h) { const r = MOVE.radius * .6 + LADDER.reach;
+  for (const L of list) if (s.x > L.minX - r && s.x < L.maxX + r && s.z > L.minZ - r && s.z < L.maxZ + r && s.y < L.y1 + .3 && s.y + h > L.y0) return L; return null; }
+
+import { boxesNear } from './box-grid.js';
+const NG = [], NB = [], NC = [];   // nearby boxes (box-grid.js), one list per query site
 
 export function createMoveState(y = 0) { return { vx: 0, vz: 0, vy: 0, y, onGround: true, stamina: 0, ducked: false, landed: 0 }; }
 
 // Ground under (x, z): the highest box top within a step of the feet (0 = floor).
 export function groundAt(boxes, x, z, feet, r = MOVE.radius) {
-  let g = 0; for (const b of boxes) if (b.y1 <= feet + MOVE.step + 1e-6 && b.y1 > g && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) g = b.y1;
+  let g = 0; for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, NG)) if (b.y1 <= feet + MOVE.step + 1e-6 && b.y1 > g && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) g = b.y1;
   return g;
 }
 // Can a body (feet at `feet`, `h` tall) stand at (x, z)? Boxes lower than a step are walked onto, not into.
 export function blocked(boxes, bounds, x, z, feet, h = MOVE.height, r = MOVE.radius) {
   if (bounds && (x < bounds.minX + r || x > bounds.maxX - r || z < bounds.minZ + r || z > bounds.maxZ - r)) return true;
-  for (const b of boxes) if (b.y1 > feet + MOVE.step && b.y0 < feet + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return true;
+  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, NB)) if (b.y1 > feet + MOVE.step && b.y0 < feet + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return true;
   return false;
 }
 
@@ -44,7 +53,10 @@ function accelerate(s, wx, wz, wishspeed, accel, dt, cap = Infinity) {
 }
 
 // One tick. input: { wish: [x, z] (camera-relative move direction, any length; [0,0] = no keys), walk, duck, jump,
-// weapon, scoped }. world: { boxes, bounds }. Moves s.x / s.z / s.y in place (s.x, s.z set by the caller).
+// weapon, scoped, look: [x, z] (where the camera faces), pitch (radians, up +) }. world: { boxes, bounds, ladders }.
+// On a ladder (touching its volume): no gravity; forward climbs up while looking level or up and down while looking
+// down (back: the reverse), strafing slides along it, and the same push carries you onto the ledge at the top;
+// jumping pushes you off backwards. Moves s.x / s.z / s.y in place (s.x, s.z set by the caller).
 // world.others: other players / bots [{ x, z, y }] — solid 32×72 u hulls you can't walk through (but can stand
 // on). Anyone you already overlap (spawned on top of each other) is ignored until you separate.
 export function moveStep(s, input, world, dt) {
@@ -58,7 +70,15 @@ export function moveStep(s, input, world, dt) {
   let wishspeed = wl > 1e-6 ? maxSpeed(input.weapon, input.scoped) : 0;
   if (s.ducked && s.onGround) wishspeed *= MOVE.duck; else if (input.walk) wishspeed *= MOVE.walk;
   if (s.stamina > 0 && s.onGround) wishspeed *= (100 - s.stamina) / 100;
-  if (s.onGround && input.jump) {
+  // Ladders.
+  s.ladderOff = Math.max(0, (s.ladderOff || 0) - dt);
+  const lad = world?.ladders?.length && !s.ladderOff ? ladderAt(world.ladders, s, height) : null; let climbing = false;
+  if (lad) { const [lx, lz] = input.look || [0, 0], f = wx * lx + wz * lz, down = (input.pitch ?? 0) < LADDER.downPitch, dir = f > .3 ? (down ? -1 : 1) : f < -.3 ? (down ? 1 : -1) : 0;
+    if (input.jump && !s.onGround) { s.vx = -lx * LADDER.jumpOff; s.vz = -lz * LADDER.jumpOff; s.vy = 0; s.ladderOff = .35; }
+    else if (!(s.onGround && dir <= 0)) { climbing = true; s.onGround = false; s.vy = dir * LADDER.climb; const k = wl > 1e-6 ? LADDER.climb * .5 : 0; s.vx = wx * k; s.vz = wz * k; } }
+  s.onLadder = climbing;
+  if (climbing) { /* velocities set: no friction, acceleration or gravity this tick */ }
+  else if (s.onGround && input.jump) {
     s.vy = MOVE.jump; s.onGround = false; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.jump);
   }
   if (s.onGround) {
@@ -66,7 +86,7 @@ export function moveStep(s, input, world, dt) {
     const sp = Math.hypot(s.vx, s.vz);
     if (sp > 0) { const drop = Math.max(sp, MOVE.stopspeed) * MOVE.friction * dt, k = Math.max(0, sp - drop) / sp; s.vx *= k; s.vz *= k; }
     accelerate(s, wx, wz, wishspeed, MOVE.accelerate, dt);
-  } else {
+  } else if (!climbing) {
     accelerate(s, wx, wz, wishspeed, MOVE.airaccelerate, dt, MOVE.aircap);
     s.vy -= MOVE.gravity * dt;
   }
@@ -79,10 +99,11 @@ export function moveStep(s, input, world, dt) {
   if (s.onGround) { if (s.y - ground > MOVE.step) s.onGround = false; else s.y = ground; }
   if (!s.onGround) {
     const ny = s.y + s.vy * dt;
-    if (s.vy > 0 && (ceilingIn(boxes, boxes.length, s.x, s.z, s.y, ny, height) || ceilingIn(HULLS, nh, s.x, s.z, s.y, ny, height))) s.vy = 0;
+    const near = s.vy > 0 ? boxesNear(boxes, s.x - MOVE.radius, s.z - MOVE.radius, s.x + MOVE.radius, s.z + MOVE.radius, NC) : null;
+    if (s.vy > 0 && (ceilingIn(near, near.length, s.x, s.z, s.y, ny, height) || ceilingIn(HULLS, nh, s.x, s.z, s.y, ny, height))) s.vy = 0;
     else s.y = ny;
     const g = groundBy(boxes, nh, s.x, s.z, Math.max(s.y, ground));
-    if (s.vy <= 0 && s.y <= g) { s.y = g; s.vy = 0; s.onGround = true; s.landed = 1; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.land); }
+    if (s.vy <= 0 && s.y <= g) { s.y = g; s.vy = 0; s.onGround = true; if (!climbing) { s.landed = 1; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.land); } }
   }
   return s;
 }

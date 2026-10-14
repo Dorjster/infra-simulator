@@ -98,7 +98,11 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   const spawnY = p => { const i = cellOf(p[0], p[1]), k = i >= 0 ? floorNear(i, p[2]) : -1; return +(((k >= 0 ? z[i * MAXF + k] : p[2]) - zLow) * U).toFixed(2); };
   const spawns = { t: T10.map(p => [...toGameXZ(p[0], p[1]), spawnY(p)]), ct: CT10.map(p => [...toGameXZ(p[0], p[1]), spawnY(p)]) };
   const toGame = (x, y, h) => [(x - x0) * U - W / 2, (h - zLow) * U, (y1 - y) * U - D / 2];
-  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: { data: bsp, toGame }, aligned: align ? +align.err.toFixed(0) : null, fromFile: true } });
+  // Ladders (func_ladder): their volumes in game units relative to the map centre [minX, maxX, minZ, maxZ, y0, y1], for
+  // climbing (arena-move.js).
+  const ladders = []; for (const e of ents('func_ladder')) { const mi = modelOf(e); if (mi <= 0 || !bsp.models[mi]) continue; const b = bounds(bsp.models[mi], e.origin ? vec(e.origin) : [0, 0, 0]), a = toGame(b.mins[0], b.maxs[1], b.mins[2]), c = toGame(b.maxs[0], b.mins[1], b.maxs[2]);
+    ladders.push([a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(2))); }
+  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: { data: bsp, toGame }, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders } });
   // The segments only made the collision boxes: these maps are drawn from their own faces (bsp-mesh.js), never from
   // the columns, and a large map holds some 200 000 of them (60 MB).
   map.columns.segs = null; return map;

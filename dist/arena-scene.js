@@ -9,6 +9,8 @@ import { buildColumnMeshes } from './cs-mesh.js';
 import { buildBspMeshes } from './bsp-mesh.js';
 import { buildVbspMeshes } from './vbsp-mesh.js';
 import { buildVbspProps } from './vbsp-props-mesh.js';
+import { boxesNear } from './box-grid.js';
+const SURF_NEAR = [];
 const warmCam = new THREE.PerspectiveCamera(70, 1.6, .1, 5000);
 let mapTextures = null;   // a Source map's texture cache (all of it is freed when the map goes, used by a mesh or not)
 import { buildProps, propWarmMeshes } from './arena-props.js';
@@ -94,7 +96,7 @@ export function arenaWarmMeshes() {
 }
 export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.userData.gd = true; group.visible = false; scene.add(group);
-  let current = null, boxes = [], bounds = null, savedBg = null, savedFog = null;
+  let current = null, boxes = [], ladders = [], bounds = null, savedBg = null, savedFog = null;
   // Outdoor light per map: a strong warm sun (hard building shadows, as on the real maps), the sky's colour from above
   // and the ground's warm bounce from below, a soft fill so no shade is pitch black, and a sky dome — deep blue
   // overhead, pale and hazy at the horizon (the fog takes the horizon colour).
@@ -112,7 +114,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   let builtFrom = null;   // the map object drawn (a map file loaded later replaces it: draw again)
   function build(id) {
     if (current === id && builtFrom === ARENA_MAPS[id]) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id; builtFrom = map;
-    const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
+    const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); ladders = (map.ladders || []).map(([a, b, c, d, y0, y1]) => ({ minX: cx + a, maxX: cx + b, minZ: cz + c, maxZ: cz + d, y0, y1 })); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
     // A map from a file: its own faces, textures and baked light (bsp-mesh.js); collision is the columns, as always.
     if (map.bsp) { const T = map.bsp.toGame, toGame = (x, y, z) => { const g = T(x, y, z); return [cx + g[0], g[1], cz + g[2]]; };
       // Counter-Strike 1.6 maps (bsp-mesh.js) or Source maps (vbsp-mesh.js: their own packed textures, terrain and props).
@@ -133,14 +135,14 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   }
   return {
     group,
-    get map() { return current; }, get boxes() { return boxes; }, get bounds() { return bounds; },
+    get map() { return current; }, get boxes() { return boxes; }, get ladders() { return ladders; }, get bounds() { return bounds; },
     // Show / hide the arena (and swap the dark indoor background for a sky while inside it).
     show(id) { build(id); group.visible = true; if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id], L = outdoor(id); scene.background = new THREE.Color(L.horizon); scene.fog = new THREE.FogExp2(L.horizon, .0011); scene.userData.outdoor = L; sky(L); },   // light haze: the far side of the map stays visible   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
     hide() { group.visible = false; delete scene.userData.outdoor; if (savedBg !== null) { scene.background = savedBg; scene.fog = savedFog; savedBg = null; } },
     inArena: z => z < ARENA.maxZ,
     clear(x, z) { return !!bounds && walkable(boxes, bounds, x, z); },
     // What the feet are on at (x, z) with feet at height y, for footstep sounds: wood, metal, grass (sand) or concrete.
-    surfaceAt(x, z, y = 0) { const b = y > .3 && boxes.find(b => Math.abs(b.y1 - y) < .6 && x > b.minX - 1 && x < b.maxX + 1 && z > b.minZ - 1 && z < b.maxZ + 1), m = b ? b.mat : ARENA_MAPS[current]?.floor || 'concrete';
+    surfaceAt(x, z, y = 0) { const b = y > .3 && boxesNear(boxes, x - 1, z - 1, x + 1, z + 1, SURF_NEAR).find(b => Math.abs(b.y1 - y) < .6 && x > b.minX - 1 && x < b.maxX + 1 && z > b.minZ - 1 && z < b.maxZ + 1), m = b ? b.mat : ARENA_MAPS[current]?.floor || 'concrete';
       return /wood|crate/.test(m) ? 'wood' : /metal/.test(m) ? 'metal' : /sand/.test(m) ? 'grass' : 'concrete'; },
     spawnFor(i) { const map = ARENA_MAPS[current]; if (!map) return null; const s = map.spawns[((i % map.spawns.length) + map.spawns.length) % map.spawns.length]; return { x: ARENA.cx + s[0], z: ARENA.cz + s[1], ...(s[2] !== undefined ? { y: s[2] } : {}) }; },
   };
