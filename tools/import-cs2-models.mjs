@@ -76,12 +76,16 @@ const models = { weapons: { ...(old.models.weapons || {}) }, agents: { ...(old.m
 const put = (rel, data) => { mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); writeFileSync(path.join(out, rel), data); };
 const url = f => 'http://assets.local/file' + f.split('/').map(encodeURIComponent).join('/');
 const done = new Set(), { WEAPON_IDS } = await import(new URL('../dist/weapons-data.js', import.meta.url).href), known = new Set([...WEAPON_IDS, 'knife', 'knife-t', 'karambit', 'c4', 'kit']);
+// Guns are held by their grip as measured on each CS2 model (weapon-models.js CS2_FIT); one without it would float in
+// the hand, so it is left out until measured (the game keeps its built-in model for it).
+const fitted = (() => { const src = readFileSync(new URL('../dist/weapon-models.js', import.meta.url), 'utf8'), i = src.indexOf('export const CS2_FIT = {'), j = src.indexOf('\n};', i); return new Set([...src.slice(i, j).matchAll(/(?:^|[\s,{])'?([a-z0-9-]+)'?: \{ at:/g)].map(m => m[1])); })();
 // .glb first: the same model as .fbx in the same download is then skipped.
 jobs.sort((a, b) => (/\.glb$/i.test(b.file) - /\.glb$/i.test(a.file)));
 for (const j of jobs) {
   const what = await p.evaluate(async u => { const m = await import('/page.js'); const { root } = await m.load(u); return m.identify(root); }, url(j.file)).catch(e => ({ error: e.message }));
   if (!what || what.error) { console.log('  skip', path.basename(j.file), what?.error || '(not a CS2 model this game uses)'); continue; }
   if (what.kind === 'weapon' && !known.has(what.id)) { console.log('  skip', path.basename(j.file), '(' + what.id + ': the game has no such weapon)'); continue; }
+  if (what.kind === 'weapon' && !fitted.has(what.id)) { console.log('  skip', path.basename(j.file), '(' + what.id + ': no grip measured for it yet — the built-in model is used)'); continue; }
   const key = what.kind + ':' + what.id; if (done.has(key)) { console.log('  skip', path.basename(j.file), '(' + key + ' already from this run)'); continue; }
   const base = 'http://assets.local/file', files = j.pics;
   try {

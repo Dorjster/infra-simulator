@@ -351,6 +351,7 @@ export const VARIANTS = {
   usps: { base: 'pistol', tint: 0x9aa3ad, suppressor: [.75, .055] }, fiveseven: { base: 'pistol', scale: 1.05, tint: 0xd8c9a8 }, p250: { base: 'luger', tint: 0x8c8f96 }, deagle: { base: 'pistol', scale: 1.28, tint: 0xd0d4da, chrome: true },
   mac10: { base: 'greasegun', scale: .78, tint: 0x5a5d62 }, mp9: { base: 'greasegun', scale: .85, tint: 0x3a3c40 }, mp7: { base: 'greasegun', scale: .92, tint: 0x6b6e66 }, smg: { base: 'greasegun', tint: 0x2e3034, suppressor: [1.1, .08] },
   ump45: { base: 'suomi', scale: .9, tint: 0x55575c }, p90: { base: 'suomi', scale: .85, tint: 0x4f5a45 },
+  cz75: { base: 'pistol', scale: .97, tint: 0x7a6650 }, tec9: { base: 'pistol', scale: 1.14, tint: 0x2c2e31 }, bizon: { base: 'suomi', scale: .96, tint: 0x4a4334 },
   xm1014: { base: 'shotgun', tint: 0x4a4a4e }, galil: { base: 'ak', tint: 0xc9b48a }, famas: { base: 'm4', tint: 0xcbb48a }, m4s: { base: 'm4', suppressor: [1.15, .085] },
   sg553: { base: 'ak', tint: 0x55595e, scope: true }, aug: { base: 'm4', tint: 0x7d8a5c, scope: true }, ssg08: { base: 'sniper', scale: .92, tint: 0x8aa0b4 }, lmg: { base: 'm4', scale: 1.22, tint: 0x5c5f55, box: true },
 };

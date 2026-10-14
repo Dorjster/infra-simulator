@@ -8,9 +8,9 @@ const F = name => { const f = path.join(dir, 'ES_' + name + ' - Epidemic Sound.w
 const cache = new Map();
 function load(file, rate = RATE, ch = 1) { const k = file + rate + ch; if (cache.has(k)) return cache.get(k); const t = path.join(tmp, 'x.wav'); execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@' + rate, '-c', String(ch), file, t]); const b = readFileSync(t); let o = 12; while (b.toString('ascii', o, o + 4) !== 'data') o += 8 + b.readUInt32LE(o + 4);
   const n = b.readUInt32LE(o + 4) / 2, s = new Float32Array(n); for (let i = 0; i < n; i++) s[i] = b.readInt16LE(o + 8 + i * 2) / 32768; cache.set(k, s); return s; }
-// ONLY=<prefix> (env): write only the sounds whose names start with it (e.g. ONLY=shot- re-cuts the gunshots alone).
-const ONLY = process.env.ONLY || '';
-function save(name, s, { gain = 1, rate = RATE, ch = 1 } = {}) { if (ONLY && !name.startsWith(ONLY)) return; let peak = 0; for (const v of s) peak = Math.max(peak, Math.abs(v)); const k = peak ? .92 * gain / peak : 1, b = Buffer.alloc(44 + s.length * 2);
+// ONLY=<prefix>[,<prefix>…] (env): write only the sounds whose names start with one (e.g. ONLY=shot- re-cuts the gunshots alone).
+const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);   // (several prefixes, comma separated)
+function save(name, s, { gain = 1, rate = RATE, ch = 1 } = {}) { if (ONLY.length && !ONLY.some(o => name.startsWith(o))) return; let peak = 0; for (const v of s) peak = Math.max(peak, Math.abs(v)); const k = peak ? .92 * gain / peak : 1, b = Buffer.alloc(44 + s.length * 2);
   b.write('RIFF', 0); b.writeUInt32LE(36 + s.length * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(ch, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2 * ch, 28); b.writeUInt16LE(2 * ch, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(s.length * 2, 40);
   for (let i = 0; i < s.length; i++) b.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(s[i] * k * 32767))), 44 + i * 2); writeFileSync(path.join(out, name + '.wav'), b); console.log(name.padEnd(22), (s.length / rate / ch).toFixed(2) + ' s'); }
 // Onsets: a 5 ms window jumping well above the quietest of the last 40 ms (splits bursts and footsteps too).
@@ -53,6 +53,9 @@ const GUNS = {
   fiveseven: ['Guns, Pistol, Handgun, Walther P99 9MM, Various Shots', 'Guns, Pistol, Gunshot, Exterior 02', .8],
   deagle: ['Guns, Pistol, Heavy Pistol, Single Fire, Reverberant 01', 'Guns, Pistol, Long Distance Pistol, Single Fire, Reverberant', 1.2],
   cannon: ['Guns, Pistol, Revolver, Shot, Short Tail', 'Guns, Pistol, Revolver, Shot, Long Tail', 1],
+  cz75: ['Guns, Pistol, Handgun, Glock 19, Various Shots 02', 'Guns, Pistol, Distant Shooting Range, Windy 01', .7],
+  tec9: ['Guns, Pistol, Handgun, Beretta M9, Various Shots 01', 'Guns, Rifle, Distant Shooting Range, Windy 02', .8],
+  bizon: ['Guns, Automatic, Submachine Gun, HK MP5, Shots, Short Bursts 01, Combo', 'Guns, Rifle, Distant Shooting Range, Windy 03', .7],
 };
 // Three takes close up (each shot of a spray differs, as real ones do), one from afar. Every gun's files are its own:
 // a recording with fewer clean takes gets the missing ones as slightly faster / slower versions (not a copy), and
@@ -60,7 +63,7 @@ const GUNS = {
 // A take played a little faster or slower (f > 1: shorter and higher), linear interpolation.
 const vary = (s, f) => { const out = new Float32Array(Math.floor(s.length / f)); for (let j = 0; j < out.length; j++) { const x = j * f, i = x | 0, k = x - i; out[j] = (s[i] || 0) * (1 - k) + (s[i + 1] || 0) * k; } return out; };
 const farUse = new Map();
-for (const [id, [near, far, len]] of Object.entries(GUNS)) { const t = takes(F(near), { count: 4, len }).filter((x, i, a) => x.length > RATE * .25 || a.length === 1).slice(0, 3); t.forEach((s, i) => save('shot-' + id + (i ? '-' + 'abc'[i] : ''), s)); for (let i = t.length; i < 3; i++) save('shot-' + id + '-' + 'abc'[i], vary(t[i % t.length], i % 2 ? 1.04 : .96));
+for (const [id, [near, far, len]] of Object.entries(GUNS)) { const all = takes(F(near), { count: 4, len }), t = (all.some(x => x.length > RATE * .25) ? all.filter(x => x.length > RATE * .25) : all).slice(0, 3);   /* (a recording of quick shots: its shorter takes) */ t.forEach((s, i) => save('shot-' + id + (i ? '-' + 'abc'[i] : ''), s)); for (let i = t.length; i < 3; i++) save('shot-' + id + '-' + 'abc'[i], vary(t[i % t.length], i % 2 ? 1.04 : .96));
   const k = farUse.get(far) || 0; farUse.set(far, k + 1); const ft = takes(F(far), { count: k + 1, len: len * 1.4 }); save('shot-' + id + '-far', k < ft.length ? ft[k] : vary(ft[k % ft.length], 1 + .035 * (1 + (k - ft.length))), { gain: .85 }); }
 
 // ── Reloads (CS2: the whole sequence is heard): a handling grab at the start, mag out, mag in, bolt / slide / pump,
