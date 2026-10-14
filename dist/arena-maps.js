@@ -5,7 +5,7 @@
 // metal-blue, metal-green, roof, stone. kind: 'dm' (deathmatch) or 'defuse' (bomb sites A / B, T / CT spawns, bot routes).
 import { DRESS } from './arena-maps-more.js';
 import { buildCsMap } from './cs-mapbuild.js';
-import { parseBsp } from './bsp30.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js';
+import { parseBsp } from './bsp30.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js'; import { compactVbsp } from './vbsp-compact.js';
 import { THEMES, CS_MAP_IDS } from './cs-maps/themes.js';
 import dust2 from './cs-maps/dust2-nav.js'; import mirage from './cs-maps/mirage-nav.js'; import inferno from './cs-maps/inferno-nav.js'; import nuke from './cs-maps/nuke-nav.js';
 import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js';
@@ -66,7 +66,7 @@ for (const id of CS_MAP_IDS) Object.defineProperty(ARENA_MAPS, id, { enumerable:
 // time it is used. The host and every client load the same file (the room serves it), so all build the same map.
 const FILE_MAPS = new Map();
 // Counter-Strike 1.6 (BSP 30) or Source (VBSP: CS:S / CS:GO ports; its terrain and solid props join the collision when the map is built).
-export function useMapFile(id, buffer, info = {}) { if (!CS_MAP_IDS.includes(id)) throw Error('No such Defuse map: ' + id); const bsp = isVbsp(buffer) ? (sb => { const g = toGoldSrc(sb); g.extraSpans = (x, y) => (g._solids ??= sourceSolids(sb, { bounds: playBounds(sb) })).extraSpans(x, y); return g; })(parseVbsp(buffer)) : parseBsp(buffer); FILE_MAPS.set(id, { size: buffer.byteLength, ...info });
+export function useMapFile(id, buffer, info = {}) { if (!CS_MAP_IDS.includes(id)) throw Error('No such Defuse map: ' + id); const bsp = isVbsp(buffer) ? (sb => { const g = toGoldSrc(sb); g.extraSpans = (x, y) => (g._solids ??= sourceSolids(sb, { bounds: playBounds(sb) })).extraSpans(x, y); return g; })(compactVbsp(parseVbsp(buffer))) : parseBsp(buffer); FILE_MAPS.set(id, { size: buffer.byteLength, ...info });
   Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() { const m = buildBspMap(id, bsp, { T: THEMES[id], nav: NAV[id] }); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } }); }
 export const mapFileOf = id => FILE_MAPS.get(id) || null;
 // Every map's id, name and kind without building any (menus, settings).

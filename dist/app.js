@@ -140,8 +140,8 @@ function benchmark(dt){if(!benchNeeded||benchFrames===null||!lab.active)return;b
 // Adaptive resolution: every 0.5 s while playing at full rate (never on capped menus or a background window),
 // scale the pixel ratio in proportion to how slow frames are, so a GPU-bound laptop recovers within a second or
 // two; climb back slowly when there is headroom. Stays within [floor, ceiling] of the chosen preset.
-let scaleAt=0,lastDownscale=0,slowChecks=0;const bootAt=performance.now();
-function scaleResolution(){const now=performance.now();if(now-scaleAt<500||now-bootAt<6000||frameCap()<60)return;scaleAt=now;
+let scaleAt=0,lastDownscale=0,slowChecks=0,loadingAt=0;const bootAt=performance.now();
+function scaleResolution(){const now=performance.now();if(now-scaleAt<500||now-bootAt<6000||frameCap()<60)return;scaleAt=now;if(document.getElementById('ar-load')?.hidden===false)loadingAt=now;if(now-loadingAt<3000){slowChecks=0;return;}/* a match loading (a big map file building) and the few seconds after it (the browser tidying up) are not play: their slow frames never lower the resolution */
  const recent=[...frameRing].filter(Boolean).slice(-40).sort((a,b)=>a-b),median=recent[Math.floor(recent.length/2)]||16.7;   // median: a loading hitch doesn't count
  const current=renderer.getPixelRatio(),ceiling=graphicsCeiling(),floor=Math.min(ceiling,(softwareGL?.35:preferences.graphics==='Low'?.6:Math.min(devicePixelRatio,1)*.75)*(+preferences.resolutionScale||1));
  slowChecks=median>19?slowChecks+1:0;let next=current;

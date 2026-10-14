@@ -45,13 +45,13 @@ const jobs = [], bsps = []; for (const r of roots) { const files = walk(r.dir), 
 for (const f of loose) if (/\.bsp$/i.test(f)) bsps.push({ from: path.basename(f), file: f }); else jobs.push({ from: path.basename(f), file: f, pics: walk(path.dirname(f)).filter(x => /\.(png|jpe?g)$/i.test(x)) });
 console.log(`${roots.length + loose.length} downloads in ${src}: ${jobs.length} model files, ${bsps.length} map files`);
 
-// Maps: a Counter-Strike 1.6 map file (BSP 30) named after one of the game's maps (de_dust2_c2.bsp → dust2); of several
-// for the same map, the newest download. Other versions (Source, CS2) are not read by the game and are skipped.
+// Maps: a Counter-Strike 1.6 map file (BSP 30) or a Source one (VBSP 19–21: CS:S / CS:GO ports) named after one of the
+// game's maps (de_dust2_c2.bsp → dust2); of several for the same map, the newest download. CS2's own format is skipped.
 const { CS_MAP_IDS } = await import(new URL('../dist/cs-maps/themes.js', import.meta.url).href), mapPick = new Map();
 for (const m of bsps) { const name = path.basename(m.file).toLowerCase(), id = CS_MAP_IDS.find(i => new RegExp('(^|[^a-z])' + i + '([^a-z]|$)').test(name.replace(/\.bsp$/, '')));
-  const head = readFileSync(m.file).subarray(0, 4), ver = head.length === 4 ? head.readInt32LE(0) : 0;
+  const head = readFileSync(m.file).subarray(0, 8), vbsp = head.toString('latin1', 0, 4) === 'VBSP', ver = vbsp ? head.readInt32LE(4) : head.length >= 4 ? head.readInt32LE(0) : 0;
   if (!id) { console.log('  skip map', path.basename(m.file), '(not one of: ' + CS_MAP_IDS.join(', ') + ')'); continue; }
-  if (ver !== 30) { console.log('  skip map', path.basename(m.file), '(BSP version ' + ver + ': only Counter-Strike 1.6 maps, version 30)'); continue; }
+  if (vbsp ? ver < 19 || ver > 21 : ver !== 30) { console.log('  skip map', path.basename(m.file), '(' + (vbsp ? 'Source map version ' : 'BSP version ') + ver + ': the game reads Counter-Strike 1.6 maps (30) and Source maps (19–21))'); continue; }
   const t = statSync(m.file).mtimeMs, was = mapPick.get(id); if (!was || t > was.t) mapPick.set(id, { ...m, t }); }
 for (const [id, m] of mapPick) for (const dir of [mapsOut, ...(app ? [path.join(app, 'maps')] : [])]) { mkdirSync(dir, { recursive: true }); writeFileSync(path.join(dir, id + '.bsp'), readFileSync(m.file)); }
 for (const [id, m] of mapPick) console.log('  map', id, '←', m.from, '(' + path.basename(m.file) + ')');

@@ -7,6 +7,10 @@ import { ARENA_MAPS, MAP_LIST, mapBoxes, walkable } from './arena-maps.js';
 import { THEMES } from './cs-maps/themes.js';
 import { buildColumnMeshes } from './cs-mesh.js';
 import { buildBspMeshes } from './bsp-mesh.js';
+import { buildVbspMeshes } from './vbsp-mesh.js';
+import { buildVbspProps } from './vbsp-props-mesh.js';
+const warmCam = new THREE.PerspectiveCamera(70, 1.6, .1, 5000);
+let mapTextures = null;   // a Source map's texture cache (all of it is freed when the map goes, used by a mesh or not)
 import { buildProps, propWarmMeshes } from './arena-props.js';
 
 function tex(draw, size = 256) {
@@ -104,13 +108,20 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   function sky(L) { fill.color.setHex(L.fill); const P = DOME.attributes.position, C = DOME.attributes.color, z = new THREE.Color(L.zenith), h = new THREE.Color(L.horizon), c = new THREE.Color();
     for (let i = 0; i < P.count; i++) { const t = Math.max(0, P.getY(i) / 1000); c.copy(h).lerp(z, Math.pow(t, .4)); C.setXYZ(i, c.r, c.g, c.b); } C.needsUpdate = true; }
   function clearMap() { for (const o of [...group.children]) { if (o.userData.ground || o.userData.keep) continue;   // dropped guns (arena-ui), the sky dome and fill light stay   // dropped guns: arena-ui owns them
-    group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); if (o.userData.bsp) { o.material.map?.dispose(); o.material.lightMap?.dispose(); o.material.dispose(); }   /* a map file's own textures and light */ const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; }
+    group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); if (o.userData.bsp) { o.material.map?.dispose(); o.material.userData.map2?.dispose(); o.material.lightMap?.dispose(); o.material.dispose(); if (o.isBatchedMesh) o.dispose(); }   /* a prop batch: its own instance textures too */   /* a map file's own textures and light */ const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; mapTextures?.dispose(); mapTextures = null; }
   let builtFrom = null;   // the map object drawn (a map file loaded later replaces it: draw again)
   function build(id) {
     if (current === id && builtFrom === ARENA_MAPS[id]) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id; builtFrom = map;
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
     // A map from a file: its own faces, textures and baked light (bsp-mesh.js); collision is the columns, as always.
-    if (map.bsp) { const T = map.bsp.toGame; for (const mesh of buildBspMeshes(map.bsp.data, { toGame: (x, y, z) => { const g = T(x, y, z); return [cx + g[0], g[1], cz + g[2]]; } }).meshes) group.add(mesh); return; }
+    if (map.bsp) { const T = map.bsp.toGame, toGame = (x, y, z) => { const g = T(x, y, z); return [cx + g[0], g[1], cz + g[2]]; };
+      // Counter-Strike 1.6 maps (bsp-mesh.js) or Source maps (vbsp-mesh.js: their own packed textures, terrain and props).
+      const built = map.bsp.data.format === 'vbsp' ? buildVbspMeshes(map.bsp.data.source, { toGame, renderer: globalThis.__infra?.renderer }) : buildBspMeshes(map.bsp.data, { toGame });
+      for (const mesh of built.meshes) group.add(mesh);
+      if (map.bsp.data.format === 'vbsp') { for (const mesh of buildVbspProps(map.bsp.data.source, { toGame, textures: built.textures }).meshes) group.add(mesh);
+        // Every texture uploaded and every material compiled now, on the loading screen — never on first sight in play.
+        mapTextures = built.textures; const r = globalThis.__infra?.renderer; if (r) { for (const t of built.textures.all()) r.initTexture(t); r.compile(group, warmCam); } }
+      return; }
     if (map.columns) { for (const mesh of buildColumnMeshes(map, shadedMaterial, tileOf, cx, cz)) group.add(mesh);   // classic maps: drawn from their columns (not aim-raycast: shots and the arena use the collision boxes)
       for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; const g = map.siteGoals?.[L] || [x, z], fy = g[2] ?? map.nav.floorAt(g[0], g[1]); s.position.set(cx + g[0], (Number.isFinite(fy) ? fy : 0) + .08, cz + g[1]); s.scale.setScalar(Math.min(r, 30) * 1.2); s.renderOrder = 1; group.add(s); }
       return; }

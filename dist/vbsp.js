@@ -54,10 +54,14 @@ export function parseVbsp(buffer) {
     for (let i = 0; i < n; i++) { const o = GL.off + 4 + i * 16, id = i32(o), ver = u16(o + 6), fo = i32(o + 8), fl = i32(o + 12); if (id !== 0x73707270 || !fl) continue;   // 'sprp'
       let p = fo; const nd = i32(p); p += 4; for (let k = 0; k < nd; k++) propModels.push(cstr(p + k * 128, 128).toLowerCase().replace(/\\/g, '/')); p += nd * 128;
       const nl = i32(p); p += 4 + nl * 2; const np = i32(p); p += 4; if (!np) continue; const size = Math.floor((fo + fl - p) / np);
-      for (let k = 0; k < np; k++) { const q = p + k * size; props.push({ origin: [f32(q), f32(q + 4), f32(q + 8)], angles: [f32(q + 12), f32(q + 16), f32(q + 20)], model: u16(q + 24), solid: u8[q + 30], flags: u8[q + 31], skin: i32(q + 32), scale: ver >= 11 && size >= 80 ? f32(q + 76) || 1 : 1 }); } } }
+      for (let k = 0; k < np; k++) { const q = p + k * size; props.push({ origin: [f32(q), f32(q + 4), f32(q + 8)], angles: [f32(q + 12), f32(q + 16), f32(q + 20)], model: u16(q + 24), solid: u8[q + 30], flags: u8[q + 31], skin: i32(q + 32), fadeMax: size >= 44 ? f32(q + 40) : 0, scale: ver >= 11 && size >= 80 ? f32(q + 76) || 1 : 1 }); } } }
+  // Ambient light per leaf (for props): an index (count, first) per leaf into samples of 28 bytes (a cube of six
+  // RGB × 2^exponent colours and the sample's place in the leaf). The plain (LDR) set, else the HDR one.
+  const ldr = lump(52).len && lump(56).len, AI = lump(ldr ? 52 : 51), AL = lump(ldr ? 56 : 55);
+  const ambient = AI.len && AL.len ? { index: new Uint16Array(u8.slice(AI.off, AI.off + AI.len).buffer), samples: u8.subarray(AL.off, AL.off + AL.len) } : null;
   // Packed files: a .zip in the map (usually stored, not compressed).
   const PK = lump(L.PAKFILE), pak = PK.len ? readPak(u8.subarray(PK.off, PK.off + PK.len)) : new Map();
-  return { format: 'vbsp', version, planes, vertices, edges, surfedges, nodes, leafContents, leafBrushes, leafbrush, brushes, brushsides, texinfo, texdata, faces, lighting, hdr: useHdr, models, disps, dispVerts, dispTris, entities, props, propModels, pak };
+  return { format: 'vbsp', version, planes, vertices, edges, surfedges, nodes, leafContents, leafBrushes, leafbrush, brushes, brushsides, texinfo, texdata, faces, lighting, hdr: useHdr, models, disps, dispVerts, dispTris, entities, props, propModels, ambient, pak };
 }
 
 // The map's packed .zip: path (lower case, '/') → { method, offset, size, csize } in `u8`; read(name) gives the bytes.
