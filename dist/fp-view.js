@@ -89,8 +89,9 @@ function gripBase(pts) { if (pts.length < 10) return null; let z0 = Infinity, z1
   if (!rear.length) return null; let lo = Infinity; for (const q of rear) lo = Math.min(lo, q.y); const near = rear.filter(q => q.y < lo + (z1 - z0) * .05), c = new THREE.Vector3(); for (const q of near) c.add(q); return c.multiplyScalar(1 / near.length); }
 const loaded = new Map(), ready = new Map();   // pack name → promise · → built arms
 function load(name) {
+  if (loaded.has(name)) return loaded.get(name);   // (once: a second url promise would reject unheard without imported files)
   const P = PACKS[name], url = P.user ? userAssets().then(ua => { const v = ua.models.viewmodels?.[P.user]; if (!v) throw Error('none'); return userAssetURL(ua, v.file); }) : Promise.resolve(new URL('./models/fp/' + P.url + '/scene.gltf', import.meta.url).href);
-  if (!loaded.has(name)) loaded.set(name, Promise.all([url.then(u => new GLTFLoader().loadAsync(u)), loadGlove()]).then(([g, glove]) => { const b = build(name, g, glove); ready.set(name, b); return b; }).catch(e => { if (e?.message !== 'none' && typeof window !== 'undefined') console.warn('first-person arms', name, e?.message); return null; }));
+  loaded.set(name, Promise.all([url.then(u => new GLTFLoader().loadAsync(u)), loadGlove()]).then(([g, glove]) => { const b = build(name, g, glove); ready.set(name, b); return b; }).catch(e => { if (e?.message !== 'none' && typeof window !== 'undefined') console.warn('first-person arms', name, e?.message); return null; }));
   return loaded.get(name);
 }
 export const loadFP = () => Promise.all([...Object.keys(PACKS).map(load), loadKarambit()]);

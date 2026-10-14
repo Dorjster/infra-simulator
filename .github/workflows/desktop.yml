@@ -1,5 +1,6 @@
-# Desktop builds: tests first, then a macOS DMG built on macOS runners and a Windows Setup.exe built on
-# a Windows runner. Artifacts are uploaded for every run; a GitHub release is published only for v* tags.
+# Desktop builds: tests first, then a macOS DMG for Apple Silicon built on a macOS runner (no Intel Mac build)
+# and a Windows Setup.exe built on a Windows runner. Artifacts are uploaded for every run; a GitHub release is
+# published only for v* tags.
 # Signing: set APPLE_ID / APPLE_APP_PASSWORD / APPLE_TEAM_ID (+ a Developer ID certificate in the
 # keychain) for macOS notarization and WINDOWS_CERTIFICATE_FILE / WINDOWS_CERTIFICATE_PASSWORD for
 # Windows. Without them the builds are unsigned (macOS Gatekeeper and Windows SmartScreen will warn).
@@ -26,7 +27,6 @@ jobs:
       matrix:
         include:
           - { os: macos-14, arch: arm64, label: macos-apple-silicon }
-          - { os: macos-15-intel, arch: x64, label: macos-intel }
           - { os: windows-latest, arch: x64, label: windows-x64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
