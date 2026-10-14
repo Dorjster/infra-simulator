@@ -17,11 +17,11 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-radar" hidden><canvas width="420" height="420"></canvas><small></small></div>');
   const el = document.getElementById('gd-radar'), cv = el.querySelector('canvas'), x = cv.getContext('2d'), label = el.querySelector('small');
   let mode = (() => { try { return localStorage.getItem(PREF) === 'fixed' ? 'fixed' : 'rotate'; } catch { return 'rotate'; } })();
-  let img = null, imgMap = null, imgLayer = null, boxMap = null, boxes = [], scale = 1, at = 0, big = false, span = SPAN; const seen = new Map(), lastShots = new Map(), why = new Map();
+  let img = null, imgMap = null, imgObj = null, imgLayer = null, boxMap = null, boxes = [], scale = 1, at = 0, big = false, span = SPAN; const seen = new Map(), lastShots = new Map(), why = new Map();
   // The map, drawn once: floor, walls (dark), low cover (mid), raised floors / roofs (light outline), sites.
   // The map picture (CS-overview style, gd-radar-art.js), drawn once per map.
   // layer: null, or 'lower' (Nuke's lower level, while you are down there).
-  function drawMap(id, layer = null) { const r = radarImage(ARENA_MAPS[id], id, 2, layer); img = r.canvas; scale = r.scale; imgMap = id; imgLayer = layer; }
+  function drawMap(id, layer = null) { const r = radarImage(ARENA_MAPS[id], id, 2, layer); img = r.canvas; scale = r.scale; imgMap = id; imgObj = ARENA_MAPS[id]; imgLayer = layer; }
   const isFoe = (G, me, other) => { const t = G.combat?.d?.teams; return !t || !t[me] || t[other] !== t[me]; };
   return {
     // Hold Tab (with the scoreboard): the whole map, north up, at a large size.
@@ -35,8 +35,8 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
     update() {
       const G = world.operations.game, on = G.mode === 'arena' && !!G.arena && active(); if (el.hidden === on) el.hidden = !on; if (!on) return;
       const now = performance.now(); if (now - at < 66) return; at = now;
-      const A = G.arena, m = ARENA_MAPS[A.map]; if (!m) return; const pf = where(), feet = (pf?.y ?? EYE) - EYE, layer = m.grid?.lower && feet < m.grid.lowerY ? 'lower' : null; if (imgMap !== A.map || imgLayer !== layer) drawMap(A.map, layer);
-      const me = key(name()), d = G.combat?.d, myTeam = d?.teams?.[me] || null, p = where(), [w, dd] = m.size, cx = ARENA.cx, cz = ARENA.cz; if (boxMap !== A.map) { boxMap = A.map; boxes = m.nav ? [] : mapBoxes(m, cx, cz); }   /* once per map, not per frame */
+      const A = G.arena, m = ARENA_MAPS[A.map]; if (!m) return; const pf = where(), feet = (pf?.y ?? EYE) - EYE, layer = m.grid?.lower && feet < m.grid.lowerY ? 'lower' : null; if (imgMap !== A.map || imgObj !== m || imgLayer !== layer) drawMap(A.map, layer);   /* (a map file loaded under the same name: its own picture) */
+      const me = key(name()), d = G.combat?.d, myTeam = d?.teams?.[me] || null, p = where(), [w, dd] = m.size, cx = ARENA.cx, cz = ARENA.cz; if (boxMap !== m) { boxMap = m; boxes = m.nav ? [] : mapBoxes(m, cx, cz); }   /* once per map, not per frame */
       // Everyone we know of: [{ k, name, x, z, yaw, dead, bot, shotN, weapon }].
       const people = []; for (const pl of lan.players || []) { if (!pl.pose || key(pl.name) === me) continue; people.push({ k: key(pl.name), x: pl.pose.x, y: pl.pose.y, z: pl.pose.z, yaw: pl.pose.yaw, dead: (G.combat?.down?.[key(pl.name)]?.until || 0) > Date.now(), shot: pl.pose.shot?.n, weapon: pl.pose.weapon }); }
       // Revealed enemies: seen by any living team mate (or you), or heard firing (unsuppressed) within 90 units.

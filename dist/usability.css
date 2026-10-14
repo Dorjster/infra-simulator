@@ -45,3 +45,7 @@ body.gd-mode #campaign-panel #cp-nav:empty { display: none; }
 body.gd-menu-open #resume-hint { display: none !important; }
 #gd-menu .gm-invite { margin: -8px 0 14px; color: #bfe9f2; font: 600 13px system-ui, sans-serif; line-height: 1.5; }
 #gd-menu .gm-invite code { color: #fff; font-size: 14px; background: #ffffff14; padding: 1px 6px; border-radius: 4px; }
+#gd-menu .gm-practice { display: flex; flex-wrap: wrap; gap: 2px 6px; max-width: 520px; margin: -6px 0 12px; }
+#gd-menu .gm-practice[hidden] { display: none; }
+#gd-menu .gm-practice h3 { flex-basis: 100%; margin: 0 0 4px; color: #f0b232; font: 800 12px system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+#gd-menu .gm-practice button { font-size: 14px; padding: 7px 10px; background: #ffffff0d; }

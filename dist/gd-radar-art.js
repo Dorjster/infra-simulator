@@ -29,7 +29,7 @@ export function locationOf(m, x, z, feet) { let best = '', bd = 70 * 70; for (co
 
 // The radar picture: { canvas, scale (pixels per unit) }.
 export function radarImage(m, id = m.name, px = 2, layer = null) {
-  const k = id + ':' + px + ':' + (layer || ''); if (cache.has(k)) return cache.get(k);
+  const k = id + ':' + px + ':' + (layer || '') + ':' + m.size.join('x') + (m.fromFile ? ':file' : ''); if (cache.has(k)) return cache.get(k);   // (a map file replaces the built-in map of that name: its own picture)
   const [w, d] = m.size, cv = typeof OffscreenCanvas !== 'undefined' && !globalThis.document ? new OffscreenCanvas(1, 1) : document.createElement('canvas'); cv.width = Math.ceil(w * px); cv.height = Math.ceil(d * px);
   const g = cv.getContext('2d'), G = cellsOf(m, layer), X = v => (v + w / 2) * px, Z = v => (v + d / 2) * px, cs = G.cell * px;
   g.fillStyle = '#0b0f12'; g.fillRect(0, 0, cv.width, cv.height);

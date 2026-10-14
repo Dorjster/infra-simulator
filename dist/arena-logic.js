@@ -122,6 +122,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   // A request made in a round that has ended (it crossed the round change on the network) does nothing.
   if (a.round !== undefined && ROUND_BOUND.has(a.type) && game.combat?.d?.round?.id && a.round !== game.combat.d.round.id) throw Error('That round has ended');
   // ── Match: lobby, teams, host settings, map ──
+  if (a.type === 'practice') { if (!A.practice) throw Error('Only in practice'); A.practice = cleanPractice({ ...A.practice, ...(a.settings || {}) }); return 'Practice: ' + ({ stand: 'bots stand still', move: 'bots move', fight: 'bots fight back' })[A.practice.bots]; }   // its settings, changed during the session
   if (a.type === 'ready') { if (!A.lobby || A.lobby.started) throw Error('The match is running'); A.lobby.ready[key(name)] = a.ready !== false; return a.ready === false ? 'Not ready' : 'Ready'; }
   if (a.type === 'start-match') { if (!perm.isHost) throw Error('Only the host starts the match'); if (!A.lobby || A.lobby.started) throw Error('The match is already running'); const e = lobbyShort(game, players); if (e) throw Error(e); beginMatch(game, players, now); return 'Match started'; }
   if (a.type === 'team') return changeTeam(game, name, a.team, players, now);

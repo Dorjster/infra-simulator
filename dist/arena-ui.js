@@ -241,7 +241,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     if (D()) return defuseHud();
     const A = g().arena, C = g().combat || {}, left = Math.max(0, A.endsAt - Date.now()), mm = Math.floor(left / 60000), ss = String(Math.floor(left / 1000) % 60).padStart(2, '0');
     const top = Object.entries(C.kills || {}).sort((a, b) => b[1] - a[1])[0], mine = C.kills?.[me()] || 0;
-    $('ar-top').hidden = false; $('ar-top').innerHTML = `<span><small>KILLS</small> ${mine}</span><span>${mm}:${ss}</span><span><small>LEADER</small> ${top ? esc(C.names?.[top[0]] || top[0]) + ' ' + top[1] : '—'}</span>`;
+    $('ar-top').hidden = false; $('ar-top').innerHTML = `<span><small>KILLS</small> ${mine}</span><span>${A.practice ? 'PRACTICE' : mm + ':' + ss}</span><span><small>LEADER</small> ${top ? esc(C.names?.[top[0]] || top[0]) + ' ' + top[1] : '—'}</span>`;
     const feed = (C.feed || []).filter(f => Date.now() - f.at < 7000), fk = feed.map(f => f.at).join();
     if (fk !== feedKey) { feedKey = fk; deathSounds(feed); $('ar-feed').innerHTML = feed.map(f => feedLine(f, key(f.by) === me() || key(f.target) === me())).join(''); }
     $('ar-over').hidden = !A.over; if (A.over) $('ar-over').innerHTML = `MATCH OVER<small>${A.over.winner ? 'Winner: ' + esc(A.over.winner) : 'No kills'} · next match in ${Math.max(0, Math.ceil((A.over.at + 12000 - Date.now()) / 1000))} s</small>`;
@@ -324,7 +324,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     defuseHold(hold) { const at = where(); return send({ type: 'defuse', hold, x: at?.x, y: at?.y, z: at?.z }).then(r => { if (hold && r?.error) notify(r.error); return r; }); },
     nearBomb() { const p = D()?.round?.phase === 'planted' && D().round.planted, at = where(); return !!(p && at && myTeam() === 'ct' && Math.hypot(at.x - p.x, at.z - p.z) < 7); },
     // Throw the grenade in hand (left click); then the next one of that kind, or back to your best gun.
-    async throwNade(id, strength = 'long') { const at = where(), a = aim(); if (!at) return; throwSound(); const r = await send({ type: 'throw', kind: id, x: at.x, y: at.y, z: at.z, strength, ...a }); if (r?.error) { notify(r.error); return; }
+    async throwNade(id, strength = 'long') { const at = where(), a = aim(); if (!at) return; throwSound(); const r = await send({ type: 'throw', kind: id, x: at.x, y: at.y, z: at.z, strength, ...a }); if (r?.error) { notify(r.error); return; } dispatchEvent(new CustomEvent('gd-throw', { detail: { kind: id, a: { x: at.x, y: at.y, z: at.z, strength, ...a } } }));   /* (practice: its flight path) */
       const own = arenaArsenalOf(g(), name()); equip(own.includes(id) ? id : own[0]); },
     update() {
       if (!inArena()) { if (entered) leave(); return; }
