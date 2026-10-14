@@ -6,10 +6,16 @@
 //    takes the size its texture quality asks for);
 //  · agents (player characters) → a .glb with one skeleton (CS2's bone names, dist/cs2-agents.js drives it) and its
 //    pictures at 2048 px;
-//  · the karambit first-person model (arms, gloves, knife) → a .glb with one skeleton, untextured (the game paints it).
+//  · the karambit first-person model (arms, gloves, knife) → a .glb with one skeleton, untextured (the game paints it);
+//  · first-person rifle animations (arms on a Rigify rig holding CS2's M4A1-S: Equip, Inspect, Reload, Shots…, the gun
+//    on weapon_hand_r) → a .glb with the arms, the gun (plain: only its shape is used), the bones and the clips;
+//  · gloves (CS2's characters/models/shared/arms/glove_*) → a .glb: both hands on CS2's arm bones, with its pictures
+//    (the game moves it onto its first-person arms, dist/fp-view.js).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 // CS2's weapon class names → the game's weapon ids.
@@ -21,6 +27,10 @@ const VALVE = { glock18: 'pistol', usp_silencer: 'usps', hkp2000: 'p2000', p250:
 const file = async url => { const r = await fetch(url); if (!r.ok) throw Error(url + ': ' + r.status); return r.arrayBuffer(); };
 export async function load(url) {
   const buf = await file(url);
+  // OBJ (with its .mtl and pictures beside it, when it has them).
+  if (/\.obj$/i.test(url)) { const base = url.slice(0, url.lastIndexOf('/') + 1), text = new TextDecoder().decode(buf), lib = /^mtllib\s+(.+)$/m.exec(text)?.[1]?.trim(), ol = new OBJLoader();
+    if (lib) { try { const m = new MTLLoader().setPath(base).parse(new TextDecoder().decode(await file(base + encodeURIComponent(lib))), base); await new Promise(r => { m.preload(); setTimeout(r, 50); }); ol.setMaterials(m); } catch {} }
+    const o = ol.parse(text); await new Promise(r => setTimeout(r, 400)); return { root: o, animations: [], gltf: false }; }
   if (/\.fbx$/i.test(url)) { const o = new FBXLoader().parse(buf, url.slice(0, url.lastIndexOf('/') + 1)); return { root: o, animations: o.animations || [], gltf: false }; }
   const g = await new GLTFLoader().parseAsync(buf, ''); return { root: g.scene, animations: g.animations || [], gltf: true };
 }
@@ -30,6 +40,8 @@ const namesOf = root => { const n = []; root.traverse(o => { n.push(o.name); if 
 export function identify(root) {
   const s = namesOf(root); let bones = 0; root.traverse(o => { if (o.isBone) bones++; });
   if (/v_knife_karam/.test(s) && /glove|arm/.test(s)) return { kind: 'viewmodel', id: 'karambit' };
+  if (/\bweapon_hand_r\b/.test(s) && /v_models.arms/.test(s) && /def-hand/.test(s)) return { kind: 'fp', id: 'rifle' };
+  if (/glove_/.test(s) && /finger_index_0_l/.test(s) && !/\bpelvis\b|knife/.test(s)) return { kind: 'glove', id: 'glove' };
   if (bones > 40 && /\bpelvis\b/.test(s) && /arm_upper_l/.test(s)) { const ct = /ctm_/.test(s), t = /\btm_|body_tm_|[^c]tm_/.test(s.replace(/ctm_/g, '')); return ct || t ? { kind: 'agent', id: ct ? 'ct' : 't', team: ct ? 'ct' : 't', name: (/(ctm|tm)_([a-z0-9]+)/.exec(s) || [])[2] || '' } : null; }
   if (/defuse_multimeter|defuser/.test(s)) return { kind: 'weapon', id: 'kit' };
   if (/knife_default_ct/.test(s)) return { kind: 'weapon', id: 'knife' };
@@ -87,12 +99,38 @@ async function pixels(src, size) {
 }
 async function jpeg(data, q = .88) { const c = new OffscreenCanvas(data.width, data.height); c.getContext('2d').putImageData(data, 0, 0); const u8 = new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality: q })).arrayBuffer()); let s = ''; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode(...u8.subarray(i, i + 32768)); return btoa(s); }
 // A picture file of this model by kind (color / normal / rough / ao / metal / orm), best match to the material's name.
-const KIND = { color: /_(color|albedo|basecolor|diffuse)/, normal: /_normal/, rough: /_rough/, ao: /_ao(?!.*_orm)|ambientocclusion/, metal: /_metal/, orm: /_orm/ };
+const KIND = { color: /_(color|albedo|basecolor|diffuse|rgb)(?![a-z])/, normal: /_normal|_n\.(png|jpe?g)$/, rough: /_rough/, ao: /_ao(?!.*_orm)|ambientocclusion/, metal: /_metal/, orm: /_orm/ };
 export function pickTexture(files, kind, matName = '') {
   const toks = new Set(matName.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 1 && !/^(body|default|psd|tga|png|vmat|mat)$/.test(t)));
   let best = null, bs = -1; for (const f of files) { const b = f.toLowerCase().split('/').pop(); if (!KIND[kind].test(b) || (kind !== 'orm' && /@channels/.test(b))) continue; let sc = 0; for (const t of b.split(/[^a-z0-9]+/)) if (toks.has(t)) sc++; if (sc > bs) { bs = sc; best = f; } } return best;
 }
 
+// A gun from elsewhere, tidied in place (parts: { P, N, U } triangle soups, cm): triangles far outside the gun's main
+// body dropped (the 2nd–98th percentile box, widened by half), then turned so its longest side runs along z, its
+// height along y; the end with the grip hanging down at the back (+z: the muzzle along −z), the grip pointing down.
+function tidy(parts) {
+  const xs = [], ys = [], zs = []; for (const pt of parts) for (let i = 0; i < pt.P.length; i += 3) { xs.push(pt.P[i]); ys.push(pt.P[i + 1]); zs.push(pt.P[i + 2]); }
+  const pr = (a, q) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor((s.length - 1) * q)]; }, lim = a => { const lo = pr(a, .02), hi = pr(a, .98), w = (hi - lo) * .5; return [lo - w, hi + w]; }, LX = lim(xs), LY = lim(ys), LZ = lim(zs);
+  const ok = (P, i) => P[i] >= LX[0] && P[i] <= LX[1] && P[i + 1] >= LY[0] && P[i + 1] <= LY[1] && P[i + 2] >= LZ[0] && P[i + 2] <= LZ[1];
+  for (const pt of parts) { const P = [], N = [], U = []; for (let t = 0; t < pt.P.length / 9; t++) { if (!ok(pt.P, t * 9) || !ok(pt.P, t * 9 + 3) || !ok(pt.P, t * 9 + 6)) continue; for (let k = 0; k < 9; k++) { P.push(pt.P[t * 9 + k]); N.push(pt.N[t * 9 + k]); } for (let k = 0; k < 6; k++) U.push(pt.U[t * 6 + k]); } pt.P = P; pt.N = N; pt.U = U; }
+  const each = f => { for (const pt of parts) for (const A of [pt.P, pt.N]) for (let i = 0; i < A.length; i += 3) { const r = f(A[i], A[i + 1], A[i + 2]); A[i] = r[0]; A[i + 1] = r[1]; A[i + 2] = r[2]; } };
+  const ext = () => { const b = new THREE.Box3(); for (const pt of parts) for (let i = 0; i < pt.P.length; i += 3) b.expandByPoint(new THREE.Vector3(pt.P[i], pt.P[i + 1], pt.P[i + 2])); return b; };
+  let b = ext(), sz = b.getSize(new THREE.Vector3()); const order = [['x', sz.x], ['y', sz.y], ['z', sz.z]].sort((a, c) => a[1] - c[1]).map(a => a[0]);   // shortest → x, middle → y, longest → z
+  if (order.join('') !== 'xyz') { const ix = { x: 0, y: 1, z: 2 }, [a, m, l] = order.map(k => ix[k]), odd = !['012', '120', '201'].includes('' + a + m + l);   // (an odd swap mirrors: x turned back)
+    each((x, y, z) => { const v = [x, y, z]; return [odd ? -v[a] : v[a], v[m], v[l]]; }); }
+  // Which end has the grip: the half whose slices are taller in all (grip, stock) — the muzzle half is mostly barrel;
+  // it goes to +z. Then which way it hangs from the muzzle half's middle line: down (−y).
+  b = ext(); const z0 = b.min.z, dz = (b.max.z - b.min.z) / 20 || 1, lo = new Float64Array(20).fill(Infinity), hi = new Float64Array(20).fill(-Infinity);
+  for (const pt of parts) for (let i = 0; i < pt.P.length; i += 3) { const s = Math.min(19, Math.floor((pt.P[i + 2] - z0) / dz)); lo[s] = Math.min(lo[s], pt.P[i + 1]); hi[s] = Math.max(hi[s], pt.P[i + 1]); }
+  const span = (s0, s1) => { let t = 0; for (let s = s0; s < s1; s++) if (hi[s] > lo[s]) t += hi[s] - lo[s]; return t; }, mid = (s0, s1) => { let t = 0, n = 0; for (let s = s0; s < s1; s++) if (hi[s] > lo[s]) { t += (hi[s] + lo[s]) / 2; n++; } return n ? t / n : 0; };
+  const gripEnd = span(0, 10) > span(10, 20) ? 0 : 1, [g0, g1] = gripEnd ? [10, 20] : [0, 10], line = gripEnd ? mid(0, 10) : mid(10, 20);
+  let gLo = Infinity, gHi = -Infinity; for (let s = g0; s < g1; s++) if (hi[s] > lo[s]) { gLo = Math.min(gLo, lo[s]); gHi = Math.max(gHi, hi[s]); }
+  const gripDown = line - gLo >= gHi - line;
+  if (gripEnd === 0) each((x, y, z) => [-x, y, -z]);   // grip end to the back
+  if (!gripDown) each((x, y, z) => [-x, -y, z]);        // grip downward
+}
+// Real lengths (cm), for files in other units: the pistols, SMGs and machine guns downloaded from elsewhere.
+const REAL_LENGTH_CM = { pistol: 20.2, p250: 19.2, fiveseven: 20.8, cz75: 20.6, tec9: 31.7, deagle: 26.9, usps: 30, bizon: 66.8, negev: 100, galil: 96 };
 // A static model (gun, knife, bomb, kit): baked parts + pictures (base, normal, ORM: G roughness, B metalness).
 export async function convertStatic({ url, files, base, size = 2048, id }) {
   const { root, gltf } = await load(url); root.updateMatrixWorld(true);
@@ -102,6 +140,13 @@ export async function convertStatic({ url, files, base, size = 2048, id }) {
   let parts = bake(root, { gltf, toGame, keep: o => !/controlpanel|panorama/i.test(o.name) }).filter(pt => !(id === 'kit' && /cable/i.test(pt.mat.name)));
   // One picture set: the material with the most triangles (CS2 guns have one; the kit's cable bits share theirs).
   parts.sort((a, b) => b.P.length - a.P.length); const main = parts[0], mat = main.mat;
+  // Re-exports from elsewhere: parts far from the gun (a ground plane metres away) left out, and a file in other units
+  // (metres, inches) scaled to the real gun's length — CS2's own files are already right and are left as they are.
+  { const box = P => { const b = new THREE.Box3(); for (let i = 0; i < P.length; i += 3) b.expandByPoint(new THREE.Vector3(P[i], P[i + 1], P[i + 2])); return b; }, mb = box(main.P), mc = mb.getCenter(new THREE.Vector3()), md = mb.getSize(new THREE.Vector3()).length();
+    parts = parts.filter(pt => pt === main || box(pt.P).getCenter(new THREE.Vector3()).distanceTo(mc) < md * 1.5);
+    if (REAL_LENGTH_CM[id] && !/weapon_|_cs2|\.vmdl/i.test(url)) tidy(parts);   // not CS2's own file: stray triangles out, the gun turned the right way
+    const all0 = new THREE.Box3(); for (const pt of parts) all0.union(box(pt.P)); const L = all0.max.z - all0.min.z, E = REAL_LENGTH_CM[id];
+    if (E && L > 0 && (L < E * .85 || L > E * 1.5)) { const f = E / L; for (const pt of parts) for (let i = 0; i < pt.P.length; i++) pt.P[i] *= f; } }
   const all = { P: [], N: [], U: [] }; for (const pt of parts) for (const key of ['P', 'N', 'U']) for (const x of pt[key]) all[key].push(x);
   const tex = {}, src = { color: mat.map?.image, normal: mat.normalMap?.image, orm: (mat.metalnessMap || mat.roughnessMap)?.image };
   for (const kind of ['color', 'normal', 'rough', 'ao', 'metal', 'orm']) if (!src[kind]) { const f = pickTexture(files, kind, mat.name); if (f) src[kind] = base + f; }
@@ -111,6 +156,8 @@ export async function convertStatic({ url, files, base, size = 2048, id }) {
       // No metalness picture (the knives): bright, grey, smooth texels are steel.
       let met = m ? m.data[i] : 0; if (!m && col) { const R = col.data[i], G = col.data[i + 1], B = col.data[i + 2], mx = Math.max(R, G, B), mn = Math.min(R, G, B); met = mx > 70 && (mx - mn) < 26 && (r ? r.data[i] < 150 : true) ? 255 : 0; }
       orm.data[i + 2] = met; orm.data[i + 3] = 255; } } }
+  if (!col) { const d = new ImageData(16, 16); for (let i = 0; i < d.data.length; i += 4) { d.data[i] = 58; d.data[i + 1] = 60; d.data[i + 2] = 64; d.data[i + 3] = 255; } tex.base = await jpeg(d, .92);   // no picture of its own: gunmetal
+    if (!orm) { const o = new ImageData(16, 16); for (let i = 0; i < o.data.length; i += 4) { o.data[i] = 255; o.data[i + 1] = 120; o.data[i + 2] = 200; o.data[i + 3] = 255; } tex.orm = await jpeg(o, .92); } }
   if (col) tex.base = await jpeg(col, .92); if (nor) tex.normal = await jpeg(nor, .95); if (orm) tex.orm = await jpeg(orm, .92);
   const box = new THREE.Box3(); for (let i = 0; i < all.P.length; i += 3) box.expandByPoint(new THREE.Vector3(all.P[i], all.P[i + 1], all.P[i + 2]));
   return { id, tex, box: [box.min.toArray(), box.max.toArray()], part: { name: 'main', P: all.P, N: all.N, U: all.U }, tris: all.P.length / 9 };
@@ -166,6 +213,32 @@ export async function convertAgent({ url, files, base, size = 2048 }) {
   root.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
   let tris = 0; root.traverse(o => { if (o.isMesh) tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; });
   return { glb: await exportGLB(fix), tris, bones: skel.bones.length, height: +(box.max.y - box.min.y).toFixed(3) };
+}
+
+// First-person animations: the arms (their own pictures, at most 2048 px) and the gun on one skeleton, with every clip;
+// the backdrop the file was shown on dropped, the gun's pictures dropped (the game holds its own guns; it only measures
+// where this one sits in the hand).
+export async function convertFPAnim({ url }) {
+  const { root, animations } = await load(url); root.updateMatrixWorld(true);
+  const drop = []; root.traverse(o => { if (o.isMesh && !o.isSkinnedMesh) drop.push(o); }); for (const o of drop) o.parent.remove(o);
+  let arms = 0, tris = 0, bones = 0; root.traverse(o => { if (o.isBone) bones++; if (!o.isSkinnedMesh) return; o.frustumCulled = false; tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
+    if ([].concat(o.material).some(m => /v_models.arms/i.test(m.name))) { arms++; for (const m of [].concat(o.material)) for (const k of ['map', 'normalMap']) if (m[k]) m[k].userData.mimeType = 'image/jpeg'; }
+    else o.material = new THREE.MeshStandardMaterial({ name: 'gun', color: 0x555555 }); });
+  if (!arms || !animations.length) throw Error('no arms or no clips');
+  const glb = await new Promise((res, rej) => new GLTFExporter().parse(root, b => { const u8 = new Uint8Array(b); let s = ''; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode(...u8.subarray(i, i + 32768)); res(btoa(s)); }, rej, { binary: true, onlyVisible: false, animations, maxTextureSize: 2048 }));
+  return { glb, tris, bones, clips: animations.map(a => a.name + ' ' + a.duration.toFixed(2)) };
+}
+
+// Gloves: one skinned mesh (both hands) on CS2's arm bones, kept as it is, with its pictures — the download's base
+// colour (any picture not named as another kind) and normal map, at 2048 px.
+export async function convertGlove({ url, files, base, size = 2048 }) {
+  const { root, gltf } = await load(url); root.updateMatrixWorld(true);
+  const nm = f => f.split('/').pop().toLowerCase(), nor = files.find(f => /normal|_n\.(png|jpe?g|tga)$/.test(nm(f))), col = files.find(f => f !== nor && /\.(png|jpe?g|tga)$/.test(nm(f)) && !/rough|metal|_ao|orm|mask|spec/.test(nm(f)));
+  const tex = async (f, srgb) => { const d = f && await pixels(base + f, size); if (!d) return null; const c = new OffscreenCanvas(d.width, d.height); c.getContext('2d').putImageData(d, 0, 0); const t = new THREE.CanvasTexture(c); t.flipY = !gltf; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.userData.mimeType = 'image/jpeg'; return t; };
+  const mat = new THREE.MeshStandardMaterial({ name: 'glove', map: await tex(col, true), normalMap: await tex(nor, false), roughness: .8, metalness: 0 });
+  let tris = 0, bones = 0; root.traverse(o => { if (o.isMesh) { o.material = mat; o.frustumCulled = false; tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; } if (o.isBone) bones++; });
+  if (!bones) throw Error('a glove without bones');
+  return { glb: await exportGLB(root), tris, bones, maps: [col && 'base', nor && 'normal'].filter(Boolean) };
 }
 
 // The karambit first-person model: arms, gloves and knife on one skeleton, the far-off spare knife dropped, in its

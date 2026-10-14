@@ -39,6 +39,7 @@ const GUNS = {
   ssg08: ['Guns, Rifle, Sniper, Shot, Short Tail', 'Guns, Rifle, Sniper, Shot, Long Tail', 1.5],
   sniper: ['Guns, Rifle, Big Sniper Rifle, Fire, Shoot, Singular Shots, Reverberant 01', 'Guns, Rifle, Heavy Sniper Rifle, Fire, Shoot, Singular Shots, Very Reverberant', 1.8],
   lmg: ['Guns, Automatic, Machine Gun, M249, Auto-Bridge', 'Guns, Automatic, Machine Gun, M249, Distant, Long Bursts', 1.1],
+  negev: ['Guns, Automatic, Machine Gun, MAC-58, Shots, Bursts, Combo', 'Guns, Artillery, Shooting Range, Distant Heavy Machine Gun, Fire, Intense 02', .9],
   mac10: ['Guns, Automatic, Submachine Gun, Uzi, Various Shots, Single, Bursts, Reload 01', 'Guns, Automatic, Submachine Gun, Uzi, Various Shots, Single, Bursts, Reload 03', .8],
   mp9: ['Guns, Automatic, Submachine Gun, HK MP5, Shots, Short Bursts 02, Perspective 1, High Frequency Details', 'Guns, Automatic, Gunshots, Machine Gun, Burst, Distant', .8],
   mp7: ['Guns, Automatic, Submachine Gun, HK MP7, Single Shots', 'Guns, Automatic, Gunshots, Machine Gun, Burst, Distant', .7],

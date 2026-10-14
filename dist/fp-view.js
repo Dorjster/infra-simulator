@@ -3,6 +3,8 @@
 // its gun: draw, idle, walk, run, fire, reload. The AK, the pistol and the shotgun are the packs' own guns; the other
 // rifles, SMG and machine gun use the rifle arms with our model on the pack's weapon bone (the Desert Eagle the
 // pistol arms). The rig looks along +z from just in front of its shoulders.
+// Imported on this computer (user-assets, never shipped): CS2's gloves are worn on every pair of arms, and CS2's own
+// first-person M4A1-S animations (cs2rifle) hold every rifle, sniper and machine gun.
 import * as THREE from './three.module.js';
 import { GLTFLoader } from './post/GLTFLoader.js';
 import { weaponModel, MUZZLE, VARIANTS, modelFromFile } from './weapon-models.js';
@@ -16,22 +18,41 @@ const PACKS = {
   rifle: { url: 'rifle', k: 1, eye: [1.6 - .06, .2, 0], gun: /^(SK_AK-47|SM-CARGADOR)/, bone: /^DEF-Weapon/ },
   pistol: { url: 'pistol', k: 2.9, eye: [4.72 - .29, .64, 0], gun: /^Pistol_/, bone: /^DEF-Weapon/ },
   shotgun: { url: 'shotgun', k: 2.38, eye: [3.86 - .14, .24, 0], gun: /^SKM_Saps/, bone: /^DEF-Weapon/ },
+  // CS2's own first-person rifle animations, imported on this computer (user-assets/fp/rifle.glb, never shipped): a
+  // Rigify body holding the M4A1-S on weapon_hand_r — the hold (ref_pose), draw, inspect, reload and shots as in CS2.
+  // When there, every rifle uses them (fpInfo). The eye: just above and ahead of the head bone; the arms CS2's length.
+  cs2rifle: { user: 'rifle', k: 1, sleeve: { mat: /arms.v_$/, from: 'rifle/textures/M_Shirt_BlackCamo2' }, eye: [1.781 + .1, .025 + .08, 0], gun: /^m4a1/, bone: /^weapon_hand_r$/, arms: /^rence/, head: /^DEF-spine006$/, gloveMat: /arms.t_$/, fullArms: true, equipEnd: 1, fireEnd: .4,
+    // Our guns on weapon_hand_r: CS2's view-model gun is drawn 1.22× real size; at this offset and scale our M4A1-S
+    // lies exactly on the file's (measured), and every CS2 gun's origin is its grip. On the M4A1-S the left hand stays
+    // where the animation puts it (native); on the others it goes onto their own handguard.
+    attach: { at: [0, .44, .065], scale: 1.22 }, native: 'm4s', reach: -2.13, keepGrip: new Set(['aug']) },
 };
 // Which pack holds which weapon; `own`: the pack's gun is that weapon (else ours is attached).
 export const FP = { knife: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, karambit: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, he: { pack: 'pistol', onehand: true, palm: true, fistK: .55 }, flash: { pack: 'pistol', onehand: true, palm: true, fistK: .55 }, smoke: { pack: 'pistol', onehand: true, palm: true, fistK: .55 }, molotov: { pack: 'pistol', onehand: true, palm: true, fistK: .45 }, c4: { pack: 'pistol', onehand: true, view: [-.05, -.1, .12] }, ak: { pack: 'rifle', own: true }, m4: { pack: 'rifle' }, sniper: { pack: 'rifle' }, smg: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol', own: true }, deagle: { pack: 'pistol' }, shotgun: { pack: 'shotgun', own: true }, xm1014: { pack: 'shotgun', own: true } };   /* both shotguns use the shotgun arms' own gun in first person: its reload animation is made for it */
 // How each pack's arms sit in view for guns, CS2-like (the packs were posed for another camera: the rifle swung in
 // toward the crosshair, the pistol tipped up): a turn [pitch, yaw, roll] about the eye and a shift (game units),
 // arms and gun together, so the grip never changes. Per-weapon view / viewRot (FP) still win.
-export const PACK_VIEW = { rifle: { view: [.35, .05, -.424], rot: [.044, .193, -.223] }, pistol: { view: [.314, -.08, -.409], rot: [.048, .123, -.373] }, shotgun: { view: [.35, -.08, -.424], rot: [.044, .193, -.223] } };   // (measured with aimView: barrel level toward the crosshair, the gun upright)
+export const PACK_VIEW = { rifle: { view: [.35, .05, -.424], rot: [.044, .193, -.223] }, pistol: { view: [.314, -.08, -.409], rot: [.048, .123, -.373] }, shotgun: { view: [.35, -.08, -.424], rot: [.044, .193, -.223] }, cs2rifle: { view: [.9, .55, -.9], rot: [0, 0, 0] } };   // (measured with aimView: barrel level toward the crosshair, the gun upright)
 const GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'lmg', 'shotgun']);
 // Our guns on the rifle / pistol weapon bone: offset (game units, in the weapon's own frame) and turn.
-export const ATTACH = { p250: { at: [0, -.12, .18], scale: .62 }, fiveseven: { at: [0, -.12, .18], scale: .62 },   /* the low-poly pack's pistols: real pistol size in the hand */ knife: { at: [0, -.45, .1], rot: [1.2, 0, 0] }, karambit: { at: [0, -.4, .1], rot: [0, -1.57, 3.14], scale: 1.3 },   // karambit like CS2: ring on the index finger, blade curling up
+export const ATTACH = { p250: { at: [0, -.12, .18], scale: .62, lowPoly: true }, fiveseven: { at: [0, -.12, .18], scale: .62, lowPoly: true },   /* the low-poly pack's pistols: real pistol size in the hand (a CS2 model is real size already) */ knife: { at: [0, -.45, .1], rot: [1.2, 0, 0] }, karambit: { at: [0, -.4, .1], rot: [0, -1.57, 3.14], scale: 1.3 },   // karambit like CS2: ring on the index finger, blade curling up
    he: { at: [0, 0, 0], rot: [0, 0, 0] }, flash: { at: [0, 0, 0], rot: [0, 0, 0] }, smoke: { at: [0, 0, 0], rot: [0, 0, 0] }, molotov: { at: [0, 0, 0], rot: [0, 0, 0] }, c4: { at: [0, 0, 0], rot: [0, .6, 0] }   /* the bomb lies on the palm, turned to show its face, low right: never over the crosshair */, ak: { at: [0, 0, -1.5] }, m4: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 }, sniper: { at: [0, -.15, -.7], rot: [0, 0, 0], scale: .7 }, smg: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, greasegun: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, suomi: { at: [0, -.15, -.55], rot: [0, 0, 0], scale: .7 }, lmg: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 },   /* our guns are real size; the pack's AK is ~0.7 of that: same scale, grip in the hand */ deagle: { at: [0, 0, 0], rot: [0, 0, 0] } };   // ak: only for its muzzle (the pack's AK lines up with ours there)
 // Every gun gets arms: its own entry, else by kind (rifles, SMGs, snipers, the M249 on the rifle arms; pistols on the
 // pistol arms; shotguns on the shotgun arms); grips follow the base model of a variant.
 const KIND_FP = { rifle: { pack: 'rifle' }, smg: { pack: 'rifle' }, sniper: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol' }, shotgun: { pack: 'shotgun' } };
-export const fpInfo = id => FP[id] || KIND_FP[weaponById(id)?.kind] || null;
+const CS2_KINDS = new Set(['rifle', 'sniper', 'lmg']), cs2Info = new Map();
+export const fpInfo = id => { const f = FP[id] || KIND_FP[weaponById(id)?.kind] || null; if (!f || !CS2_KINDS.has(weaponById(id)?.kind) || !ready.get('cs2rifle')) return f;   // (the CS2 rifle arms, when imported)
+  if (!cs2Info.has(id)) cs2Info.set(id, { ...f, pack: 'cs2rifle', own: false }); return cs2Info.get(id); };
 const attachInfo = id => ATTACH[id] || (VARIANTS[id]?.base === 'ak' ? ATTACH.m4 : ATTACH[VARIANTS[id]?.base]) || ATTACH[{ luger: 'deagle', pistol: 'deagle' }[VARIANTS[id]?.base]] || {};
+// How a gun sits on the packs' weapon bone (a pack's own gun replaced by a CS2 model: as the M4A4 / Desert Eagle).
+const packAttach = id => FP[id]?.own ? ATTACH[FP[id].pack === 'rifle' ? 'm4' : 'deagle'] || {} : attachInfo(id);
+// …and on the CS2 rifle arms (P.attach): a CS2 model (its origin is its grip) as the M4A1-S lies; any other model moved
+// from the packs' hold the way the M4A4 moves (the same grip in the hand, the same scale-up).
+function cs2Attach(P, id, model) { if (modelFromFile(model) || modelFromFile(VARIANTS[model]?.base)) return P.attach;
+  const ref = ATTACH.m4, o = packAttach(id), k = P.attach.scale / ref.scale, at = (o.at || [0, 0, 0]).map((v, i) => P.attach.at[i] + k * (v - ref.at[i]));
+  return { at, rot: o.rot, scale: k * (o.scale || 1) }; }
+// A depth measured on the packs' hold (SUPPORT_Z) on the CS2 rifle arms.
+const cs2Z = (P, id, z) => { const o = packAttach(id), ref = ATTACH.m4; return modelFromFile(id) || modelFromFile(VARIANTS[id]?.base) ? P.attach.at[2] + P.attach.scale * (z - (o.at?.[2] || 0)) / (o.scale || 1) : P.attach.at[2] + P.attach.scale / ref.scale * (z - ref.at[2]); };
 
 // The weapon bone's frame → a gun pointing along −z (set from the packs' own guns, see calibrate()).
 // Knife twirl: the axis (in the hand's frame) and the pivot (the ring) the knife spins around while inspecting.
@@ -61,19 +82,81 @@ export let SUPPORT_AT = .44; export const SUPPORT_AT_SET = v => { SUPPORT_AT = v
 // on the models (a share of the length put it on bare barrel or a suppressor on some: hand too high). Others: SUPPORT_AT.
 export const SUPPORT_Z = { ak: -1.43, galil: -1.31, m4: -1.28, m4s: -1.28, famas: -.92, aug: -.85, sg553: -1.1, sniper: -1.75, ssg08: -1.5, mp9: -.57, mp7: -.76, mac10: -.6, ump45: -1, p90: -.6, bizon: -1, lmg: -1.5 };
 export const SUPPORT_GRIP = { knuckles: [.55, .28, -.78], palm: [-.2, 1, 0], axis: 'x', sign: 1, fingers: [1, 1.2, .8], thumb: [.4, .5, .3] };
-const SUPPORT_PACKS = new Set(['rifle', 'shotgun']);
+const SUPPORT_PACKS = new Set(['rifle', 'shotgun', 'cs2rifle']);
 // A pistol's grip base from its points (gun frame: muzzle −z, up +y): the lowest of its rear half, averaged with
 // its neighbours (so one stray vertex doesn't decide).
 function gripBase(pts) { if (pts.length < 10) return null; let z0 = Infinity, z1 = -Infinity; for (const q of pts) { z0 = Math.min(z0, q.z); z1 = Math.max(z1, q.z); } const mid = (z0 + z1) / 2, rear = pts.filter(q => q.z > mid);
   if (!rear.length) return null; let lo = Infinity; for (const q of rear) lo = Math.min(lo, q.y); const near = rear.filter(q => q.y < lo + (z1 - z0) * .05), c = new THREE.Vector3(); for (const q of near) c.add(q); return c.multiplyScalar(1 / near.length); }
 const loaded = new Map(), ready = new Map();   // pack name → promise · → built arms
 function load(name) {
-  if (!loaded.has(name)) loaded.set(name, new GLTFLoader().loadAsync(new URL('./models/fp/' + PACKS[name].url + '/scene.gltf', import.meta.url).href).then(g => { const b = build(name, g); ready.set(name, b); return b; }).catch(() => null));
+  const P = PACKS[name], url = P.user ? userAssets().then(ua => { const v = ua.models.viewmodels?.[P.user]; if (!v) throw Error('none'); return userAssetURL(ua, v.file); }) : Promise.resolve(new URL('./models/fp/' + P.url + '/scene.gltf', import.meta.url).href);
+  if (!loaded.has(name)) loaded.set(name, Promise.all([url.then(u => new GLTFLoader().loadAsync(u)), loadGlove()]).then(([g, glove]) => { const b = build(name, g, glove); ready.set(name, b); return b; }).catch(e => { if (e?.message !== 'none' && typeof window !== 'undefined') console.warn('first-person arms', name, e?.message); return null; }));
   return loaded.get(name);
 }
 export const loadFP = () => Promise.all([...Object.keys(PACKS).map(load), loadKarambit()]);
 
 // The karambit's own first-person model when one is imported on this computer (tools/import-cs2-models.mjs →
+// Gloves imported on this computer (user-assets/fp/glove.glb: CS2's own, never shipped) are worn on every pack's arms
+// in place of their black ones. CS2's glove is skinned to CS2's arm bones; each is matched to the rig's own (hand →
+// DEF-hand, finger_index_0 → DEF-f_index01, finger_index_meta → DEF-palm01…) and its part of the glove carried over at
+// both rest poses: the bone's start on the rig bone's start, along it to the next joint, turned about it by the way
+// the palm faces, stretched to the rig bone's length (across: by the hands' size). Done once, on load: nothing per frame.
+let gloveLoading = null;
+function loadGlove() {
+  return gloveLoading ??= userAssets().then(ua => { const v = ua.models.viewmodels?.glove; if (!v) return null;
+    return new GLTFLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { let m = null; g.scene.traverse(o => { if (!m && o.isSkinnedMesh) m = o; }); g.scene.updateMatrixWorld(true); return m; }); }).catch(e => { console.warn('gloves', e?.message); return null; });
+}
+const FINGERS = ['index', 'middle', 'ring', 'pinky'];
+// The rigs it goes on: the packs' (Rigify: DEF-hand, DEF-palm01…, DEF-f_index01…) and the karambit's (CS:GO's Biped:
+// Bip01_L_Hand, Finger0 the thumb … Finger4 the little finger, each finger's base on the hand: no palm bones).
+const RIG_NAMES = {
+  rigify: { up: sd => 'DEF-upper_arm' + sd + '_', up1: sd => 'DEF-upper_arm' + sd + '001', fore: sd => 'DEF-forearm' + sd + '_', fore1: sd => 'DEF-forearm' + sd + '001', hand: sd => 'DEF-hand' + sd + '_',
+    meta: (f, sd) => 'DEF-palm0' + (FINGERS.indexOf(f) + 1) + sd + '_', finger: (f, k, sd) => (f === 'thumb' ? 'DEF-thumb0' : 'DEF-f_' + f + '0') + (k + 1) + sd + '_' },
+  biped: { up: sd => 'v_weaponBip01_' + sd + '_UpperArm', up1: sd => 'v_weaponBip01_' + sd + '_UpperArm', fore: sd => 'v_weaponBip01_' + sd + '_Forearm', fore1: sd => 'v_weaponBip01_' + sd + '_ForeTwist', hand: sd => 'v_weaponBip01_' + sd + '_Hand',
+    meta: (f, sd) => 'v_weaponBip01_' + sd + '_Hand', finger: (f, k, sd) => 'v_weaponBip01_' + sd + '_Finger' + (f === 'thumb' ? 0 : FINGERS.indexOf(f) + 1) + (k ? k : '') },
+};
+// CS2 glove bone → [rig bone, the joint it runs to (CS2 · rig); none: on past its end].
+function gloveBoneMap(R) {
+  const M = new Map();
+  for (const sd of ['L', 'R']) {
+    const up = [R.up(sd), 'arm_lower_' + sd, R.fore(sd)], up1 = [R.up1(sd), ...up.slice(1)], lo = [R.fore(sd), 'hand_' + sd, R.hand(sd)], lo1 = [R.fore1(sd), ...lo.slice(1)];
+    M.set('arm_upper_' + sd, up); M.set('arm_upper_' + sd + '_TWIST', up); M.set('arm_upper_' + sd + '_TWIST1', up1);
+    M.set('arm_lower_' + sd, lo); M.set('arm_lower_' + sd + '_TWIST', lo); M.set('arm_lower_' + sd + '_TWIST1', lo1);
+    M.set('hand_' + sd, [R.hand(sd), 'finger_middle_0_' + sd, R.finger('middle', 0, sd)]);
+    for (const f of FINGERS) M.set('finger_' + f + '_meta_' + sd, [R.meta(f, sd), 'finger_' + f + '_0_' + sd, R.finger(f, 0, sd)]);
+    for (const f of [...FINGERS, 'thumb']) for (let k = 0; k < 3; k++) M.set('finger_' + f + '_' + k + '_' + sd, [R.finger(f, k, sd), k < 2 ? 'finger_' + f + '_' + (k + 1) + '_' + sd : null, k < 2 ? R.finger(f, k + 1, sd) : null]);
+  }
+  return M;
+}
+// The glove on a rig's arms: a skinned mesh on its bones (`rigSkin`: one of the rig's own skinned meshes).
+export function wearGlove(src, rigSkin) {
+  const GS = src.skeleton, RS = rigSkin.skeleton, R = RS.bones.some(b => b.name.startsWith('DEF-hand')) ? RIG_NAMES.rigify : RIG_NAMES.biped, MAP = gloveBoneMap(R);
+  const gi = new Map(GS.bones.map((b, i) => [b.name, i])), rigIdx = pre => { for (const n of [pre, pre.replace(/_$/, '')]) { const i = RS.bones.findIndex(b => b.name === n); if (i >= 0) return i; } return RS.bones.findIndex(b => b.name.startsWith(pre)); };   // (Rigify names with or without three.js' numbered suffix)
+  const gW = i => new THREE.Matrix4().copy(GS.boneInverses[i]).invert(), rW = j => new THREE.Matrix4().copy(RS.boneInverses[j]).invert();   // each bone at rest (bind)
+  const gP = n => gi.has(n) ? new THREE.Vector3().setFromMatrixPosition(gW(gi.get(n))) : null, rP = pre => { const j = rigIdx(pre); return j < 0 ? null : new THREE.Vector3().setFromMatrixPosition(rW(j)); };
+  // Per hand: which way the palm faces, and the hand's size (wrist → middle knuckle), in each rig.
+  const side = {}; for (const sd of ['L', 'R']) { const pal = (P, h, i, m, p) => { const H = P(h), I = P(i), Mi = P(m), Pi = P(p); return H && I && Mi && Pi ? { n: new THREE.Vector3().subVectors(I, Pi).cross(new THREE.Vector3().subVectors(Mi, H)).normalize(), size: Mi.distanceTo(H) } : null; };
+    side[sd] = { g: pal(gP, 'hand_' + sd, 'finger_index_0_' + sd, 'finger_middle_0_' + sd, 'finger_pinky_0_' + sd), r: pal(rP, R.hand(sd), R.finger('index', 0, sd), R.finger('middle', 0, sd), R.finger('pinky', 0, sd)) }; }
+  if (!side.L.g || !side.L.r || !side.R.g || !side.R.r) return null;
+  const frame = (head, tail, n) => { const x = tail.clone().sub(head).normalize(), z = n.clone().addScaledVector(x, -n.dot(x)); if (z.lengthSq() < 1e-8) z.set(x.y, -x.x, 0); z.normalize(); return new THREE.Matrix4().makeBasis(x, z.clone().cross(x), z).setPosition(head); };
+  const bones = [], inverses = [], A = new Map();
+  GS.bones.forEach((b, i) => { const m = MAP.get(b.name), sd = /_([LR])(_TWIST1?)?$/.exec(b.name)?.[1], j = m ? rigIdx(m[0]) : -1;
+    if (!m || j < 0 || !sd) return; const S = side[sd], gh = gP(b.name), rh = rW(j).elements, rH = new THREE.Vector3(rh[12], rh[13], rh[14]);
+    let gt = m[1] && gP(m[1]), rt = m[2] && rP(m[2]);
+    if (!gt || !rt) { const gp = gP(b.parent?.name), j2 = RS.bones.indexOf(RS.bones[j].parent), rp = gp && j2 >= 0 ? new THREE.Vector3().setFromMatrixPosition(rW(j2)) : null;   // the last joint: on past it as far as the one before is long, ×0.8
+      if (!gp || !rp) return; gt = gh.clone().addScaledVector(gh.clone().sub(gp), .8); rt = rH.clone().addScaledVector(rH.clone().sub(rp), .8); }
+    if (/_meta_/.test(b.name) && m[0] === R.hand(sd)) { const g0 = gP('hand_' + sd); rH.lerp(rt, g0.distanceTo(gh) / Math.max(1e-6, g0.distanceTo(gt))); }   // (no palm bones: the knuckle's bone starts as far along the hand)
+    const along = rt.distanceTo(rH) / Math.max(1e-6, gt.distanceTo(gh)), across = S.r.size / S.g.size;
+    A.set(i, [j, frame(rH, rt, S.r.n).multiply(new THREE.Matrix4().makeScale(along, across, across)).multiply(frame(gh, gt, S.g.n).invert())]); });
+  // Bones not matched (the file's root): as their nearest matched parent.
+  GS.bones.forEach((b, i) => { let k = i, q = b; while (!A.has(k) && q) { q = q.parent; k = q ? gi.get(q.name) ?? -1 : -1; } const [j, Ai] = A.get(k) || A.get(gi.get('hand_L')) || [...A.values()][0];
+    bones.push(RS.bones[j]); inverses.push(new THREE.Matrix4().copy(RS.boneInverses[j]).multiply(Ai).multiply(src.bindMatrix)); });
+  const mesh = new THREE.SkinnedMesh(src.geometry, src.material); mesh.name = 'gloves'; mesh.frustumCulled = false; mesh.castShadow = mesh.receiveShadow = false;
+  mesh.bind(new THREE.Skeleton(bones, inverses), new THREE.Matrix4());
+  for (const m of [].concat(mesh.material)) { m.userData.shared = true; m.envMapIntensity = .2; }
+  return mesh;
+}
+
 // user-assets/fp/karambit.glb, never shipped: CS:GO's view model — arms in sport gloves, the knife in the right hand,
 // ring on the index finger). It replaces the pistol arms for the karambit. Posed, not animated: weapons.js swings and
 // turns the whole view round the hand (handIn) and the inspect spins the knife on its ring (twirl). The file comes
@@ -83,9 +166,9 @@ export const KARAMBIT = { scale: .0076, eye: [50, 505, -1030], forearm: .9 };   
 let karambitRig = null, karambitLoading = null;
 function loadKarambit() {
   return karambitLoading ??= userAssets().then(ua => { const v = ua.models.viewmodels?.karambit; if (!v) return null;
-    return new GLTFLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { karambitRig = buildKarambit(g.scene); return karambitRig; }); }).catch(e => { console.warn('karambit view model', e?.message); return null; });
+    return Promise.all([new GLTFLoader().loadAsync(userAssetURL(ua, v.file)), loadGlove()]).then(([g, gl]) => { karambitRig = buildKarambit(g.scene, gl); return karambitRig; }); }).catch(e => { console.warn('karambit view model', e?.message); return null; });
 }
-function buildKarambit(sc) {
+function buildKarambit(sc, gloveSrc) {
   const root = new THREE.Group(), fix = new THREE.Group(); root.add(fix); fix.add(sc); fix.rotation.y = Math.PI; fix.scale.setScalar(KARAMBIT.scale); sc.position.set(-KARAMBIT.eye[0], -KARAMBIT.eye[1], -KARAMBIT.eye[2]);
   const bones = {}; sc.traverse(o => { if (o.isBone) bones[o.name.replace(/^v_weapon/, '')] = o; });
   // The knife rides on the right hand (in the file it hangs off the rig's root, placed by animations we don't have);
@@ -98,6 +181,8 @@ function buildKarambit(sc) {
   sc.traverse(o => { if (!o.isMesh) return; o.frustumCulled = false; o.castShadow = o.receiveShadow = false;
     o.material = [].concat(o.material).map(m => /^knife:/.test(m.name) ? blade : /^skin:/.test(m.name) ? skin : glove); if (o.material.length === 1) o.material = o.material[0];
     if (/knife/i.test(o.name)) fade(o); });
+  // Imported gloves (as on the packs' arms): in place of its own.
+  if (gloveSrc) { let arms = null; sc.traverse(o => { if (!arms && o.isSkinnedMesh && [].concat(o.material).includes(glove)) arms = o; }); const g = arms && wearGlove(gloveSrc, arms); if (g) { arms.parent.add(g); glove.visible = false; } }
   const hand = bones.Bip01_R_Hand, ring = bones.Bip01_R_Finger11 || bones.Bip01_R_Finger1 || hand, finger = bones.Bip01_R_Finger1 || hand, knife = bones.knife;
   const k0 = knife ? [knife.position.clone(), knife.quaternion.clone()] : null, piv = new THREE.Vector3(), ax = new THREE.Vector3(), tq = new THREE.Quaternion(), tm = new THREE.Matrix4(), out0 = new THREE.Vector3();
   let t = 0;
@@ -124,17 +209,32 @@ function fade(mesh) {
     const w = (f - a[0]) / ((b[0] - a[0]) || 1); c.setRGB(a[1][0] + (b[1][0] - a[1][0]) * w, a[1][1] + (b[1][1] - a[1][1]) * w, a[1][2] + (b[1][2] - a[1][2]) * w, THREE.SRGBColorSpace); C[i * 3] = c.r; C[i * 3 + 1] = c.g; C[i * 3 + 2] = c.b; }
   mesh.geometry.setAttribute('color', new THREE.BufferAttribute(C, 3));
 }
-function build(name, gltf) {
+function build(name, gltf, glove) {
   const P = PACKS[name], sc = gltf.scene, root = new THREE.Group(), fix = new THREE.Group(), rig = new THREE.Group(); root.add(fix); fix.add(rig); rig.add(sc); fix.matrixAutoUpdate = false;
   // Rig units → game units, turned to look along −z, the eye at the camera.
   const s = U / P.k; rig.scale.setScalar(s); rig.rotation.set(P.eye[2], Math.PI, 0); sc.position.set(0, -P.eye[0], -P.eye[1]);
   // The arms live under SK_Comando (fabric: no metal shine, so they stay black under the arena's bright sky);
   // every other mesh is the gun.
   const gunMeshes = []; let bone = null;
-  sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = o.receiveShadow = false; for (const m of [].concat(o.material)) m.userData.shared = true; let arm = false; for (let q = o; q; q = q.parent) if (/^SK_Comando/.test(q.name)) arm = true; if (!arm) gunMeshes.push(o); else for (const m of [].concat(o.material)) { m.metalness = 0; m.metalnessMap = null; m.envMapIntensity = .2; m.color.multiplyScalar(.8); m.needsUpdate = true; } } if (o.isBone && !bone && P.bone.test(o.name)) bone = o; });
+  sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = o.receiveShadow = false; for (const m of [].concat(o.material)) m.userData.shared = true; let arm = false; for (let q = o; q; q = q.parent) if ((P.arms || /^SK_Comando/).test(q.name)) arm = true; if (!arm) gunMeshes.push(o); else for (const m of [].concat(o.material)) { m.metalness = 0; m.metalnessMap = null; m.envMapIntensity = .2; m.color.multiplyScalar(.8); m.needsUpdate = true; } } if (o.isBone && !bone && P.bone.test(o.name)) bone = o; });
+  // CS2's bare arms (P.sleeve) in the packs' black camo shirt, as every other gun's arms.
+  if (P.sleeve) { const T = n => { const t = new THREE.TextureLoader().load(new URL('./models/fp/' + P.sleeve.from + '_' + n + '.jpg', import.meta.url).href); t.flipY = false; t.wrapS = t.wrapT = THREE.RepeatWrapping; if (n === 'baseColor') t.colorSpace = THREE.SRGBColorSpace; return t; };
+    const shirt = new THREE.MeshStandardMaterial({ map: T('baseColor'), normalMap: T('normal'), roughness: .9, metalness: 0, envMapIntensity: .2 }); shirt.userData.shared = true;
+    sc.traverse(o => { if (o.isMesh && !Array.isArray(o.material) && P.sleeve.mat.test(o.material.name)) o.material = shirt; }); }
+  // Imported gloves on these arms, in place of the pack's black ones.
+  if (glove) { const own = []; sc.traverse(o => { if (o.isSkinnedMesh && [].concat(o.material).some(m => (P.gloveMat || /glove/i).test(m.name))) own.push(o); }); const g = own[0] && wearGlove(glove, own[0]); if (g) { own[0].parent.add(g); for (const o of own) o.visible = false; } }
   const clip = re => gltf.animations.find(a => re.test(a.name.replace(/^RIG_UE5_Comando_/, '').replace(/^AK_+/, '')));
   const A = { equip: clip(/^Equip$/), idle: clip(/^Idle$/), walk: clip(/^Walk$/), run: clip(/^_?Run$/), fire: clip(/^Fire$/), reload: clip(/^Reload$/), toReload: clip(/^IdleToReload$/), fromReload: clip(/^ReloadToIdle$/) };
+  // CS2's clips: the hold is a single pose (ref_pose), the draw the first part of Equip (the rest is the first-draw
+  // charging-handle pull), a shot the first part of Shots; Inspect as it is.
+  if (!A.idle && clip(/^ref_pose$/)) { A.idle = clip(/^ref_pose$/); A.idle.duration = Math.max(A.idle.duration, 1); }
+  A.inspect = clip(/^Inspect$/); if (A.equip && P.equipEnd) A.equip = THREE.AnimationUtils.subclip(A.equip, 'equip', 0, Math.round(P.equipEnd * 30), 30);
+  if (!A.fire && P.fireEnd && clip(/^Shots$/)) A.fire = THREE.AnimationUtils.subclip(clip(/^Shots$/), 'fire', 0, Math.round(P.fireEnd * 30), 30);
   const mixer = new THREE.AnimationMixer(sc), act = k => A[k] && mixer.clipAction(A[k]);
+  // three.js writes an animated value to its bone only when it differs from the frame before; the arms are reset, bent
+  // and curled after the mixer every frame, so a still pose (CS2's hold, the end of a clip) would stop being
+  // re-applied and those changes pile up. Both of each binding's last results are marked stale first: always applied.
+  const freshMix = () => { const B = mixer._bindings; for (let i = 0, n = mixer._nActiveBindings; i < n; i++) { const b = B[i], k = b.valueSize; b.buffer[k] = b.buffer[k * 2] = NaN; } };
   // Calibrate from the pack's own gun at the idle pose: its root bone, which of that bone's axes point forward and up
   // in view (→ BASE, so our guns line up the same way) and where its muzzle is in that bone's frame.
   // The gun's main bone: the one most of its vertices are skinned to (the body, not the magazine or slide).
@@ -164,16 +264,16 @@ function build(name, gltf) {
   // Our gun follows the weapon bone: its position and rotation in camera space, at real size.
   const bp = new THREE.Vector3(), bq = new THREE.Quaternion(), bs = new THREE.Vector3(), rootInv = new THREE.Matrix4(), rel = new THREE.Matrix4();
   const follow = () => { if (!ours) return; root.updateMatrixWorld(true); rel.copy(rootInv.copy(root.matrixWorld).invert()).multiply(bone.matrixWorld); rel.decompose(bp, bq, bs); ours.position.copy(bp); ours.quaternion.copy(bq).multiply(BASE[name]); if (twirlA) { ours.quaternion.multiply(twq.setFromAxisAngle(AX[TWIRL.axis], twirlA)); ours.position.add(twp.copy(TWIRL.pivot).applyQuaternion(ours.quaternion).negate().add(twp2.copy(TWIRL.pivot).applyQuaternion(twq2.copy(bq).multiply(BASE[name])))); } };   /* a knife twirl (inspect) turns the knife around the ring finger, not the hand */
-  const fingers = []; sc.traverse(o => { const m = o.isBone && /^DEF-(f_(index|middle|ring|pinky)|thumb)0([123])R_/.exec(o.name); if (m) fingers.push({ b: o, seg: +m[3] - 1, thumb: m[1] === 'thumb' }); }); let fist = false;
+  const fingers = []; sc.traverse(o => { const m = o.isBone && /^DEF-(f_(index|middle|ring|pinky)|thumb)0([123])R(_|$)/.exec(o.name); if (m) fingers.push({ b: o, seg: +m[3] - 1, thumb: m[1] === 'thumb' }); }); let fist = false;
   const AX = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) }, fq = new THREE.Quaternion();
   // One-handed items (knife, grenades, bomb): the left arm folds away out of view.
   const boneOf = re => { let b = null; sc.traverse(o => { if (!b && o.isBone && re.test(o.name)) b = o; }); return b; };
-  const head = (() => { let h = null; sc.traverse(o => { if (!h && /^CB-?Head/i.test(o.name)) h = o; }); return h; })(), headRest = new THREE.Matrix4(), fixM = new THREE.Matrix4(), hInv = new THREE.Matrix4(), rigInv = new THREE.Matrix4(), fp_ = new THREE.Vector3(), fq_ = new THREE.Quaternion(), fs_ = new THREE.Vector3();
+  const head = (() => { let h = null; sc.traverse(o => { if (!h && (P.head || /^CB-?Head/i).test(o.name)) h = o; }); return h; })(), headRest = new THREE.Matrix4(), fixM = new THREE.Matrix4(), hInv = new THREE.Matrix4(), rigInv = new THREE.Matrix4(), fp_ = new THREE.Vector3(), fq_ = new THREE.Quaternion(), fs_ = new THREE.Vector3();
   // The head bone in the space the correction works in (the rig's parent): rig.matrix × (rig → head).
   const headIn = () => { sc.updateMatrixWorld(true); return new THREE.Matrix4().copy(rig.matrix).multiply(rigInv.copy(rig.matrixWorld).invert().multiply(head.matrixWorld)); };
   if (head) { mixer.clipAction(A.idle).play(); mixer.update(0); root.updateMatrixWorld(true); headRest.copy(headIn()); mixer.stopAllAction(); }   // the head at rest (idle)
   // The arm chains (DEF-upper_arm → .001 → forearm → .001 → hand), their rest offsets, for ARMS (shortened every frame).
-  const chains = ['L', 'R'].map(sd => { const up = boneOf(new RegExp('^DEF-upper_arm' + sd + '_')), up1 = boneOf(new RegExp('^DEF-upper_arm' + sd + '001')), fo = boneOf(new RegExp('^DEF-forearm' + sd + '_')), fo1 = boneOf(new RegExp('^DEF-forearm' + sd + '001')), hand = boneOf(new RegExp('^DEF-hand' + sd + '_'));   /* (three.js drops the dots from bone names) */
+  const chains = ['L', 'R'].map(sd => { const up = boneOf(new RegExp('^DEF-upper_arm' + sd + '(_|$)')), up1 = boneOf(new RegExp('^DEF-upper_arm' + sd + '001')), fo = boneOf(new RegExp('^DEF-forearm' + sd + '(_|$)')), fo1 = boneOf(new RegExp('^DEF-forearm' + sd + '001')), hand = boneOf(new RegExp('^DEF-hand' + sd + '(_|$)'));   /* (three.js drops the dots from bone names) */
     return up && up1 && fo && fo1 && hand ? { up, segs: [[up1, 'upper'], [fo, 'upper'], [fo1, 'fore'], [hand, 'fore']].map(([b, k]) => ({ b, k, rest: b.position.clone() })), upRest: up.position.clone(), hand } : null; }).filter(Boolean);
   const aS = new THREE.Vector3(), aH = new THREE.Vector3();
   // Arm IK, worked out in the rig's own space (below the view model's stretch, which is not uniform): two bones — the
@@ -194,22 +294,27 @@ function build(name, gltf) {
     turnRel(c.up, kV.subVectors(kE, kS), kU.subVectors(kP, kS));
     relPos(fo, kE); relPos(c.hand, kH); kW.copy(kS).addScaledVector(kA, d); turnRel(fo, kV.subVectors(kH, kE), kU.subVectors(kW, kE));
     setRel(c.hand, handQ || handQ0); }
-  const sides = { L: chains.find(c => /L_/.test(c.up.name)), R: chains.find(c => /R_/.test(c.up.name)) }, poleV = new THREE.Vector3(), wristV = new THREE.Vector3();
+  const sides = { L: chains.find(c => /L(_|$)/.test(c.up.name)), R: chains.find(c => /R(_|$)/.test(c.up.name)) }, poleV = new THREE.Vector3(), wristV = new THREE.Vector3();
   const poseElbows = () => { const E = ELBOWS[name]; if (!E || onehand || supportW > .01) return; for (const k of ['L', 'R']) if (E[k] && sides[k]) { const c = sides[k]; root.updateMatrixWorld(true); RI.copy(root.matrixWorld).invert(); relPos(c.hand, wristV); poleV.set(...E[k]).applyQuaternion(qB.copy(root.quaternion).invert()); armTo(c, wristV, poleV, null); } };
   // The support hand on the gun actually held (two-handed guns with our model on the weapon bone: CS2 models' handguards
   // are not where the pack's AK had its own): laid under the handguard — palm up, knuckles across to the right and a
   // little forward, fingers curled round — the arm reaching it with the elbow down; it lets go for reloads and the draw.
   const LH = sides.L?.hand, lfingers = []; let handFrame = null, supportAt = null, supportW = 0;
-  sc.traverse(o => { const m = o.isBone && /^DEF-(f_(index|middle|ring|pinky)|thumb)0([123])L_/.exec(o.name); if (m) lfingers.push({ b: o, seg: +m[3] - 1, thumb: m[1] === 'thumb' }); });
+  sc.traverse(o => { const m = o.isBone && /^DEF-(f_(index|middle|ring|pinky)|thumb)0([123])L(_|$)/.exec(o.name); if (m) lfingers.push({ b: o, seg: +m[3] - 1, thumb: m[1] === 'thumb' }); });
   if (LH) { sc.updateMatrixWorld(true); const at = re => { const b = boneOf(re); return b ? LH.worldToLocal(b.getWorldPosition(new THREE.Vector3())) : null; };
-    const mid = at(/^DEF-f_middle01L_/), idx = at(/^DEF-f_index01L_/), pnk = at(/^DEF-f_pinky01L_/), th = at(/^DEF-thumb01L_/);
+    const mid = at(/^DEF-f_middle01L(_|$)/), idx = at(/^DEF-f_index01L(_|$)/), pnk = at(/^DEF-f_pinky01L(_|$)/), th = at(/^DEF-thumb01L(_|$)/);
     if (mid && idx && pnk && th) { const dL = mid.clone().normalize(), across = idx.clone().sub(pnk), nL = new THREE.Vector3().crossVectors(dL, across).normalize(); if (nL.dot(th) < 0) nL.negate(); nL.addScaledVector(dL, -nL.dot(dL)).normalize();
       handFrame = { basisT: new THREE.Matrix4().makeBasis(dL, nL, new THREE.Vector3().crossVectors(dL, nL)).transpose(), palm: mid.clone().multiplyScalar(.55), thick: nL.clone().multiplyScalar(mid.length() * .22) };   /* (the palm surface, a little off the bone on its own side: under the handguard the bone sits below it) */ } }
   // The handguard of the held gun (its own shape), in `ours`' space: half way from the grip to the muzzle, just under it.
   function findSupport() { supportAt = null; if (!ours) return; ours.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(ours.matrixWorld).invert(), v = new THREE.Vector3(), pts = [];
     ours.traverse(o => { if (!o.isMesh) return; const P = o.geometry.attributes.position, M = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld), step = Math.max(1, Math.floor(P.count / 6000)); for (let i = 0; i < P.count; i += step) pts.push(v.fromBufferAttribute(P, i).applyMatrix4(M).clone()); });
     if (pts.length < 20) return; let zMin = Infinity; for (const q of pts) zMin = Math.min(zMin, q.z); if (zMin > -.5) return;
-    let by = 0, bn = 0; for (const q of pts) if (q.z < zMin * .92) { by += q.y; bn++; } const bore = bn ? by / bn : 0, zh = Math.max(zMin * .9, SUPPORT_Z[oursId] ?? zMin * SUPPORT_AT);
+    let by = 0, bn = 0; for (const q of pts) if (q.z < zMin * .92) { by += q.y; bn++; } const bore = bn ? by / bn : 0, sz = SUPPORT_Z[oursId] == null ? null : P.attach ? cs2Z(P, oursId, SUPPORT_Z[oursId]) : SUPPORT_Z[oursId];   /* (SUPPORT_Z: as the guns sit on the packs' weapon bone) */
+    let zh = Math.max(zMin * .9, sz ?? zMin * SUPPORT_AT);
+    // CS2's arms reach as far along as the animation's own M4A1-S hold (P.reach), but not past the handguard's front:
+    // the first slice from the muzzle back with something well under the bore (not the barrel or a suppressor).
+    if (P.reach && !P.keepGrip?.has(oursId)) { let front = null; for (let z = zMin * .98; z < -.3 && front === null; z += .1) { let lo = Infinity; for (const q of pts) if (q.z >= z && q.z < z + .1 && Math.abs(q.x) < .45 && q.y > bore - 1.2) lo = Math.min(lo, q.y); if (lo < bore - .3) front = z; }
+      if (front !== null) zh = Math.max(P.reach, Math.min(front + .3, sz ?? front + .3)); }   // (a front found behind the measured handguard: missed, the measured one)
     // The handguard's underside there: the lowest point a hand's width round it, below the bore (not the barrel itself)
     // and above anything hanging lower (a magazine): with none, a little under the bore.
     let bottom = Infinity; for (const q of pts) if (Math.abs(q.z - zh) < .2 && Math.abs(q.x) < .45 && q.y > bore - .6 && q.y < bore - .1) bottom = Math.min(bottom, q.y);
@@ -235,7 +340,7 @@ function build(name, gltf) {
   // fist): its centre on the palm, a grenade's half width off it, the fingers closed round it (FP fistK).
   const RH = sides.R?.hand; let rPalm = null;
   if (RH) { sc.updateMatrixWorld(true); const at = re => { const b = boneOf(re); return b ? RH.worldToLocal(b.getWorldPosition(new THREE.Vector3())) : null; };
-    const mid = at(/^DEF-f_middle01R_/), idx = at(/^DEF-f_index01R_/), pnk = at(/^DEF-f_pinky01R_/), th = at(/^DEF-thumb01R_/);
+    const mid = at(/^DEF-f_middle01R(_|$)/), idx = at(/^DEF-f_index01R(_|$)/), pnk = at(/^DEF-f_pinky01R(_|$)/), th = at(/^DEF-thumb01R(_|$)/);
     if (mid && idx && pnk && th) { const d = mid.clone().normalize(), n = new THREE.Vector3().crossVectors(d, idx.clone().sub(pnk)).normalize(); if (n.dot(th) < 0) n.negate(); n.addScaledVector(d, -n.dot(d)).normalize();
       rPalm = { at: mid.clone().multiplyScalar(.5), n, basisT: new THREE.Matrix4().makeBasis(d, n, new THREE.Vector3().crossVectors(d, n)).transpose() }; } }
   const pP = new THREE.Vector3(), pQ = new THREE.Quaternion(), pS = new THREE.Vector3(), pV = new THREE.Vector3(), pM = new THREE.Matrix4(), pI = new THREE.Matrix4();
@@ -251,10 +356,10 @@ function build(name, gltf) {
     for (const f of fingers) f.b.quaternion.multiply(fq.setFromAxisAngle(AX[FIST.axis], FIST.sign * (f.thumb ? FIST.thumb : FIST.angles)[f.seg] * fistK)); sc.updateMatrixWorld(true);
     ours.position.copy(gT).addScaledVector(gN, PALM_OUT); }
   const restArms = () => { for (const c of chains) { c.up.position.copy(c.upRest); for (const g of c.segs) g.b.position.copy(g.rest); } };
-  const shortenArms = () => { if (ARMS.upper === 1 && ARMS.fore === 1) return; for (const c of chains) { c.hand.updateWorldMatrix(true, false); aS.setFromMatrixPosition(c.up.matrixWorld); aH.setFromMatrixPosition(c.hand.matrixWorld);
+  const shortenArms = () => { if (P.fullArms || ARMS.upper === 1 && ARMS.fore === 1) return; for (const c of chains) { c.hand.updateWorldMatrix(true, false); aS.setFromMatrixPosition(c.up.matrixWorld); aH.setFromMatrixPosition(c.hand.matrixWorld);
       const full = aS.distanceTo(aH); let L0 = 0, L1 = 0; for (const g of c.segs) { const l = g.rest.length(); L0 += l; L1 += l * ARMS[g.k]; g.b.position.copy(g.rest).multiplyScalar(ARMS[g.k]); }
       if (!full || !L0) continue; aS.sub(aH).multiplyScalar(L1 / L0).add(aH); c.up.position.copy(c.up.parent.worldToLocal(aS)); } };
-  const leftArm = boneOf(/^DEF-upper_armL/), leftFore = boneOf(/^DEF-forearmL_/), eu = new THREE.Euler(); let onehand = false, noLeft = false, bobT = 0, bobA = 0;
+  const leftArm = boneOf(/^DEF-upper_armL/), leftFore = boneOf(/^DEF-forearmL(_|$)/), eu = new THREE.Euler(); let onehand = false, noLeft = false, bobT = 0, bobA = 0;
   let ours = null, oursId = null, cur = null, base = 'idle', oneShotUntil = 0, reloadPlan = null, palmItem = false, fistK = 1;
   // Reloads: the packs' reload clips lift and tilt the gun toward the face; at our field of view that left the screen.
   // While reloading the arms ease back (and a little down and left) so the whole reload stays in view (like CS2's
@@ -272,7 +377,7 @@ function build(name, gltf) {
       // A CS2 model imported for this gun (weapon-models.js) replaces the pack's own: held like the other rifles / pistols.
       const own = F.own && !modelFromFile(id); if (ours) { ours.removeFromParent(); ours = null; } oursId = own ? null : id;
       for (const m of gunMeshes) m.visible = !!own;
-      if (!own) { const a = F.own ? (ATTACH[F.pack === 'rifle' ? 'm4' : 'deagle'] || {}) : attachInfo(id), g = weaponModel(model, a.scale || 1); ours = new THREE.Group(); ours.add(g); root.add(ours); g.position.set(...(a.at || [0, 0, 0])); g.rotation.set(...(a.rot || [0, 0, 0])); follow(); }
+      if (!own) { let a = F.own ? (ATTACH[F.pack === 'rifle' ? 'm4' : 'deagle'] || {}) : P.attach ? cs2Attach(P, id, model) : attachInfo(id); if (a.lowPoly && modelFromFile(model)) a = {}; const g = weaponModel(model, a.scale || 1); ours = new THREE.Group(); ours.add(g); root.add(ours); g.position.set(...(a.at || [0, 0, 0])); g.rotation.set(...(a.rot || [0, 0, 0])); follow(); }
       if (ours && packGrip && F.pack === 'pistol' && GUN_KINDS.has(weaponById(id)?.kind) && (modelFromFile(model) || VARIANTS[model])) {   /* (CS2 models and the real-model variants: the low-poly pack keeps its own fit) */ const g = ours.children[0]; ours.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(ours.matrixWorld).invert(), v = new THREE.Vector3(), pts = [];
         g.traverse(o => { if (!o.isMesh) return; const P = o.geometry.attributes.position, M = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld), step = Math.max(1, Math.floor(P.count / 4000)); for (let i = 0; i < P.count; i += step) pts.push(v.fromBufferAttribute(P, i).applyMatrix4(M).clone()); });
         const mine = gripBase(pts); if (mine) { g.position.add(packGrip.clone().sub(mine)); follow(); } }   // its grip in the hand, where the pack's own pistol's is
@@ -283,6 +388,8 @@ function build(name, gltf) {
     twirl(a) { twirlA = a; },
     // The right hand's position in `space`'s local frame (the pivot for swings and inspect).
     handIn(space, out) { space.updateMatrixWorld(true); return out.setFromMatrixPosition(handM.copy(space.matrixWorld).invert().multiply(bone.matrixWorld)); },
+    // CS2's inspect, where these arms have it: plays it, returns its length (ms); 0 — none (the hand turns the gun instead).
+    inspect() { if (!A.inspect || reloadPlan || !ours && !gunMeshes.some(m => m.visible)) return 0; to('inspect', .15, { once: true }); oneShotUntil = performance.now() + A.inspect.duration * 1000; return A.inspect.duration * 1000; },
     fire() { if (!A.fire || reloadPlan) return; to('fire', .04, { once: true }); oneShotUntil = performance.now() + Math.min(A.fire.duration * 1000, 450); },
     // Reload over `ms` (the shotgun: into reload, shells, out of reload).
     reload(ms) { const now = performance.now(); if (A.toReload && A.fromReload) { const i = ms * .25, o = ms * .2; reloadPlan = [[now, 'toReload', i], [now + i, 'reload', ms - i - o], [now + ms - o, 'fromReload', o]]; } else reloadPlan = [[now, 'reload', ms]]; reloadPlan.end = now + ms; },
@@ -291,7 +398,7 @@ function build(name, gltf) {
       const now = performance.now();
       if (reloadPlan) { if (now >= reloadPlan.end) reloadPlan = null; else { const step = [...reloadPlan].reverse().find(s => now >= s[0]); if (step && cur !== act(step[1])) to(step[1], .1, { once: step[1] !== 'reload' || !A.toReload, ms: step[2] }); } }
       if (!reloadPlan && now >= oneShotUntil) { const want = 'idle';   /* CS2: no run / lowered-gun clip while moving, only a small bob (below) */ if (want !== base || (cur && cur.loop === THREE.LoopOnce)) { base = want; to(A[want] ? want : 'idle', .2); } }
-      restArms(); mixer.update(dt); fixHead(); shortenArms(); follow(); supportHand(dt, SUPPORT_PACKS.has(name) && !onehand && !reloadPlan && now >= oneShotUntil); poseElbows(); { let e = 0; if (reloadPlan) { const t = (now - reloadPlan[0][0]) / (reloadPlan.end - reloadPlan[0][0]), ss = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); e = ss(t / .14) * (1 - ss((t - .86) / .14)); } root.position.copy(viewBase).addScaledVector(roff, e); bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); root.position.x += Math.sin(bobT) * .012 * bobA; root.position.y += -Math.abs(Math.cos(bobT)) * .01 * bobA; } if (onehand && leftArm) { if (LEFT.relaxed && !noLeft) { leftArm.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.upper))); if (leftFore) leftFore.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.fore))); } else leftArm.scale.setScalar(.001); leftArm.updateMatrixWorld(true); }
+      restArms(); freshMix(); mixer.update(dt); fixHead(); shortenArms(); follow(); supportHand(dt, SUPPORT_PACKS.has(name) && !onehand && !reloadPlan && now >= oneShotUntil && oursId !== P.native); poseElbows(); { let e = 0; if (reloadPlan) { const t = (now - reloadPlan[0][0]) / (reloadPlan.end - reloadPlan[0][0]), ss = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); e = ss(t / .14) * (1 - ss((t - .86) / .14)); } root.position.copy(viewBase).addScaledVector(roff, e); bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); root.position.x += Math.sin(bobT) * .012 * bobA; root.position.y += -Math.abs(Math.cos(bobT)) * .01 * bobA; } if (onehand && leftArm) { if (LEFT.relaxed && !noLeft) { leftArm.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.upper))); if (leftFore) leftFore.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.fore))); } else leftArm.scale.setScalar(.001); leftArm.updateMatrixWorld(true); }
       if (fist) { for (const f of fingers) f.b.quaternion.multiply(fq.setFromAxisAngle(AX[FIST.axis], FIST.sign * (f.thumb ? FIST.thumb : FIST.angles)[f.seg] * fistK)); sc.updateMatrixWorld(true); } follow(); if (palmItem) inPalm();
     },
     // Calibration info: the pack gun's muzzle in the bone frame (its forward axis).
@@ -309,7 +416,7 @@ function build(name, gltf) {
     debugSupport() { const c = sides.L; if (!c || !ours || !handFrame) return null; root.updateMatrixWorld(true); RI.copy(root.matrixWorld).invert(); const q = relQuat(c.hand, new THREE.Quaternion()), w = relPos(c.hand, new THREE.Vector3());
       const toGun = v => v.clone().applyQuaternion(q).applyQuaternion(ours.quaternion.clone().invert()), bT = handFrame.basisT.clone().transpose(), dL = new THREE.Vector3().setFromMatrixColumn(bT, 0), nL = new THREE.Vector3().setFromMatrixColumn(bT, 1);
       const target = supportAt.clone().applyQuaternion(ours.quaternion).add(ours.position), palm = handFrame.palm.clone().add(handFrame.thick).multiply(rS).applyQuaternion(q).add(w);
-      return { d: toGun(dL).toArray().map(v => +v.toFixed(2)), n: toGun(nL).toArray().map(v => +v.toFixed(2)), miss: +palm.distanceTo(target).toFixed(3), at: supportAt.toArray().map(v => +v.toFixed(2)), w: supportW }; },
+      const sh = relPos(c.up, new THREE.Vector3()), el = relPos(c.segs[1].b, new THREE.Vector3()); const wG = w.clone().sub(ours.position).applyQuaternion(ours.quaternion.clone().invert()), sG = sh.clone().sub(ours.position).applyQuaternion(ours.quaternion.clone().invert()); const pG = palm.clone().sub(ours.position).applyQuaternion(ours.quaternion.clone().invert()); return { palmInGun: pG.toArray().map(v => +v.toFixed(2)), wristInGun: wG.toArray().map(v => +v.toFixed(2)), shoulderInGun: sG.toArray().map(v => +v.toFixed(2)), shW: +sh.distanceTo(w).toFixed(2), wristMiss: +w.distanceTo(wristV).toFixed(3), reach: [+sh.distanceTo(el).toFixed(2), +el.distanceTo(w).toFixed(2), +sh.distanceTo(wristV).toFixed(2)], segs: c.segs.map(g => g.b.name), d: toGun(dL).toArray().map(v => +v.toFixed(2)), n: toGun(nL).toArray().map(v => +v.toFixed(2)), miss: +palm.distanceTo(target).toFixed(3), at: supportAt.toArray().map(v => +v.toFixed(2)), w: supportW }; },
     get boneMuzzle() { return muzzleLocal.clone(); },
     // Where shots leave the barrel (world space).
     muzzle(out) { root.updateMatrixWorld(true);

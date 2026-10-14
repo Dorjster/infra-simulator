@@ -2,9 +2,9 @@
 // MODEL-SOURCES.md): gunshots per weapon, reloads and handling, grenades, knife, hits, footsteps per surface, music. Decoded once in the background when the sound engine starts; until then (or if a file is missing)
 // play() returns false and callers fall back to their synthesized sounds.
 import { audioCtx, outAt, reverb, listenerAt, musicBus } from './spatial-audio.js';
-import { weaponById } from './weapons-data.js';
+import { weaponById, WEAPONS, isFirearm } from './weapons-data.js';
 const DIR = new URL('./sounds/', import.meta.url).href;
-const GUNS = ['pistol', 'usps', 'p250', 'fiveseven', 'deagle', 'cannon', 'mac10', 'mp7', 'smg', 'mp9', 'p90', 'ump45', 'shotgun', 'xm1014', 'ak', 'galil', 'sg553', 'famas', 'm4', 'm4s', 'aug', 'ssg08', 'sniper', 'lmg'];
+const GUNS = [...WEAPONS.filter(isFirearm).map(w => w.id), 'cannon'];   // (every gun's own shots: shot-<id>[-b|-c|-far])
 const NAMES = [...GUNS.flatMap(id => ['shot-' + id, 'shot-' + id + '-b', 'shot-' + id + '-c', 'shot-' + id + '-far']), ...['rifle', 'smg', 'lmg', 'pistol', 'bolt', 'pump'].flatMap(k => ['grab', 0, 1, 2].map(p => `reload-${k}-${p}`)), 'music-freeze'];
 const STEPS = ['concrete', 'wood', 'grass', 'carpet', 'metal'];
 // Effects: name → number of takes (fx-<name>-<take>.wav, or .ogg for the older CC0 ones).
@@ -69,7 +69,7 @@ export const isQuiet = id => !!SHOT[id]?.[2];
 // Reload parts per weapon: magazine out, magazine in, bolt / slide / pump.
 // Reload sets per weapon class: [mag out, mag in, bolt / slide / pump]; the class's handling grab plays with the mag
 // out, so a reload is heard as one sequence (grab, out, in, charge) over its whole CS2 length.
-const kindOf = id => { const k = weaponById(id)?.kind; return ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : id === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
+const kindOf = id => { const k = weaponById(id)?.kind; return ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : k === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
 export function reloadSound(part, id, at = null) { const k = kindOf(id), r = .97 + Math.random() * .06; if (part === 0) play(`reload-${k}-grab`, { at, volume: .55, rate: r, kind: 'handling' }); return play(`reload-${k}-${part}`, { at, volume: .9, rate: r, delay: part === 0 ? .12 : 0, kind: 'handling' }); }
 // Footstep on a surface (concrete, wood, grass, carpet, metal); a random take each step.
 export const stepSound = (surface, at = null, volume = .6) => play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12, kind: 'step' });

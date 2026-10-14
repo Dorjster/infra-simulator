@@ -7,6 +7,7 @@ import * as THREE from './three.module.js';
 import { faceVerts, dispGrid, SURF, playBounds } from './vbsp.js';
 import { parseVtf, parseVmt, decodeDxt } from './vtf.js';
 import { anisotropy } from './texture-quality.js';
+import { sourceStandin } from './bsp-mesh.js';
 
 const HIDDEN = /^tools\/|^(effects\/(trainsky|skybox))|skybox/;
 const DRAWN = /^func_(brush|wall|wall_toggle|breakable|breakable_surf|door|door_rotating|illusionary|movelinear|rotating|button|tracktrain|lod)$|^prop_dynamic$/;
@@ -67,11 +68,15 @@ export function buildVbspMeshes(bsp, { toGame, renderer, textures = vbspTextures
   const meshes = [], mats = [];
   for (const G of groups.values()) { if (!G.P.length) continue; const kv = textures.material(G.name) || {}, sh = kv.shader || '', water = sh === 'water';
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(G.P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(G.N, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(G.UV, 2)); g.setAttribute('uv1', new THREE.Float32BufferAttribute(G.UV2, 2));
-    const map = water ? null : textures.texture(kv['$basetexture']), map2 = G.blend && kv['$basetexture2'] ? textures.texture(kv['$basetexture2']) : null; if (map2) g.setAttribute('blend', new THREE.Float32BufferAttribute(G.A, 1));
+    let map = water ? null : textures.texture(kv['$basetexture']), map2 = G.blend && kv['$basetexture2'] ? textures.texture(kv['$basetexture2']) : null, tint = 0xffffff;
+    // A stock material the file doesn't carry: a stand-in photo by its name (see-through cards with none: not drawn).
+    const cutout = kv['$alphatest'] === '1' || kv['$translucent'] === '1'; if (!map && !water && cutout) continue;
+    if (!map && !water) { const s = sourceStandin(G.name); map = s.map; tint = s.color; if (G.blend && !map2 && s.map2) map2 = s.map2; }
+    if (map2) g.setAttribute('blend', new THREE.Float32BufferAttribute(G.A, 1));
     g.computeBoundingSphere(); for (const a of Object.values(g.attributes)) a.onUpload(releaseArray);
     const translucent = kv['$translucent'] === '1' || water, alphaTest = kv['$alphatest'] === '1', unlit = sh === 'unlitgeneric';
-    const m = new THREE.MeshBasicMaterial({ map, color: map ? 0xffffff : water ? 0x1d3b44 : 0x9a9a92, lightMap: unlit ? null : lightTex, lightMapIntensity: Math.PI, transparent: translucent, opacity: water ? .78 : 1, alphaTest: alphaTest ? .5 : 0, side: translucent || alphaTest || kv['$nocull'] === '1' ? THREE.DoubleSide : THREE.FrontSide, depthWrite: !translucent || alphaTest });
-    if (map2) blendWith(m, map2);
+    const m = new THREE.MeshBasicMaterial({ map, color: map ? tint : water ? 0x1d3b44 : 0x9a9a92, lightMap: unlit ? null : lightTex, lightMapIntensity: Math.PI, transparent: translucent, opacity: water ? .78 : 1, alphaTest: alphaTest ? .5 : 0, side: translucent || alphaTest || kv['$nocull'] === '1' ? THREE.DoubleSide : THREE.FrontSide, depthWrite: !translucent || alphaTest });
+    m.name = G.name; if (map2) blendWith(m, map2);
     const mesh = new THREE.Mesh(g, m); mesh.userData.arena = true; mesh.userData.bsp = true; mesh.userData.noShadow = true; mesh.castShadow = mesh.receiveShadow = false; meshes.push(mesh); mats.push(m); }
   return { meshes, textures, atlas: { width: AW, height: AH, faces: rects.length } };
 }

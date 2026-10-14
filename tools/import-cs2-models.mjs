@@ -1,5 +1,5 @@
 // Imports models and maps downloaded on this computer into the game: Counter-Strike 2 agents (player characters),
-// guns, knives, the bomb, the defuse kit and the karambit first-person model (e.g. Sketchfab uploads of CS2's own
+// guns, knives, the bomb, the defuse kit, the karambit first-person model, first-person rifle animations and gloves (e.g. Sketchfab uploads of CS2's own
 // models) → user-assets/; Counter-Strike 1.6 map files (.bsp, BSP 30: de_dust2, de_mirage…) → user-maps/. The room
 // serves both to every player in it (lan/room.mjs) and the game draws them in place of its built-in ones. They are
 // Valve's or their makers': they stay on this computer (both folders are git-ignored) and are never shipped.
@@ -42,7 +42,7 @@ for (const r of roots.splice(0).filter(r => { if (!existsSync(path.join(r.dir, '
   if (existsSync(path.join(r.dir, 'maps'))) copyTree(path.join(r.dir, 'maps'), mapsOut);
   console.log('  asset pack installed ←', r.name); }
 // The model files (a .glb before an .fbx of the same thing; .dae copies are not read) with the pictures beside them.
-const jobs = [], bsps = []; for (const r of roots) { const files = walk(r.dir), models = files.filter(f => /\.(glb|fbx)$/i.test(f)), pics = files.filter(f => /\.(png|jpe?g)$/i.test(f));
+const jobs = [], bsps = []; for (const r of roots) { const files = walk(r.dir), models = files.filter(f => /\.(glb|fbx|obj)$/i.test(f)), pics = files.filter(f => /\.(png|jpe?g)$/i.test(f));
   for (const m of models) jobs.push({ from: r.name, file: m, pics }); for (const f of files) if (/\.bsp$/i.test(f)) bsps.push({ from: r.name, file: f }); }
 for (const f of loose) if (/\.bsp$/i.test(f)) bsps.push({ from: path.basename(f), file: f }); else jobs.push({ from: path.basename(f), file: f, pics: walk(path.dirname(f)).filter(x => /\.(png|jpe?g)$/i.test(x)) });
 console.log(`${roots.length + loose.length} downloads in ${src}: ${jobs.length} model files, ${bsps.length} map files`);
@@ -79,13 +79,16 @@ const done = new Set(), { WEAPON_IDS } = await import(new URL('../dist/weapons-d
 // Guns are held by their grip as measured on each CS2 model (weapon-models.js CS2_FIT); one without it would float in
 // the hand, so it is left out until measured (the game keeps its built-in model for it).
 const fitted = (() => { const src = readFileSync(new URL('../dist/weapon-models.js', import.meta.url), 'utf8'), i = src.indexOf('export const CS2_FIT = {'), j = src.indexOf('\n};', i); return new Set([...src.slice(i, j).matchAll(/(?:^|[\s,{])'?([a-z0-9-]+)'?: \{ at:/g)].map(m => m[1])); })();
+const BY_NAME = [[/glock/, 'pistol'], [/p250/, 'p250'], [/five.?seven/, 'fiveseven'], [/tec.?9/, 'tec9'], [/cz.?75/, 'cz75'], [/bizon/, 'bizon'], [/negev/, 'negev'], [/galil/, 'galil'], [/deagle|desert.?eagle/, 'deagle']];
 // .glb first: the same model as .fbx in the same download is then skipped.
 jobs.sort((a, b) => (/\.glb$/i.test(b.file) - /\.glb$/i.test(a.file)));
 for (const j of jobs) {
-  const what = await p.evaluate(async u => { const m = await import('/page.js'); const { root } = await m.load(u); return m.identify(root); }, url(j.file)).catch(e => ({ error: e.message }));
+  let what = await p.evaluate(async u => { const m = await import('/page.js'); const { root } = await m.load(u); return m.identify(root); }, url(j.file)).catch(e => ({ error: e.message }));
+  // Files without CS2's part names (re-exports: "DefaultMaterial", a hash for a name): the download's own name says.
+  if (!what && !what?.error) { const n = (j.from + ' ' + path.basename(j.file)).toLowerCase(), hit = BY_NAME.find(([re]) => re.test(n)); if (hit) what = { kind: 'weapon', id: hit[1] }; }
   if (!what || what.error) { console.log('  skip', path.basename(j.file), what?.error || '(not a CS2 model this game uses)'); continue; }
   if (what.kind === 'weapon' && !known.has(what.id)) { console.log('  skip', path.basename(j.file), '(' + what.id + ': the game has no such weapon)'); continue; }
-  if (what.kind === 'weapon' && !fitted.has(what.id)) { console.log('  skip', path.basename(j.file), '(' + what.id + ': no grip measured for it yet — the built-in model is used)'); continue; }
+  if (what.kind === 'weapon' && !fitted.has(what.id) && !process.env.ALLOW_UNFITTED) {   /* (ALLOW_UNFITTED=1: import anyway, to measure its grip) */ console.log('  skip', path.basename(j.file), '(' + what.id + ': no grip measured for it yet — the built-in model is used)'); continue; }
   const key = what.kind + ':' + what.id; if (done.has(key)) { console.log('  skip', path.basename(j.file), '(' + key + ' already from this run)'); continue; }
   const base = 'http://assets.local/file', files = j.pics;
   try {
@@ -101,6 +104,14 @@ for (const j of jobs) {
       const r = await p.evaluate(async a => (await import('/page.js')).convertAgent(a), { url: url(j.file), files, base });
       put(`agents/${what.team}.glb`, Buffer.from(r.glb, 'base64')); models.agents[what.team] = { file: `agents/${what.team}.glb`, name: what.name, tris: r.tris, bones: r.bones, height: r.height, from: j.from };
       console.log('  agent', what.team, what.name, r.tris, 'triangles', r.bones, 'bones', r.height + ' m', '←', j.from);
+    } else if (what.kind === 'fp') {
+      const r = await p.evaluate(async a => (await import('/page.js')).convertFPAnim(a), { url: url(j.file) });
+      put(`fp/${what.id}.glb`, Buffer.from(r.glb, 'base64')); models.viewmodels[what.id] = { file: `fp/${what.id}.glb`, tris: r.tris, bones: r.bones, clips: r.clips, from: j.from };
+      console.log('  first-person', what.id, 'animations:', r.clips.join(', '), '←', j.from);
+    } else if (what.kind === 'glove') {
+      const r = await p.evaluate(async a => (await import('/page.js')).convertGlove(a), { url: url(j.file), files, base });
+      put('fp/glove.glb', Buffer.from(r.glb, 'base64')); models.viewmodels.glove = { file: 'fp/glove.glb', tris: r.tris, bones: r.bones, from: j.from };
+      console.log('  gloves', r.tris, 'triangles', r.bones, 'bones', r.maps.join('/'), '←', j.from);
     } else if (what.kind === 'viewmodel') {
       const r = await p.evaluate(async a => (await import('/page.js')).convertViewmodel(a), { url: url(j.file) });
       put(`fp/${what.id}.glb`, Buffer.from(r.glb, 'base64')); models.viewmodels[what.id] = { file: `fp/${what.id}.glb`, tris: r.tris, bones: r.bones, from: j.from };

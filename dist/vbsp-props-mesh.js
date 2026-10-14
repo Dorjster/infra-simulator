@@ -11,6 +11,7 @@ import * as THREE from './three.module.js';
 import { loadModel, propMatrix } from './vbsp-props.js';
 import { playBounds } from './vbsp.js';
 import { live } from './live-settings.js';
+import { sourceStandin } from './bsp-mesh.js';
 
 export function buildVbspProps(bsp, { toGame, textures, bounds = playBounds(bsp), lightScale = 1, lightGamma = 1 / 2.2 } = {}) {
   const inArea = p => p.origin[0] >= bounds[0] - 512 && p.origin[0] <= bounds[2] + 512 && p.origin[1] >= bounds[1] - 512 && p.origin[1] <= bounds[3] + 512;
@@ -24,12 +25,15 @@ export function buildVbspProps(bsp, { toGame, textures, bounds = playBounds(bsp)
       if (!B.geoms.has(key)) { const levels = [mesh]; if (mesh.idx.length / 3 > 800) levels.push(cluster(mesh, 36), cluster(mesh, 14)); B.geoms.set(key, { levels, ids: [] }); for (const l of levels) { B.verts += l.pos.length / 3; B.idx += l.idx.length; } } B.count++; }); }
   const meshes = [], tmp = new THREE.Color(); let tris = 0;
   for (const [path, B] of byMat) {
-    const kv = textures.material(path) || {}, map = textures.texture(kv['$basetexture']), translucent = kv['$translucent'] === '1', alphaTest = kv['$alphatest'] === '1' || (translucent && /foliage|leaf|leaves|grass|plant|vine|fern|bush|tree/.test(path));
-    const mat = new THREE.MeshBasicMaterial({ map, color: map ? 0xffffff : 0x8a8a84, alphaTest: alphaTest ? .5 : 0, transparent: translucent && !alphaTest, side: alphaTest || kv['$nocull'] === '1' ? THREE.DoubleSide : THREE.FrontSide, depthWrite: !(translucent && !alphaTest) });
+    const kv = textures.material(path) || {}, pic = textures.texture(kv['$basetexture']), translucent = kv['$translucent'] === '1', alphaTest = kv['$alphatest'] === '1' || (translucent && /foliage|leaf|leaves|grass|plant|vine|fern|bush|tree/.test(path));
+    if (!pic && (alphaTest || translucent)) continue;   // a see-through card without its picture: not drawn (no grey squares)
+    const sub = pic ? null : sourceStandin(path), map = pic || sub.map;   // a stock prop picture the file doesn't carry: a stand-in photo
+    const mat = new THREE.MeshBasicMaterial({ name: path, map, color: pic ? 0xffffff : sub.color, alphaTest: alphaTest ? .5 : 0, transparent: translucent && !alphaTest, side: alphaTest || kv['$nocull'] === '1' ? THREE.DoubleSide : THREE.FrontSide, depthWrite: !(translucent && !alphaTest) });
     const batch = new THREE.BatchedMesh(B.count, B.verts, B.idx, mat); batch.perObjectFrustumCulled = true; batch.sortObjects = false;
     for (const g of B.geoms.values()) { for (const l of g.levels) { const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(l.pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(l.nrm, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(l.uv, 2)); geo.setIndex(new THREE.BufferAttribute(l.idx, 1)); g.ids.push(batch.addGeometry(geo)); } g.tris = g.levels[0].idx.length / 3; }
     const inst = [];   // [instance id, x, y, z (game units), fade distance², level ids…]
-    for (const P of placed) P.m.lods[0].forEach((mesh, k) => { if (mesh.material !== path) return; const g = B.geoms.get(P.p.model + ':' + k), id = batch.addInstance(g.ids[0]); batch.setMatrixAt(id, P.M); batch.setColorAt(id, tmp.setRGB(P.tint[0], P.tint[1], P.tint[2]));   /* linear, like the lightmaps the walls get */
+    batch.userData.models = [];   // (each instance's model, for tools)
+    for (const P of placed) P.m.lods[0].forEach((mesh, k) => { if (mesh.material !== path) return; const g = B.geoms.get(P.p.model + ':' + k), id = batch.addInstance(g.ids[0]); batch.userData.models[id] = bsp.propModels[P.p.model]; batch.setMatrixAt(id, P.M); batch.setColorAt(id, tmp.setRGB(P.tint[0], P.tint[1], P.tint[2]));   /* linear, like the lightmaps the walls get */
       const fade = Math.min(P.p.fadeMax > 0 ? P.p.fadeMax / 6.5 * 1.25 : Infinity, alphaTest ? FOLIAGE_FADE : Infinity), fadeOk = Number.isFinite(fade) ? fade : 0; inst.push({ id, x: P.M.elements[12], y: P.M.elements[13], z: P.M.elements[14], fade2: fadeOk * fadeOk, ids: g.ids, cur: 0, vis: true }); tris += g.tris; });
     // Before each draw: the level of detail by distance, hidden past the fade distance.
     // (BatchedMesh builds its own draw list in onBeforeRender: ours runs first, then its own.)

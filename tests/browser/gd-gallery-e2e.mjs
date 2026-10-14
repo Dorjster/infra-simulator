@@ -9,9 +9,10 @@ const b = await chromium.launch({ executablePath: '/Applications/Google Chrome.a
 await p.goto(base + '/gd-gallery.html'); await p.waitForFunction(() => /items ·/.test(document.getElementById('status')?.textContent || ''), null, { timeout: 90000 }).catch(() => {});
 const r = await p.evaluate(() => ({ status: document.getElementById('status').textContent, cards: document.querySelectorAll('.card').length, rendered: [...document.querySelectorAll('img[data-model]')].filter(i => i.src.startsWith('data:image/png') && i.naturalWidth > 0).length, fallback: document.querySelectorAll('.bad').length, distinct: new Set([...document.querySelectorAll('img[data-model]')].map(i => i.src)).size }));
 let ok = 0, n = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (d !== '' ? ' · ' + String(d).slice(0, 300) : '')); };
-check('a card for every weapon, knife, grenade and the bomb (30)', r.cards === 30, r.cards);
+const { WEAPONS, KNIVES, GRENADES } = await import(new URL('../../dist/weapons-data.js', import.meta.url).href), want = WEAPONS.length + KNIVES.length + GRENADES.length + 1;   // (+ the bomb)
+check(`a card for every weapon, knife, grenade and the bomb (${want})`, r.cards === want, r.cards);
 check('every model drawn', r.rendered === r.cards, r.rendered);
-check('no two models look the same (30 different pictures)', r.distinct === r.cards, r.distinct);
+check(`no two models look the same (${r.cards} different pictures)`, r.distinct === r.cards, r.distinct);
 check('none is the generic fallback', r.fallback === 0, r.fallback);
 check('no page errors or failed loads', errs.length === 0, errs.slice(0, 3).join(' | '));
 await p.screenshot({ path: path.join(out, 'gallery.png'), fullPage: false }); console.log(ok + '/' + n); await b.close(); server.kill(); process.exit(ok === n ? 0 : 1);

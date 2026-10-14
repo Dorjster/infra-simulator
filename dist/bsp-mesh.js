@@ -13,6 +13,11 @@ const HIDDEN = /^(sky|clip|origin|aaatrigger|null|hint|skip|bevel|black_hidden|t
 const STANDIN = [[/brick|cinder|block/, 'brick', 0xffffff], [/crate|box|case|pallet/, 'crate', 0xffffff], [/wood|plank|plywood|door|board/, 'wood', 0xffffff], [/train|trk_|wheel|steel|metal|mtl|rail|pipe|duct|dump|fender|rim|axle|grille|bumper|hood/, 'metal-green', 0xc8ccc8],
   [/asphalt|track|tracks/, 'concrete', 0x8a8a88], [/gravel|dirt|ground|sand/, 'sand', 0xb8b0a0], [/grass|ivy|leaf|plant/, 'fieldstone', 0x8ea070], [/roof|tile/, 'roof', 0xffffff], [/plaster|stucco/, 'plaster', 0xffffff], [/window|glass/, 'concrete', 0x8fa8c0], [/light|lgt|lamp/, 'plaster', 0xfff2d0], [/./, 'concrete', 0xd8d8d4]];
 const standin = name => STANDIN.find(([re]) => re.test(name)) || STANDIN[STANDIN.length - 1];
+// Source maps (CS:GO ports) use the game's own stock materials, which the file doesn't carry: the same by their path
+// (stone pavers, temple blocks and rock first). A blend's two layers ("…blend_paver2-dirt4…") each get theirs.
+const SOURCE_STANDIN = [[/paver|cobble|flagstone|temple|ruin|aztec|ancient|stone|rock|cliff/, 'ancientstone', 0xffffff], [/sandstone/, 'sandstone', 0xffffff], [/mud|soil/, 'sand', 0x9a8a70], ...STANDIN];
+export function sourceStandin(path) { const name = path.toLowerCase().split('/').pop().replace(/_-?\d+_-?\d+_-?\d+$/, ''), m = /blend_([a-z]+)\d*-([a-z]+)/.exec(name), pick = n => { const s = SOURCE_STANDIN.find(([re]) => re.test(n)) || SOURCE_STANDIN[SOURCE_STANDIN.length - 1]; return { map: photo(s[1]), color: s[2] }; };
+  return m ? { ...pick(m[1]), map2: pick(m[2]).map } : pick(name); }
 let photoLoader = null; const photos = new Map(); const photo = file => { photoLoader ??= new THREE.TextureLoader(); if (!photos.has(file)) { const t = photoLoader.load(new URL('./textures/' + file + '.jpg', import.meta.url).href); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = anisotropy(); photos.set(file, t); } return photos.get(file); };
 // Brush entities that are drawn (their faces belong to their model); others (triggers, buy zones, bomb targets) are not.
 const DRAWN = /^func_(wall|wall_toggle|breakable|door|door_rotating|illusionary|pushable|button|rot_button|rotating|conveyor|water|train|tracktrain|plat|pendulum|guntarget|mortar_field|vehicle)$/;
@@ -35,7 +40,13 @@ export function buildBspMeshes(bsp, { toGame, lightScale = 1.25, lightGamma = .6
   // The game drew its lightmaps through a gamma curve (dark corners lifted, bright spots kept): the same here.
   const GAMMA = new Uint8Array(256).map((_, v) => Math.round(255 * Math.pow(v / 255, lightGamma)));
   const atlas = new Uint8Array(AW * AH * 4), L = bsp.lighting, put = (x, y, r, g, b) => { const o = (y * AW + x) * 4; atlas[o] = GAMMA[r]; atlas[o + 1] = GAMMA[g]; atlas[o + 2] = GAMMA[b]; atlas[o + 3] = 255; };
-  for (const r of rects) { const base = r.f.lightOfs; for (let y = -1; y <= r.h; y++) for (let x = -1; x <= r.w; x++) { const sx = Math.min(r.w - 1, Math.max(0, x)), sy = Math.min(r.h - 1, Math.max(0, y)), o = base + (sy * r.w + sx) * 3; if (o + 2 < L.length) put(r.ax + x, r.ay + y, L[o], L[o + 1], L[o + 2]); } }
+  // A face's light is the sum of its light styles' maps (up to four, one after another): the steady light (style 0) and
+  // switchable lights (32 and up) — on, as the map starts, unless their light entity starts dark. Reading only the
+  // first left faces lit by a switchable light black (Nuke's floors).
+  const dark = new Set(bsp.entities.filter(e => /^light/.test(e.classname || '') && +e.style >= 32 && (+e.spawnflags & 1)).map(e => +e.style));
+  for (const r of rects) { const base = r.f.lightOfs, size = r.w * r.h * 3, on = [0, 1, 2, 3].filter(k => r.f.styles[k] !== 255 && !dark.has(r.f.styles[k]));
+    for (let y = -1; y <= r.h; y++) for (let x = -1; x <= r.w; x++) { const sx = Math.min(r.w - 1, Math.max(0, x)), sy = Math.min(r.h - 1, Math.max(0, y)), o = base + (sy * r.w + sx) * 3; let cr = 0, cg = 0, cb = 0;
+      for (const k of on) { const q = o + k * size; if (q + 2 < L.length) { cr += L[q]; cg += L[q + 1]; cb += L[q + 2]; } } put(r.ax + x, r.ay + y, Math.min(255, cr), Math.min(255, cg), Math.min(255, cb)); } }
   const lightTex = new THREE.DataTexture(atlas, AW, AH, THREE.RGBAFormat); lightTex.colorSpace = THREE.SRGBColorSpace; lightTex.magFilter = THREE.LinearFilter; lightTex.minFilter = THREE.LinearFilter; lightTex.flipY = false; lightTex.channel = 1; lightTex.needsUpdate = true; lightTex.onUpdate = () => { lightTex.image.data = null; };
   // A face without light of its own (sky-lit special surfaces, oversize faces): a mid-grey luxel.
   const GREY = [AW - 1, AH - 1]; put(GREY[0], GREY[1], 150, 150, 150);
@@ -55,6 +66,6 @@ export function buildBspMeshes(bsp, { toGame, lightScale = 1.25, lightGamma = .6
     // On the GPU once drawn: the arrays are let go (never aimed at — shots use the collision boxes; bounds computed above).
     for (const a of Object.values(g.attributes)) a.onUpload(releaseArray);
     const own = texOf(G.tex), sub = own ? null : standin(G.tex.name), map = own || photo(sub[1]), m = new THREE.MeshBasicMaterial({ map, color: own ? 0xffffff : sub[2], lightMap: lightTex, lightMapIntensity: lightScale * Math.PI,   /* (three.js divides a lightmap by π on unlit materials) */ transparent: G.opacity < 1 || G.water, opacity: G.opacity, alphaTest: G.alphaT ? .5 : 0, side: G.alphaT || G.water ? THREE.DoubleSide : THREE.FrontSide, depthWrite: !(G.opacity < 1) || G.alphaT, blending: G.add ? THREE.AdditiveBlending : THREE.NormalBlending });
-    g.userData.shared = false; const mesh = new THREE.Mesh(g, m); mesh.userData.arena = true; mesh.userData.bsp = true; mesh.userData.noShadow = true; mesh.castShadow = false; mesh.receiveShadow = false; meshes.push(mesh); }
+    m.name = G.tex.name; g.userData.shared = false; const mesh = new THREE.Mesh(g, m); mesh.userData.arena = true; mesh.userData.bsp = true; mesh.userData.noShadow = true; mesh.castShadow = false; mesh.receiveShadow = false; meshes.push(mesh); }
   return { meshes, atlas: { width: AW, height: AH, faces: rects.length } };
 }

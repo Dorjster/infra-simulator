@@ -29,6 +29,7 @@ import { rayBoxes, bulletPath } from './arena-maps.js';
 
 // Draw (deploy) time, CS2-like: it swings up from below; no shooting until it's up.
 const DRAW_BY_KIND = { pistol: 600, smg: 750, rifle: 900, sniper: 1050, shotgun: 850, lmg: 1100, knife: 450, nade: 500, bomb: 600 };
+const GUN_FP_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'shotgun', 'lmg']);   // (guns: their arms may have an inspect animation)
 export const DRAW_MS = new Proxy({ karambit: 500, deagle: 700, ak: 850, m4: 850, sniper: 1000 }, { get: (o, id) => o[id] ?? DRAW_BY_KIND[weaponById(id)?.kind] ?? 600 });
 const AXES = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
 const LOUD = { pistol: [.5, 1], smg: [.32, 1.3], shotgun: [.75, .62], rifle: [.5, 1], sniper: [.85, .7], lmg: [.45, .9] };
@@ -191,7 +192,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     get punch() { return punch; }, get shake() { return shake; }, get spray() { return ri; }, get lastShot() { return lastEnds; }, get scope() { return scope; }, get scopeFov() { return scope && current?.zoom ? current.zoom[scope - 1] : 0; },
     get nade() { return current?.kind === 'nade' ? { state: nade.state, strength: nade.buttons.size > 1 || nade.both ? 'medium' : nade.buttons.has(2) ? 'short' : 'long' } : null; },
     // Inspect (F): look the weapon over; any action cancels it.
-    inspect() { if (!current || (knife && now() < knife.until) || reloading() || scope || now() - drawAt < drawMs || (current.kind === 'nade' && nade.state !== 'idle')) return false; inspecting = { start: now(), ms: current.kind === 'knife' ? 2400 : current.kind === 'bomb' ? 1400 : 2000 }; return true; },
+    inspect() { if (!current || (knife && now() < knife.until) || reloading() || scope || now() - drawAt < drawMs || (current.kind === 'nade' && nade.state !== 'idle')) return false; const clip = GUN_FP_KINDS.has(current.kind) ? fp?.inspect?.() || 0 : 0; inspecting = { start: now(), ms: clip || (current.kind === 'knife' ? 2400 : current.kind === 'bomb' ? 1400 : 2000), clip: clip > 0 }; return true; },   // (clip: the arms' own inspect animation plays)
     get inspecting() { return !!inspecting; },
     // What to hold when the current item is gone (a thrown grenade, a planted bomb): the last weapon, else the best one.
     fallback() { const own = arsenal().filter(Boolean); return own.includes(prevWeapon) ? prevWeapon : own.find(i => !['nade', 'bomb'].includes(weaponById(i)?.kind)) || null; },
@@ -253,7 +254,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       // Knife idle: a slow breathing sway (the packs' idle clip barely moves a one-handed fist).
       idleT += dt; if (current.kind === 'knife' && !knife) { kx += Math.sin(idleT * 1.1) * .006; ky += Math.sin(idleT * 2.2) * .004; rz += Math.sin(idleT * 1.1) * .02; }
       // Inspect: raise and turn the hand to show the weapon's side, hold, turn back; the karambit spins round the ring.
-      if (inspecting) { const t = (now() - inspecting.start) / inspecting.ms; if (t >= 1) { inspecting = null; fp?.twirl?.(0); } else { const ss = v => v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v), e = ss(t / .22) * (1 - ss((t - .78) / .22));
+      if (inspecting) { const t = (now() - inspecting.start) / inspecting.ms; if (t >= 1) { inspecting = null; fp?.twirl?.(0); } else if (!inspecting.clip) { const ss = v => v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v), e = ss(t / .22) * (1 - ss((t - .78) / .22));
         if (current.kind === 'knife') { ky += e * .06; kx -= e * .07; ry -= e * .35; rz += e * .35; rx -= e * .12; if (current.id === 'karambit') fp?.twirl?.(Math.PI * 2 * ss((t - .34) / .3)); }
         else if (current.kind === 'bomb') { ky += e * .05; ry -= e * .25; rz += e * .15; }
         else { ky += e * .04; kx -= e * .05; ry -= e * .3; rz += e * .35; rx -= e * .08; } } }

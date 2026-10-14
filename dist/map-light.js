@@ -14,7 +14,7 @@ import { textureRGBA } from './bsp30.js';
 export function floorLight(bsp, G, opts) {
   const { cols, rows, n, z } = G, N = cols * rows, out = new Float32Array(N * MAXF).fill(-1);
   const src = bsp.format === 'vbsp' ? bsp.source : bsp; if (!src?.faces?.length || !src.lighting?.length) return null;
-  const L = src.lighting, vbsp = bsp.format === 'vbsp';
+  const L = src.lighting, vbsp = bsp.format === 'vbsp', dark = new Set((src.entities || []).filter(e => /^light/.test(e.classname || '') && +e.style >= 32 && (+e.spawnflags & 1)).map(e => +e.style));   // (CS 1.6: switchable lights that start off)
   floorHits(src, G, opts, (f, ti, W) => {
     if (f.lightOfs < 0 || f.styles[0] === 255) return null;
     // The face's lightmap: its luxel grid (16 units a luxel in CS 1.6; Source: its own mins / size).
@@ -26,7 +26,8 @@ export function floorLight(bsp, G, opts) {
     return (j, x, y, h) => {
       const ss = Math.min(lw - 1, Math.max(0, Math.round(x * ls[0] + y * ls[1] + h * ls[2] + ls[3] - s0))), tt = Math.min(lh - 1, Math.max(0, Math.round(x * lt[0] + y * lt[1] + h * lt[2] + lt[3] - t0)));
       let lum; if (vbsp) { const o = f.lightOfs + (tt * lw + ss) * 4; if (o + 3 >= L.length) return; const e = 2 ** (L[o + 3] << 24 >> 24); lum = Math.pow(Math.min(1, (.3 * L[o] + .59 * L[o + 1] + .11 * L[o + 2]) * e / 255), 1 / 2.2); }
-      else { const o = f.lightOfs + (tt * lw + ss) * 3; if (o + 2 >= L.length) return; lum = Math.pow((.3 * L[o] + .59 * L[o + 1] + .11 * L[o + 2]) / 255, .6) * 1.25; }
+      else { const o = f.lightOfs + (tt * lw + ss) * 3, size = lw * lh * 3; if (o + 2 >= L.length) return; let v = 0; for (let k = 0; k < 4; k++) { const st = f.styles[k], q = o + k * size; if (st === 255 || dark.has(st) || q + 2 >= L.length) continue; v += .3 * L[q] + .59 * L[q + 1] + .11 * L[q + 2]; }   /* every light style's map, summed (as bsp-mesh.js) */
+        lum = Math.pow(Math.min(255, v) / 255, .6) * 1.25; }
       if (lum > out[j]) out[j] = lum; }; });
   // Floors no face was found for (props, displacements): the mean of their lit neighbours, else 1.
   for (let pass = 0; pass < 3; pass++) for (let i = 0; i < N; i++) for (let k = 0; k < n[i]; k++) { if (out[i * MAXF + k] >= 0) continue; let s = 0, m = 0; const h = z[i * MAXF + k];

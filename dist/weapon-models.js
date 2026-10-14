@@ -325,6 +325,7 @@ function decorate(g, V, mz, len, top, bottom) {
 export const CS2_FIT = {
   ak: { at: [0, 1.6, -3.4], gun: true }, m4: { at: [0, 25.3, -38.5], gun: true }, m4s: { at: [0, 6.2, .8], gun: true }, sniper: { at: [0, 17.6, -4.9], gun: true }, usps: { at: [0, 5.1, -11.4], gun: true }, deagle: { at: [0, 4.8, -2.2], gun: true },
   famas: { at: [0, -1.5, -13], gun: true }, mp7: { at: [0, -2.7, 7], gun: true }, mp9: { at: [0, 6, -14.6], gun: true },
+  pistol: { at: [0, 1.9, 1.4], gun: true }, p250: { at: [0, 6, -5], gun: true }, fiveseven: { at: [0, 14.6, -2], gun: true }, cz75: { at: [0, 8.6, -6.1], gun: true }, tec9: { at: [0, -3.9, 9.5], gun: true }, bizon: { at: [0, .4, 4.7], gun: true }, negev: { at: [0, 3, 2], gun: true },   // (the hand ~9 cm above the grip's base, as on the Deagle and USP-S; the Bizon as the AK)
   knife: { at: [0, 4.1, 0], rot: [-Math.PI / 2, Math.PI / 2, 0] }, 'knife-t': { at: [0, 3.4, 0], rot: [-Math.PI / 2, Math.PI / 2, 0] }, karambit: { at: [0, 0, 0] }, c4: { at: [0, -2.5, 0] }, kit: { at: [0, 0, 0] },
 };
 const fromFile = new Set();
@@ -354,12 +355,13 @@ export const VARIANTS = {
   cz75: { base: 'pistol', scale: .97, tint: 0x7a6650 }, tec9: { base: 'pistol', scale: 1.14, tint: 0x2c2e31 }, bizon: { base: 'suomi', scale: .96, tint: 0x4a4334 },
   xm1014: { base: 'shotgun', tint: 0x4a4a4e }, galil: { base: 'ak', tint: 0xc9b48a }, famas: { base: 'm4', tint: 0xcbb48a }, m4s: { base: 'm4', suppressor: [1.15, .085] },
   sg553: { base: 'ak', tint: 0x55595e, scope: true }, aug: { base: 'm4', tint: 0x7d8a5c, scope: true }, ssg08: { base: 'sniper', scale: .92, tint: 0x8aa0b4 }, lmg: { base: 'm4', scale: 1.22, tint: 0x5c5f55, box: true },
+  negev: { base: 'lmg', scale: .97, tint: 0x3f413a },
 };
 const MUZZLE_SET = new Set(), variantMats = new Map(), decoMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: .45, metalness: .8 }); decoMat.userData.shared = true;
 function tintMaterial(m, hex, chrome) { const k = m.uuid + ':' + hex + (chrome ? 'c' : ''); if (!variantMats.has(k)) { const c = m.clone(); c.color = new THREE.Color(hex); if (chrome) { c.metalness = 1; c.roughness = .25; c.metalnessMap = null; c.roughnessMap = null; } c.userData.shared = true; variantMats.set(k, c); } return variantMats.get(k); }
 function variantModel(id, scale) {
   const V = VARIANTS[id], src = real.get(V.base); if (!src) return null; const g = src.clone(), s = V.scale || 1;
-  if (V.tint) g.traverse(o => { if (o.isMesh) o.material = tintMaterial(o.material, V.tint, V.chrome); });
+  if (V.tint) g.traverse(o => { if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map(m => tintMaterial(m, V.tint, V.chrome)) : tintMaterial(o.material, V.tint, V.chrome); });   // (a variant of a variant: parts with several materials)
   const mz = new THREE.Vector3(...(MUZZLE[V.base] || [0, 0, -1])), box = new THREE.Box3().setFromObject(src), len = box.max.z - box.min.z;
   const cyl = (r, l) => new THREE.Mesh(new THREE.CylinderGeometry(r, r, l, 18).rotateX(Math.PI / 2), decoMat);
   if (V.suppressor) { const [l, r] = V.suppressor, c = cyl(r, l); c.position.copy(mz).add(new THREE.Vector3(0, 0, -l / 2 + .02)); g.add(c); }
