@@ -22,6 +22,8 @@ import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, zoneAt, HIT_GROUPS, isFirearm,
 import { loadSounds, reloadSound, fx as rec } from './sound-bank.js';
 import { loadFP, fpFor } from './fp-view.js';
 import { live } from './live-settings.js';
+// The view model's own field of view (vertical degrees; 0: the world's), as CS2's viewmodel_fov 68 (4:3 horizontal ≈ 54 vertical).
+export const VIEWMODEL = { fov: 58 };
 import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT, knifeFor } from './weapon-models.js';
 import { rayBoxes, bulletPath } from './arena-maps.js';
 
@@ -88,8 +90,12 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   const vmNear = r => r.getContext().depthRange(0, .01), vmFar = r => r.getContext().depthRange(0, 1);
   const onTop = g => g.traverse(o => { if (o.isMesh || o.isSkinnedMesh) { o.onBeforeRender = vmNear; o.onAfterRender = vmFar; o.frustumCulled = false; o.castShadow = false; } });
   // Gun hand (Settings → Global Defensive): the whole first-person view mirrored for the left hand, as CS2's cl_righthand.
+  // Viewmodel field of view (CS2's viewmodel_fov): the arms and gun drawn as with a narrower lens than the world's —
+  // the same as stretching them sideways and up from the eye by tan(world / 2) / tan(view model / 2) — so a long gun
+  // doesn't swing steeply in from the corner (VIEWMODEL.fov, vertical degrees; the packs' poses sit further out to match).
   const hand = new THREE.Group(); hand.name = 'gun-hand';
-  const sideView = v => { hand.scale.x = live.leftHand ? -1 : 1; hand.add(v); if (!hand.parent) camera.add(hand); };
+  const fitHand = () => { const k = VIEWMODEL.fov > 0 && camera.fov > VIEWMODEL.fov ? Math.tan(camera.fov * Math.PI / 360) / Math.tan(VIEWMODEL.fov * Math.PI / 360) : 1; hand.scale.set(live.leftHand ? -k : k, k, 1); };
+  const sideView = v => { fitHand(); hand.add(v); if (!hand.parent) camera.add(hand); };
   function setView(id, draw = false) {
     if (view) { view.removeFromParent(); view = null; }
     if (draw && id) { drawAt = now(); drawMs = DRAW_MS[id]; sounds.draw(null, id); }
@@ -257,7 +263,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
         rz += up * .62; ry += up * .16; ky += up * .09; kx -= up * .04; kz += pull * .15; rx += pull * .12; }
       // Planting: the bomb is lowered to the ground in front of you while the plant runs.
       plantE += ((current.kind === 'bomb' && planting() ? 1 : 0) - plantE) * Math.min(1, dt * 7); if (plantE > .001) { ky -= plantE * .22; kz -= plantE * .12; kx -= plantE * .1; rx -= plantE * .7; }
-      hand.scale.x = live.leftHand ? -1 : 1;   // (a change in Settings applies at once)
+      fitHand();   // (a change in Settings or the field of view applies at once)
       view.position.set(x + kx, y0 + kick * .05 * k - rl * .35 - dr * .55 + ky + ny, z + kick * .22 * k + dr * .15 + kz + nz);
       view.rotation.set(kick * .35 * k - rl * .6 - dr * .9 + rx + nr, .04 + ry, rl * .4 + dr * .35 + spin + rz);
       // Swings, inspect and planting turn round the hand (not the eye), so the weapon twists in place on screen.
