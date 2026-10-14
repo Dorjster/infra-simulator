@@ -19,7 +19,7 @@ const g = room.world.operations.game;
 startArena(g, { map: 'yard', kind: 'dm', bots: 0 }, Date.now());
 let r = await post('voice', { to: idOf(bo), signal: { type: 'offer', sdp: 'x' } }, ann.token); ok('deathmatch: no voice (no team mates)', r.status === 403, JSON.stringify(r));
 // Defuse: Ann and Bo Terrorists, Cy Counter-Terrorist.
-startArena(g, { map: 'dune', kind: 'defuse', bots: 0 }, Date.now()); g.combat.d.teams = { ann: 't', bo: 't', cy: 'ct' };
+startArena(g, { map: 'dust2', kind: 'defuse', bots: 0 }, Date.now()); g.combat.d.teams = { ann: 't', bo: 't', cy: 'ct' };
 r = await post('voice', { to: idOf(bo), signal: { type: 'offer', sdp: 'hello' } }, ann.token); ok('team mate: relayed', r.status === 200, JSON.stringify(r));
 r = await post('voice', { to: idOf(cy), signal: { type: 'offer', sdp: 'spy' } }, ann.token); ok('enemy: refused', r.status === 403 && /team only/.test(r.body.error), JSON.stringify(r));
 r = await post('voice', { to: idOf(ann), signal: { type: 'ice', c: {} } }, cy.token); ok('enemy → you: refused too', r.status === 403);

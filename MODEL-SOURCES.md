@@ -52,3 +52,22 @@ Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and p
 - Reloads: ["Gun Reload Sounds" by SpringySpringo](https://opengameart.org/content/gun-reload-sounds) — CC0.
 - Footsteps, breaking glass, grenade bounces, brass casings, bullet and body impacts: [Kenney "Impact Sounds"](https://kenney.nl/assets/impact-sounds) — CC0.
 - Explosions (HE, flashbang, bomb) and the molotov burn: [Kenney "Sci-Fi Sounds"](https://kenney.nl/assets/sci-fi-sounds) — CC0.
+- Epidemic Sound recordings (October 2026, `tools/pack-epidemic.mjs`): the project owner's Epidemic Sound downloads, cut into each gun's close, second, third and distant takes, the per-class reload sequences, knife, grenades, hits, death, footsteps, landing and the freeze-time jazz. **Licence for redistribution in a public repository or a downloadable app has not been confirmed**; the GitHub repository is public.
+
+## Imported on the player's computer (never shipped, never committed)
+
+- Map files (`user-maps/`, the desktop app's `maps/`): Counter-Strike 1.6 maps (BSP 30) and Source ports (VBSP: CS:S / CS:GO) the player downloaded — Valve's designs, made by their community porters; their packed textures and models stay inside the file.
+- Models (`user-assets/`, the desktop app's `assets/`): Counter-Strike 2 agents, guns, knives, the C4, the defuse kit and the karambit view model the player downloaded (e.g. Sketchfab uploads of CS2's own models) — Valve's, converted locally by `tools/import-cs2-models.mjs`.
+- Shared only with players in the same LAN room (the room serves them); the one-file asset pack is for the player's own other computers.
+
+## Classic Defuse maps (`dist/cs-maps/`, built by `tools/maps/extract-nav.mjs`)
+
+Full notices: `dist/cs-maps/LICENSES.md`.
+
+- Heights, floors, place names and connections: [awpy](https://github.com/pnxenopoulos/awpy) navigation data, commit a5434abc06 — MIT, Peter Xenopoulos.
+- Floor / wall / cover outline: radar overviews from Lexogrine's [csgo-react-hud](https://github.com/lexogrine/csgo-react-hud) (commit 2c6bbaa31e) — MIT, Lexogrine, all eight maps (earlier builds sampled boltobserv's GPL-3.0 copies for six maps; replaced).
+- The layouts are Valve's Counter-Strike designs; the reference data is derived from Valve's game files.
+
+## Map surface textures (`dist/textures/`)
+
+CC0 photo textures from [ambientCG](https://ambientcg.com) (1K JPG colour maps, resaved at quality 80): Ground079S (sand), Ground079L (tunnel floor), Plaster002 (plaster: Dust II and Mirage walls, tunnels), Tiles143 (stone), Tiles142 (sandstone), Concrete034 (concrete), CorrugatedSteel007A (blue metal), PavingStones138 (Ancient paving), Planks037A (crates), WoodFloor043 (wood), RoofingTiles012A (Inferno roof ledges), Bricks094 (brick), PaintedMetal006 (green metal), Bricks075A (Ancient fieldstone walls).

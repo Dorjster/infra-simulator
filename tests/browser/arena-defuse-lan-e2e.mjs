@@ -10,11 +10,11 @@ const browsers = [], launch = () => chromium.launch({ executablePath: process.en
 let ok = 0, n = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (d !== '' ? ' · ' + String(d).slice(0, 220) : '')); }; const errs = [];
 async function open(who) { const bw = await launch(); browsers.push(bw); const p = await (await bw.newContext({ viewport: { width: 1200, height: 750 } })).newPage(); p.on('pageerror', e => errs.push(who + ': ' + e.message)); p.on('dialog', d => d.accept());
   await p.addInitScript(n => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-name', n); localStorage.setItem('infra-face-name', n);
-    globalThis.__lf = []; let last = 0; const tick = t => { const hid = id => { const e = document.getElementById(id); return !e || e.hidden; }; if (last && hid('ar-load') && hid('start-screen') && t - last > 50) __lf.push(Math.round(t - last)); last = t; requestAnimationFrame(tick); }; requestAnimationFrame(tick); }, who);
+    globalThis.__lf = []; let last = 0; const tick = t => { const hid = id => { const e = document.getElementById(id); return !e || e.hidden; }; if (last && hid('ar-load') && hid('start-screen') && globalThis.__infra?.lab?.arenaScene?.inArena?.(__infra.camera.position.z) && t - last > 50) __lf.push(Math.round(t - last));   /* in the arena only: a guest still waiting in the office while the host's page builds the map on the same machine is not play */ last = t; requestAnimationFrame(tick); }; requestAnimationFrame(tick); }, who);
   await p.goto(base + '/'); await p.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 60000 }); await p.waitForTimeout(1200); return p; }
 const host = await open('Host'), guest = await open('Guest');
 const D = p => p.evaluate(() => { const d = __infra.lab.world.operations.game.combat?.d; return d && { teams: d.teams, phase: d.round?.phase, winner: d.round?.winner, reason: d.round?.reason, carrier: d.bomb?.carrier, score: d.score }; });
-await host.evaluate(() => document.querySelector('[data-start=arena]').click()); await host.waitForTimeout(400); await host.selectOption('#ss-ar-kind', 'defuse'); await host.selectOption('#ss-ar-map', 'dune'); await host.selectOption('#ss-ar-bots', '0');
+await host.evaluate(() => document.querySelector('[data-start=arena]').click()); await host.waitForTimeout(400); await host.selectOption('#ss-ar-kind', 'defuse'); await host.selectOption('#ss-ar-map', 'dust2'); await host.selectOption('#ss-ar-bots', '0');
 await host.evaluate(() => document.getElementById('ss-ar-host').click());
 await host.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.world.operations.game.combat?.d?.teams?.host, null, { timeout: 30000 });
 const code = await host.evaluate(() => __infra.lab.lan.roomCode);
@@ -26,7 +26,7 @@ let s = await D(host); check('Host is T, the guest CT', s.teams.host === 't' && 
 check('The host carries the bomb', s.carrier === 'host');
 const sg = await D(guest); check('The guest sees the same teams', sg.teams.host === 't' && sg.teams.guest === 'ct');
 await host.waitForFunction(() => __infra.lab.world.operations.game.combat.d.round.phase === 'live', null, { timeout: 20000 });
-const siteA = await host.evaluate(async () => { const { ARENA } = await import('./facility-layout.js'), { ARENA_MAPS } = await import('./arena-maps.js'); const [x, z] = ARENA_MAPS.dune.sites.A; return { x: ARENA.cx + x, z: ARENA.cz + z }; });
+const siteA = await host.evaluate(async () => { const { ARENA } = await import('./facility-layout.js'), { ARENA_MAPS } = await import('./arena-maps.js'); const [x, z] = ARENA_MAPS.dust2.sites.A; return { x: ARENA.cx + x, z: ARENA.cz + z }; });
 await host.evaluate(s => { __infra.lab.enter(); __infra.camera.position.x = s.x; __infra.camera.position.z = s.z; }, siteA); await host.waitForTimeout(700);
 await host.keyboard.press('Digit5'); await host.waitForTimeout(800); await host.mouse.move(600, 375); await host.mouse.down(); await host.waitForTimeout(3700); await host.mouse.up(); await host.waitForTimeout(600);
 s = await D(host); check('Host planted the bomb on A', s.phase === 'planted', JSON.stringify(s));

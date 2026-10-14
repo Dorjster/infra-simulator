@@ -1,10 +1,16 @@
-// Arena maps as plain data (original layouts). Shared by the game (3D build, collision) and the host (bot line of
+// Arena maps as plain data (deathmatch: original layouts; Defuse: the classic maps, cs-mapbuild.js). Shared by the game (3D build, collision) and the host (bot line of
 // sight, spawns). Coordinates are game units relative to the arena centre (ARENA.cx, ARENA.cz); 1 unit ≈ 16.5 cm,
 // so a wall 24 high is ~4 m, a crate 6 high is waist-high cover, eye height is 9.7.
 // Each solid: [x, z, w, d, h, material, y0?]. Materials: sand, plaster, concrete, brick, wood, crate, metal-red,
 // metal-blue, metal-green, roof, stone. kind: 'dm' (deathmatch) or 'defuse' (bomb sites A / B, T / CT spawns, bot routes).
 import { DRESS } from './arena-maps-more.js';
-import { CLASSIC } from './arena-maps-classic.js';
+import { buildCsMap } from './cs-mapbuild.js';
+import { parseBsp } from './bsp30.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js'; import { compactVbsp } from './vbsp-compact.js'; import { indexBoxes, boxesNear, boxesAlong } from './box-grid.js';
+import { THEMES, CS_MAP_IDS } from './cs-maps/themes.js';
+import dust2 from './cs-maps/dust2-nav.js'; import mirage from './cs-maps/mirage-nav.js'; import inferno from './cs-maps/inferno-nav.js'; import nuke from './cs-maps/nuke-nav.js';
+import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js';
+import { textureSize } from './texture-quality.js';
+const NAV = { dust2, mirage, inferno, nuke, cache, anubis, ancient };
 const B = (x, z, w, d, h, m, y0 = 0) => [x, z, w, d, h, m, y0];
 // Windows painted on the face of a solid block (decoration: shutters and frames on a wall you can't enter).
 // (windows() — painted windows on solid blocks — lives in arena-mapkit.js.)
@@ -52,26 +58,53 @@ export const ARENA_MAPS = {
     spawns: [[-70, -70], [70, -70], [-70, 70], [70, 70], [0, -95], [0, 95], [-95, -30], [95, 30], [-40, 15], [40, -15]],
   },
 };
-// The Defuse maps: classic-flow grid maps (arena-maps-classic.js).
-for (const [id, make] of Object.entries(CLASSIC)) ARENA_MAPS[id] = make();
+// The Defuse maps: the classic Counter-Strike maps, rebuilt at true scale from their navigation areas and overviews
+// (cs-mapbuild.js). Each is built the first time it is used (a fraction of a second) and kept.
+for (const id of CS_MAP_IDS) Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() {
+  const m = buildCsMap(id, NAV[id], THEMES[id]); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } });
+// Maps from files (Counter-Strike 1.6 .bsp, imported on this computer, never shipped): useMapFile puts one in place of
+// the built-in version of the same map — drawn from the file, walked on its own geometry (bsp-map.js). Built the first
+// time it is used. The host and every client load the same file (the room serves it), so all build the same map.
+const FILE_MAPS = new Map();
+// Counter-Strike 1.6 (BSP 30) or Source (VBSP: CS:S / CS:GO ports; its terrain and solid props join the collision when the map is built).
+export function useMapFile(id, buffer, info = {}) { if (!CS_MAP_IDS.includes(id)) throw Error('No such Defuse map: ' + id); const bsp = isVbsp(buffer) ? (sb => { const g = toGoldSrc(sb); g.extraSpans = (x, y) => (g._solids ??= sourceSolids(sb, { bounds: playBounds(sb) })).extraSpans(x, y); return g; })(compactVbsp(parseVbsp(buffer), { maxSize: textureSize() })) : parseBsp(buffer); FILE_MAPS.set(id, { size: buffer.byteLength, ...info });
+  Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() { const m = buildBspMap(id, bsp, { T: THEMES[id], nav: NAV[id] }); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } }); }
+export const mapFileOf = id => FILE_MAPS.get(id) || null;
+// Every map's id, name and kind without building any (menus, settings).
+export const MAP_LIST = [...Object.keys(ARENA_MAPS).filter(id => !CS_MAP_IDS.includes(id)).map(id => ({ id, name: ARENA_MAPS[id].name, kind: ARENA_MAPS[id].kind })), ...CS_MAP_IDS.map(id => ({ id, name: THEMES[id].name, kind: 'defuse' }))];
+// In a team's buy zone? (dx, dz relative to the arena centre.) Classic maps: within reach of any of the team's spawn
+// points (their spawn areas are large); others: around the spawns' centre.
+export function inBuyZone(m, side, dx, dz, radius) { const sp = side === 'ct' ? m.ct : m.t; if (!sp?.length) return true;
+  if (m.classic) return sp.some(([x, z]) => Math.hypot(dx - x, dz - z) <= radius * .9);
+  const cx = sp.reduce((a, q) => a + q[0], 0) / sp.length, cz = sp.reduce((a, q) => a + q[1], 0) / sp.length; return Math.hypot(dx - cx, dz - cz) <= radius; }
+export const mapMeta = id => MAP_LIST.find(m => m.id === id) || null;
 // The older maps get their props, windows and callouts (arena-maps-more.js).
-for (const [id, dress] of Object.entries(DRESS)) { if (ARENA_MAPS[id]?.grid) continue; const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
-for (const m of Object.values(ARENA_MAPS)) if (m.kind === 'defuse') m.spawns = [...m.t, ...m.ct];
+for (const [id, dress] of Object.entries(DRESS)) { if (CS_MAP_IDS.includes(id) || !Object.getOwnPropertyDescriptor(ARENA_MAPS, id)?.value || ARENA_MAPS[id]?.grid) continue; const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
+
 // Solids as world-space boxes: { minX, maxX, minZ, maxZ, y0, y1, mat }.
-export function mapBoxes(map, cx, cz) { return map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk }; }); }
+// The map's collision boxes at (cx, cz), with a grid index for nearby queries (box-grid.js); the same list is handed
+// out again (read only) for the last few maps asked for.
+const BOX_CACHE = new Map();
+export function mapBoxes(map, cx, cz) {
+  const key = (map.id || '') + '@' + cx + ',' + cz, hit = BOX_CACHE.get(key); if (hit && hit.map === map) return hit.boxes;
+  const boxes = indexBoxes(map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk }; }));
+  BOX_CACHE.delete(key); BOX_CACHE.set(key, { map, boxes }); while (BOX_CACHE.size > 4) BOX_CACHE.delete(BOX_CACHE.keys().next().value); return boxes;
+}
 // The highest walk-on floor (raised floor, stair) under (x, z) whose top is at most `below` (0 if none).
-export function floorTop(boxes, x, z, below = Infinity) { let y = 0; for (const b of boxes) if (b.walk && b.y1 <= below && b.y1 > y && x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) y = b.y1; return y; }
+const FT = [];
+export function floorTop(boxes, x, z, below = Infinity) { let y = 0; for (const b of boxesNear(boxes, x, z, x, z, FT)) if (b.walk && b.y1 <= below && b.y1 > y && x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) y = b.y1; return y; }
 // The floor under a world point (raised floors and ramps of grid maps; 0 elsewhere).
 export const floorAt = (map, cx, cz, x, z) => map?.floorAt ? map.floorAt(x - cx, z - cz) : 0;
 // Can a player stand at (x, z)? (radius r, ignores roofs, raised floors and stairs (walked on) and things above head height)
 export function walkable(boxes, bounds, x, z, r = 1.3) {
   if (x < bounds.minX + r || x > bounds.maxX - r || z < bounds.minZ + r || z > bounds.maxZ - r) return false;
-  for (const b of boxes) if (b.y0 < 10 && !b.walk && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return false;
+  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, WK)) if (b.y0 < 10 && !b.walk && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return false;
   return true;
 }
 // Line of sight at eye height between two points (segment vs boxes that cover y = 8…10).
+const LS = [], SC = [], RB = [], WK = [], BP = [];   // nearby boxes per query (box-grid.js)
 export function lineOfSight(boxes, ax, az, bx, bz, y = 9) {
-  for (const b of boxes) { if (b.y0 > y || b.y1 < y) continue; let t0 = 0, t1 = 1; const dx = bx - ax, dz = bz - az;
+  for (const b of boxesAlong(boxes, ax, az, bx, bz, 0, LS)) { if (b.y0 > y || b.y1 < y) continue; let t0 = 0, t1 = 1; const dx = bx - ax, dz = bz - az;
     for (const [p, d, lo, hi] of [[ax, dx, b.minX, b.maxX], [az, dz, b.minZ, b.maxZ]]) { if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { t0 = 2; break; } continue; } let a = (lo - p) / d, c = (hi - p) / d; if (a > c) [a, c] = [c, a]; t0 = Math.max(t0, a); t1 = Math.min(t1, c); if (t0 > t1) break; }
     if (t0 <= t1 && t0 < 1 && t1 > 0) return false; }
   return true;
@@ -79,7 +112,7 @@ export function lineOfSight(boxes, ax, az, bx, bz, y = 9) {
 // Is the 3D segment a→b clear of every box? (slab test; used for bullets, knife, grenades and pickups)
 export function segmentClear(boxes, ax, ay, az, bx, by, bz) {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
-  for (const b of boxes) { let t0 = 0, t1 = 1, out = false;
+  for (const b of boxesAlong(boxes, ax, az, bx, bz, 0, SC)) { let t0 = 0, t1 = 1, out = false;
     for (const [p, d, lo, hi] of [[ax, dx, b.minX, b.maxX], [ay, dy, b.y0, b.y1], [az, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p <= lo || p >= hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 >= t1) { out = true; break; } }
@@ -89,7 +122,7 @@ export function segmentClear(boxes, ax, ay, az, bx, by, bz) {
 // Distance along a ray (origin o, unit direction d) to the first box it enters, or Infinity.
 export function rayBoxes(boxes, ox, oy, oz, dx, dy, dz, far = 2000) {
   let best = far;
-  for (const b of boxes) { let t0 = 0, t1 = best, out = false;
+  for (const b of boxesAlong(boxes, ox, oz, ox + dx * far, oz + dz * far, 0, RB)) { let t0 = 0, t1 = best, out = false;
     for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }
@@ -104,7 +137,7 @@ export const PEN_COST = { adobe: 2.6, metal: 1.6, crate: .8, wood: 1, door: .7, 
 const SOLID_THICK = 4;   // thicker than this, only crates and wood are crossed (a 15-unit container is not)
 export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0) {
   const hits = [];
-  for (const b of boxes) { let t0 = 0, t1 = far, out = false;
+  for (const b of boxesAlong(boxes, ox, oz, ox + dx * far, oz + dz * far, 0, BP)) { let t0 = 0, t1 = far, out = false;
     for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }
@@ -125,8 +158,12 @@ const slotCache = new Map();
 export function spawnSlots(map, side) {
   const k = (map.name || '') + ':' + side; if (slotCache.has(k)) return slotCache.get(k);
   const base = side === 't' ? map.t : side === 'ct' ? map.ct : map.spawns, boxes = mapBoxes(map, 0, 0), [sw, sd] = map.size, bounds = { minX: -sw / 2, maxX: sw / 2, minZ: -sd / 2, maxZ: sd / 2 }, out = [];
-  const free = (x, z) => walkable(boxes, bounds, x, z, 1.8) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
-  for (const [x, z] of base) if (free(x, z)) out.push([x, z]);
-  for (const r of [6.5, 13]) for (const [x, z] of base) for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz)) out.push([+px.toFixed(2), +pz.toFixed(2)]); }
+  // Classic maps: a spot on the spawn's own floor with floor all round it (their columns know the levels).
+  const nav = map.nav, levelOf = (x, z, y) => nav ? (Number.isFinite(y) ? nav.floorAt(x, z, y + 9.7) : nav.floorAt(x, z)) : 0;   // (a spawn's own height when it has one: [x, z, y])
+  const ground = (x, z, level) => !nav ? walkable(boxes, bounds, x, z, 1.8) : [[0, 0], [1.8, 0], [-1.8, 0], [0, 1.8], [0, -1.8]].every(([dx, dz]) => { const f = nav.floorAt(x + dx, z + dz, level); return Number.isFinite(f) && Math.abs(f - level) < 2.8; });
+  const free = (x, z, level = levelOf(x, z)) => ground(x, z, level) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
+  const lv = l => Number.isFinite(l) ? +l.toFixed(2) : undefined;
+  for (const [x, z, y] of base) { const level = levelOf(x, z, y); if (free(x, z, level)) out.push([x, z, lv(level)]); }
+  for (const r of [6.5, 13]) for (const [x, z, y] of base) { const level = levelOf(x, z, y); for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz, level)) out.push([+px.toFixed(2), +pz.toFixed(2), lv(level)]); } }
   slotCache.set(k, out); return out;
 }

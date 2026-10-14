@@ -94,7 +94,7 @@ const away = at => { const me = listenerAt(); return at && me ? Math.hypot(at.x 
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
 
 export function createNadeView({ scene, camera, world, boxes = () => [], quality = () => 'Medium', hostNow = () => Date.now() }) {
-  const group = new THREE.Group(); group.name = 'nades'; scene.add(group); const FXP = FXS = createFxSystem(group, quality);
+  const group = new THREE.Group(); group.name = 'nades'; group.userData.gd = true; scene.add(group); const FXP = FXS = createFxSystem(group, quality);
   const FM = new THREE.Matrix4(), FQ = new THREE.Quaternion(), FV = new THREE.Vector3(), FS = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
   const live = new Map(), dir = new THREE.Vector3(); let flashUntil = 0, flashPeak = 0, flashAt = 0, path = null, landRing = null;
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-flash" style="position:fixed;inset:0;z-index:39;background:#fff;opacity:0;pointer-events:none"></div>');
@@ -113,7 +113,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
     if (g.phase === 'smoke') { // a dense volume: an opaque core you can't see through, wrapped in soft puffs (fewer on Low)
       const R = NADES.smoke.radius, core = new THREE.Mesh(CORE, MAT.core.clone()); core.userData.core = true; core.scale.set(R * .58, R * .44, R * .58); core.position.y = R * .12; fx.add(core); parts.push(core);
       const n = quality() === 'Low' ? 20 : quality() === 'Medium' ? 34 : 48; for (let i = 0; i < n; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), y = 1 - (i + .5) / n * 1.15, rr = Math.sqrt(Math.max(0, 1 - y * y)), a = i * 2.39996, f = .62 + (i % 3) * .1; sp.position.set(Math.cos(a) * rr * R * f, Math.max(1.2, R * .12 + y * R * .5 * f), Math.sin(a) * rr * R * f); sp.userData.size = R * (.5 + (i % 4) * .07); fx.add(sp); parts.push(sp); }   // a shell of soft puffs around the core: a fluffy outline
-      FXP.puff(g.x, g.y + .3, g.z, 8, { color: 0xd4d6da, size: 3, grow: 3, life: 1.6, rise: 1.5, spread: 1.5, alpha: .8 }); burst(at, { len: 2.5, decay: .8, freq: 3000, vol: .35, type: 'highpass' }); }
+      FXP.puff(g.x, g.y + .3, g.z, 8, { color: 0xd4d6da, size: 3, grow: 3, life: 1.6, rise: 1.5, spread: 1.5, alpha: .8 }); if (rec('poof', { at, volume: .9, wet: .3 })) rec('smoke', { at, volume: .7, delay: .05 }); else burst(at, { len: 2.5, decay: .8, freq: 3000, vol: .35, type: 'highpass' }); }
     if (g.phase === 'fire') { // exactly where the host burns (fireCells): a glowing floor and flames on every cell
       const cells = fireCells(boxes(), g.x, g.z, g.y), flames = new THREE.InstancedMesh(FLAME, MAT.flame, Math.max(1, cells.length)), glow = new THREE.InstancedMesh(CELL, MAT.glow, Math.max(1, cells.length)), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
       cells.forEach(([cx, cz], i) => { const h = .7 + ((i * 7919) % 13) / 13 * .7; q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (i * 2.4) % 6.28); m4.compose(new THREE.Vector3(cx - g.x, .05, cz - g.z), q, sc.set(1, h, 1)); flames.setMatrixAt(i, m4); m4.compose(new THREE.Vector3(cx - g.x, .06, cz - g.z), new THREE.Quaternion(), sc.set(1, 1, 1)); glow.setMatrixAt(i, m4); });

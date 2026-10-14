@@ -14,6 +14,8 @@ import { EYE } from './weapons-data.js';
 import { hurt, isDown, recording, statOf } from './combat-logic.js';
 import { lineOfSight, segmentClear, ARENA_MAPS, floorAt } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
+import { boxesNear } from './box-grid.js';
+const SO = [], FA = [], FB = [], GU = [];   // nearby boxes per query (box-grid.js)
 
 const HU = 2.54 / 16.5;
 export const NADES = {
@@ -55,7 +57,7 @@ export function throwNade(game, name, kind, a, now = Date.now()) {
 // Solid at (x, y, z)? (map boxes, the floor, the map edge)
 function solid(boxes, bounds, x, y, z) {
   if (y < R) return true; if (bounds && (x < bounds.minX || x > bounds.maxX || z < bounds.minZ || z > bounds.maxZ)) return true;
-  for (const b of boxes) if (x > b.minX - R && x < b.maxX + R && z > b.minZ - R && z < b.maxZ + R && y > b.y0 - R && y < b.y1 + R) return true; return false;
+  for (const b of boxesNear(boxes, x - R, z - R, x + R, z + R, SO)) if (x > b.minX - R && x < b.maxX + R && z > b.minZ - R && z < b.maxZ + R && y > b.y0 - R && y < b.y1 + R) return true; return false;
 }
 // One physics step of a flying grenade (host tick and client preview alike). Returns true when it hit the floor.
 export function stepNade(g, boxes, bounds, dt) {
@@ -114,8 +116,8 @@ export function putOut(f, now) { f.phase = 'out'; f.outAt = now; f.firedAt = now
 const fireCache = new Map();
 export function fireCells(boxes, x, z, y = 0) {
   const k = [x.toFixed(1), z.toFixed(1), y.toFixed(1), boxes.length].join(); if (fireCache.has(k)) return fireCache.get(k);
-  const S = 3, Rn = Math.ceil(NADES.molotov.radius / S), floorAt = (px, pz) => { let top = 0; for (const b of boxes) if (px > b.minX && px < b.maxX && pz > b.minZ && pz < b.maxZ && b.y0 <= y + 1.5 && b.y1 <= y + 1.5 && b.y1 > top) top = b.y1; return top; };
-  const blocked = (px, pz) => boxes.some(b => px > b.minX - .5 && px < b.maxX + .5 && pz > b.minZ - .5 && pz < b.maxZ + .5 && b.y0 < y + 2 && b.y1 > y + 1.5);   // a wall or crate standing on this surface
+  const S = 3, Rn = Math.ceil(NADES.molotov.radius / S), floorAt = (px, pz) => { let top = 0; for (const b of boxesNear(boxes, px, pz, px, pz, FA)) if (px > b.minX && px < b.maxX && pz > b.minZ && pz < b.maxZ && b.y0 <= y + 1.5 && b.y1 <= y + 1.5 && b.y1 > top) top = b.y1; return top; };
+  const blocked = (px, pz) => boxesNear(boxes, px - .5, pz - .5, px + .5, pz + .5, FB).some(b => px > b.minX - .5 && px < b.maxX + .5 && pz > b.minZ - .5 && pz < b.maxZ + .5 && b.y0 < y + 2 && b.y1 > y + 1.5);   // a wall or crate standing on this surface
   const seen = new Set(['0,0']), out = [], q = [[0, 0]];
   while (q.length) { const [i, j] = q.shift(), px = x + i * S, pz = z + j * S; if (Math.hypot(i, j) * S > NADES.molotov.radius || blocked(px, pz) || Math.abs(floorAt(px, pz) - y) > 1.5) continue; out.push([+px.toFixed(2), +pz.toFixed(2)]);
     for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const kk = (i + di) + ',' + (j + dj); if (!seen.has(kk) && Math.abs(i + di) <= Rn && Math.abs(j + dj) <= Rn) { seen.add(kk); q.push([i + di, j + dj]); } } }
@@ -150,7 +152,7 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
   C.nades = C.nades.filter(g => g.phase === 'air' || now - g.firedAt < ({ boom: 1200, pop: 1200, smoke: NADES.smoke.lasts, fire: NADES.molotov.lasts, out: 900 }[g.phase] || 0));
   return changed || C.nades.length !== n;
 }
-function groundUnder(boxes, x, z, y) { let g = 0; for (const b of boxes) if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ && b.y1 <= y + 1 && b.y1 > g) g = b.y1; return g; }
+function groundUnder(boxes, x, z, y) { let g = 0; for (const b of boxesNear(boxes, x, z, x, z, GU)) if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ && b.y1 <= y + 1 && b.y1 > g) g = b.y1; return g; }
 // How blinded a viewer is by a flash at (fx, fy, fz): 0…1 (1 = fully white), from distance and how directly they look
 // at it; nothing through walls (3D, from the eye) or smoke. dirX/Y/Z: where the viewer looks.
 export function flashAmount(boxes, fx, fy, fz, x, y, z, dirX, dirY, dirZ, game = null) {

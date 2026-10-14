@@ -3,7 +3,8 @@
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
 import { getVolumes, setVolumes } from './spatial-audio.js';
-import { ARENA_MAPS } from './arena-maps.js';
+import { ARENA_MAPS, MAP_LIST } from './arena-maps.js';
+import { APP_VERSION } from './version.js';
 import * as THREE from './three.module.js';
 import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
 import {TICKETS} from './tickets.js';
@@ -19,6 +20,7 @@ import {RACK_PADS, DELIVERY, PROCUREMENT, ROOM} from './facility-layout.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SAVE_KEY = 'infra-local-campaign-v20';
+const gdMode = () => typeof document !== 'undefined' && document.body?.classList.contains('gd-mode');   // in a Global Defensive match
 const TABS = [['objective', 'Objective', 'J'], ['inventory', 'Inventory & orders', 'I'], ['map', 'Map', 'M'], ['laptop', 'Laptop', 'L'], ['team', 'Team', 'T'], ['settings', 'Settings', '']];
 
 export function createCampaignUI(ctx) {
@@ -44,7 +46,7 @@ export function createCampaignUI(ctx) {
   document.body.insertAdjacentHTML('beforeend', `
 <section id="start-screen" aria-label="Start">
  <div class="ss-wrap">
-  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small>v36.9</small></div>
+  <div class="ss-brand"><span>⌘</span> INFRA SIMULATOR <small id="ss-version">v${APP_VERSION}</small></div>
   <h1>Build a working enterprise, starting from an empty room.</h1>
   <p class="ss-lead">Receive equipment, rack it, cable it, configure it and prove every service works. Real ports, cables, consoles and GUIs, one clear step at a time.</p>
   <div class="ss-grid" id="ss-grid"></div>
@@ -100,7 +102,7 @@ export function createCampaignUI(ctx) {
     inviteBar.innerHTML = `<span style="color:#7fe3f2;font-size:11px;letter-spacing:.12em">HOSTING · FRIENDS JOIN WITH</span><span>${invite.addrs.length ? invite.addrs.map(a => `<code style="font-size:15px">${esc(a)}</code>`).join(' or ') : '<em>this computer\'s address</em>'}</span><span>passcode <code style="font-size:15px">${esc(invite.code)}</code></span>`;
   }
   async function roomInfo() { try { const r = await fetch('/api/room'); if (!r.ok || !r.headers.get('content-type')?.includes('json')) return null; const d = await r.json(); return d.protocol === 'infra-lan-v1' ? d : null; } catch { return null; } }
-  function showStart(yes = true) { startOpen = yes; $('start-screen').hidden = !yes; document.body.classList.toggle('at-start', yes); if (yes) { close(); $('ss-sub').hidden = true; renderStart(); if (document.pointerLockElement) document.exitPointerLock(); } }
+  function showStart(yes = true) { startOpen = yes; $('start-screen').hidden = !yes; document.body.classList.toggle('at-start', yes); if (yes) {  close(); $('ss-sub').hidden = true; renderStart(); if (document.pointerLockElement) document.exitPointerLock(); } }
   function begin() { showStart(false); close(); document.body.classList.add('in-game'); enter(); if (levels() && g().emptySite && !g().racks.length && !g().orders.length) ctx.place?.(-22, 10, -38, 12); render(); }
   function subPanel(html, bind) { sub = html; const el = $('ss-sub'); el.hidden = false; el.innerHTML = html; bind?.(el); el.scrollIntoView?.({ block: 'nearest' }); }
   const titlePicker = (id = 'ss-title') => `<label>Engineer title<select id="${id}"><option value="field">Field Engineer</option><option value="operations">Operations Engineer</option></select><small>Both titles can do every task.</small></label>`;
@@ -177,8 +179,12 @@ export function createCampaignUI(ctx) {
   async function startArena() {
     const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
     subPanel(`<h2>Global Defensive</h2>
-     <div class="ss-form"><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label><label>Warmup (s)<input id="ss-ar-warm" type="number" min="0" max="600" step="5" value="120" title="LAN lobby before the match · 0 starts at once"></label><label>Freeze time (s)<input id="ss-ar-freeze" type="number" min="0" max="60" step="1" value="15" title="Buy time at the start of every round · 0–60"></label><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div><p id="ss-ar-status" class="ss-note" hidden role="status"></p>
-     <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B), respawn in 2.5 s, most kills in 10 minutes. <b>Defuse</b>: Terrorists vs Counter-Terrorists with CS2 money and rounds — plant the bomb on A or B (5, hold click) or defuse it (E); first to 13, friendly fire on. Knife on 3 — Darja carries her ruby karambit. Bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
+     <div class="ss-form"><label>Your name<input id="ss-ar-name" maxlength="20" autocomplete="nickname" placeholder="Player" value="${esc((() => { try { const n = localStorage.getItem('infra-name'); return n && n !== 'Engineer' ? n : ''; } catch { return ''; } })())}"></label><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option><option value="practice">Practice (any map, helpers)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
+     <div id="ss-ar-practice" class="ss-form gd-practice" hidden><label>Bots<select id="ss-pr-bots"><option value="stand">Stand still (targets)</option><option value="move">Move, don't shoot</option><option value="fight">Fight back</option></select></label>${[['ammo', 'Infinite ammo'], ['impacts', 'Show bullet impacts'], ['recoil', 'Show my recoil'], ['paths', 'Show grenade paths']].map(([k, t]) => `<label class="chk"><input type="checkbox" id="ss-pr-${k}" checked> ${t}</label>`).join('')}</div>
+     <details class="gd-more"><summary>More options</summary><div class="ss-form"><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label>Warmup (s)<input id="ss-ar-warm" type="number" min="0" max="600" step="5" value="120" title="LAN lobby before the match · 0 starts at once"></label><label>Freeze time (s)<input id="ss-ar-freeze" type="number" min="0" max="60" step="1" value="15" title="Buy time at the start of every round · 0–60"></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}</div></details>
+     <div class="gd-go"><button id="ss-ar-solo" class="primary">Play solo<small>you and the bots</small></button>${canHost ? '<button id="ss-ar-host">Host LAN game<small>friends on your network join you</small></button>' : ''}<button id="ss-ar-join">Join LAN game<small>play in a friend's game</small></button></div>
+     <p id="ss-ar-status" class="ss-note" hidden role="status"></p>
+     <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B). <b>Defuse</b>: Terrorists vs Counter-Terrorists, plant (5) or defuse (E) the bomb, first to 13. Esc in a match: settings, or leave. Your Campaign and Payday saves are never touched.</p>`, el => {
       // Start: the chosen mode and map are sent once and confirmed from the room's own state before anyone enters.
       // Opening the room to the LAN restarts its listener; we wait for the reconnect instead of sending into the gap
       // (that gap used to drop the Defuse request and drop you into whatever arena the room still had).
@@ -187,23 +193,28 @@ export function createCampaignUI(ctx) {
       let busy = false;
       const go = async host => {
         if (busy) return; busy = true; el.querySelectorAll('#ss-ar-solo,#ss-ar-host').forEach(b => b.disabled = true); status.hidden = false; status.textContent = 'Starting…';
+        // Your name (Global Defensive has no face / engineer picker): saved, and used for the room and the scoreboard.
+        { const nm = (el.querySelector('#ss-ar-name')?.value || '').trim() || 'Player'; try { localStorage.setItem('infra-name', nm); } catch {} dispatchEvent(new CustomEvent('gd-name', { detail: nm })); }
         const kind = el.querySelector('#ss-ar-kind').value, map = el.querySelector('#ss-ar-map').value, bots = +el.querySelector('#ss-ar-bots').value;
-        if (!ARENA_MAPS[map] || ARENA_MAPS[map].kind !== kind) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
+        const practice = kind === 'practice' ? { bots: el.querySelector('#ss-pr-bots').value, ...Object.fromEntries(['ammo', 'impacts', 'recoil', 'paths'].map(k => [k, el.querySelector('#ss-pr-' + k).checked])) } : null, want = practice ? 'dm' : kind;
+        if (!MAP_LIST.some(m => m.id === map && (practice || m.kind === kind))) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
         const before = lan.epoch;
         if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); if (h?.rebound && lan.connected) { status.textContent = 'Opening the room to your network…'; if (!(await lan.whenReady(12000, before))) return fail('The room did not come back after opening it to the LAN. Check the firewall and try Host again.'); } } catch (e) { return fail(e.message); } }
         if (!(await joinLocalRoom())) return fail('The arena runs on this computer’s room · start the game from the desktop app or the room server');
         if (!(await lan.whenReady(8000))) return fail('Not connected to the room yet');
-        let out; try { out = await send({ type: 'mode', mode: 'arena', kind, map, bots, difficulty: el.querySelector('#ss-ar-diff')?.value || 'normal', lobby: !!host, warmup: +(el.querySelector('#ss-ar-warm')?.value ?? 120), freeze: +(el.querySelector('#ss-ar-freeze')?.value ?? 15) }); /* hosting: a 2-minute lobby for friends to join */ } catch (e) { return fail(e.message); }
+        let out; try { out = await send({ type: 'mode', mode: 'arena', kind, map, bots, practice, difficulty: el.querySelector('#ss-ar-diff')?.value || 'normal', lobby: !!host && !practice, warmup: +(el.querySelector('#ss-ar-warm')?.value ?? 120), freeze: +(el.querySelector('#ss-ar-freeze')?.value ?? 15) }); /* hosting: a 2-minute lobby for friends to join */ } catch (e) { return fail(e.message); }
         // Confirmed by the room's own state (the reply carries the new world): mode, kind and map must all match.
-        const t0 = performance.now(); while (performance.now() - t0 < 4000 && !(g().mode === 'arena' && g().arena?.kind === kind && g().arena?.map === map && (kind !== 'defuse' || g().combat?.d))) await new Promise(r => setTimeout(r, 50));
-        if (!(g().mode === 'arena' && g().arena?.kind === kind && g().arena?.map === map && (kind !== 'defuse' || g().combat?.d))) return fail('The room did not start ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' on ' + ARENA_MAPS[map].name + (typeof out === 'string' ? ' (' + out + ')' : '') + '. Nothing was started; try again.');
-        busy = false; notify('Global Defensive · ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + ARENA_MAPS[map].name + (host ? ' · hosting on your network' : '')); begin();
+        const okNow = () => g().mode === 'arena' && g().arena?.kind === want && g().arena?.map === map && (want !== 'defuse' || g().combat?.d) && (!practice || g().arena?.practice);
+        const t0 = performance.now(); while (performance.now() - t0 < 4000 && !okNow()) await new Promise(r => setTimeout(r, 50));
+        if (!okNow()) return fail('The room did not start ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' on ' + ARENA_MAPS[map].name + (typeof out === 'string' ? ' (' + out + ')' : '') + '. Nothing was started; try again.');
+        busy = false; notify('Global Defensive · ' + (practice ? 'Practice · Esc for its settings' : kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + ARENA_MAPS[map].name + (host ? ' · hosting on your network' : '')); begin();
       };
       // Maps for the chosen mode (deathmatch: Freight Yard, Old Town · defuse: Dune, Plaza, Hamlet).
-      const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = Object.entries(ARENA_MAPS).filter(([, m]) => m.kind === k).map(([id, m]) => `<option value="${id}">${m.name}</option>`).join(''); };
+      const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = MAP_LIST.filter(m => k === 'practice' || m.kind === k).map(({ id, ...m }) => `<option value="${id}">${m.name}</option>`).join(''); el.querySelector('#ss-ar-practice').hidden = k !== 'practice'; };   // practice: every map
       el.querySelector('#ss-ar-kind').addEventListener('change', maps); maps();
       el.querySelector('#ss-ar-solo').addEventListener('click', () => go(false));
       el.querySelector('#ss-ar-host')?.addEventListener('click', () => go(true));
+      el.querySelector('#ss-ar-join').addEventListener('click', () => { const nm = (el.querySelector('#ss-ar-name')?.value || '').trim(); if (nm) try { localStorage.setItem('infra-name', nm); } catch {} startJoin({ gd: true }); });
     });
   }
   async function startPayday() {
@@ -227,12 +238,13 @@ export function createCampaignUI(ctx) {
       el.querySelector('#ss-pay-host')?.addEventListener('click', () => start(true));
     });
   }
-  async function startJoin() {
+  // Join a game on the network. From Global Defensive ({ gd }): just the games found, the passcode and your name.
+  async function startJoin({ gd = false } = {}) {
     const info = await roomInfo(), params = new URLSearchParams(globalThis.location?.search || '');
-    subPanel(`<h2>Join LAN</h2>${desktop?.discover ? '<div id="ss-found" class="ss-found"><small>Looking for games on your network…</small></div>' : ''}<div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Passcode<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info && !desktop ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${info ? 'You are on ' + esc(location.host) + '. ' : ''}Guests share the host's world: you can do every task, but only the host chooses the mode and saves.</p><p id="ss-join-status" class="ss-note"></p>`, el => {
+    subPanel(`<h2>${gd ? 'Join a LAN game' : 'Join LAN'}</h2>${desktop?.discover ? '<div id="ss-found" class="ss-found"><small>Looking for games on your network…</small></div>' : ''}<div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Passcode<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info && !desktop ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${gd ? '' : titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${gd ? 'Pick the game your friend hosts (it shows up here by itself) and type the passcode on their screen — or type their address. Their game decides the map and mode.' : (info ? 'You are on ' + esc(location.host) + '. ' : '') + 'Guests share the host\'s world: you can do every task, but only the host chooses the mode and saves.'}</p><p id="ss-join-status" class="ss-note"></p>`, el => {
       // Games announced on this network by other desktop apps: one click fills the address and code and joins.
       if (desktop?.discover) { const box = el.querySelector('#ss-found'); let picked = ''; el.querySelector('#ss-code').addEventListener('keydown', e => { if (e.key === 'Enter') el.querySelector('#ss-join').click(); }); const poll = async () => { if (!box.isConnected) return; const list = await desktop.discover().catch(() => []);
-        box.innerHTML = list.length ? '<b>Games on your network</b>' + list.map(gm => `<button class="ss-found-game" data-addr="${esc(gm.address)}" data-code="${esc(gm.code)}"><strong>${esc(gm.name)}</strong><span>${esc(gm.mode || 'LAN game')} · ${gm.players} engineer${gm.players === 1 ? '' : 's'} · ${esc(gm.address)}${gm.version ? ' · v' + esc(gm.version) : ''}</span><em>Select</em></button>`).join('') : '<small>No games found on this network yet · when a friend hosts, it appears here (or type the address below)</small>';
+        box.innerHTML = list.length ? '<b>Games on your network</b>' + list.map(gm => `<button class="ss-found-game" data-addr="${esc(gm.address)}" data-code="${esc(gm.code)}"><strong>${esc(gm.name)}</strong><span>${esc(gm.mode || 'LAN game')} · ${gm.players} engineer${gm.players === 1 ? '' : 's'} · ${esc(gm.address)}${gm.version ? ' · v' + esc(gm.version) : ''}</span><em>Select</em></button>`).join('') : '<small>No games found on this network yet · when a friend hosts, it appears here by itself (or type the address below)</small>';
         if (!picked) { let last = null; try { last = JSON.parse(localStorage.getItem('infra-last-lan') || 'null'); } catch {}
           const btns = [...box.querySelectorAll('[data-addr]')], again = last && btns.find(b => b.dataset.addr === last.addr), only = btns.length === 1 ? btns[0] : null, pick = again || only;
           if (pick) { picked = pick.dataset.addr; el.querySelector('#ss-addr').value = picked; const c = el.querySelector('#ss-code'); if (again && last.code && !c.value) c.value = last.code; c.focus();
@@ -254,7 +266,7 @@ export function createCampaignUI(ctx) {
           if (desktop && url.protocol === 'http:') { url.protocol = 'https:'; url.port = String((+url.port || 8080) + 1); }   // the desktop joins the host's https twin (a secure origin: team voice works)
           url.pathname = '/'; url.search = '?join=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name); location.href = url.href; return;
         }
-        engineering.setRole(el.querySelector('#ss-jtitle').value);
+        if (el.querySelector('#ss-jtitle')) engineering.setRole(el.querySelector('#ss-jtitle').value);
         const ok = await lan.join({ name, code, hostKey: '' }); el.querySelector('#ss-join-status').textContent = ok ? 'Connected' : lan.status || 'Could not join';
         if (ok) begin();
       });
@@ -283,7 +295,39 @@ export function createCampaignUI(ctx) {
   });
 
   // ---- Panel ---------------------------------------------------------------------------------------------
-  function panel(which = 'objective') { if (engineering.busy && which !== 'objective' && which !== 'settings') { notify('Put the item down first · G'); } tab = which; open = true; engineering.close(); kit.hide(); officeUI?.close?.(); if (document.pointerLockElement) document.exitPointerLock(); $('campaign-panel').hidden = false; document.body.classList.add('cp-open'); render(); }
+  // Global Defensive's own menu (Esc in a match): Resume, Settings, and one way out that says what it does —
+  //  · alone: Leave match (the match ends, back to the start screen);
+  //  · hosting (friends can join, or are in): the address and passcode to give them, and Stop hosting (the match ends
+  //    for everyone, the room closes to the network);
+  //  · in a friend's game: Leave game (you disconnect; they play on).
+  const gdMenuOpen = () => !document.getElementById('gd-menu')?.hidden && !!document.getElementById('gd-menu');
+  const humansIn = () => (lan.players || []).filter(p => !p.bot && p.role !== 'bot').length;
+  const gdRole = () => lan.connected && !lan.canManageWorld ? 'guest' : (inviteText() || humansIn() > 1) ? 'host' : 'solo';
+  async function gdLeave(role) {
+    if (role === 'guest') { lan.leave?.(); showStart(true); return; }
+    if (role === 'host' && humansIn() > 1 && !confirm('Stop hosting? The match ends for everyone in it.')) return;
+    await send({ type: 'mode', mode: 'free' }).catch(() => null);
+    if (role === 'host') { await desktop?.stopHosting?.().catch(() => null); invite = null; renderInvite(); }
+    showStart(true);
+  }
+  function gdMenu(on) {
+    let m = document.getElementById('gd-menu');
+    if (!m) { document.body.insertAdjacentHTML('beforeend', '<div id="gd-menu" hidden role="dialog" aria-label="Global Defensive menu"><div class="gm-card"><h2>GLOBAL DEFENSIVE</h2><p class="gm-sub"></p><p class="gm-invite" hidden></p><div class="gm-practice" hidden></div><button data-gm="resume">Resume <small>Esc</small></button><button data-gm="settings">Settings</button><button data-gm="leave">Leave match</button></div></div>'); m = document.getElementById('gd-menu');
+      m.addEventListener('click', async e => { const b = e.target.closest('[data-gm]'); if (!b) return; const act = b.dataset.gm; gdMenu(false);
+        if (act === 'practice') { const P = g().arena?.practice || {}, k = b.dataset.k, next = k === 'bots' ? { bots: ({ stand: 'move', move: 'fight', fight: 'stand' })[P.bots] || 'stand' } : { [k]: !P[k] };
+          const r = await lan.act({ type: 'arena', action: { type: 'practice', settings: next } }); if (r?.error) notify(r.error); gdMenu(true); return; }   // stays open: the next setting
+        if (act === 'bot') { const r = await lan.act({ type: 'arena', action: { type: b.dataset.k === 'add' ? 'add-bot' : 'remove-bot' } }); notify(r?.error || (typeof r === 'string' ? r : r?.message) || ''); gdMenu(true); return; }
+        if (act === 'resume') enter(); else if (act === 'settings') panel('settings'); else if (act === 'leave') await gdLeave(b.dataset.role || 'solo'); }); }
+    m.hidden = !on; document.body.classList.toggle('gd-menu-open', !!on); if (!on) return;
+    { const P = g().arena?.practice, box = m.querySelector('.gm-practice'); box.hidden = !P;   // practice: its settings, changed here
+      if (P) box.innerHTML = '<h3>Practice</h3>' + `<button data-gm="practice" data-k="bots">Bots: ${({ stand: 'stand still', move: 'move, don\'t shoot', fight: 'fight back' })[P.bots]}</button>` + [['ammo', 'Infinite ammo'], ['impacts', 'Bullet impacts'], ['recoil', 'My recoil'], ['paths', 'Grenade paths']].map(([k, t]) => `<button data-gm="practice" data-k="${k}">${t}: ${P[k] ? 'on' : 'off'}</button>`).join('') + '<button data-gm="bot" data-k="add">Add a bot</button><button data-gm="bot" data-k="remove">Remove a bot</button>'; }
+    const A = g().arena, role = gdRole(), inv = inviteText(), leave = m.querySelector('[data-gm=leave]'), invEl = m.querySelector('.gm-invite');
+    m.querySelector('.gm-sub').textContent = (A ? (A.practice ? 'Practice' : A.kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + (MAP_LIST.find(x => x.id === A.map)?.name || A.map) : '') + (role === 'host' ? ' · hosting' : role === 'guest' ? ' · in a LAN game' : '') + (humansIn() > 1 ? ' · ' + humansIn() + ' players' : '');
+    leave.dataset.role = role; leave.innerHTML = role === 'host' ? 'Stop hosting <small>ends the match for everyone</small>' : role === 'guest' ? 'Leave game <small>the others play on</small>' : 'Leave match';
+    invEl.hidden = !(role === 'host' && inv); if (!invEl.hidden) invEl.innerHTML = 'Friends join with ' + (inv.addrs.length ? inv.addrs.map(a => `<code>${esc(a)}</code>`).join(' or ') : 'this computer\'s address') + ' · passcode <code>' + esc(inv.code) + '</code>';
+    if (document.pointerLockElement) document.exitPointerLock(); m.querySelector('[data-gm=resume]').focus(); }
+  function panel(which = 'objective') { if (gdMode()) which = 'settings';   // Global Defensive: the settings, nothing of the campaign
+    if (engineering.busy && which !== 'objective' && which !== 'settings') { notify('Put the item down first · G'); } tab = which; open = true; engineering.close(); kit.hide(); officeUI?.close?.(); if (document.pointerLockElement) document.exitPointerLock(); $('campaign-panel').hidden = false; document.body.classList.add('cp-open'); render(); }
   function close() { open = false; $('campaign-panel').hidden = true; document.body.classList.remove('cp-open'); }
   $('cp-close').onclick = () => { close(); if (!startOpen) enter(); };
 
@@ -391,25 +435,36 @@ export function createCampaignUI(ctx) {
   addEventListener('mousedown', e => { if (!capturing || e.target.closest?.('[data-rebind]')) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture('Mouse' + e.button); }, true);
   addEventListener('wheel', e => { if (!capturing || Math.abs(e.deltaY) < 1) return; e.preventDefault(); e.stopImmediatePropagation(); finishCapture(e.deltaY > 0 ? 'WheelDown' : 'WheelUp'); }, { capture: true, passive: false });
   function settingsView() {
-    const p = settings;
+    const p = settings, gd = gdMode(); if (gd) ctlCtx = 'arena';   // Global Defensive: its own settings only (no walking pace, guidance or Infra controls)
     return `<h2>Settings</h2><div class="set-grid">
      <label>Mouse sensitivity<input data-set="look" type="range" min="0.3" max="2.5" step="0.1" value="${p.look}"></label>
-     <label>Walk speed<input data-set="speed" type="range" min="0.7" max="1.5" step="0.05" value="${p.speed}"></label>
+     ${gd ? '' : `<label>Walk speed<input data-set="speed" type="range" min="0.7" max="1.5" step="0.05" value="${p.speed}"></label>`}
      <label>Field of view · ${p.fov}°<input data-set="fov" type="range" min="60" max="100" value="${p.fov}"></label>
      <label>Text size<select data-set="uiScale">${[1, 1.15, 1.3].map(v => `<option ${p.uiScale === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
      <label title="Performance: fastest · Balanced: sharp and smooth · Quality: reflections, shadows and glow">Graphics mode<select data-set="graphics">${[['Low', 'Performance'], ['Medium', 'Balanced'], ['High', 'Quality'], ['Ultra', 'Ultra (desktop GPU)']].map(([v, t]) => `<option value="${v}" ${p.graphics === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-     <label>Reflections<select data-set="reflections">${[['auto', 'Auto (Quality modes)'], ['on', 'On'], ['off', 'Off (faster)']].map(([v, t]) => `<option value="${v}" ${(p.reflections || 'auto') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-     <label>Shadows &amp; glow<select data-set="effects">${[['auto', 'Auto (Quality modes)'], ['on', 'On'], ['off', 'Off (faster)']].map(([v, t]) => `<option value="${v}" ${(p.effects || 'auto') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+     ${(() => { const sel = (k, label, opts, title = '') => `<label${title ? ` title="${title}"` : ''}>${label}<select data-set="${k}">${opts.map(([v, t]) => `<option value="${v}" ${String(p[k] ?? 'auto') === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`, A = [['auto', 'Auto (Graphics mode)']];
+       return [sel('shadows', 'Shadows', [...A, ['off', 'Off (fastest)'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High (sharpest)']], 'Real shadows from the sun and lamps: the higher, the sharper (and the more the GPU works)'),
+         sel('shadowEdges', 'Shadow edges', [['soft', 'Soft'], ['sharp', 'Sharp (faster)']]),
+         sel('glow', 'Glow', [...A, ['on', 'On'], ['off', 'Off (faster)']], 'A soft glow round lamps, neon, screens and muzzle flashes'),
+         sel('antialias', 'Anti-aliasing', [...A, ['0', 'Standard'], ['2', 'MSAA 2×'], ['4', 'MSAA 4× (smoothest edges)']], 'Smooth edges on the glow / shadow picture (costs most on Retina screens)'),
+         sel('reflections', 'Reflections', [['auto', 'Auto (Quality modes)'], ['on', 'On'], ['off', 'Off (faster)']]),
+         sel('textures', 'Texture quality', [...A, ['low', 'Low · 512 px'], ['medium', 'Medium · 1024 px'], ['high', 'High · 2048 px (more video memory)']], 'Pictures on guns, players and map files — takes effect on the next map or restart'),
+         sel('filtering', 'Texture filtering', [...A, ['2', '2×'], ['4', '4×'], ['8', '8×'], ['16', '16× (sharpest at a slant)']]),
+         sel('detail', 'Map detail', [...A, ['low', 'Near (faster)'], ['medium', 'Normal'], ['high', 'Far']], 'How far map props keep their full model and stay drawn'),
+         sel('tonemap', 'Tone mapping', [['off', 'Off (colours as they are)'], ['filmic', 'Filmic (ACES)'], ['agx', 'AgX (soft highlights)']], 'How bright colours roll off: like a camera instead of clipping'),
+         sel('rim', 'Player outline', [['on', 'On (players stand out in the dark)'], ['off', 'Off']]),
+         `<label>Brightness · ${Math.round((+p.brightness || 1) * 100)} %<input data-set="brightness" type="range" min="0.6" max="1.6" step="0.05" value="${+p.brightness || 1}"></label>`].join('\n     '); })()}
      <label>Resolution scale<select data-set="resolutionScale">${[[1, '100 %'], [.85, '85 %'], [.7, '70 % (fastest)']].map(([v, t]) => `<option value="${v}" ${+(p.resolutionScale ?? 1) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
      <label>Frame rate limit<select data-set="fpsCap">${[[0, 'Auto · 60, 30 in menus'], [120, '120 FPS'], [60, '60 FPS'], [30, '30 FPS (battery)']].map(([v, t]) => `<option value="${v}" ${+(p.fpsCap || 0) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-     <label>Guidance<select data-set="assistance">${['Off', 'Minimal hints', 'Guided'].map(v => `<option ${p.assistance === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-     ${['toggleSprint', 'toggleCrouch', 'headBob', 'invertY', 'showFPS', 'showControls'].map(k => `<label class="chk"><input type="checkbox" data-set="${k}" ${p[k] ? 'checked' : ''}> ${({ toggleSprint: 'Toggle run', toggleCrouch: 'Toggle crouch', headBob: 'Head bob', invertY: 'Invert mouse Y', showFPS: 'Show FPS', showControls: 'Show control hints' })[k]}</label>`).join('')}</div>
-     <h3>Controls</h3><div class="cp-row ctl-tabs">${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
+     ${gd ? '' : `<label>Guidance<select data-set="assistance">${['Off', 'Minimal hints', 'Guided'].map(v => `<option ${p.assistance === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`}
+     ${(gd ? ['invertY', 'showFPS', 'showControls'] : ['toggleSprint', 'toggleCrouch', 'headBob', 'invertY', 'showFPS', 'showControls']).map(k => `<label class="chk"><input type="checkbox" data-set="${k}" ${p[k] ? 'checked' : ''}> ${({ toggleSprint: 'Toggle run', toggleCrouch: 'Toggle crouch', headBob: 'Head bob', invertY: 'Invert mouse Y', showFPS: 'Show FPS', showControls: 'Show control hints' })[k]}</label>`).join('')}</div>
+     <h3>Controls</h3><div class="cp-row ctl-tabs"${gd ? ' hidden' : ''}>${Object.entries(CONTEXTS).filter(([c]) => actionsIn(c).length).map(([c, n]) => `<button data-ctlctx="${c}" aria-pressed="${ctlCtx === c}">${esc(n)}</button>`).join('')}</div>
      <input id="ctl-search" class="ctl-search" placeholder="Search controls…" value="${esc(ctlFilter)}"><table class="ctl"><tbody><tr><td><kbd>Mouse</kbd></td><td>Look</td><td></td></tr>${actionsIn(ctlCtx).filter(a => !ctlFilter || a.label.toLowerCase().includes(ctlFilter.toLowerCase())).map(a => `<tr><td><button class="ctl-key${capturing === a.id ? ' wait' : ''}" data-rebind="${a.id}">${capturing === a.id ? 'Press a key… (Esc cancels)' : esc(labelOf(ctlCtx, a.id))}</button></td><td>${esc(a.label)}</td><td><button class="ctl-x" data-unbind="${a.id}" title="Unbind">×</button></td></tr>`).join('')}<tr><td><kbd>Esc</kbd></td><td>Menu (fixed)</td><td></td></tr></tbody></table>
      <div class="cp-row"><button data-ctl="reset">Reset ${esc(CONTEXTS[ctlCtx].split(' (')[0])}</button><button data-ctl="reset-all">Reset all</button><button data-ctl="export">Export controls</button><button data-ctl="import">Import controls</button></div><p class="cp-muted">Controls are saved on this computer only. Joining a LAN room never changes them.</p>
-     <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
+     <h3>Global Defensive</h3><div class="set-grid"><label class="chk"><input type="checkbox" data-set="autoRescope" ${p.autoRescope !== false ? 'checked' : ''}> Auto re-scope after a sniper shot <small>(default: on)</small></label><label class="chk"><input type="checkbox" data-set="viewBob" ${p.viewBob !== false ? 'checked' : ''}> Gun bob while moving <small>(default: on)</small></label><label>Gun hand<select data-set="gunHand"><option value="right" ${p.gunHand !== 'left' ? 'selected' : ''}>Right</option><option value="left" ${p.gunHand === 'left' ? 'selected' : ''}>Left</option></select></label></div><p class="cp-muted">On: after an AWP / SSG 08 shot the scope comes back by itself once the bolt is worked. Off: right-click to scope again.</p>
      ${crosshairEditorHTML(loadCrosshair())}
      <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. The desktop app also finds them by itself in a Steam install of CS 1.6. Without them the arena uses the built-in Terrorist / Counter-Terrorist gear.</p>
+     <h3>Models and maps</h3><div class="cp-row"><button data-pack="import">Import asset pack (.zip)…</button></div><p class="cp-muted">Counter-Strike 2 agents, guns, knives and the maps from one asset pack — “Infra Simulator Assets.zip”, made by tools/import-cs2-models.mjs on the computer they were downloaded on. Installed for this room: everyone who joins sees them. They stay on this computer; the game never ships them.</p>
      <h3>Audio</h3><div class="set-grid">${(() => { const v = getVolumes(); return [['master', 'Master'], ['effects', 'Game effects'], ['voice', 'Team voice'], ['music', 'Music'], ['ui', 'Interface']].map(([k, l]) => `<label>${l} · ${Math.round(v[k] * 100)}%<input type="range" data-vol="${k}" id="vol-${k}" min="0" max="1" step=".05" value="${v[k]}"></label>`).join(''); })()}</div>
      ${voiceHTML()}
      <div class="cp-row"><button data-go="unstuck">Return to a clear aisle</button><button data-go="inspect">Orbit inspect view</button><button data-go="diagnostics">Copy performance diagnostics</button></div><p class="cp-muted">Diagnostics contain the graphics hardware, settings, frame times and mode, never names, passwords, room codes or saves. Turn on “Show FPS” for the live overlay.</p>`;
@@ -417,9 +472,11 @@ export function createCampaignUI(ctx) {
 
   function render() {
     if (!open) return; setTimeout(() => { if (document.getElementById('vc-in')) fillVoice(); });
+    if (gdMode()) tab = 'settings';
     $('cp-title').textContent = levels() ? 'CAMPAIGN · ' + g().name : g().mode === 'free' ? 'FREE BUILD' : g().mode === 'challenge' ? 'CHALLENGE' : 'CAMPAIGN';
     $('cp-context').textContent = (lan.connected ? 'LAN · ' + (lan.canManageWorld ? 'host' : 'guest') : 'Solo') + ' · ' + usdMoney(g().budget);
     $('cp-nav').innerHTML = TABS.map(([id, name, key]) => `<button data-tab="${id}" aria-pressed="${tab === id}">${name}${key ? ` <kbd>${key}</kbd>` : ''}</button>`).join('') + '<button data-tab="advanced" class="cp-adv">Advanced ▸</button>';
+    if (gdMode()) { $('cp-title').textContent = 'SETTINGS'; $('cp-context').textContent = 'Global Defensive'; $('cp-nav').innerHTML = ''; }   // no campaign tabs, money or room
     const body = { objective, inventory, map: mapView, laptop, team, settings: settingsView }[tab], el = $('cp-body');
     // Keep what the player opened or chose (sections, cable lengths, scroll) across the live refresh.
     const keep = {}; el.querySelectorAll?.('[data-key]').forEach(x => keep[x.dataset.key] = x.tagName === 'DETAILS' ? x.open : x.value); const scroll = el.scrollTop, same = el.dataset.tab === tab;
@@ -458,6 +515,12 @@ export function createCampaignUI(ctx) {
   $('campaign-panel').addEventListener('input', e => { const t = e.target; if (!t.dataset?.vol) return; setVolumes({ [t.dataset.vol]: +t.value }); const lab = t.closest('label'); if (lab) lab.firstChild.textContent = lab.firstChild.textContent.replace(/· \d+%/, '· ' + Math.round(t.value * 100) + '%'); });
   $('campaign-panel').addEventListener('input', e => { const v = ctx.voice?.(), t = e.target; if (!v || !t.dataset?.vcr) return; if (t.dataset.vcr === 'gain') v.setMicGain(t.value); else v.setVolume(t.value); const lab = t.closest('label'); if (lab) lab.firstChild.textContent = (t.dataset.vcr === 'gain' ? 'Microphone volume · ' : 'Team mates’ voices · ') + Math.round(t.value * 100) + '%'; });
   $('campaign-panel').addEventListener('click', e => {
+    // Asset pack (.zip of models and maps): sent to the room (this computer's, when hosting), which installs it; the page then reloads to use it.
+    if (e.target.closest?.('[data-pack]')) { const f = document.createElement('input'); f.type = 'file'; f.accept = '.zip';
+      f.onchange = async () => { const file = f.files?.[0]; if (!file) return; notify('Installing ' + file.name + '…');
+        try { const lan = globalThis.__infra?.lab?.lan, r = lan?.upload ? await lan.upload('user-assets/pack', file) : await fetch('/api/user-assets/pack', { method: 'POST', body: file }).then(async x => { const d = await x.json().catch(() => ({})); if (!x.ok) throw new Error(d.error || 'HTTP ' + x.status); return d; });
+          notify('Asset pack installed: ' + r.files + ' model files, ' + r.maps + ' maps. Reloading…'); setTimeout(() => location.reload(), 1500); } catch (err) { notify(err.message); } };
+      f.click(); return; }
     const imp = e.target.closest?.('[data-csimp]');
     if (imp) { const team = imp.dataset.csimp, chars = ctx.characters; if (!chars) return;
       if (team === 'clear') { if (confirm('Remove the imported arena character models from this computer?')) chars.clear().then(() => { notify('Imported characters removed'); render(); }); return; }
@@ -474,7 +537,7 @@ export function createCampaignUI(ctx) {
     if (a === 'import') { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,application/json'; f.onchange = async () => { try { importBindings(await f.files[0].text()); notify('Controls imported'); } catch (err) { notify('Could not import: ' + err.message + ' · your current controls are kept'); } render(); }; f.click(); }
     render();
   });
-  $('campaign-panel').addEventListener('input', e => { if (e.target.id === 'ctl-search') { ctlFilter = e.target.value; const pos = e.target.selectionStart; render(); const el = $('ctl-search'); el?.focus(); el?.setSelectionRange(pos, pos); return; } const xk = e.target.dataset?.xh; if (xk) { const c = loadCrosshair(); c[xk] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'range' ? +e.target.value : e.target.value; saveCrosshair(c); const pv = document.querySelector('#campaign-panel .xh-preview'); if (pv) pv.innerHTML = crosshairHTML(c); const lab = e.target.closest('label'); if (lab && e.target.type === 'range') lab.firstChild.textContent = lab.firstChild.textContent.replace(/· [\d.]+/, '· ' + e.target.value); return; } const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov') render(); });
+  $('campaign-panel').addEventListener('input', e => { if (e.target.id === 'ctl-search') { ctlFilter = e.target.value; const pos = e.target.selectionStart; render(); const el = $('ctl-search'); el?.focus(); el?.setSelectionRange(pos, pos); return; } const xk = e.target.dataset?.xh; if (xk) { const c = loadCrosshair(); c[xk] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'range' ? +e.target.value : e.target.value; saveCrosshair(c); const pv = document.querySelector('#campaign-panel .xh-preview'); if (pv) pv.innerHTML = crosshairHTML(c); const lab = e.target.closest('label'); if (lab && e.target.type === 'range') lab.firstChild.textContent = lab.firstChild.textContent.replace(/· [\d.]+/, '· ' + e.target.value); return; } const k = e.target.dataset.set; if (!k) return; settings[k] = e.target.type === 'checkbox' ? e.target.checked : ['look', 'speed', 'fov', 'uiScale', 'resolutionScale', 'fpsCap', 'brightness'].includes(k) ? +e.target.value : e.target.value; savePreferences(settings); if (k === 'fov' || k === 'brightness') render(); });
   $('site-map') || 0;
   document.addEventListener('click', e => { const place = e.target.closest?.('#site-map [data-place]'); if (!place) return; const p = PLACES[place.dataset.place]; if (p?.x !== null && p) { focus = { x: p.x, z: p.z, label: p.label, until: Date.now() + 60000 }; notify('Marker · ' + p.label); render(); } });
 
@@ -519,6 +582,7 @@ export function createCampaignUI(ctx) {
     if (k === 'i' || k === 'tab') { open && tab === 'inventory' ? (close(), enter()) : panel('inventory'); return true; }
     if (k === 'm') { open && tab === 'map' ? (close(), enter()) : panel('map'); return true; }
     if (k === 'h' && levels()) { const L = C.status()?.level; if (L) { hintTier[L.id] = Math.min(3, (hintTier[L.id] || 0) + 1); const tier = hintTier[L.id], st = C.status(); notify('Hint ' + tier + ' · ' + (tier < 3 ? L.hints[tier - 1] : st.next ? st.next.label + ': ' + st.next.detail + (st.next.fix ? ' · ' + st.next.fix : '') : 'Everything passes')); if (open) render(); } return true; }
+    if (k === 'escape' && gdMode()) { if (open) { close(); enter(); } else gdMenu(!gdMenuOpen()); return true; }   // Global Defensive: its own menu
     if (k === 'escape') { open ? (close(), enter()) : panel(levels() ? 'objective' : 'settings'); return true; }
     return false;
   }

@@ -6,7 +6,8 @@ import { MAX_HP } from './weapons-data.js';
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 
 // Hit feedback sounds (synthesized): a short tick for a body hit, a bright ding for a head shot, two notes for a knock-out.
-import { audioCtx, uiBus } from './spatial-audio.js';   // hit sounds on the UI bus (Settings → Audio)
+import { audioCtx, uiBus } from './spatial-audio.js';
+import { fx as recFx } from './sound-bank.js';   // hit sounds on the UI bus (Settings → Audio)
 let hctx = null;
 function hitSound(kind) { try { hctx = audioCtx(); const out = uiBus(hctx), t = hctx.currentTime;
   const note = (f, at, len, vol, type = 'sine') => { const o = hctx.createOscillator(), g = hctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, t + at); g.gain.setValueAtTime(vol, t + at); g.gain.exponentialRampToValueAtTime(.001, t + at + len); o.connect(g).connect(out); o.start(t + at); o.stop(t + at + len + .02); };
@@ -14,7 +15,7 @@ function hitSound(kind) { try { hctx = audioCtx(); const out = uiBus(hctx), t = 
   // Body: a fleshy thud. Head: the helmet "dink" (inharmonic metal partials ringing out). Kill: a two-note confirm.
   if (kind === 'body') { thud(.5); note(170, 0, .08, .25); note(1300, 0, .03, .08, 'triangle'); }
   else if (kind === 'head') { thud(.35, 900); for (const [f, v, l] of [[2950, .2, .38], [4870, .12, .3], [7120, .07, .22], [1980, .08, .25]]) note(f, 0, l, v); }
-  else { thud(.45); note(1800, 0, .1, .25); note(2700, .09, .18, .25); } } catch {} }
+  else { thud(.45); note(1800, 0, .1, .25); note(2700, .09, .18, .25); recFx('kill', { volume: .55, kind: 'ui' }); } } catch {} }
 export const warmHitSound = () => { try { hctx = audioCtx(); } catch {} };
 export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
   const css = document.createElement('style'); css.textContent = `

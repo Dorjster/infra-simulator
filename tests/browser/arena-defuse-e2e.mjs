@@ -14,9 +14,9 @@ await p.addInitScript(() => { localStorage.setItem('infra-face', 'smile'); local
 await p.goto(base + '/'); await p.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 60000 }); await p.waitForTimeout(1200);
 const G = () => p.evaluate(() => { const g = __infra.lab.world.operations.game, d = g.combat?.d; return { kind: g.arena?.kind, map: g.arena?.map, team: d?.teams?.darja, money: d?.money?.darja, phase: d?.round?.phase, n: d?.n, carrier: d?.bomb?.carrier, winner: d?.round?.winner, reason: d?.round?.reason, score: d?.score }; });
 await p.evaluate(() => document.querySelector('[data-start=arena]').click()); await p.waitForTimeout(400);
-await p.selectOption('#ss-ar-kind', 'defuse'); await p.selectOption('#ss-ar-map', 'dune'); await p.selectOption('#ss-ar-bots', '0'); await p.evaluate(() => document.getElementById('ss-ar-solo').click());
+await p.selectOption('#ss-ar-kind', 'defuse'); await p.selectOption('#ss-ar-map', 'dust2'); await p.selectOption('#ss-ar-bots', '0'); await p.evaluate(() => document.getElementById('ss-ar-solo').click());
 await p.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.arenaScene?.inArena(__infra.camera.position.z) && __infra.lab.world.operations.game.combat?.d?.teams?.darja, null, { timeout: 30000 });
-let s = await G(); check('Defuse on Dune started; you are a Terrorist with $800', s.kind === 'defuse' && s.map === 'dune' && s.team === 't' && s.money === 800, JSON.stringify(s));
+let s = await G(); check('Defuse on Dune started; you are a Terrorist with $800', s.kind === 'defuse' && s.map === 'dust2' && s.team === 't' && s.money === 800, JSON.stringify(s));
 check('Team HUD (T score · clock · CT score) and money shown', await p.evaluate(() => /T/.test(document.getElementById('ar-top').textContent) && /CT/.test(document.getElementById('ar-top').textContent) && /\$ 800/.test(document.getElementById('ar-money').textContent)));
 check('You carry the bomb (slot 5)', s.carrier === 'darja');
 // Screenshots stall the page's rendering (a test artefact): frames around them aren't counted.
@@ -38,7 +38,7 @@ await p.waitForFunction(() => __infra.lab.world.operations.game.combat.d.round.p
 await p.evaluate(() => __infra.lab.enter()); a0 = await pos(); await p.keyboard.down('KeyW'); await p.waitForTimeout(700); await p.keyboard.up('KeyW'); a1 = await pos();
 check('Moving after the freeze', Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) > 5, Math.hypot(a1[0] - a0[0], a1[1] - a0[1]).toFixed(1));
 // Walk to site A (teleport for speed), bomb in hand, hold left click.
-await p.evaluate(async () => { const { ARENA } = await import('./facility-layout.js'), { ARENA_MAPS } = await import('./arena-maps.js'); const [x, z] = ARENA_MAPS.dune.sites.A; __infra.camera.position.x = ARENA.cx + x; __infra.camera.position.z = ARENA.cz + z; });
+await p.evaluate(async () => { const { ARENA } = await import('./facility-layout.js'), { ARENA_MAPS } = await import('./arena-maps.js'); const [x, z] = ARENA_MAPS.dust2.sites.A; __infra.camera.position.x = ARENA.cx + x; __infra.camera.position.z = ARENA.cz + z; });
 await p.waitForTimeout(600); await p.keyboard.press('Digit5'); await p.waitForTimeout(800);
 check('Key 5: the bomb in hand', await p.evaluate(() => __infra.lab.pistol.current?.id) === 'c4');
 await p.mouse.move(640, 400); await p.mouse.down(); await p.waitForTimeout(1500);

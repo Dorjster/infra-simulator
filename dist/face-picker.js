@@ -37,10 +37,13 @@ export function createFacePicker({ onPick = () => {} } = {}) {
   const play = el.querySelector?.('#fp-play'); if (play) play.onclick = () => pick(pending, pendingSkin, nameInput?.value);
   const nameInput = el.querySelector?.('#fp-name');
   function pick(id, k = pendingSkin, n = nameInput?.value || name) { if (!FACES.some(f => f.id === id)) return; face = id; if (SKINS[k]) skin = k; hat = pendingHat; outfit = pendingOutfit; name = cleanName(n); chosen = true; try { localStorage.setItem(KEY, face); localStorage.setItem(SKIN_KEY, skin); localStorage.setItem(NAME_KEY, name); localStorage.setItem(HAT_KEY, hat); localStorage.setItem(OUTFIT_KEY, outfit); } catch { /* storage blocked */ } hide(); button.textContent = '🙂 ' + name; onPick(face, skin, name); }
-  function show(initialName) { if (initialName && name === 'Engineer') name = cleanName(initialName); if (nameInput) nameInput.value = name; pending = face; pendingSkin = skin; pendingHat = hat; pendingOutfit = outfit; draw(); paint(); open = true; el.hidden = false; if (document.pointerLockElement) document.exitPointerLock?.(); }
+  function show(initialName) { if (document.body.classList.contains('gd-mode')) return;   // Global Defensive has no engineers: your name is set on its start screen
+    if (initialName && name === 'Engineer') name = cleanName(initialName); if (nameInput) nameInput.value = name; pending = face; pendingSkin = skin; pendingHat = hat; pendingOutfit = outfit; draw(); paint(); open = true; el.hidden = false; if (document.pointerLockElement) document.exitPointerLock?.(); }
   function hide() { open = false; el.hidden = true; }
   button.onclick = () => (open ? hide() : show());
   button.textContent = '🙂 ' + (chosen ? name : 'Face');
   addEventListener('keydown', e => { if (!open) return; if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); pick(pending, pendingSkin, nameInput?.value); } else if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); pick(pending, pendingSkin, nameInput?.value); } else e.stopImmediatePropagation(); }, true);
-  return { show, hide, pick, get name() { return name; }, get face() { return face; }, get skin() { return skin; }, get hat() { return hat; }, get outfit() { return outfit; }, get chosen() { return chosen; }, get isOpen() { return open; } };
+  // A name without a face (Global Defensive's start screen): saved and shown like one chosen here.
+  function setName(n) { const c = cleanName(n || ''); if (!c) return name; name = c; try { localStorage.setItem(NAME_KEY, name); } catch { /* storage blocked */ } button.textContent = '🙂 ' + (chosen ? name : 'Face'); return name; }
+  return { show, hide, pick, setName, get name() { return name; }, get face() { return face; }, get skin() { return skin; }, get hat() { return hat; }, get outfit() { return outfit; }, get chosen() { return chosen; }, get isOpen() { return open; } };
 }
