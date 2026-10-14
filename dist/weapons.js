@@ -61,7 +61,8 @@ export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kin
   pin: at => rec('pin', { at, volume: .8, kind: 'handling' }) || (tick(2900, .03, .14, 'square', at), setTimeout(() => tick(1900, .04, .1, 'triangle', at), 90)),
   magOut: (at, id) => reloadSound(0, id, at) || tick(420, .09, .3, 'triangle', at), magIn: (at, id) => reloadSound(1, id, at) || tick(620, .07, .35, 'triangle', at), bolt: (at, id) => reloadSound(2, id, at) || (tick(900, .05, .3, 'square', at), setTimeout(() => tick(1300, .04, .25, 'square', at), 70)) };
 
-// Options: scene, camera, effects (fun-pistol), arsenal() ids, targets() [{ id, feet, crouched }], report(hit),
+// Options: scene, camera, effects (fun-pistol), arsenal() ids, targets() [{ id, feet, crouched, seen }] (seen: the
+// moment of them shown, sent with a hit for lag compensation), report(hit),
 // canFire(), blind() 0…1 (flashed), aim() { pitch, yaw }, boxes() map boxes, move() { speed, max, onGround, landedAgo, ducked },
 // throwNade(id, strength), moveSpeed(), host() { ammo: { id: [mag, res] }, shots: { n, r, pending } } (mine).
 const PIVOT = new THREE.Vector3(), pivR = new THREE.Quaternion(), pivE = new THREE.Euler(), pivA = new THREE.Vector3(), pivB = new THREE.Vector3();
@@ -122,7 +123,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     // A little aim assist for the knife: a body just beside the crosshair still counts (CS2's swing is wide).
     if (!best) for (const tgt of targets()) { const c = tgt.feet.clone().setY(tgt.feet.y + 6), to = c.clone().sub(o), dist = to.length(); if (dist < K.range + 1.5 && to.normalize().dot(d) > .93 && dist < wall && (!best || dist < best.t)) best = { t: dist, tgt }; }
     if (best) sounds.stab(null, knife.kind === 'heavy');
-    if (best) report({ type: 'hit', target: best.tgt.id, weapon: current.id, attack: knife.kind, zone: zoneAt(o.y + d.y * best.t - best.tgt.feet.y) === 'head' ? 'head' : 'chest' });
+    if (best) report({ type: 'hit', target: best.tgt.id, seen: best.tgt.seen, weapon: current.id, attack: knife.kind, zone: zoneAt(o.y + d.y * best.t - best.tgt.feet.y) === 'head' ? 'head' : 'chest' });
   }
   // Grenades: press = pull the pin (and hold); release = throw. Left alone: long throw; right alone: short underhand;
   // both: medium. One throw per grenade; nothing after death.
@@ -160,13 +161,13 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       const end = Math.min(best ? best.t : wallT, 400);
       for (const c of path.crossed) if (c.t0 < end) ends.push({ point: o.clone().addScaledVector(d, c.t0), normal: d.clone().negate(), mark: true });   // entry holes in what it went through
       ends.push({ point: o.clone().addScaledVector(d, end), normal: best ? null : d.clone().negate(), flesh: !!best });
-      if (!best) continue; const y = (o.y + d.y * best.t - best.tgt.feet.y) / (best.tgt.crouched ? .7 : 1), h = hits.get(best.tgt.id) || { pellets: 0 }, z = zoneAt(y);
+      if (!best) continue; const y = (o.y + d.y * best.t - best.tgt.feet.y) / (best.tgt.crouched ? .7 : 1), h = hits.get(best.tgt.id) || { pellets: 0, seen: best.tgt.seen }, z = zoneAt(y);
       h.pellets++; if (!h.zone || HIT_GROUPS[z] > HIT_GROUPS[h.zone]) h.zone = z; hits.set(best.tgt.id, h);
     }
     lastEnds = { origin: o.clone(), dir: base.clone(), ends, muzzle: muzzle.clone(), cone };   // (tests: where the shot went)
     effects.shootAt ? effects.shootAt(muzzle, ends, shotFx(current)) : effects.shoot(muzzle, base.clone(), { ...shotFx(current), dirs });
     const how = { noscope: !!current.zoom && !(scope > 0), air: !m.onGround, blind: blind() > .5 };   // for the kill feed (CS2 marks)
-    for (const [target, h] of hits) report({ type: 'hit', target, weapon: id, pellets: h.pellets, zone: h.zone, head: h.zone === 'head', n: shots, ...how });
+    for (const [target, h] of hits) report({ type: 'hit', target, seen: h.seen, weapon: id, pellets: h.pellets, zone: h.zone, head: h.zone === 'head', n: shots, ...how });
     ri = Math.min(ri + 1, (current.pattern?.length || 1) + 2);
     // Bolt-action rifles: the scope drops at once for the bolt; it comes back after the bolt if Auto re-scope is on (Settings).
     if (current.mode === 'bolt') { if (scope) rescope = { id, level: scope, at: now() + current.rateMs * .9, manual: false }; scope = 0; setTimeout(() => current?.id === id && sounds.bolt(null, id), current.rateMs * .4); }
