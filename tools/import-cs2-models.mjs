@@ -4,6 +4,7 @@
 // serves both to every player in it (lan/room.mjs) and the game draws them in place of its built-in ones. They are
 // Valve's or their makers': they stay on this computer (both folders are git-ignored) and are never shipped.
 //   node tools/import-cs2-models.mjs [<folder> = ~/Desktop/Infra Simulator Assets] [<out> = user-assets]
+//     --maps <dir> (default user-maps)  --pack <file> (default ~/Desktop/Infra Simulator Assets.zip)  --no-app  --no-pack
 // The folder holds the downloads as they come: .zip / .rar / .7z archives, folders, or loose .glb / .fbx / .bsp
 // files (from ~/Downloads, only archives whose names look like CS models or maps are opened). When the desktop app has
 // been run on this computer, its own folders (~/Library/Application Support/Infra Simulator/assets, maps) get the same
@@ -16,9 +17,10 @@
 import { execFileSync } from 'node:child_process'; import { writeZip } from '../lan/zip.mjs'; import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, mkdtempSync, rmSync, existsSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.join(here, '..'), DROP = path.join(os.homedir(), 'Desktop', 'Infra Simulator Assets');
-const args = process.argv.slice(2).filter(a => !a.startsWith('--')), noPack = process.argv.includes('--no-pack'), PACK = path.join(os.homedir(), 'Desktop', 'Infra Simulator Assets.zip');
-const src = path.resolve(args[0] || DROP), out = path.resolve(args[1] || path.join(repo, 'user-assets')), mapsOut = path.join(repo, 'user-maps');
-const APP = path.join(os.homedir(), 'Library', 'Application Support', 'Infra Simulator'), app = process.platform === 'darwin' && existsSync(APP) ? APP : null;
+const argv = process.argv.slice(2), opt = k => { const i = argv.indexOf(k); return i >= 0 ? argv.splice(i, 2)[1] : null; }, mapsArg = opt('--maps'), packArg = opt('--pack');
+const args = argv.filter(a => !a.startsWith('--')), noPack = argv.includes('--no-pack'), noApp = argv.includes('--no-app'), PACK = path.resolve(packArg || path.join(os.homedir(), 'Desktop', 'Infra Simulator Assets.zip'));
+const src = path.resolve(args[0] || DROP), out = path.resolve(args[1] || path.join(repo, 'user-assets')), mapsOut = path.resolve(mapsArg || path.join(repo, 'user-maps'));
+const APP = path.join(os.homedir(), 'Library', 'Application Support', 'Infra Simulator'), app = !noApp && process.platform === 'darwin' && existsSync(APP) ? APP : null;
 if (!existsSync(src)) { mkdirSync(src, { recursive: true }); console.log('Made ' + src + ': put the downloads there and run this again.'); process.exit(0); }
 // From ~/Downloads, only archives / folders whose names say CS / weapon / agent / map (not every zip in there).
 const WANT = /cs2|csgo|cs-go|cs_go|\bcss?_|weapon|knife|karambit|agent|bomb|c4|defuse|rifle|pistol|smg|sniper|shotgun|glove|\bsas\b|phoenix|terror|counter|de_[a-z]/i, picky = path.basename(src) === 'Downloads';
@@ -46,13 +48,14 @@ for (const f of loose) if (/\.bsp$/i.test(f)) bsps.push({ from: path.basename(f)
 console.log(`${roots.length + loose.length} downloads in ${src}: ${jobs.length} model files, ${bsps.length} map files`);
 
 // Maps: a Counter-Strike 1.6 map file (BSP 30) or a Source one (VBSP 19–21: CS:S / CS:GO ports) named after one of the
-// game's maps (de_dust2_c2.bsp → dust2); of several for the same map, the newest download. CS2's own format is skipped.
+// game's maps (de_dust2_c2.bsp → dust2); of several for the same map, the most detailed one (the largest file; variants —
+// rainy, night, snow… — only if nothing else). CS2's own format is skipped.
 const { CS_MAP_IDS } = await import(new URL('../dist/cs-maps/themes.js', import.meta.url).href), mapPick = new Map();
 for (const m of bsps) { const name = path.basename(m.file).toLowerCase(), id = CS_MAP_IDS.find(i => new RegExp('(^|[^a-z])' + i + '([^a-z]|$)').test(name.replace(/\.bsp$/, '')));
   const head = readFileSync(m.file).subarray(0, 8), vbsp = head.toString('latin1', 0, 4) === 'VBSP', ver = vbsp ? head.readInt32LE(4) : head.length >= 4 ? head.readInt32LE(0) : 0;
   if (!id) { console.log('  skip map', path.basename(m.file), '(not one of: ' + CS_MAP_IDS.join(', ') + ')'); continue; }
   if (vbsp ? ver < 19 || ver > 21 : ver !== 30) { console.log('  skip map', path.basename(m.file), '(' + (vbsp ? 'Source map version ' : 'BSP version ') + ver + ': the game reads Counter-Strike 1.6 maps (30) and Source maps (19–21))'); continue; }
-  const t = statSync(m.file).mtimeMs, was = mapPick.get(id); if (!was || t > was.t) mapPick.set(id, { ...m, t }); }
+  const t = statSync(m.file).size * (/rainy|night|snow|winter|xmas|beta|old|_sky/i.test(name) ? .001 : 1), was = mapPick.get(id); if (!was || t > was.t) mapPick.set(id, { ...m, t }); }
 for (const [id, m] of mapPick) for (const dir of [mapsOut, ...(app ? [path.join(app, 'maps')] : [])]) { mkdirSync(dir, { recursive: true }); writeFileSync(path.join(dir, id + '.bsp'), readFileSync(m.file)); }
 for (const [id, m] of mapPick) console.log('  map', id, '←', m.from, '(' + path.basename(m.file) + ')');
 
