@@ -6,6 +6,7 @@ import { pistolModel } from './fun-pistol.js';
 import { OBJLoader } from './post/OBJLoader.js';
 import { MTLLoader } from './post/MTLLoader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
+import { decodeJpeg, anisotropy } from './texture-quality.js';
 
 // Surface textures, drawn once at start (256 px, a few KB of GPU memory each): brushed steel, blued metal with
 // wear on the edges, stippled polymer, walnut grain. Each also drives roughness, so light catches the grain.
@@ -257,8 +258,8 @@ async function loadReal(id, src = { file: n => REAL_DIR + n, fit: REAL_FIT[id] |
   const buf = await (await fetch(src.file(id + '.bin'))).arrayBuffer(), dv = new DataView(buf), hl = dv.getUint32(0, true), head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
   let o = 4 + hl; const f32 = n => { const a = new Float32Array(buf.slice(o, o + n * 4)); o += n * 4; return a; };
   // Textures are decoded off the main thread (ImageBitmap), so uploading them never stalls a frame.
-  const tex = (part, kind, srgb) => src.fit.maps && !src.fit.maps[part]?.includes(kind) ? Promise.resolve(null) : fetch(src.file(`${id}-${part}-${kind}.jpg`)).then(r => r.ok ? r.blob() : null).then(b => b && createImageBitmap(b, { imageOrientation: 'flipY' })).then(bmp => {
-    if (!bmp) return null; const t = new THREE.Texture(bmp); t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 4; t.needsUpdate = true; return t; }).catch(() => null);
+  const tex = (part, kind, srgb) => src.fit.maps && !src.fit.maps[part]?.includes(kind) ? Promise.resolve(null) : fetch(src.file(`${id}-${part}-${kind}.jpg`)).then(r => r.ok ? r.blob() : null).then(b => b && decodeJpeg(b, { imageOrientation: 'flipY' })).then(bmp => {   // (decoded at the size Settings → Texture quality asks for)
+    if (!bmp) return null; const t = new THREE.Texture(bmp); t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = anisotropy(); t.needsUpdate = true; return t; }).catch(() => null);
   const g = new THREE.Group(), fit = src.fit, inner = new THREE.Group(); g.add(inner);
   // Muzzle: centre of the vertices within 1 cm of the front end (file cm), for flashes and tracers.
   const zMin = fit.flip ? head.box[1][2] : head.box[0][2], front = z => fit.flip ? z > zMin - 1 : z < zMin + 1; let my = 0, mx = 0, mn = 0;   // the muzzle end (−z, or +z for models authored the other way round)

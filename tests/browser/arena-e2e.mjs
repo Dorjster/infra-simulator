@@ -24,7 +24,7 @@ let s = await st(); check('Arena started from the start screen with 3 bots', s.m
 check('Player is in the arena and bots are drawn', s.z < -240 && s.models === 3, JSON.stringify(s));
 check('Campaign HUD and hotbar hidden in the arena', await p.evaluate(() => getComputedStyle(document.getElementById('inventory')).display === 'none' && getComputedStyle(document.getElementById('eng-objective') || document.body).display === 'none'));
 if (process.env.CS_T) { await p.waitForTimeout(800); const d = await p.evaluate(() => [...__infra.lab.lan.models.entries()].filter(([k]) => k.startsWith('bot-')).map(([k, m]) => ({ n: m.name, team: m.cs?.team, model: m.cs?.model }))); check('Every bot wears a CS character', d.every(x => x.team && x.model), JSON.stringify(d)); }
-check('Buy menu opens on entry (no primary yet)', await p.evaluate(() => !document.getElementById('ar-buy').hidden));
+check('Buy menu opens on entry (no primary yet)', await p.waitForFunction(() => !document.getElementById('ar-buy').hidden, null, { timeout: 8000 }).then(() => true, () => false));   // (once the loading card is gone)
 await p.screenshot({ path: path.join(out, 'buy-menu.png') });
 await p.click('#ar-buy [data-pick="ak"]'); await p.waitForTimeout(600); await p.click('#ar-buy [data-act="close"]');
 check('AK-47 in the loadout and in hand', await p.evaluate(() => __infra.lab.world.operations.game.arena.loadout.darja?.primary === 'ak' && __infra.lab.pistol.current?.id === 'ak'));

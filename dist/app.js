@@ -1,7 +1,7 @@
 import {loadPreferences,savePreferences} from './player-preferences.js';
 import {createJobs} from './jobs.js';
 import {APP_VERSION} from './version.js';
-import {createGraphics} from './graphics.js';
+import {createGraphics,resolveGraphics} from './graphics.js';
 import {notify} from './hud.js';
 import {physicalOffline,physicalLinkDown} from './operations.js';
 import { createLab } from './lab.js';
@@ -119,8 +119,8 @@ let slowFor=0,fastFor=0;const preferences=loadPreferences();const fpsDisplay=doc
 // scaler only moves within [floor, ceiling] of the preset, with hysteresis.
 // High / Ultra draw every pixel several times (shadows, HDR buffer, glow), so they also have a pixel budget: a Retina laptop
 // screen (2940×1800 px) would take ~20 ms a frame on an M-series GPU; ~2.8 million pixels (Ultra 4) keeps it at 60 fps and looks the same.
-function graphicsCeiling(p=preferences){const scales={Low:1,Medium:1.5,High:2,Ultra:2};const res=+p.resolutionScale||1;if(softwareGL)return Math.max(.35,.5*res);let r=Math.min(devicePixelRatio,scales[p.graphics]||1.25);const post=p.effects==='on'||(p.effects!=='off'&&['High','Ultra'].includes(p.graphics)),budget=p.graphics==='Ultra'?4e6:2.8e6;if(post)r=Math.min(r,Math.sqrt(budget/Math.max(1,innerWidth*innerHeight)));return Math.max(.5,r*res);}
-function applyGraphics(p){renderer.setPixelRatio(graphicsCeiling(p));preferences.resolutionScale=p.resolutionScale??1;preferences.fpsCap=+p.fpsCap||0;preferences.graphics=p.graphics||'Medium';preferences.showFPS=!!p.showFPS;document.documentElement?.style.setProperty('--game-ui-scale',p.uiScale||1);}applyGraphics(preferences);addEventListener('infra-preferences',e=>applyGraphics(e.detail));addEventListener('resize',()=>{const c=graphicsCeiling();if(renderer.getPixelRatio()>c+.01)renderer.setPixelRatio(c);});   // a bigger window: stay within the pixel budget
+function graphicsCeiling(p=preferences){const scales={Low:1,Medium:1.5,High:2,Ultra:2};const res=+p.resolutionScale||1;if(softwareGL)return Math.max(.35,.5*res);let r=Math.min(devicePixelRatio,scales[p.graphics]||1.25);const rg=resolveGraphics(p,p.graphics,false),post=rg.glow||rg.shadows!=='off'||rg.aa>0,budget=p.graphics==='Ultra'?4e6:2.8e6;if(post)r=Math.min(r,Math.sqrt(budget/Math.max(1,innerWidth*innerHeight)));return Math.max(.5,r*res);}
+function applyGraphics(p){Object.assign(preferences,p);/* every setting (shadows, glow, textures… read by graphics.js) */renderer.setPixelRatio(graphicsCeiling(p));preferences.resolutionScale=p.resolutionScale??1;preferences.fpsCap=+p.fpsCap||0;preferences.graphics=p.graphics||'Medium';preferences.showFPS=!!p.showFPS;document.documentElement?.style.setProperty('--game-ui-scale',p.uiScale||1);}applyGraphics(preferences);addEventListener('infra-preferences',e=>applyGraphics(e.detail));addEventListener('resize',()=>{const c=graphicsCeiling();if(renderer.getPixelRatio()>c+.01)renderer.setPixelRatio(c);});   // a bigger window: stay within the pixel budget
 let activeParticleCount=particleCount;
 let frame=0,lastFrame=performance.now(),smoothedFrame=16;const vec=new THREE.Vector3(),col=new THREE.Color(),orbitPos=new THREE.Vector3();
 const frameRing=new Float32Array(240);let ringAt=0,lastDrawn=0,cpuSmoothed=8;

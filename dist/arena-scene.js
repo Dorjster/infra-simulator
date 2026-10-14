@@ -14,10 +14,11 @@ const SURF_NEAR = [];
 const warmCam = new THREE.PerspectiveCamera(70, 1.6, .1, 5000);
 let mapTextures = null;   // a Source map's texture cache (all of it is freed when the map goes, used by a mesh or not)
 import { buildProps, propWarmMeshes } from './arena-props.js';
+import { anisotropy } from './texture-quality.js';
 
 function tex(draw, size = 256) {
   try { const c = document.createElement('canvas'); c.width = c.height = size; const g = c.getContext('2d'); if (typeof g?.fillRect !== 'function') return null; draw(g, size);
-    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; } catch { return null; }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = anisotropy(); return t; } catch { return null; }
 }
 let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 const speckle = (g, s, base, amp, n = 4000) => { g.fillStyle = base; g.fillRect(0, 0, s, s); for (let i = 0; i < n; i++) { const v = (rnd() - .5) * amp; g.fillStyle = v > 0 ? `rgba(255,255,255,${v})` : `rgba(0,0,0,${-v})`; g.fillRect(rnd() * s, rnd() * s, 2, 2); } };
@@ -58,7 +59,7 @@ const PHOTO = {
 const tileOf = name => PHOTO[name]?.[2] ?? (LOOK[name] || LOOK.concrete)[1];
 const photoLoader = typeof document !== 'undefined' ? new THREE.TextureLoader() : null;
 function photo(m, name) { const P = PHOTO[name]; if (!P || !photoLoader) return; m.color.setHex(P[1]);
-  photoLoader.load(new URL('./textures/' + P[0] + '.jpg', import.meta.url).href, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; m.map = t; for (const v of vmats.values()) if (v.userData.base === name) v.map = t; }); }
+  photoLoader.load(new URL('./textures/' + P[0] + '.jpg', import.meta.url).href, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = anisotropy(); m.map = t; for (const v of vmats.values()) if (v.userData.base === name) v.map = t; }); }
 const mats = new Map();
 function material(name) {
   if (mats.has(name)) return mats.get(name); const [draw] = LOOK[name] || LOOK.concrete, map = tex(draw);

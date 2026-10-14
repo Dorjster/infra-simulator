@@ -2,16 +2,16 @@
 // textures, and the static props' models with their materials and textures (copied out); its lightmaps and ambient
 // light copied too. The rest of the file (prop lighting, physics, sounds — most of a CS:GO map's size) is let go, so a
 // 600 MB map file costs a fraction of that once read. Textures are kept already read (vtf.js), only the sizes the game
-// uploads (up to 1024 px), so a 2048 picture costs a quarter.
+// uploads (up to maxSize: Settings → Texture quality, 1024 px by default, so a 2048 picture costs a quarter).
 import { loadModel } from './vbsp-props.js';
 import { parseVmt, parseVtf } from './vtf.js';
 
-export function compactVbsp(bsp) {
+export function compactVbsp(bsp, { maxSize = 1024 } = {}) {
   const keep = new Map(), vtfs = new Map(), src = bsp.pak, read = n => src.read(n);
   const take = n => { n = n.toLowerCase(); if (keep.has(n) || !src.has(n)) return null; const b = read(n); if (!b) return null; keep.set(n, b.slice()); return b; };
   const material = vmt => { const b = take(vmt); if (!b) return; const kv = parseVmt(new TextDecoder().decode(b), read);
     if (kv.include) take(String(kv.include).replace(/\\/g, '/'));
-    for (const k of ['$basetexture', '$basetexture2']) if (kv[k]) { const t = String(kv[k]).toLowerCase().replace(/\\/g, '/').replace(/\.vtf$/, ''); if (vtfs.has(t)) continue; const v = parseVtf(read('materials/' + t + '.vtf')); if (v) vtfs.set(t, { ...v, mips: v.mips.map(m => ({ width: m.width, height: m.height, data: m.data.slice() })) }); } };
+    for (const k of ['$basetexture', '$basetexture2']) if (kv[k]) { const t = String(kv[k]).toLowerCase().replace(/\\/g, '/').replace(/\.vtf$/, ''); if (vtfs.has(t)) continue; const v = parseVtf(read('materials/' + t + '.vtf'), { skipAbove: maxSize }); if (v) vtfs.set(t, { ...v, mips: v.mips.map(m => ({ width: m.width, height: m.height, data: m.data.slice() })) }); } };
   for (const td of bsp.texdata) material('materials/' + td.name + '.vmt');
   const used = new Set(bsp.props.map(p => p.model));
   for (const k of used) { const path = bsp.propModels[k], base = path.replace(/\.mdl$/i, ''); for (const f of [path, base + '.vvd', base + '.dx90.vtx', base + '.vtx']) take(f);

@@ -6,6 +6,7 @@
 import * as THREE from './three.module.js';
 import { faceVerts, dispGrid, SURF, playBounds } from './vbsp.js';
 import { parseVtf, parseVmt, decodeDxt } from './vtf.js';
+import { anisotropy } from './texture-quality.js';
 
 const HIDDEN = /^tools\/|^(effects\/(trainsky|skybox))|skybox/;
 const DRAWN = /^func_(brush|wall|wall_toggle|breakable|breakable_surf|door|door_rotating|illusionary|movelinear|rotating|button|tracktrain|lod)$|^prop_dynamic$/;
@@ -18,7 +19,7 @@ export function vbspTextures(bsp, renderer) {
     let tx = null; const v = bsp.vtfs?.get(path) || parseVtf(read('materials/' + path + '.vtf'));   /* compacted maps keep their textures already read (vbsp-compact.js) */
     if (v) { if (v.format !== 'rgba' && s3tc) { tx = new THREE.CompressedTexture(v.mips.map(m => ({ data: m.data, width: m.width, height: m.height })), v.width, v.height, FORMATS[v.format]); tx.minFilter = v.mips.length > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; }
       else { const m = v.mips[0], data = v.format === 'rgba' ? m.data : decodeDxt(m.data, m.width, m.height, v.format); tx = new THREE.DataTexture(data, m.width, m.height, THREE.RGBAFormat); tx.generateMipmaps = true; tx.minFilter = THREE.LinearMipmapLinearFilter; }
-      tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.magFilter = THREE.LinearFilter; tx.anisotropy = 8; tx.flipY = false; tx.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; tx.userData.alpha = v.alpha; tx.needsUpdate = true;
+      tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.magFilter = THREE.LinearFilter; tx.anisotropy = anisotropy(); tx.flipY = false; tx.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; tx.userData.alpha = v.alpha; tx.needsUpdate = true;
       if (!bsp.vtfs?.has(path)) tx.onUpdate = () => { if (tx.mipmaps) for (const m of tx.mipmaps) m.data = null; else if (tx.image) tx.image.data = null; };   /* on the GPU: the bytes stay in the map file only (a compacted map's kept copy is reused on the next visit) */
     }
     cache.set(key, tx); return tx; };

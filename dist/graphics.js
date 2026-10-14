@@ -6,6 +6,10 @@
 //    5× a second. The count never changes, so no shader ever recompiles; lighting where you stand looks the same.
 //  · High / Ultra (not on software rendering): real shadows from the key light, which follows the player
 //    so a small shadow map stays sharp, and a soft glow (bloom) on lamps, neon and LEDs.
+// Each part has its own setting (Settings → Graphics, resolveGraphics below; 'auto' follows the Graphics mode):
+// shadows (off, low, medium, high: the shadow map's size), their edges (soft, sharp), the glow, anti-aliasing (MSAA
+// of the HDR buffer), reflections, brightness and tone mapping (off: colours as they are; filmic / AgX: highlights
+// rolled off like a camera's).
 import * as THREE from './three.module.js';
 import { RoomEnvironment } from './post/RoomEnvironment.js';
 import { EffectComposer } from './post/EffectComposer.js';
@@ -13,6 +17,18 @@ import { RenderPass } from './post/RenderPass.js';
 import { UnrealBloomPass } from './post/UnrealBloomPass.js';
 import { OutputPass } from './post/OutputPass.js';
 import { AVATAR_SHADOW } from './avatar.js';
+import { anisotropy, applyFiltering } from './texture-quality.js';
+
+// Shadow map sizes, indoors / outdoors (a Global Defensive map: its shadow box is larger).
+export const SHADOW_MAPS = { low: [512, 1024], medium: [1024, 2048], high: [2048, 4096] };
+// The graphics settings as used, from the preferences and the Graphics mode. The old single "Shadows & glow" setting
+// (effects) still counts where the new ones are left on auto.
+export function resolveGraphics(p = {}, preset = p.graphics || 'Medium', software = false) {
+  const q = preset === 'High' || preset === 'Ultra', ultra = preset === 'Ultra', old = p.effects === 'on' || p.effects === 'off' ? p.effects : null, pick = (v, d) => v && v !== 'auto' ? v : d;
+  const shadows = software ? 'off' : pick(p.shadows, old === 'off' ? 'off' : old === 'on' || q ? (ultra ? 'high' : 'medium') : 'off');
+  return { shadows: SHADOW_MAPS[shadows] ? shadows : 'off', edges: p.shadowEdges === 'sharp' ? 'sharp' : 'soft', glow: !software && pick(p.glow, old ?? (q ? 'on' : 'off')) === 'on',
+    aa: software ? 0 : Math.min(4, +pick(p.antialias, ultra ? 4 : 0) || 0), brightness: Math.max(.6, Math.min(1.6, +p.brightness || 1)), tone: ['filmic', 'agx'].includes(p.tonemap) ? p.tonemap : 'off' };
+}
 
 export function createGraphics({ renderer, scene, camera, sun, preset, prefs = () => ({}), software = false, jobs = null }) {
   // Reflections.
@@ -30,21 +46,32 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   let composer = null, bloom = null, mode = '', frame = 0, fxOn = false; const hemi = scene.children.find(o => o.isHemisphereLight), base = { sun: sun.intensity, hemi: hemi?.intensity, sunColor: sun.color.clone(), sky: hemi?.color.clone(), ground: hemi?.groundColor.clone() };
   // scene.userData.outdoor (Global Defensive maps): { sun, sunK, sky, ground, hemiK } — that map's sunlight and sky light, and the sun
   // far enough out for buildings to cast their shadows; the hall's lighting comes back when it is cleared.
-  let lastOutdoor = null;
+  let lastOutdoor = null, G = resolveGraphics({}), shadowOn = false, filtering = 0;
   const auto = (v, def) => v === 'on' ? true : v === 'off' ? false : def;
-  const high = () => !software && auto(prefs().effects, ['High', 'Ultra'].includes(preset()));
   const reflect = () => !!envTexture && auto(prefs().reflections, ['High', 'Ultra'].includes(preset()));
+  const shadowSize = outdoor => (SHADOW_MAPS[G.shadows] || SHADOW_MAPS.medium)[outdoor ? 1 : 0];
+  // Brightness: exposure, applied where the picture goes to the screen (linear at 1 changes nothing).
+  const TONE = { off: THREE.LinearToneMapping, filmic: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping };
+  renderer.toneMapping = THREE.LinearToneMapping;
+  // Worked out again only when a setting changes (no garbage per frame).
+  let dirty = true, lastPreset = null; addEventListener?.('infra-preferences', () => { dirty = true; });
   function apply() {
-    const fx = high() ? (preset() === 'Ultra' ? 'Ultra' : 'High') : 'basic', want = fx + (reflect() ? '+env' : ''); if (want === mode) return; mode = want;
-    const on = fx !== 'basic'; fxOn = on; scene.environment = reflect() ? envTexture : null;
-    renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap; sun.castShadow = on;
-    AVATAR_SHADOW.visible = !on;                                                                             // contact shadows only without real ones
-    sun.intensity = base.sun * (on ? 1.55 : 1); if (hemi) hemi.intensity = base.hemi * (on ? .72 : 1);              // more light from the shadow-casting key on High
-    sun.shadow.mapSize.setScalar(fx === 'Ultra' ? 2048 : 1024); sun.shadow.map?.dispose(); sun.shadow.map = null; lastOutdoor = undefined;   // (outdoor shadow settings re-applied on the next frame)
-    if (on) flagShadows();   // first time at once; the job keeps it current
-    if (on && !composer) {
+    if (!dirty && preset() === lastPreset) return; dirty = false; lastPreset = preset();
+    const p = prefs(); G = resolveGraphics(p, lastPreset, software); renderer.toneMappingExposure = G.brightness;
+    { const a = anisotropy(p); if (a !== filtering) { const first = !filtering; filtering = a; if (!first) applyFiltering(scene, a); } }   // texture filtering changed: every texture re-sent once
+    const want = [G.shadows, G.edges, G.glow, G.aa, G.tone, reflect()].join('|'); if (want === mode) return; mode = want;
+    renderer.toneMapping = TONE[G.tone];
+    shadowOn = G.shadows !== 'off'; fxOn = shadowOn || G.glow; scene.environment = reflect() ? envTexture : null;
+    renderer.shadowMap.enabled = shadowOn; renderer.shadowMap.type = G.edges === 'sharp' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap; sun.castShadow = shadowOn;
+    AVATAR_SHADOW.visible = !shadowOn;                                                                       // contact shadows only without real ones
+    sun.shadow.mapSize.setScalar(shadowSize(!!scene.userData.outdoor)); sun.shadow.map?.dispose(); sun.shadow.map = null; lastOutdoor = undefined;   // (outdoor shadow settings re-applied on the next frame)
+    if (shadowOn) flagShadows();   // first time at once; the job keeps it current
+    // The HDR buffer: for the glow, or for anti-aliasing (its MSAA). Made again when either changes.
+    const needPost = G.glow || G.aa > 0;
+    if (composer && (!needPost || composer.renderTarget1.samples !== G.aa)) { composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); bloom?.dispose(); composer = null; bloom = null; }
+    if (needPost && !composer) {
       const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-      const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: fx === 'Ultra' ? 4 : 0 });   // MSAA only on Ultra (it is the costliest part on Retina)
+      const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: G.aa });
       composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera));
       bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05);
       // The composer sizes every pass to the full buffer; the glow is a blur, so its mips start at a quarter of
@@ -52,8 +79,9 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       const fullSize = bloom.setSize.bind(bloom); bloom.setSize = (w, h) => fullSize(w / 2, h / 2);
       composer.addPass(bloom); composer.addPass(new OutputPass());
     }
-    scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });                              // shadow / no-shadow shaders
-    glow(on); metalShine();
+    if (bloom) bloom.enabled = G.glow;
+    scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });   // shadow / no-shadow, soft / sharp, tone-mapping shaders
+    glow(G.glow); metalShine();
   }
   // Lamps, neon, LEDs (bright unlit colours without a texture) become HDR on High so the bloom picks them up.
   const boosted = new Set();
@@ -101,7 +129,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   }
   async function warm(objs, reveal, whole) {
     performance.mark?.('warm:start'); apply(); scanLights();   // the lights as play has them (lamps folded into the pool): a shader's light count is part of it, so a warm-up with more lights on compiled variants play never uses (Ancient: a 45 ms frame)
-    const g = new THREE.Group(); g.position.set(0, -500, 0); objs.forEach(o => g.add(o)); scene.add(g); metalShine(); if (fxOn) flagShadows(); g.visible = false;
+    const g = new THREE.Group(); g.position.set(0, -500, 0); objs.forEach(o => g.add(o)); scene.add(g); metalShine(); if (shadowOn) flagShadows(); g.visible = false;
     const frame = () => new Promise(r => requestAnimationFrame(r));
     // Compile a couple of objects per frame (shader linking can block the main thread on some GPUs). The set's
     // settings (e.g. the arena's fog) are applied only while the programs are created, and the objects are hidden
@@ -122,7 +150,8 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
 
   return {
     prewarm,
-    get post() { return !!composer && fxOn; },
+    get post() { return !!composer; },
+    get settings() { return G; },
     get passes() { return composer?.passes || []; },
     setSize(w, h) { if (composer) { const s = renderer.getDrawingBufferSize(new THREE.Vector2()); composer.setSize(w, h); composer.setPixelRatio?.(renderer.getPixelRatio()); bloom?.resolution.set(s.x / 2, s.y / 2); } },
     // scene.userData.renderOnly(o): draw only the top-level objects it keeps (Global Defensive hides the Infra world this
@@ -137,15 +166,15 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
           // Outdoors (a Global Defensive map): the shadow box covers what you see around you (buildings cast across the
           // streets), the sun far out; the hall's tight box comes back indoors.
           const SC = sun.shadow.camera, box = O ? OUT_BOX : SHADOW_BOX; SC.left = SC.bottom = -box; SC.right = SC.top = box; SC.far = O ? 520 : 170; SC.updateProjectionMatrix();
-          const ms = O ? (mode.startsWith('Ultra') ? 4096 : 2048) : (mode.startsWith('Ultra') ? 2048 : 1024); if (sun.shadow.mapSize.x !== ms) { sun.shadow.mapSize.setScalar(ms); sun.shadow.map?.dispose(); sun.shadow.map = null; }
+          const ms = shadowSize(!!O); if (sun.shadow.mapSize.x !== ms) { sun.shadow.mapSize.setScalar(ms); sun.shadow.map?.dispose(); sun.shadow.map = null; }
           sun.shadow.normalBias = O ? .12 : .04; if (hemi) { hemi.color.copy(O ? new THREE.Color(O.sky) : base.sky); hemi.groundColor.copy(O ? new THREE.Color(O.ground) : base.ground); } }
-        sun.intensity = base.sun * (fxOn ? 1.55 : 1) * (O ? O.sunK : 1); if (hemi) hemi.intensity = base.hemi * (fxOn ? .72 : 1) * (O ? O.hemiK : 1); }
+        sun.intensity = base.sun * (shadowOn ? 1.55 : 1) * (O ? O.sunK : 1); if (hemi) hemi.intensity = base.hemi * (shadowOn ? .72 : 1) * (O ? O.hemiK : 1); }   // more light from the shadow-casting key
       if (jobs) jobs.add('metal-shine', metalShine, 3000); else if (frame % 180 === 2) metalShine();
-      if (fxOn) {
-        if (jobs) jobs.add('shadow-flags', () => { if (fxOn) { flagShadows(); glow(true); } }, 2000); else if (frame % 120 === 1) { flagShadows(); glow(true); }
+      if (fxOn && jobs) jobs.add('shadow-flags', () => { if (shadowOn) flagShadows(); if (G.glow) glow(true); }, 2000); else if (fxOn && frame % 120 === 1) { if (shadowOn) flagShadows(); if (G.glow) glow(true); }
+      if (shadowOn) { const O = scene.userData.outdoor, tx = O ? 2 * OUT_BOX / sun.shadow.mapSize.x : 0, snap = v => tx ? Math.round(v / tx) * tx : v;   // whole shadow texels: shadows don't crawl as you move
+        sun.target.position.set(snap(camera.position.x), 0, snap(camera.position.z)); sun.position.copy(sun.target.position).add(SUN_DIR.copy(sunOffset).multiply(O ? OUT_TILT : ONE3).setLength(O ? 260 : LIGHT_DIST)); }   // just under the ceilings, so they don't shade the rooms
+      if (composer) {
         const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
-        { const O = scene.userData.outdoor, tx = O ? 2 * OUT_BOX / sun.shadow.mapSize.x : 0, snap = v => tx ? Math.round(v / tx) * tx : v;   // whole shadow texels: shadows don't crawl as you move
-          sun.target.position.set(snap(camera.position.x), 0, snap(camera.position.z)); sun.position.copy(sun.target.position).add(SUN_DIR.copy(sunOffset).multiply(O ? OUT_TILT : ONE3).setLength(O ? 260 : LIGHT_DIST)); }   // just under the ceilings, so they don't shade the rooms
         composer.render();
       } else renderer.render(scene, camera);
   }

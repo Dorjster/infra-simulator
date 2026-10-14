@@ -10,6 +10,7 @@ const LOD_AT = [700 / 6.5, 1600 / 6.5], FOLIAGE_FADE = 1800 / 6.5;   // game uni
 import * as THREE from './three.module.js';
 import { loadModel, propMatrix } from './vbsp-props.js';
 import { playBounds } from './vbsp.js';
+import { live } from './live-settings.js';
 
 export function buildVbspProps(bsp, { toGame, textures, bounds = playBounds(bsp), lightScale = 1, lightGamma = 1 / 2.2 } = {}) {
   const inArea = p => p.origin[0] >= bounds[0] - 512 && p.origin[0] <= bounds[2] + 512 && p.origin[1] >= bounds[1] - 512 && p.origin[1] <= bounds[3] + 512;
@@ -32,8 +33,8 @@ export function buildVbspProps(bsp, { toGame, textures, bounds = playBounds(bsp)
       const fade = Math.min(P.p.fadeMax > 0 ? P.p.fadeMax / 6.5 * 1.25 : Infinity, alphaTest ? FOLIAGE_FADE : Infinity), fadeOk = Number.isFinite(fade) ? fade : 0; inst.push({ id, x: P.M.elements[12], y: P.M.elements[13], z: P.M.elements[14], fade2: fadeOk * fadeOk, ids: g.ids, cur: 0, vis: true }); tris += g.tris; });
     // Before each draw: the level of detail by distance, hidden past the fade distance.
     // (BatchedMesh builds its own draw list in onBeforeRender: ours runs first, then its own.)
-    const own = batch.onBeforeRender.bind(batch); batch.onBeforeRender = (r, sc, cam, geo, mat, grp) => { const cx = cam.matrixWorld.elements[12], cy = cam.matrixWorld.elements[13], cz = cam.matrixWorld.elements[14];
-      for (let i = 0; i < inst.length; i++) { const I = inst[i], dx = I.x - cx, dy = I.y - cy, dz = I.z - cz, d2 = dx * dx + dy * dy + dz * dz, vis = !I.fade2 || d2 < I.fade2;
+    const own = batch.onBeforeRender.bind(batch); batch.onBeforeRender = (r, sc, cam, geo, mat, grp) => { const cx = cam.matrixWorld.elements[12], cy = cam.matrixWorld.elements[13], cz = cam.matrixWorld.elements[14], k2 = live.detail * live.detail;   /* Settings → Map detail: × the distances */
+      for (let i = 0; i < inst.length; i++) { const I = inst[i], dx = I.x - cx, dy = I.y - cy, dz = I.z - cz, d2 = (dx * dx + dy * dy + dz * dz) / k2, vis = !I.fade2 || d2 < I.fade2;
         if (vis !== I.vis) { batch.setVisibleAt(I.id, vis); I.vis = vis; } if (!vis || I.ids.length < 2) continue;
         const lv = d2 > LOD_AT[1] * LOD_AT[1] ? 2 : d2 > LOD_AT[0] * LOD_AT[0] ? 1 : 0; if (lv !== I.cur) { batch.setGeometryIdAt(I.id, I.ids[lv]); I.cur = lv; } }
       own(r, sc, cam, geo, mat, grp); };

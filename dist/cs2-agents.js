@@ -12,14 +12,19 @@ import { userAssets, userAssetURL } from './user-assets.js';
 import { weaponModel, knifeFor, MUZZLE } from './weapon-models.js';
 import { weaponById, HEAD_Y } from './weapons-data.js';
 import { addRim, rimFor } from './rim-light.js';
+import { live } from './live-settings.js';
+import { fitImage, anisotropy } from './texture-quality.js';
 
 const templates = {}; let loading = null;
 // Load the imported agents (once): resolves to the sides that have one.
 export function loadAgents() {
   return loading ??= userAssets().then(ua => Promise.all(Object.entries(ua.models.agents || {}).map(([side, a]) =>
-    new GLTFLoader().loadAsync(userAssetURL(ua, a.file)).then(g => { templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))))).then(() => Object.keys(templates));
+    new GLTFLoader().loadAsync(userAssetURL(ua, a.file)).then(async g => { await fitTextures(g.scene); templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))))).then(() => Object.keys(templates));
 }
 export const hasAgent = side => !!templates[side];
+// Its pictures at the size Settings → Texture quality asks for (stored at 2048), filtered as set.
+async function fitTextures(root) { const ts = new Set(); root.traverse(o => { if (o.isMesh) for (const m of [].concat(o.material)) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) if (m[k]) ts.add(m[k]); });
+  const a = anisotropy(); await Promise.all([...ts].map(async t => { t.image = await fitImage(t.image); t.anisotropy = a; t.needsUpdate = true; })); }
 
 // Fingers closed round a grip: each segment's bend (radians) about its own axis — fingers, thumb.
 export const CURL = { axis: 'z', sign: 1, fingers: [.75, .9, .6], thumb: [.3, .4, .35] };   // ~125°: round a grip, not a clenched fist
@@ -108,7 +113,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     { const box = new THREE.Box3().setFromObject(gun); stock = Math.max(.12, box.max.z / T.k); reachFwd = Math.max(.1, -box.min.z / T.k); }   // grip → butt and grip → muzzle, metres
   }
   function update(dt, s = {}) {
-    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(.3, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); rim.value = rimFor(shade); } }
+    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(.3, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); rim.value = live.rim ? rimFor(shade) : 0; } }
     const k = Math.min(1, dt * 10); st.speed += ((s.speed || 0) - st.speed) * Math.min(1, dt * 8); st.crouch += ((s.crouch ? 1 : 0) - st.crouch) * k; st.gun += ((s.aim && !s.dead ? 1 : 0) - st.gun) * k;
     st.reload += ((s.act === 'reload' ? 1 : 0) - st.reload) * Math.min(1, dt * 9); st.throwA += ((s.act === 'throw' ? 1 : 0) - st.throwA) * Math.min(1, dt * 14);
     fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); fallG.rotation.x = -fall * Math.PI / 2; fallG.position.y = fall * 1.3;

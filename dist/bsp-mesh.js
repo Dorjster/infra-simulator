@@ -4,6 +4,7 @@
 // collision columns (bsp-map.js).
 import * as THREE from './three.module.js';
 import { faceVerts, modelOf, vec, textureRGBA } from './bsp30.js';
+import { anisotropy } from './texture-quality.js';
 
 // Faces never drawn: tool textures (invisible brushes), the sky (the scene's sky shows through).
 const HIDDEN = /^(sky|clip|origin|aaatrigger|null|hint|skip|bevel|black_hidden|translucent|\{?invisible)$|^(aaa|clip)/;
@@ -12,7 +13,7 @@ const HIDDEN = /^(sky|clip|origin|aaatrigger|null|hint|skip|bevel|black_hidden|t
 const STANDIN = [[/brick|cinder|block/, 'brick', 0xffffff], [/crate|box|case|pallet/, 'crate', 0xffffff], [/wood|plank|plywood|door|board/, 'wood', 0xffffff], [/train|trk_|wheel|steel|metal|mtl|rail|pipe|duct|dump|fender|rim|axle|grille|bumper|hood/, 'metal-green', 0xc8ccc8],
   [/asphalt|track|tracks/, 'concrete', 0x8a8a88], [/gravel|dirt|ground|sand/, 'sand', 0xb8b0a0], [/grass|ivy|leaf|plant/, 'fieldstone', 0x8ea070], [/roof|tile/, 'roof', 0xffffff], [/plaster|stucco/, 'plaster', 0xffffff], [/window|glass/, 'concrete', 0x8fa8c0], [/light|lgt|lamp/, 'plaster', 0xfff2d0], [/./, 'concrete', 0xd8d8d4]];
 const standin = name => STANDIN.find(([re]) => re.test(name)) || STANDIN[STANDIN.length - 1];
-let photoLoader = null; const photos = new Map(); const photo = file => { photoLoader ??= new THREE.TextureLoader(); if (!photos.has(file)) { const t = photoLoader.load(new URL('./textures/' + file + '.jpg', import.meta.url).href); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; photos.set(file, t); } return photos.get(file); };
+let photoLoader = null; const photos = new Map(); const photo = file => { photoLoader ??= new THREE.TextureLoader(); if (!photos.has(file)) { const t = photoLoader.load(new URL('./textures/' + file + '.jpg', import.meta.url).href); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = anisotropy(); photos.set(file, t); } return photos.get(file); };
 // Brush entities that are drawn (their faces belong to their model); others (triggers, buy zones, bomb targets) are not.
 const DRAWN = /^func_(wall|wall_toggle|breakable|door|door_rotating|illusionary|pushable|button|rot_button|rotating|conveyor|water|train|tracktrain|plat|pendulum|guntarget|mortar_field|vehicle)$/;
 
@@ -49,7 +50,7 @@ export function buildBspMeshes(bsp, { toGame, lightScale = 1.25, lightGamma = .6
     for (let j = 1; j + 1 < r.V.length; j++) for (const k of [0, j + 1, j]) { const v = r.V[k], g = toGame(v[0] + off[0], v[1] + off[1], v[2] + off[2]); G.P.push(g[0], g[1], g[2]); G.N.push(nx, nz, -ny); const a = uv(k), b = uv2(k); G.UV.push(a[0], a[1]); G.UV2.push(b[0], b[1]); } }   // fan, wound for y-up
   // 5. Textures and materials (unlit: the light is baked; a little more light than the raw lightmap, as the game drew it).
   const texCache = new Map(), meshes = [];
-  const texOf = t => { if (texCache.has(t)) return texCache.get(t); let tx = null; if (t.rgba) { tx = new THREE.DataTexture(textureRGBA(t), t.width, t.height, THREE.RGBAFormat); tx.onUpdate = () => { tx.image.data = null; };   /* decoded for the upload, then let go (the file keeps the pixels) */ tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.magFilter = THREE.LinearFilter; tx.minFilter = THREE.LinearMipmapLinearFilter; tx.generateMipmaps = true; tx.anisotropy = 8; tx.colorSpace = THREE.SRGBColorSpace; tx.needsUpdate = true; } texCache.set(t, tx); return tx; };
+  const texOf = t => { if (texCache.has(t)) return texCache.get(t); let tx = null; if (t.rgba) { tx = new THREE.DataTexture(textureRGBA(t), t.width, t.height, THREE.RGBAFormat); tx.onUpdate = () => { tx.image.data = null; };   /* decoded for the upload, then let go (the file keeps the pixels) */ tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.magFilter = THREE.LinearFilter; tx.minFilter = THREE.LinearMipmapLinearFilter; tx.generateMipmaps = true; tx.anisotropy = anisotropy(); tx.colorSpace = THREE.SRGBColorSpace; tx.needsUpdate = true; } texCache.set(t, tx); return tx; };
   for (const G of groups.values()) { if (!G.P.length) continue; const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(G.P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(G.N, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(G.UV, 2)); g.setAttribute('uv1', new THREE.Float32BufferAttribute(G.UV2, 2)); g.computeBoundingSphere();
     // On the GPU once drawn: the arrays are let go (never aimed at — shots use the collision boxes; bounds computed above).
     for (const a of Object.values(g.attributes)) a.onUpload(releaseArray);

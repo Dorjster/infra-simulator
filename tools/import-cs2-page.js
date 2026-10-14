@@ -2,9 +2,10 @@
 // downloaded model (glTF binary or FBX), tells what it is from the names Counter-Strike 2 gives its meshes and
 // bones, and converts it:
 //  · guns, knives, the bomb and the defuse kit → the game's compact model (weapon-models.js loadReal): one part,
-//    pose baked, centimetres, y up, muzzle / blade along −z, plus base / normal / ORM pictures (JPEG);
+//    pose baked, centimetres, y up, muzzle / blade along −z, plus base / normal / ORM pictures (JPEG, 2048 px: the game
+//    takes the size its texture quality asks for);
 //  · agents (player characters) → a .glb with one skeleton (CS2's bone names, dist/cs2-agents.js drives it) and its
-//    pictures at 1024 px;
+//    pictures at 2048 px;
 //  · the karambit first-person model (arms, gloves, knife) → a .glb with one skeleton, untextured (the game paints it).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -66,8 +67,24 @@ export function bake(root, { gltf, toGame, keep = () => true }) {
 }
 
 // Pictures: drawn to `size`, as JPEG (base64). Sources: a texture's image (from the model) or a file URL.
-async function bitmapOf(src) { if (!src) return null; if (typeof src === 'string') return createImageBitmap(await (await fetch(src)).blob()); return src; }
-async function pixels(src, size) { const b = await bitmapOf(src); if (!b) return null; const c = new OffscreenCanvas(size, size), x = c.getContext('2d'); x.drawImage(b, 0, 0, size, size); return x.getImageData(0, 0, size, size); }
+// A picture's colours exactly as stored, at size × size, its alpha left out. CS2 keeps data in the alpha of its
+// pictures (normal maps: often 0), and a 2D canvas multiplies the colours by it — the normal maps came out black or
+// half dark, lighting the guns and agents wrong. So: read through WebGL (nothing premultiplied), then averaged down.
+let rgl = null;
+async function pixels(src, size) {
+  if (!src) return null; const b = typeof src === 'string' ? await createImageBitmap(await (await fetch(src)).blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }) : src;
+  const W = b.width, H = b.height, gl = rgl ??= new OffscreenCanvas(1, 1).getContext('webgl2'), t = gl.createTexture(), fb = gl.createFramebuffer();
+  gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, b);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+  const px = new Uint8Array(W * H * 4); gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px); gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb); gl.deleteTexture(t);
+  const out = new ImageData(size, size), o = out.data;
+  for (let y = 0; y < size; y++) { const ya = Math.floor(y * H / size), yb = Math.max(ya + 1, Math.floor((y + 1) * H / size));
+    for (let x = 0; x < size; x++) { const xa = Math.floor(x * W / size), xb = Math.max(xa + 1, Math.floor((x + 1) * W / size)); let r = 0, g = 0, bl = 0, n = 0;
+      for (let yy = ya; yy < yb; yy++) for (let xx = xa; xx < xb; xx++) { const i = (yy * W + xx) * 4; r += px[i]; g += px[i + 1]; bl += px[i + 2]; n++; }
+      const j = (y * size + x) * 4; o[j] = r / n; o[j + 1] = g / n; o[j + 2] = bl / n; o[j + 3] = 255; } }
+  return out;
+}
 async function jpeg(data, q = .88) { const c = new OffscreenCanvas(data.width, data.height); c.getContext('2d').putImageData(data, 0, 0); const u8 = new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality: q })).arrayBuffer()); let s = ''; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode(...u8.subarray(i, i + 32768)); return btoa(s); }
 // A picture file of this model by kind (color / normal / rough / ao / metal / orm), best match to the material's name.
 const KIND = { color: /_(color|albedo|basecolor|diffuse)/, normal: /_normal/, rough: /_rough/, ao: /_ao(?!.*_orm)|ambientocclusion/, metal: /_metal/, orm: /_orm/ };
@@ -77,7 +94,7 @@ export function pickTexture(files, kind, matName = '') {
 }
 
 // A static model (gun, knife, bomb, kit): baked parts + pictures (base, normal, ORM: G roughness, B metalness).
-export async function convertStatic({ url, files, base, size = 1024, id }) {
+export async function convertStatic({ url, files, base, size = 2048, id }) {
   const { root, gltf } = await load(url); root.updateMatrixWorld(true);
   // CS2 guns from glTF face +z (y up, metres); the FBX ones are in centimetres. → cm, muzzle / blade along −z.
   const k = gltf ? 100 : 1, toGame = new THREE.Matrix4().makeRotationY(Math.PI).multiply(new THREE.Matrix4().makeScale(k, k, k));
@@ -94,7 +111,7 @@ export async function convertStatic({ url, files, base, size = 1024, id }) {
       // No metalness picture (the knives): bright, grey, smooth texels are steel.
       let met = m ? m.data[i] : 0; if (!m && col) { const R = col.data[i], G = col.data[i + 1], B = col.data[i + 2], mx = Math.max(R, G, B), mn = Math.min(R, G, B); met = mx > 70 && (mx - mn) < 26 && (r ? r.data[i] < 150 : true) ? 255 : 0; }
       orm.data[i + 2] = met; orm.data[i + 3] = 255; } } }
-  if (col) tex.base = await jpeg(col); if (nor) tex.normal = await jpeg(nor, .92); if (orm) tex.orm = await jpeg(orm, .9);
+  if (col) tex.base = await jpeg(col, .92); if (nor) tex.normal = await jpeg(nor, .95); if (orm) tex.orm = await jpeg(orm, .92);
   const box = new THREE.Box3(); for (let i = 0; i < all.P.length; i += 3) box.expandByPoint(new THREE.Vector3(all.P[i], all.P[i + 1], all.P[i + 2]));
   return { id, tex, box: [box.min.toArray(), box.max.toArray()], part: { name: 'main', P: all.P, N: all.N, U: all.U }, tris: all.P.length / 9 };
 }
@@ -134,7 +151,7 @@ async function packTextures(root, files, base, size, gltf) {
 const exportGLB = root => new Promise((res, rej) => new GLTFExporter().parse(root, b => { const u8 = new Uint8Array(b); let s = ''; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode(...u8.subarray(i, i + 32768)); res(btoa(s)); }, rej, { binary: true, onlyVisible: true, animations: [] }));
 
 // An agent: one skeleton, pictures at `size`, standing on y = 0 facing +z, in metres.
-export async function convertAgent({ url, files, base, size = 1024 }) {
+export async function convertAgent({ url, files, base, size = 2048 }) {
   const { root, gltf } = await load(url); const skel = oneSkeleton(root); root.updateMatrixWorld(true);
   // Height and facing from the bones: feet on the ground, the toes (ball_l / ball_r) ahead of the ankles → +z.
   const w = name => { const b = skel.bones.find(b => b.name === name); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
