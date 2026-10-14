@@ -11,6 +11,7 @@ import { GLTFLoader } from './post/GLTFLoader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { weaponModel, knifeFor, MUZZLE } from './weapon-models.js';
 import { weaponById, HEAD_Y } from './weapons-data.js';
+import { addRim, rimFor } from './rim-light.js';
 
 const templates = {}; let loading = null;
 // Load the imported agents (once): resolves to the sides that have one.
@@ -83,13 +84,13 @@ function ik(upper, lower, end, [l1, l2], target, poleDir, s) {
 // The dress interface multiplayer.js expects: { g, update(dt, { speed, crouch, dead, aim, act }), setWeapon(id), dispose() }.
 // lightAt(x, y, z) (world, feet): the map's baked light there (map-light.js, 1 ≈ sunlit floor) — the agent is
 // tinted by it (its own copies of the materials; the pictures stay shared), never below 30 %: dark in a tunnel,
-// bright in the sun, never invisible.
+// bright in the sun, never invisible — and outlined by a rim of light that grows as it gets darker (rim-light.js).
 export function makeAgent(p, team, { lightAt = null } = {}) {
   const T = templates[team]; if (!T) return null;
   const g = new THREE.Group(), fallG = new THREE.Group(), face = new THREE.Group(), model = new THREE.Group(), body = cloneSkinned(T.scene);
   g.add(fallG); fallG.add(face); face.rotation.y = Math.PI; face.add(model); model.scale.setScalar(T.k); model.add(body);   // the avatar convention: facing −z in g
   const B = {}; body.traverse(o => { if (o.isBone && POSED.includes(o.name) && !B[o.name]) B[o.name] = o; });
-  const own = []; if (lightAt) body.traverse(o => { if (o.isMesh) { o.material = [].concat(o.material).map(m => { const c = m.clone(); c.userData = {}; own.push(c); return c; }); if (o.material.length === 1) o.material = o.material[0]; } });
+  const own = [], rim = { value: rimFor(1) }; if (lightAt) body.traverse(o => { if (o.isMesh) { o.material = [].concat(o.material).map(m => { const c = addRim(m.clone()); c.userData = { rim }; own.push(c); return c; }); if (o.material.length === 1) o.material = o.material[0]; } });
   let shade = 1, shadeAt = 0; const feetW = new THREE.Vector3();
   const rest = POSED.filter(n => B[n]).map(n => [B[n], B[n].position.clone(), B[n].quaternion.clone()]), fingers = FINGERS.filter(n => B[n]).map(n => [B[n], /thumb/.test(n), +n.split('_')[2], n.endsWith('_l')]), curlAx = new THREE.Vector3(), curlQ = new THREE.Quaternion(), ankleRest = { l: new THREE.Quaternion(), r: new THREE.Quaternion() };
   g.updateMatrixWorld(true); for (const s of ['l', 'r']) { B['ankle_' + s].getWorldQuaternion(ankleRest[s]); model.getWorldQuaternion(q1); ankleRest[s].premultiply(q1.invert()); }   // feet flat: their rotation in model space
@@ -107,7 +108,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     { const box = new THREE.Box3().setFromObject(gun); stock = Math.max(.12, box.max.z / T.k); reachFwd = Math.max(.1, -box.min.z / T.k); }   // grip → butt and grip → muzzle, metres
   }
   function update(dt, s = {}) {
-    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(.3, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); } }
+    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(.3, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); rim.value = rimFor(shade); } }
     const k = Math.min(1, dt * 10); st.speed += ((s.speed || 0) - st.speed) * Math.min(1, dt * 8); st.crouch += ((s.crouch ? 1 : 0) - st.crouch) * k; st.gun += ((s.aim && !s.dead ? 1 : 0) - st.gun) * k;
     st.reload += ((s.act === 'reload' ? 1 : 0) - st.reload) * Math.min(1, dt * 9); st.throwA += ((s.act === 'throw' ? 1 : 0) - st.throwA) * Math.min(1, dt * 14);
     fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); fallG.rotation.x = -fall * Math.PI / 2; fallG.position.y = fall * 1.3;
