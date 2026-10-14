@@ -179,8 +179,11 @@ export function createCampaignUI(ctx) {
   async function startArena() {
     const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
     subPanel(`<h2>Global Defensive</h2>
-     <div class="ss-form"><label>Your name<input id="ss-ar-name" maxlength="20" autocomplete="nickname" placeholder="Player" value="${esc((() => { try { const n = localStorage.getItem('infra-name'); return n && n !== 'Engineer' ? n : ''; } catch { return ''; } })())}"></label><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label><label>Warmup (s)<input id="ss-ar-warm" type="number" min="0" max="600" step="5" value="120" title="LAN lobby before the match · 0 starts at once"></label><label>Freeze time (s)<input id="ss-ar-freeze" type="number" min="0" max="60" step="1" value="15" title="Buy time at the start of every round · 0–60"></label><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}<button id="ss-ar-solo" class="primary">Play</button>${canHost ? '<button id="ss-ar-host">Host on LAN</button>' : ''}</div><p id="ss-ar-status" class="ss-note" hidden role="status"></p>
-     <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B), respawn in 2.5 s, most kills in 10 minutes. <b>Defuse</b>: Terrorists vs Counter-Terrorists with CS2 money and rounds — plant the bomb on A or B (5, hold click) or defuse it (E); first to 13, friendly fire on. Knife on 3 — Darja carries her ruby karambit. Bots from the scoreboard (Tab). Your Campaign and Payday saves are never touched.</p>`, el => {
+     <div class="ss-form"><label>Your name<input id="ss-ar-name" maxlength="20" autocomplete="nickname" placeholder="Player" value="${esc((() => { try { const n = localStorage.getItem('infra-name'); return n && n !== 'Engineer' ? n : ''; } catch { return ''; } })())}"></label><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
+     <details class="gd-more"><summary>More options</summary><div class="ss-form"><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label>Warmup (s)<input id="ss-ar-warm" type="number" min="0" max="600" step="5" value="120" title="LAN lobby before the match · 0 starts at once"></label><label>Freeze time (s)<input id="ss-ar-freeze" type="number" min="0" max="60" step="1" value="15" title="Buy time at the start of every round · 0–60"></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}</div></details>
+     <div class="gd-go"><button id="ss-ar-solo" class="primary">Play solo<small>you and the bots</small></button>${canHost ? '<button id="ss-ar-host">Host LAN game<small>friends on your network join you</small></button>' : ''}<button id="ss-ar-join">Join LAN game<small>play in a friend's game</small></button></div>
+     <p id="ss-ar-status" class="ss-note" hidden role="status"></p>
+     <p class="ss-note"><b>Deathmatch</b>: everyone against everyone, every gun free (B). <b>Defuse</b>: Terrorists vs Counter-Terrorists, plant (5) or defuse (E) the bomb, first to 13. Esc in a match: settings, or leave. Your Campaign and Payday saves are never touched.</p>`, el => {
       // Start: the chosen mode and map are sent once and confirmed from the room's own state before anyone enters.
       // Opening the room to the LAN restarts its listener; we wait for the reconnect instead of sending into the gap
       // (that gap used to drop the Defuse request and drop you into whatever arena the room still had).
@@ -208,6 +211,7 @@ export function createCampaignUI(ctx) {
       el.querySelector('#ss-ar-kind').addEventListener('change', maps); maps();
       el.querySelector('#ss-ar-solo').addEventListener('click', () => go(false));
       el.querySelector('#ss-ar-host')?.addEventListener('click', () => go(true));
+      el.querySelector('#ss-ar-join').addEventListener('click', () => { const nm = (el.querySelector('#ss-ar-name')?.value || '').trim(); if (nm) try { localStorage.setItem('infra-name', nm); } catch {} startJoin({ gd: true }); });
     });
   }
   async function startPayday() {
@@ -231,12 +235,13 @@ export function createCampaignUI(ctx) {
       el.querySelector('#ss-pay-host')?.addEventListener('click', () => start(true));
     });
   }
-  async function startJoin() {
+  // Join a game on the network. From Global Defensive ({ gd }): just the games found, the passcode and your name.
+  async function startJoin({ gd = false } = {}) {
     const info = await roomInfo(), params = new URLSearchParams(globalThis.location?.search || '');
-    subPanel(`<h2>Join LAN</h2>${desktop?.discover ? '<div id="ss-found" class="ss-found"><small>Looking for games on your network…</small></div>' : ''}<div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Passcode<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info && !desktop ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${info ? 'You are on ' + esc(location.host) + '. ' : ''}Guests share the host's world: you can do every task, but only the host chooses the mode and saves.</p><p id="ss-join-status" class="ss-note"></p>`, el => {
+    subPanel(`<h2>${gd ? 'Join a LAN game' : 'Join LAN'}</h2>${desktop?.discover ? '<div id="ss-found" class="ss-found"><small>Looking for games on your network…</small></div>' : ''}<div class="ss-form"><label>Your name<input id="ss-jname" maxlength="20" value="${esc(params.get('name') || localStorage.getItem('infra-name') || 'Engineer')}"></label><label>Passcode<input id="ss-code" maxlength="12" autocomplete="off" value="${esc(params.get('join') || '')}" placeholder="From the host"></label>${info && !desktop ? '' : `<label>Host address<input id="ss-addr" placeholder="192.168.1.20:8080"></label>`}${gd ? '' : titlePicker('ss-jtitle')}<button id="ss-join" class="primary">Join room</button></div><p class="ss-note">${gd ? 'Pick the game your friend hosts (it shows up here by itself) and type the passcode on their screen — or type their address. Their game decides the map and mode.' : (info ? 'You are on ' + esc(location.host) + '. ' : '') + 'Guests share the host\'s world: you can do every task, but only the host chooses the mode and saves.'}</p><p id="ss-join-status" class="ss-note"></p>`, el => {
       // Games announced on this network by other desktop apps: one click fills the address and code and joins.
       if (desktop?.discover) { const box = el.querySelector('#ss-found'); let picked = ''; el.querySelector('#ss-code').addEventListener('keydown', e => { if (e.key === 'Enter') el.querySelector('#ss-join').click(); }); const poll = async () => { if (!box.isConnected) return; const list = await desktop.discover().catch(() => []);
-        box.innerHTML = list.length ? '<b>Games on your network</b>' + list.map(gm => `<button class="ss-found-game" data-addr="${esc(gm.address)}" data-code="${esc(gm.code)}"><strong>${esc(gm.name)}</strong><span>${esc(gm.mode || 'LAN game')} · ${gm.players} engineer${gm.players === 1 ? '' : 's'} · ${esc(gm.address)}${gm.version ? ' · v' + esc(gm.version) : ''}</span><em>Select</em></button>`).join('') : '<small>No games found on this network yet · when a friend hosts, it appears here (or type the address below)</small>';
+        box.innerHTML = list.length ? '<b>Games on your network</b>' + list.map(gm => `<button class="ss-found-game" data-addr="${esc(gm.address)}" data-code="${esc(gm.code)}"><strong>${esc(gm.name)}</strong><span>${esc(gm.mode || 'LAN game')} · ${gm.players} engineer${gm.players === 1 ? '' : 's'} · ${esc(gm.address)}${gm.version ? ' · v' + esc(gm.version) : ''}</span><em>Select</em></button>`).join('') : '<small>No games found on this network yet · when a friend hosts, it appears here by itself (or type the address below)</small>';
         if (!picked) { let last = null; try { last = JSON.parse(localStorage.getItem('infra-last-lan') || 'null'); } catch {}
           const btns = [...box.querySelectorAll('[data-addr]')], again = last && btns.find(b => b.dataset.addr === last.addr), only = btns.length === 1 ? btns[0] : null, pick = again || only;
           if (pick) { picked = pick.dataset.addr; el.querySelector('#ss-addr').value = picked; const c = el.querySelector('#ss-code'); if (again && last.code && !c.value) c.value = last.code; c.focus();
@@ -258,7 +263,7 @@ export function createCampaignUI(ctx) {
           if (desktop && url.protocol === 'http:') { url.protocol = 'https:'; url.port = String((+url.port || 8080) + 1); }   // the desktop joins the host's https twin (a secure origin: team voice works)
           url.pathname = '/'; url.search = '?join=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name); location.href = url.href; return;
         }
-        engineering.setRole(el.querySelector('#ss-jtitle').value);
+        if (el.querySelector('#ss-jtitle')) engineering.setRole(el.querySelector('#ss-jtitle').value);
         const ok = await lan.join({ name, code, hostKey: '' }); el.querySelector('#ss-join-status').textContent = ok ? 'Connected' : lan.status || 'Could not join';
         if (ok) begin();
       });
@@ -287,16 +292,32 @@ export function createCampaignUI(ctx) {
   });
 
   // ---- Panel ---------------------------------------------------------------------------------------------
-  // Global Defensive's own menu (Esc in a match): Resume, Settings, Leave match. Leaving a match you play alone ends
-  // it (back to the start screen); with other players in the room it only takes you to the start screen.
+  // Global Defensive's own menu (Esc in a match): Resume, Settings, and one way out that says what it does —
+  //  · alone: Leave match (the match ends, back to the start screen);
+  //  · hosting (friends can join, or are in): the address and passcode to give them, and Stop hosting (the match ends
+  //    for everyone, the room closes to the network);
+  //  · in a friend's game: Leave game (you disconnect; they play on).
   const gdMenuOpen = () => !document.getElementById('gd-menu')?.hidden && !!document.getElementById('gd-menu');
+  const humansIn = () => (lan.players || []).filter(p => !p.bot && p.role !== 'bot').length;
+  const gdRole = () => lan.connected && !lan.canManageWorld ? 'guest' : (inviteText() || humansIn() > 1) ? 'host' : 'solo';
+  async function gdLeave(role) {
+    if (role === 'guest') { lan.leave?.(); showStart(true); return; }
+    if (role === 'host' && humansIn() > 1 && !confirm('Stop hosting? The match ends for everyone in it.')) return;
+    await send({ type: 'mode', mode: 'free' }).catch(() => null);
+    if (role === 'host') { await desktop?.stopHosting?.().catch(() => null); invite = null; renderInvite(); }
+    showStart(true);
+  }
   function gdMenu(on) {
     let m = document.getElementById('gd-menu');
-    if (!m) { document.body.insertAdjacentHTML('beforeend', '<div id="gd-menu" hidden role="dialog" aria-label="Global Defensive menu"><div class="gm-card"><h2>GLOBAL DEFENSIVE</h2><p class="gm-sub"></p><button data-gm="resume">Resume <small>Esc</small></button><button data-gm="settings">Settings</button><button data-gm="leave">Leave match</button></div></div>'); m = document.getElementById('gd-menu');
+    if (!m) { document.body.insertAdjacentHTML('beforeend', '<div id="gd-menu" hidden role="dialog" aria-label="Global Defensive menu"><div class="gm-card"><h2>GLOBAL DEFENSIVE</h2><p class="gm-sub"></p><p class="gm-invite" hidden></p><button data-gm="resume">Resume <small>Esc</small></button><button data-gm="settings">Settings</button><button data-gm="leave">Leave match</button></div></div>'); m = document.getElementById('gd-menu');
       m.addEventListener('click', async e => { const b = e.target.closest('[data-gm]'); if (!b) return; const act = b.dataset.gm; gdMenu(false);
-        if (act === 'resume') enter(); else if (act === 'settings') panel('settings');
-        else if (act === 'leave') { const humans = (lan.players || []).filter(p => !p.bot && p.role !== 'bot').length; if (humans <= 1 && (!lan.connected || lan.canManageWorld)) await send({ type: 'mode', mode: 'free' }).catch(() => null); showStart(true); } }); }
-    m.hidden = !on; document.body.classList.toggle('gd-menu-open', !!on); if (!on) return; const A = g().arena; m.querySelector('.gm-sub').textContent = (A ? (A.kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + (MAP_LIST.find(x => x.id === A.map)?.name || A.map) : '') + ((lan.players || []).filter(p => !p.bot && p.role !== 'bot').length > 1 ? ' · LAN' : ''); if (document.pointerLockElement) document.exitPointerLock(); m.querySelector('[data-gm=resume]').focus(); }
+        if (act === 'resume') enter(); else if (act === 'settings') panel('settings'); else if (act === 'leave') await gdLeave(b.dataset.role || 'solo'); }); }
+    m.hidden = !on; document.body.classList.toggle('gd-menu-open', !!on); if (!on) return;
+    const A = g().arena, role = gdRole(), inv = inviteText(), leave = m.querySelector('[data-gm=leave]'), invEl = m.querySelector('.gm-invite');
+    m.querySelector('.gm-sub').textContent = (A ? (A.kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + (MAP_LIST.find(x => x.id === A.map)?.name || A.map) : '') + (role === 'host' ? ' · hosting' : role === 'guest' ? ' · in a LAN game' : '') + (humansIn() > 1 ? ' · ' + humansIn() + ' players' : '');
+    leave.dataset.role = role; leave.innerHTML = role === 'host' ? 'Stop hosting <small>ends the match for everyone</small>' : role === 'guest' ? 'Leave game <small>the others play on</small>' : 'Leave match';
+    invEl.hidden = !(role === 'host' && inv); if (!invEl.hidden) invEl.innerHTML = 'Friends join with ' + (inv.addrs.length ? inv.addrs.map(a => `<code>${esc(a)}</code>`).join(' or ') : 'this computer\'s address') + ' · passcode <code>' + esc(inv.code) + '</code>';
+    if (document.pointerLockElement) document.exitPointerLock(); m.querySelector('[data-gm=resume]').focus(); }
   function panel(which = 'objective') { if (gdMode()) which = 'settings';   // Global Defensive: the settings, nothing of the campaign
     if (engineering.busy && which !== 'objective' && which !== 'settings') { notify('Put the item down first · G'); } tab = which; open = true; engineering.close(); kit.hide(); officeUI?.close?.(); if (document.pointerLockElement) document.exitPointerLock(); $('campaign-panel').hidden = false; document.body.classList.add('cp-open'); render(); }
   function close() { open = false; $('campaign-panel').hidden = true; document.body.classList.remove('cp-open'); }

@@ -127,6 +127,13 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     if (warmed.has(key)) return warmed.get(key); if (!objs?.length) return Promise.resolve();
     const job = warm(objs, reveal, key === 'main'); warmed.set(key, job); return job;
   }
+  // renderer.compileAsync, but a material disposed while its shader still compiles (a bot removed meanwhile) no longer
+  // throws in the readiness check ("reading 'isReady'"): it just stops being waited for.
+  function compileWarm(root) {
+    if (!renderer.compileAsync) { renderer.compile(root, camera, scene); return Promise.resolve(); }
+    const mats = renderer.compile(root, camera, scene);
+    return new Promise(res => { const check = () => { for (const m of mats) { const pr = renderer.properties.get(m).currentProgram; if (!pr || pr.isReady()) mats.delete(m); } if (!mats.size) res(); else setTimeout(check, 10); }; check(); });
+  }
   async function warm(objs, reveal, whole) {
     performance.mark?.('warm:start'); apply(); scanLights();   // the lights as play has them (lamps folded into the pool): a shader's light count is part of it, so a warm-up with more lights on compiled variants play never uses (Ancient: a 45 ms frame)
     const g = new THREE.Group(); g.position.set(0, -500, 0); objs.forEach(o => g.add(o)); scene.add(g); metalShine(); if (shadowOn) flagShadows(); g.visible = false;
@@ -134,17 +141,21 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     // Compile a couple of objects per frame (shader linking can block the main thread on some GPUs). The set's
     // settings (e.g. the arena's fog) are applied only while the programs are created, and the objects are hidden
     // otherwise, so normal frames never draw them with other settings.
-    const one = async root => { g.visible = true; const restore = reveal(); let job; try { job = renderer.compileAsync ? renderer.compileAsync(root, camera, scene) : renderer.compile(root, camera, scene); } catch {} restore(); g.visible = false; try { await job; } catch {} };
+    // The lights counted are those a frame draws: with scene.userData.renderOnly (set by reveal() or play), only the
+    // top-level objects it keeps, as render() does.
+    const one = async root => { g.visible = true; const restore = reveal(), only = scene.userData.renderOnly, all = scene.children; if (only) scene.children = all.filter(o => o === g || only(o));
+      let job; try { job = compileWarm(root); } catch {} scene.children = all; restore(); g.visible = false; try { await job; } catch {} };
     for (let i = 0; i < objs.length; i += 2) { const part = new THREE.Group(); part.position.copy(g.position); objs.slice(i, i + 2).forEach(o => part.add(o)); g.add(part); performance.mark?.('warm:part' + i); await one(part); g.remove(part); await frame(); }
     // The start-up set: everything in the hall too (rooms revealed by reveal()) — one mesh per distinct material
     // and kind (instanced, skinned, shadow flags decide the shader variant), three per frame.
     if (whole) { const restore = reveal(), seenKey = new Set(), reps = []; scene.traverseVisible(o => { if (!o.isMesh && !o.isSprite && !o.isPoints && !o.isLine) return; for (const m of [].concat(o.material || [])) { const k = m.uuid + (o.isInstancedMesh ? 'I' : '') + (o.isSkinnedMesh ? 'S' : '') + (o.receiveShadow ? 'r' : '') + (o.castShadow ? 'c' : ''); if (!seenKey.has(k)) { seenKey.add(k); reps.push(o); } } }); restore();
-      for (let i = 0; i < reps.length; i += 3) { const restore2 = reveal(); let job; try { job = Promise.all(reps.slice(i, i + 3).map(o => renderer.compileAsync ? renderer.compileAsync(o, camera, scene) : renderer.compile(o, camera, scene))); } catch {} restore2(); try { await job; } catch {} await frame(); } }
+      for (let i = 0; i < reps.length; i += 3) { const restore2 = reveal(); let job; try { job = Promise.all(reps.slice(i, i + 3).map(o => compileWarm(o))); } catch {} restore2(); try { await job; } catch {} await frame(); } }
     performance.mark?.('warm:compiled');
-    // Upload every texture now (signs, felts, reels, cards, gun skins…) instead of on first sight — two per frame.
+    // Upload every texture now (signs, felts, reels, cards, gun skins…) instead of on first sight.
     const seen = new Set(); const look = o => { const ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : []; for (const m of ms) for (const k of ['map', 'roughnessMap', 'metalnessMap', 'normalMap', 'emissiveMap', 'alphaMap']) { const t = m[k]; if (t) seen.add(t); } };
     objs.forEach(o => o.traverse(look)); if (whole) scene.traverse(look); scene.remove(g);
-    let n = 0; for (const t of seen) { try { renderer.initTexture(t); } catch {} if (++n % 2 === 0) await frame(); }
+    // (as many a frame as fit in ~8 ms: this runs behind the loading card, and 2 a frame took 1.4 s with the 2048 px pictures)
+    let t0 = performance.now(); for (const t of seen) { try { renderer.initTexture(t); } catch {} if (performance.now() - t0 > 8) { await frame(); t0 = performance.now(); } }
     performance.mark?.('warm:done');
   }
 

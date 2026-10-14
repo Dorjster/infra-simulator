@@ -18,7 +18,8 @@ if (process.env.CS_T && process.env.CS_CT) {
   const n = await p.evaluate(async () => { const C = __infra.lab.characters, f = async (u, n) => new File([await (await fetch(u)).arrayBuffer()], n); await C.import('t', [await f('/__cs/t', 't.zip')]); await C.import('ct', [await f('/__cs/ct', 'ct.zip')]); return C.counts(); });
   check('Imported CS characters (T and CT)', n.t > 0 && n.ct > 0, JSON.stringify(n));
 }
-await p.click('[data-start=arena]'); await p.waitForTimeout(500); await p.selectOption('#ss-ar-bots', '3'); await p.click('#ss-ar-solo'); await p.waitForTimeout(3500);
+await p.click('[data-start=arena]'); await p.waitForTimeout(500); await p.selectOption('#ss-ar-bots', '3'); await p.click('#ss-ar-solo');
+await p.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.camera.position.z < -240, null, { timeout: 30000 }).catch(() => {}); await p.waitForTimeout(800);   // in, past the loading card
 const st = () => p.evaluate(() => { const g = __infra.lab.world.operations.game; return { mode: g.mode, map: g.arena?.map, bots: g.arena?.bots?.length, z: Math.round(__infra.camera.position.z), models: [...(__infra.lab.lan.models || new Map()).keys()].filter(k => k.startsWith('bot-')).length }; });
 let s = await st(); check('Arena started from the start screen with 3 bots', s.mode === 'arena' && s.map === 'yard' && s.bots === 3, JSON.stringify(s));
 check('Player is in the arena and bots are drawn', s.z < -240 && s.models === 3, JSON.stringify(s));

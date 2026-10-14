@@ -81,10 +81,17 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   function goSpawn(so) { if (Number.isFinite(so?.x)) teleport(so.x, so.z, Math.atan2(-(ARENA.cx - so.x), -(ARENA.cz - so.z)), so.y); else goTo(so?.i ?? spawnIndex()); }
   // Entering waits for the arena warm-up (shaders, textures) behind a short loading screen instead of a frozen frame.
   let loading = false;
-  function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; r.catch(() => {}).finally(() => { loading = false; $('ar-load').hidden = true; }); } return; } enterNow(); }
+  // The card goes once the GPU has caught up — frames smooth several in a row (2.5 s at most) — so the uploads and first
+  // draws queued behind it never show as a hitch (it used to go after 4 frames: a 100–150 ms frame right after).
+  let revealing = 0;
+  function revealWhenSmooth() { const id = ++revealing; let smooth = 0, frames = 0, minD = Infinity, last = performance.now(); const t0 = last;
+    const step = now => { if (id !== revealing) return; const d = now - last; last = now; frames++; if (frames > 1) minD = Math.min(minD, d); smooth = frames > 1 && d < Math.max(24, minD * 1.5) ? smooth + 1 : 0;
+      if (!loading && frames >= 4 && (smooth >= 6 || now - t0 > 2500)) $('ar-load').hidden = true; else requestAnimationFrame(step); };
+    requestAnimationFrame(step); }
+  function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; r.catch(() => {}).finally(() => { loading = false; revealWhenSmooth(); }); } return; } enterNow(); }
   function enterNow() { performance.mark?.('arena:enter'); const A = g().arena;
     // The map's first frames (GPU uploads, first shadow pass) are drawn behind the loading card; play starts warm.
-    $('ar-load').hidden = false; let frames = 0; const reveal = () => { if (++frames < 4) requestAnimationFrame(reveal); else if (!loading) $('ar-load').hidden = true; }; requestAnimationFrame(reveal); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
+    $('ar-load').hidden = false; revealWhenSmooth(); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
   function leave() { freezeMusic(false); for (const id of ['ar-paused', 'ar-alive', 'ar-money', 'ar-banner', 'ar-prog', 'ar-lobby', 'ar-team', 'ar-look']) $(id).hidden = true; teamOpen = false; bombView(null); for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
   // Buy menu (B opens and closes it, Escape closes it). Guns by category with an info card; equipment (armor, kit);
   // grenades; and, apart from the shop, the guns lying near you (free to pick up, E or click).
@@ -250,15 +257,17 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   }
   const nearest = (r, filter = () => true) => { const at = where(); if (!at) return null; let best = null, bd = r; for (const it of g().combat?.ground || []) { const d = Math.hypot(it.x - at.x, it.z - at.z); if (d < bd && filter(it)) { bd = d; best = it; } } return best; };
   // Walking over an item whose slot is empty picks it up (checked 6×/s).
+  // Not right after a drop (as CS2: the gun you let go is not taken straight back — dropped by a wall it lands at your feet).
+  let pickPause = 0;
   function autoPick() {
-    if (isDownNow(name())) return; const l = g().arena.loadout?.[me()] || {}, free = s => s === 'primary' ? !l.primary : l.secondary === null;
+    if (isDownNow(name()) || Date.now() < pickPause) return; const l = g().arena.loadout?.[me()] || {}, free = s => s === 'primary' ? !l.primary : l.secondary === null;
     const it = nearest(3.2, it => slotOf(it.item) && free(slotOf(it.item)) && (tried.get(it.id) || 0) < Date.now()); if (!it) return;
     tried.set(it.id, Date.now() + 1500); send({ type: 'pickup', id: it.id }).then(r => { const m = typeof r === 'string' ? r : r?.message; if (m && !r?.error) { notify(m); setAmmo?.(it.item, it.ammo); } });
   }
   // G: drop the gun in hand (not the knife), then hold the next one.
   async function drop() {
     const id = current(), slot = slotOf(id); if (!slot) { notify('You can\u2019t drop the knife'); return; }
-    const at = where(), r = await send({ type: 'drop', slot, kind: id, x: at?.x, z: at?.z, y: feet(), yaw: yaw() }); if (r?.error) { notify(r.error); return; } if (slot !== 'nades') setAmmo?.(id, null);
+    pickPause = Date.now() + 1500; const at = where(), r = await send({ type: 'drop', slot, kind: id, x: at?.x, z: at?.z, y: feet(), yaw: yaw() }); if (r?.error) { notify(r.error); return; } if (slot !== 'nades') setAmmo?.(id, null);
     if (slot === 'nades' && arenaArsenalOf(g(), name()).includes(id)) return;   // another of the same grenade stays in hand
     const own = arenaArsenalOf(g(), name()); equip(own.find(w => w !== id) || own[own.length - 1]);
   }

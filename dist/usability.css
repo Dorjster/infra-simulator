@@ -43,3 +43,5 @@ body.gd-mode :is(#scanner, #terminal, #boot, #inventory, #field-laptop, #game-ba
 #gd-menu button small { margin-left: 10px; color: #7f8f99; font-size: 12px; font-weight: 600; }
 body.gd-mode #campaign-panel #cp-nav:empty { display: none; }
 body.gd-menu-open #resume-hint { display: none !important; }
+#gd-menu .gm-invite { margin: -8px 0 14px; color: #bfe9f2; font: 600 13px system-ui, sans-serif; line-height: 1.5; }
+#gd-menu .gm-invite code { color: #fff; font-size: 14px; background: #ffffff14; padding: 1px 6px; border-radius: 4px; }
