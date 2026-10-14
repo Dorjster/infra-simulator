@@ -1,5 +1,6 @@
 // Ladders in play (needs the map files: user-maps/nuke.bsp, from tools/import-cs2-models.mjs): on Nuke, standing at
-// the foot of a ladder and facing it, holding W climbs it (no gravity), letting go holds on, S climbs back down.
+// the foot of a ladder and facing it, holding W climbs it (no gravity), letting go holds on, S climbs back down. And
+// footsteps there sound like the map's own floor (its faces' materials, map-light.js), not the theme's default.
 //   node tests/browser/gd-ladders-e2e.mjs <repo-root> <out-dir>
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync, mkdirSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 const [root, out] = process.argv.slice(2); mkdirSync(out, { recursive: true });
@@ -24,6 +25,9 @@ const spot = await p.evaluate(async () => { const { ARENA_MAPS } = await import(
 check('a ladder with floor at its foot', !!spot, JSON.stringify(spot));
 if (spot) {
   await p.evaluate(s => { __infra.lab.look(s.x, s.z, s.cx, s.y + 9.7, s.cz, s.y + 9.7); }, spot); await p.waitForTimeout(400);   // standing at its foot, eyes level, facing it
+  const steps = await p.evaluate(async s => { const { ARENA_MAPS } = await import('/arena-maps.js'), { ARENA } = await import('/facility-layout.js'), M = ARENA_MAPS.nuke, sc = __infra.lab.arenaScene;
+    return { own: M.surfaceAt(s.x - ARENA.cx, s.z - ARENA.cz, s.y), scene: sc.surfaceAt(s.x, s.z, s.y), spawn: M.t.slice(0, 3).map(t => sc.surfaceAt(t[0] + ARENA.cx, t[1] + ARENA.cz, M.nav.floorAt(t[0], t[1]))) }; }, spot);
+  check('footsteps: the map\'s own floor', !!steps.own && steps.scene === steps.own && steps.spawn.every(v => v === 'concrete'), JSON.stringify(steps));
   const feet = () => p.evaluate(() => __infra.camera.position.y);
   const y0 = await feet(); await p.keyboard.down('KeyW'); await p.waitForTimeout(900); const y1 = await feet();
   check('holding W at a ladder climbs it', y1 - y0 > 6, (y1 - y0).toFixed(1) + ' units up');

@@ -8,6 +8,7 @@
 import { solidSpans, hullSolid, vec, modelOf } from './bsp30.js';
 import { CELL, MAXF, NONE, SITE, STEP } from './cs-columns.js';
 import { finishMap, U } from './cs-mapbuild.js';
+import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
 
 const CROUCH = 36, SOLID = /^func_(wall|wall_toggle|breakable|door|door_rotating|pushable|train|tracktrain|plat|rotating|button|brush)$/, Q = 2;
 export function buildBspMap(id, bsp, { T, nav = null } = {}) {
@@ -105,7 +106,15 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: { data: bsp, toGame }, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders } });
   // The segments only made the collision boxes: these maps are drawn from their own faces (bsp-mesh.js), never from
   // the columns, and a large map holds some 200 000 of them (60 MB).
-  map.columns.segs = null; return map;
+  map.columns.segs = null;
+  // The baked light on each floor and what it is made of (map-light.js), by spot in game units (x, z, feet):
+  // lightAt — 1 ≈ a sunlit floor; surfaceAt — a footstep surface, or null where the map's faces don't say.
+  const light = floorLight(bsp, G, { x0, y1 }), surface = floorSurface(bsp, G, { x0, y1 }), cw = CELL * U;
+  const floorIndex = (x, zz, feet) => { const c = Math.floor((x + W / 2) / cw), r = Math.floor((zz + D / 2) / cw); if (c < 0 || r < 0 || c >= cols || r >= rows) return -1; const i = r * cols + c, h = feet / U + zLow;
+    let best = -1, bd = Infinity; for (let k = 0; k < n[i]; k++) { const dz = h - z[i * MAXF + k]; if (dz > -STEP && Math.abs(dz) < bd) { bd = Math.abs(dz); best = k; } } return best >= 0 ? i * MAXF + best : -1; };
+  map.lightAt = (x, zz, feet) => { if (!light) return 1; const j = floorIndex(x, zz, feet); return j >= 0 ? light[j] : 1; };
+  map.surfaceAt = (x, zz, feet) => { if (!surface) return null; const j = floorIndex(x, zz, feet), v = j >= 0 ? surface[j] : UNKNOWN; return v === UNKNOWN ? null : SURFACES[v]; };
+  return map;
 }
 // A brush model's bounds, moved by an entity origin.
 function bounds(m, off) { return { mins: m.mins.map((v, j) => v + off[j]), maxs: m.maxs.map((v, j) => v + off[j]) }; }

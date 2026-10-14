@@ -142,7 +142,8 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     inArena: z => z < ARENA.maxZ,
     clear(x, z) { return !!bounds && walkable(boxes, bounds, x, z); },
     // What the feet are on at (x, z) with feet at height y, for footstep sounds: wood, metal, grass (sand) or concrete.
-    surfaceAt(x, z, y = 0) { const b = y > .3 && boxesNear(boxes, x - 1, z - 1, x + 1, z + 1, SURF_NEAR).find(b => Math.abs(b.y1 - y) < .6 && x > b.minX - 1 && x < b.maxX + 1 && z > b.minZ - 1 && z < b.maxZ + 1), m = b ? b.mat : ARENA_MAPS[current]?.floor || 'concrete';
+    surfaceAt(x, z, y = 0) { const own = ARENA_MAPS[current]?.surfaceAt?.(x - ARENA.cx, z - ARENA.cz, y); if (own) return own;   /* maps from files: their own floors (map-light.js) */
+      const b = y > .3 && boxesNear(boxes, x - 1, z - 1, x + 1, z + 1, SURF_NEAR).find(b => Math.abs(b.y1 - y) < .6 && x > b.minX - 1 && x < b.maxX + 1 && z > b.minZ - 1 && z < b.maxZ + 1), m = b ? b.mat : ARENA_MAPS[current]?.floor || 'concrete';
       return /wood|crate/.test(m) ? 'wood' : /metal/.test(m) ? 'metal' : /sand/.test(m) ? 'grass' : 'concrete'; },
     spawnFor(i) { const map = ARENA_MAPS[current]; if (!map) return null; const s = map.spawns[((i % map.spawns.length) + map.spawns.length) % map.spawns.length]; return { x: ARENA.cx + s[0], z: ARENA.cz + s[1], ...(s[2] !== undefined ? { y: s[2] } : {}) }; },
   };
