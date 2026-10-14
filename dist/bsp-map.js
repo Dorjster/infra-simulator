@@ -5,7 +5,7 @@
 // the map's own entities. Place names (callouts, the radar's labels, the bots' mid) come from the CS:GO navigation
 // data of the same map, matched to this file by aligning the spawns and bomb sites (the community ports are often
 // moved, rotated or scaled). The rest (boxes, navigation, routes, radar) is the classic maps' own (finishMap).
-import { solidSpans, hullSolid, vec, modelOf } from './bsp30.js';
+import { solidSpans, solidAt, hullSolid, hullSpans, vec, modelOf } from './bsp30.js';
 import { CELL, MAXF, NONE, SITE, STEP } from './cs-columns.js';
 import { finishMap, U } from './cs-mapbuild.js';
 import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
@@ -13,8 +13,8 @@ import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
 const CROUCH = 36, SOLID = /^func_(wall|wall_toggle|breakable|door|door_rotating|pushable|train|tracktrain|plat|rotating|button|brush)$/, Q = 2;
 export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // Solid parts: the world and the solid brush entities (with their origin offset), each with its bounds.
-  const parts = [{ head: bsp.models[0].head, off: [0, 0, 0], ...bounds(bsp.models[0], [0, 0, 0]) }];
-  for (const e of bsp.entities) { const mi = modelOf(e); if (mi > 0 && SOLID.test(e.classname || '') && bsp.models[mi]) { const off = e.origin ? vec(e.origin) : [0, 0, 0]; parts.push({ head: bsp.models[mi].head, off, ...bounds(bsp.models[mi], off) }); } }
+  const parts = [{ head: bsp.models[0].head, off: [0, 0, 0], mi: 0, ...bounds(bsp.models[0], [0, 0, 0]) }];
+  for (const e of bsp.entities) { const mi = modelOf(e); if (mi > 0 && SOLID.test(e.classname || '') && bsp.models[mi]) { const off = e.origin ? vec(e.origin) : [0, 0, 0]; parts.push({ head: bsp.models[mi].head, off, mi, ...bounds(bsp.models[mi], off) }); } }
   // Source maps (vbsp.js: toGoldSrc) keep their 3D sky box — a miniature far outside the play area — inside the world's
   // bounds: there the area is the spawns' and bomb sites' surroundings (1 500 units round them) and their height range.
   // Source places a spawn at the feet (Counter-Strike 1.6: the body's centre, 36 up).
@@ -33,6 +33,8 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
     const ord = []; for (let i = 0; i < ev.length; i += 2) ord.push(i); ord.sort((a, b) => ev[a] - ev[b] || ev[b + 1] - ev[a + 1]);
     const out = []; let k = 0, start = null; for (const i of ord) { const was = k; k += ev[i + 1]; if (was < 2 && k >= 2) start = ev[i]; else if (was >= 2 && k < 2 && start !== null) { const lo = Math.floor(start / Q) * Q, hi = Math.round(ev[i] / Q) * Q, last = out[out.length - 1]; if (last && lo - last[1] < 4) last[1] = hi; else if (hi > lo) out.push([lo, hi]); start = null; } }
     spans[r * cols + c] = out; }
+  if (!src) thinWalls(bsp, parts, spans, { x0, y1, cols, rows, zA, zB, src });   // (Source maps: their brushes clipped exactly per ray; none was walked through)
+  if (!src) playerClips(bsp, spans, { x0, y1, cols, rows, zA, zB });
   // Floors: a solid's top with crouching room above (its ceiling the next solid's bottom); three per column at most —
   // standing room first, lowest first.
   const n = new Uint8Array(N), z = new Float32Array(N * MAXF).fill(NONE), ceil = new Float32Array(N * MAXF).fill(Infinity), place = new Uint8Array(N * MAXF), flags = new Uint8Array(N), slope = new Uint8Array(N * MAXF), floorOf = new Array(N);
@@ -124,3 +126,44 @@ function similarity(src, dst) { const n = src.length, ms = [0, 0], md = [0, 0]; 
   const s = Math.hypot(a, b) / ss, th = Math.atan2(b, a), co = Math.cos(th) * s, si = Math.sin(th) * s; let dz = 0; for (let i = 0; i < n; i++) dz += (dst[i][2] - src[i][2] * s) / n;
   const map = (x, y, h) => [md[0] + co * (x - ms[0]) - si * (y - ms[1]), md[1] + si * (x - ms[0]) + co * (y - ms[1]), h * s + dz];
   let err = 0; for (let i = 0; i < n; i++) { const p = map(...src[i]); err += Math.hypot(p[0] - dst[i][0], p[1] - dst[i][1], p[2] - dst[i][2]) / n; } return { s, th, dz, map, err }; }   // (heights count: Nuke's sites are stacked)
+// Thin walls — doors, planks, sandbags, fences: thinner than the rays' spacing, they fell between the four rays (or
+// met only one) and could be walked through (Dust II's long doors, Nuke's roll doors). Every upright face of the solid
+// parts is laid over the columns: where it is thin (solid just behind, open 10 units behind), its column is solid at
+// that height. Thicker walls always meet a ray (they are 8 units apart); this only adds what the rays missed.
+function thinWalls(bsp, parts, spans, { x0, y1, cols, rows, zA, zB, src }) {
+  const F = src ? bsp.source : bsp; if (!F?.faces?.length) return; const P = F.planes, V = F.vertices, add = new Map();
+  const solid = (p, x, y, z) => src ? bsp.solidSpans(p.head, x - p.off[0], y - p.off[1], z - p.off[2] - .5, z - p.off[2] + .5).length > 0 : solidAt(bsp, p.head, x - p.off[0], y - p.off[1], z - p.off[2]);
+  for (const p of parts) { const m = F.models[p.mi]; if (!m) continue;
+    for (let fi = m.firstFace; fi < m.firstFace + m.numFaces; fi++) { const f = F.faces[fi]; if (src && f.disp >= 0) continue;
+      const pl = f.plane * 4, sg = f.side ? -1 : 1, nx = P[pl] * sg, ny = P[pl + 1] * sg, nz = P[pl + 2] * sg; if (Math.abs(nz) > .3) continue;
+      const W = []; for (let i = 0; i < f.numEdges; i++) { const se = F.surfedges[f.firstEdge + i], e = Math.abs(se), v = F.edges[e * 2 + (se < 0 ? 1 : 0)]; W.push([V[v * 3] + p.off[0], V[v * 3 + 1] + p.off[1], V[v * 3 + 2] + p.off[2]]); }
+      if (W.length < 3) continue; const hl = Math.hypot(nx, ny) || 1, hx = -ny / hl, hy = nx / hl;   // along the wall (horizontal), and up
+      let s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity; const ox = W[0][0], oy = W[0][1]; const S = W.map(v => { const sv = (v[0] - ox) * hx + (v[1] - oy) * hy; s0 = Math.min(s0, sv); s1 = Math.max(s1, sv); z0 = Math.min(z0, v[2]); z1 = Math.max(z1, v[2]); return [sv, v[2]]; });
+      if (z1 < zA || z0 > zB || (s1 - s0) * (z1 - z0) < 32) continue;
+      { let thin = false; for (let a = 1; a < 4 && !thin; a++) for (let b = 1; b < 4 && !thin; b++) { const sv = s0 + (s1 - s0) * a / 4, zz = z0 + (z1 - z0) * b / 4; if (inside2(S, sv, zz) && !solid(p, ox + hx * sv - nx * 10, oy + hy * sv - ny * 10, zz)) thin = true; }
+        if (!thin && (s1 - s0) > 24) continue; }   // thick all over (a 3 × 3 look): the rays have it
+      for (let sv = s0 + 2; sv < s1; sv += 8) for (let zz = z0 + 2; zz < z1; zz += 8) { if (!inside2(S, sv, zz)) continue;   // (twice a column across: every column it crosses)
+        const x = ox + hx * sv - nx * 1.5, y = oy + hy * sv - ny * 1.5; if (!solid(p, x, y, zz) || solid(p, ox + hx * sv - nx * 10, oy + hy * sv - ny * 10, zz)) continue;   // solid just behind the face, open 10 behind: a thin wall (the rays, 8 apart, never miss a thicker one)
+        const c = Math.floor((x - x0) / CELL), r = Math.floor((y1 - y) / CELL); if (c < 0 || r < 0 || c >= cols || r >= rows) continue; const i = r * cols + c;
+        let L = add.get(i); if (!L) add.set(i, L = []); L.push([Math.max(z0, zz - 4), Math.min(z1, zz + 4)]); } } }
+  for (const [i, L] of add) { const all = spans[i].concat(L).sort((a, b) => a[0] - b[0]), out = [];
+    for (const [b, t] of all) { const last = out[out.length - 1]; if (last && b - last[1] < 4) last[1] = Math.max(last[1], t); else out.push([Math.floor(b / Q) * Q, Math.round(t / Q) * Q]); }
+    spans[i] = out; }
+}
+function inside2(W, x, y) { let c = false; for (let i = 0, j = W.length - 1; i < W.length; j = i++) { const a = W[i], b = W[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
+// Counter-Strike 1.6's invisible player clips (the map's edges, roofs, smoothing round props: drawn hull 0 doesn't
+// have them; they were walked through). Hull 1 is the world grown by the player's box (16 units round, 36 up and
+// down); shrunk back, a column is a clip where hull 1 is solid at its centre and its four neighbours' (16 out), from
+// 36 above the hull's bottom to 36 below its top.
+function playerClips(bsp, spans, { x0, y1, cols, rows, zA, zB }) {
+  const head = bsp.models[0].hulls?.[1]; if (!bsp.clipnodes?.length || head == null) return;
+  const cut = (A, B) => { const out = []; let i = 0, j = 0; while (i < A.length && j < B.length) { const lo = Math.max(A[i][0], B[j][0]), hi = Math.min(A[i][1], B[j][1]); if (hi > lo) out.push([lo, hi]); if (A[i][1] < B[j][1]) i++; else j++; } return out; };
+  const H = new Array(cols * rows), FULL = [[zA - 40, zB + 40]];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const i = r * cols + c, S0 = spans[i]; H[i] = S0.length === 1 && S0[0][0] <= zA + 2 && S0[0][1] >= zB - 2 ? FULL : hullSpans(bsp, head, x0 + (c + .5) * CELL, y1 - (r + .5) * CELL, zA - 40, zB + 40); }   // once per column (solid top to bottom: outside the map, no walk)
+  for (let r = 1; r < rows - 1; r++) for (let c = 1; c < cols - 1; c++) { let S = H[r * cols + c]; if (!S.length || S === FULL) continue;
+    for (const j of [r * cols + c + 1, r * cols + c - 1, (r + 1) * cols + c, (r - 1) * cols + c]) { S = cut(S, H[j]); if (!S.length) break; }   // the four neighbours (16 out)
+    const add = []; for (const [b, t] of S) { const lo = b + 36, hi = t - 36; if (hi - lo >= 2 && hi > zA && lo < zB) add.push([Math.floor(lo / Q) * Q, Math.round(hi / Q) * Q]); }
+    if (!add.length) continue; const i = r * cols + c, all = spans[i].concat(add).sort((a, b) => a[0] - b[0]), out = [];
+    for (const [b, t] of all) { const last = out[out.length - 1]; if (last && b - last[1] < 4) last[1] = Math.max(last[1], t); else out.push([b, t]); }
+    spans[i] = out; }
+}

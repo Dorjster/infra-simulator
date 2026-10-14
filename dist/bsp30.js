@@ -65,6 +65,17 @@ export function solidSpans(bsp, head, x, y, z0, z1) {
     const c = leafContents[-(n + 1)]; if (c === CONTENTS.SOLID || c === CONTENTS.SKY) { const last = out[out.length - 1]; if (last && Math.abs(last[0] - za) < .01) last[0] = zb; else out.push([zb, za]); } };
   walk(head, z1, z0); return out.reverse();
 }
+// The same for a clip hull (clipnodes: hull 1 is the standing player's box, the world grown by 16 units round and 36
+// up and down): where a player's centre cannot be. It holds the invisible player clips the drawn hull doesn't.
+export function hullSpans(bsp, head, x, y, z0, z1) {
+  const { planes, clipnodes } = bsp, out = []; if (!clipnodes || head == null) return out;
+  const walk = (n, za, zb) => {
+    while (n >= 0) { const p = clipnodes[n * 3], nx = planes[p * 4], ny = planes[p * 4 + 1], nz = planes[p * 4 + 2], d = planes[p * 4 + 3], base = nx * x + ny * y - d, da = base + nz * za, db = base + nz * zb;
+      if (da >= 0 && db >= 0) { n = clipnodes[n * 3 + 1]; continue; } if (da < 0 && db < 0) { n = clipnodes[n * 3 + 2]; continue; }
+      const zm = -base / nz; walk(da >= 0 ? clipnodes[n * 3 + 1] : clipnodes[n * 3 + 2], za, zm); n = db >= 0 ? clipnodes[n * 3 + 1] : clipnodes[n * 3 + 2]; za = zm; }
+    if (n !== CONTENTS.EMPTY && n !== CONTENTS.WATER) { const last = out[out.length - 1]; if (last && Math.abs(last[0] - za) < .01) last[0] = zb; else out.push([zb, za]); } };
+  walk(head, z1, z0); return out.reverse();
+}
 // Is the point solid in the hull under `head`?
 export function solidAt(bsp, head, x, y, z) { const { planes, nodes, leafContents } = bsp; let n = head; while (n >= 0) { const p = nodes[n * 3]; n = planes[p * 4] * x + planes[p * 4 + 1] * y + planes[p * 4 + 2] * z - planes[p * 4 + 3] >= 0 ? nodes[n * 3 + 1] : nodes[n * 3 + 2]; } const c = leafContents[-(n + 1)]; return c === CONTENTS.SOLID || c === CONTENTS.SKY; }
 // Would a standing player (hull 1: 32 × 32 × 72, the point is its centre) be inside something at (x, y, z)? The
