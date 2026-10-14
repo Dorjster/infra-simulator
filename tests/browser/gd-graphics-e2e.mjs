@@ -1,7 +1,7 @@
 // Graphics settings in play (Settings → Graphics): every new setting is on the settings screen, and changing it there
 // takes effect at once in the running game — shadows off / on and their edges, the glow and MSAA (the HDR buffer made
 // or let go), tone mapping and brightness, texture filtering on the map's textures, map detail — with no page errors
-// and no hitch once the menu is closed.
+// the gun hand (left: the first-person view mirrored), and no hitch once the menu is closed.
 //   node tests/browser/gd-graphics-e2e.mjs <repo-root> <out-dir>
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync, mkdirSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 const [root, out] = process.argv.slice(2); mkdirSync(out, { recursive: true });
@@ -31,6 +31,8 @@ await set('filtering', '16'); await p.waitForTimeout(300); const aniso = await p
 check('texture filtering 16× on the map\'s textures', aniso.length > 0 && aniso.every(v => v === 16), aniso.length + ' textures, ' + [...new Set(aniso)].join('/'));
 await set('detail', 'high'); const det = await p.evaluate(async () => (await import('/live-settings.js')).live.detail); check('map detail far: × 1.6 at once', det === 1.6, det);
 await set('rim', 'off'); const rim = await p.evaluate(async () => (await import('/live-settings.js')).live.rim); check('player outline off at once', rim === false);
+await set('gunHand', 'left'); const hand = await p.evaluate(() => { const h = __infra.camera.getObjectByName('gun-hand'); return h ? h.scale.x : null; }); check('gun hand left: the first-person view mirrored at once', hand === -1, hand);
+await set('gunHand', 'right'); check('…and back to the right', await p.evaluate(() => __infra.camera.getObjectByName('gun-hand')?.scale.x) === 1);
 const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('infra-player-preferences'))); check('saved on this computer', saved.shadows === 'high' && saved.tonemap === 'filmic' && saved.filtering === '16' && saved.brightness === 1.3, JSON.stringify(saved));
 await p.evaluate(() => __infra.lab.campaignUI.close()); await p.waitForTimeout(1500);
 const frames = await p.evaluate(() => new Promise(res => { const ts = []; let last = performance.now(); const f = t => { ts.push(t - last); last = t; if (ts.length < 150) requestAnimationFrame(f); else res(ts.slice(5)); }; requestAnimationFrame(f); }));

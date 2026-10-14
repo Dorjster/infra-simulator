@@ -37,6 +37,10 @@ const BASE = { rifle: new THREE.Quaternion(), pistol: new THREE.Quaternion(), sh
 // One-handed items: the left arm hangs relaxed (CS2 shows it open at the bottom left) — upper arm / forearm turns.
 export const LEFT = { relaxed: true, upper: [-.5, 0, 1.2], fore: [0, .3, 0] };   // palm down, open, at the bottom left
 export const FIST = { axis: 'x', sign: 1, angles: [1.0, 1.3, .9], thumb: [.3, .5, .4] };
+// Shorter arms (CS2's view models show little sleeve): each arm's segments × these lengths, the arm's root moved along
+// toward the hand to match, so the hand keeps its place and grip on the gun (the gun hangs off the rig's root, not
+// the hand) — only less arm reaches into the picture.
+export const ARMS = { upper: .75, fore: .65 };
 const loaded = new Map(), ready = new Map();   // pack name → promise · → built arms
 function load(name) {
   if (!loaded.has(name)) loaded.set(name, new GLTFLoader().loadAsync(new URL('./models/fp/' + PACKS[name].url + '/scene.gltf', import.meta.url).href).then(g => { const b = build(name, g); ready.set(name, b); return b; }).catch(() => null));
@@ -136,6 +140,14 @@ function build(name, gltf) {
   // The head bone in the space the correction works in (the rig's parent): rig.matrix × (rig → head).
   const headIn = () => { sc.updateMatrixWorld(true); return new THREE.Matrix4().copy(rig.matrix).multiply(rigInv.copy(rig.matrixWorld).invert().multiply(head.matrixWorld)); };
   if (head) { mixer.clipAction(A.idle).play(); mixer.update(0); root.updateMatrixWorld(true); headRest.copy(headIn()); mixer.stopAllAction(); }   // the head at rest (idle)
+  // The arm chains (DEF-upper_arm → .001 → forearm → .001 → hand), their rest offsets, for ARMS (shortened every frame).
+  const chains = ['L', 'R'].map(sd => { const up = boneOf(new RegExp('^DEF-upper_arm' + sd + '_')), up1 = boneOf(new RegExp('^DEF-upper_arm' + sd + '001')), fo = boneOf(new RegExp('^DEF-forearm' + sd + '_')), fo1 = boneOf(new RegExp('^DEF-forearm' + sd + '001')), hand = boneOf(new RegExp('^DEF-hand' + sd + '_'));   /* (three.js drops the dots from bone names) */
+    return up && up1 && fo && fo1 && hand ? { up, segs: [[up1, 'upper'], [fo, 'upper'], [fo1, 'fore'], [hand, 'fore']].map(([b, k]) => ({ b, k, rest: b.position.clone() })), upRest: up.position.clone(), hand } : null; }).filter(Boolean);
+  const aS = new THREE.Vector3(), aH = new THREE.Vector3();
+  const restArms = () => { for (const c of chains) { c.up.position.copy(c.upRest); for (const g of c.segs) g.b.position.copy(g.rest); } };
+  const shortenArms = () => { if (ARMS.upper === 1 && ARMS.fore === 1) return; for (const c of chains) { c.hand.updateWorldMatrix(true, false); aS.setFromMatrixPosition(c.up.matrixWorld); aH.setFromMatrixPosition(c.hand.matrixWorld);
+      const full = aS.distanceTo(aH); let L0 = 0, L1 = 0; for (const g of c.segs) { const l = g.rest.length(); L0 += l; L1 += l * ARMS[g.k]; g.b.position.copy(g.rest).multiplyScalar(ARMS[g.k]); }
+      if (!full || !L0) continue; aS.sub(aH).multiplyScalar(L1 / L0).add(aH); c.up.position.copy(c.up.parent.worldToLocal(aS)); } };
   const leftArm = boneOf(/^DEF-upper_armL/), leftFore = boneOf(/^DEF-forearmL_/), eu = new THREE.Euler(); let onehand = false, noLeft = false, bobT = 0, bobA = 0;
   let ours = null, oursId = null, cur = null, base = 'idle', oneShotUntil = 0, reloadPlan = null;
   // Reloads: the packs' reload clips lift and tilt the gun toward the face; at our field of view that left the screen.
@@ -169,7 +181,7 @@ function build(name, gltf) {
       const now = performance.now();
       if (reloadPlan) { if (now >= reloadPlan.end) reloadPlan = null; else { const step = [...reloadPlan].reverse().find(s => now >= s[0]); if (step && cur !== act(step[1])) to(step[1], .1, { once: step[1] !== 'reload' || !A.toReload, ms: step[2] }); } }
       if (!reloadPlan && now >= oneShotUntil) { const want = 'idle';   /* CS2: no run / lowered-gun clip while moving, only a small bob (below) */ if (want !== base || (cur && cur.loop === THREE.LoopOnce)) { base = want; to(A[want] ? want : 'idle', .2); } }
-      mixer.update(dt); fixHead(); { let e = 0; if (reloadPlan) { const t = (now - reloadPlan[0][0]) / (reloadPlan.end - reloadPlan[0][0]), ss = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); e = ss(t / .14) * (1 - ss((t - .86) / .14)); } root.position.copy(viewBase).addScaledVector(roff, e); bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); root.position.x += Math.sin(bobT) * .012 * bobA; root.position.y += -Math.abs(Math.cos(bobT)) * .01 * bobA; } if (onehand && leftArm) { if (LEFT.relaxed && !noLeft) { leftArm.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.upper))); if (leftFore) leftFore.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.fore))); } else leftArm.scale.setScalar(.001); leftArm.updateMatrixWorld(true); }
+      restArms(); mixer.update(dt); fixHead(); shortenArms(); { let e = 0; if (reloadPlan) { const t = (now - reloadPlan[0][0]) / (reloadPlan.end - reloadPlan[0][0]), ss = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); e = ss(t / .14) * (1 - ss((t - .86) / .14)); } root.position.copy(viewBase).addScaledVector(roff, e); bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); root.position.x += Math.sin(bobT) * .012 * bobA; root.position.y += -Math.abs(Math.cos(bobT)) * .01 * bobA; } if (onehand && leftArm) { if (LEFT.relaxed && !noLeft) { leftArm.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.upper))); if (leftFore) leftFore.quaternion.multiply(fq.setFromEuler(eu.set(...LEFT.fore))); } else leftArm.scale.setScalar(.001); leftArm.updateMatrixWorld(true); }
       if (fist) { for (const f of fingers) f.b.quaternion.multiply(fq.setFromAxisAngle(AX[FIST.axis], FIST.sign * (f.thumb ? FIST.thumb : FIST.angles)[f.seg])); sc.updateMatrixWorld(true); } follow();
     },
     // Calibration info: the pack gun's muzzle in the bone frame (its forward axis).

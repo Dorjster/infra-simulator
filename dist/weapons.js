@@ -21,6 +21,7 @@ import { audioCtx, outAt } from './spatial-audio.js';
 import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, zoneAt, HIT_GROUPS, isFirearm, sprayAt, moveInaccuracy, pelletPattern, KNIFE, fullAmmo, THROW, RECOIL } from './weapons-data.js';
 import { loadSounds, reloadSound, fx as rec } from './sound-bank.js';
 import { loadFP, fpFor } from './fp-view.js';
+import { live } from './live-settings.js';
 import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT, knifeFor } from './weapon-models.js';
 import { rayBoxes, bulletPath } from './arena-maps.js';
 
@@ -86,13 +87,16 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // them). Same materials and shaders as everywhere else: nothing new to compile when a weapon first appears.
   const vmNear = r => r.getContext().depthRange(0, .01), vmFar = r => r.getContext().depthRange(0, 1);
   const onTop = g => g.traverse(o => { if (o.isMesh || o.isSkinnedMesh) { o.onBeforeRender = vmNear; o.onAfterRender = vmFar; o.frustumCulled = false; o.castShadow = false; } });
+  // Gun hand (Settings → Global Defensive): the whole first-person view mirrored for the left hand, as CS2's cl_righthand.
+  const hand = new THREE.Group(); hand.name = 'gun-hand';
+  const sideView = v => { hand.scale.x = live.leftHand ? -1 : 1; hand.add(v); if (!hand.parent) camera.add(hand); };
   function setView(id, draw = false) {
-    if (view) { camera.remove(view); view = null; }
+    if (view) { view.removeFromParent(); view = null; }
     if (draw && id) { drawAt = now(); drawMs = DRAW_MS[id]; sounds.draw(null, id); }
     fp = null; if (!id) return;
-    const f = fpFor(id); if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); f.hold(id, { draw, drawMs: DRAW_MS[id], model: knifeFor(id, team()) }); onTop(view); camera.add(view); if (!camera.parent) scene.add(camera); return; }
+    const f = fpFor(id); if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); f.hold(id, { draw, drawMs: DRAW_MS[id], model: knifeFor(id, team()) }); onTop(view); sideView(view); if (!camera.parent) scene.add(camera); return; }
     const [x, y, z, sc] = VIEW[id] || VIEW.pistol; const m = weaponModel(knifeFor(id, team()), sc); for (const [ax, r] of VIEW_ROT[id] || VIEW_ROT[weaponById(id)?.model] || []) m.rotateOnWorldAxis(AXES[ax], r);
-    view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; onTop(view); camera.add(view);
+    view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; onTop(view); sideView(view);
     if (!camera.parent) scene.add(camera);
   }
   // Reloads, as CS2: the rounds count only once the new magazine is seated (MAG_IN of the way through); switching
@@ -253,6 +257,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
         rz += up * .62; ry += up * .16; ky += up * .09; kx -= up * .04; kz += pull * .15; rx += pull * .12; }
       // Planting: the bomb is lowered to the ground in front of you while the plant runs.
       plantE += ((current.kind === 'bomb' && planting() ? 1 : 0) - plantE) * Math.min(1, dt * 7); if (plantE > .001) { ky -= plantE * .22; kz -= plantE * .12; kx -= plantE * .1; rx -= plantE * .7; }
+      hand.scale.x = live.leftHand ? -1 : 1;   // (a change in Settings applies at once)
       view.position.set(x + kx, y0 + kick * .05 * k - rl * .35 - dr * .55 + ky + ny, z + kick * .22 * k + dr * .15 + kz + nz);
       view.rotation.set(kick * .35 * k - rl * .6 - dr * .9 + rx + nr, .04 + ry, rl * .4 + dr * .35 + spin + rz);
       // Swings, inspect and planting turn round the hand (not the eye), so the weapon twists in place on screen.
