@@ -74,7 +74,7 @@ msg = arenaApply(g, { type: 'pickup', id: dg.id, swap: true }, 'Bo', P, t + 5200
   // Host: a hit through a crate lands with less damage; through a container it is refused.
   // A crate on Dust II that hides a standing body: shooter and target on the floor either side of it (true-scale map: real floor heights).
   const D2 = ARENA_MAPS.dust2, dboxes = mapBoxes(D2, ARENA.cx, ARENA.cz), fl = (x, z) => D2.nav.floorAt(x - ARENA.cx, z - ARENA.cz);
-  const cr = dboxes.find(b => { if (b.mat !== 'crate' || b.maxX - b.minX > 8 || b.maxZ - b.minZ > 8) return false; const z = (b.minZ + b.maxZ) / 2, fa = fl(b.minX - 4, z), fb = fl(b.maxX + 4, z); return Number.isFinite(fa) && Math.abs(fa - fb) < .5 && b.y1 - fa >= 9; });
+  const cr = dboxes.find(b => { if (b.mat !== 'crate' || b.maxX - b.minX > 8 || b.maxZ - b.minZ > 8) return false; const z = (b.minZ + b.maxZ) / 2, fa = fl(b.minX - 4, z), fb = fl(b.maxX + 4, z); return Number.isFinite(fa) && Math.abs(fa - fb) < .5 && b.y1 - fa >= 10.8; });   // (taller than a standing body at its true size: the head too)
   assert(cr, 'a tall crate on Dust II'); { const z = (cr.minZ + cr.maxZ) / 2, f0 = fl(cr.minX - 4, z), a2 = { x: cr.minX - 4, y: f0 + 7, z, yaw: 0 }, b2 = { x: cr.maxX + 4, y: f0 + 9.7, z, yaw: 0, crouched: false };
     const gw = { levels: {} }; startArena(gw, { map: 'yard', bots: 0 }, 1e10); gw.arena.map = 'dust2'; /* deathmatch rules, Dust II's crates */ arenaApply(gw, { type: 'loadout', primary: 'ak' }, 'Ann', [], 1e10);
     const rr = combatApply(gw, { type: 'hit', target: 'b', weapon: 'ak', zone: 'stomach', n: 5 }, 'Ann', [{ id: 'a', name: 'Ann', pose: { ...a2, y: f0 + 9.7 } }, { id: 'b', name: 'Bo', pose: b2 }], 'a', 1e10 + 10);

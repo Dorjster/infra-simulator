@@ -54,14 +54,16 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   const TONE = { off: THREE.LinearToneMapping, filmic: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping };
   renderer.toneMapping = THREE.LinearToneMapping;
   // Worked out again only when a setting changes (no garbage per frame).
-  let dirty = true, lastPreset = null; addEventListener?.('infra-preferences', () => { dirty = true; });
+  let dirty = true, lastPreset = null, lastBaked = false; addEventListener?.('infra-preferences', () => { dirty = true; });
   function apply() {
     if (!dirty && preset() === lastPreset) return; dirty = false; lastPreset = preset();
     const p = prefs(); G = resolveGraphics(p, lastPreset, software); renderer.toneMappingExposure = G.brightness;
     { const a = anisotropy(p); if (a !== filtering) { const first = !filtering; filtering = a; if (!first) applyFiltering(scene, a); } }   // texture filtering changed: every texture re-sent once
-    const want = [G.shadows, G.edges, G.glow, G.aa, G.tone, reflect()].join('|'); if (want === mode) return; mode = want;
+    // A map whose light is baked (a CS2 map's look, scene.userData.baked) has its shadows in its light and takes no
+    // shadow map: the sun's shadow pass would only cost (players' contact shadows instead).
+    const want = [G.shadows, G.edges, G.glow, G.aa, G.tone, reflect(), !!scene.userData.baked].join('|'); if (want === mode) return; mode = want;
     renderer.toneMapping = TONE[G.tone];
-    shadowOn = G.shadows !== 'off'; fxOn = shadowOn || G.glow; scene.environment = reflect() ? envTexture : null;
+    shadowOn = G.shadows !== 'off' && !scene.userData.baked; fxOn = shadowOn || G.glow; scene.environment = reflect() ? envTexture : null;
     renderer.shadowMap.enabled = shadowOn; renderer.shadowMap.type = G.edges === 'sharp' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap; sun.castShadow = shadowOn;
     AVATAR_SHADOW.visible = !shadowOn;                                                                       // contact shadows only without real ones
     sun.shadow.mapSize.setScalar(shadowSize(!!scene.userData.outdoor)); sun.shadow.map?.dispose(); sun.shadow.map = null; lastOutdoor = undefined;   // (outdoor shadow settings re-applied on the next frame)
@@ -172,6 +174,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     },
   };
   function draw() {
+      if (!!scene.userData.baked !== lastBaked) { lastBaked = !!scene.userData.baked; dirty = true; }   // (entering / leaving a baked map: shadows off / on)
       apply(); frame++; updatePool(performance.now());
       { const O = scene.userData.outdoor || null; if (O !== lastOutdoor) { lastOutdoor = O; sun.color.copy(O ? new THREE.Color(O.sun) : base.sunColor);
           // Outdoors (a Global Defensive map): the shadow box covers what you see around you (buildings cast across the
@@ -182,8 +185,9 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
         sun.intensity = base.sun * (shadowOn ? 1.55 : 1) * (O ? O.sunK : 1); if (hemi) hemi.intensity = base.hemi * (shadowOn ? .72 : 1) * (O ? O.hemiK : 1); }   // more light from the shadow-casting key
       if (jobs) jobs.add('metal-shine', metalShine, 3000); else if (frame % 180 === 2) metalShine();
       if (fxOn && jobs) jobs.add('shadow-flags', () => { if (shadowOn) flagShadows(); if (G.glow) glow(true); }, 2000); else if (fxOn && frame % 120 === 1) { if (shadowOn) flagShadows(); if (G.glow) glow(true); }
-      if (shadowOn) { const O = scene.userData.outdoor, tx = O ? 2 * OUT_BOX / sun.shadow.mapSize.x : 0, snap = v => tx ? Math.round(v / tx) * tx : v;   // whole shadow texels: shadows don't crawl as you move
-        sun.target.position.set(snap(camera.position.x), 0, snap(camera.position.z)); sun.position.copy(sun.target.position).add(SUN_DIR.copy(sunOffset).multiply(O ? OUT_TILT : ONE3).setLength(O ? 260 : LIGHT_DIST)); }   // just under the ceilings, so they don't shade the rooms
+      AVATAR_SHADOW.visible = !shadowOn || !!scene.userData.baked;   // contact shadows without real ones — or on a map whose light is baked (it takes no shadow map)
+      if (shadowOn) { const O = scene.userData.outdoor, tx = O ? 2 * OUT_BOX / sun.shadow.mapSize.x : 0;   // whole shadow texels: shadows don't crawl as you move
+        sun.target.position.set(tx ? Math.round(camera.position.x / tx) * tx : camera.position.x, 0, tx ? Math.round(camera.position.z / tx) * tx : camera.position.z); sun.position.copy(sun.target.position).add(SUN_DIR.copy(sunOffset).multiply(O ? OUT_TILT : ONE3).setLength(O ? 260 : LIGHT_DIST)); }   // just under the ceilings, so they don't shade the rooms
       if (composer) {
         const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
         composer.render();

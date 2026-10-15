@@ -1,5 +1,5 @@
-// Global Defensive grenades in a real browser (solo deathmatch): holding the button does not throw (the arc preview
-// shows), releasing throws exactly one; full / medium / short throws land at clearly different distances; the smoke
+// Global Defensive grenades in a real browser (solo deathmatch): holding the button does not throw (no path drawn — CS2
+// shows none in a match; practice does), releasing throws exactly one; full / medium / short throws land at clearly different distances; the smoke
 // is a volume you can't see through; the molotov fire covers its area; a flashbang you face whites out the screen and
 // wears off; the HE explodes; no frame over 50 ms; no page errors.   node tests/browser/gd-nades-e2e.mjs <repo> <out>
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync, mkdirSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
@@ -39,11 +39,11 @@ check('a quick click throws once the pin is out (CS2)', (await nades()).length =
 await buy('smoke'); await p.waitForTimeout(300); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150); const n1 = (await nades()).length;
 await p.evaluate(() => __infra.lab.pistol.button(0, true)); await p.waitForTimeout(600); await p.evaluate(() => dispatchEvent(new Event('blur'))); await p.waitForTimeout(100); await p.evaluate(() => __infra.lab.pistol.button(0, false)); await p.waitForTimeout(900);
 check('losing focus while holding cancels (no throw on release)', (await nades()).length === n1);
-// Hold: no throw, the preview shows; release: one throw.
+// Hold: no throw, no path drawn (a match: as CS2); release: one throw.
 await buy('smoke'); await p.evaluate(() => __infra.lab.enter()); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(200);
 const before = new Set((await nades()).map(x => x.id)), nh = before.size; await p.evaluate(() => __infra.lab.pistol.button(0, true)); await p.waitForTimeout(1200);
 check('holding the button: nothing thrown yet', (await nades()).length === nh && await p.evaluate(() => __infra.lab.pistol.nade?.state === 'held'));
-check('…and the trajectory preview is shown', await p.evaluate(() => { let v = false; __infra.scene.getObjectByName('nades').traverse(o => { if (o.isLine && o.visible) v = true; }); return v; }));
+check('…and no trajectory line is drawn (practice only)', await p.evaluate(() => { let v = false; __infra.scene.getObjectByName('nades').traverse(o => { if (o.isLine && o.visible) v = true; }); return !v; }));
 await snap({ path: path.join(out, 'nade-preview.png') });
 await p.evaluate(() => __infra.lab.pistol.button(0, false)); await p.waitForTimeout(700);
 check('release: exactly one grenade thrown', (await nades()).length === nh + 1 && await p.evaluate(() => !(__infra.lab.world.operations.game.arena.loadout.nader?.nades || []).length));
@@ -60,7 +60,7 @@ const throwSmoke = async (btns) => { await buy('smoke'); await p.keyboard.press(
 const s2 = await throwSmoke([0, 2]), s3 = await throwSmoke([2]);
 const d2 = s2 && Math.hypot(s2.x - lane.x, s2.z - lane.z), d3 = s3 && Math.hypot(s3.x - lane.x, s3.z - lane.z);
 check('full ≫ medium ≫ short (left / both / right)', (d1 > d2 * 1.4 || d1 > lane.L - 30) && d2 > d3 * 1.5 && d3 > 8, [d1, d2, d3].map(v => v?.toFixed(0)).join(' / '));
-check('a full throw goes far (most of a lane)', d1 > Math.min(150, lane.L - 10), d1?.toFixed(0) + ' of ' + lane.L);
+check('a full throw goes far (most of a lane)', d1 > Math.min(135, lane.L - 10), d1?.toFixed(0) + ' of ' + lane.L);   // (CS2, level from the eye: ~730 u in the air + bounces at 45 % ≈ 970 u ≈ 150 here)
 // Molotov: the fire covers its area (many burning cells).
 await p.waitForFunction(() => !(__infra.lab.world.operations.game.combat.nades || []).some(n => n.phase === 'smoke'), null, { timeout: 30000 }).catch(() => {});   // a molotov into smoke fizzles (CS2): wait for the lane to clear
 await buy('molotov'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150);   // a medium throw well away from us (standing in it would burn us)

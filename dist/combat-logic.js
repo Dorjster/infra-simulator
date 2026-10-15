@@ -8,7 +8,7 @@
 // shot.n, and every hit carries its shot number); the host takes one round per new shot number, in order, whichever
 // arrives first. A hit for a shot fired with an empty magazine is refused. A reload (pose shot.r) only moves rounds
 // from the reserve into the magazine. Clients show their own count and take the host's whenever they are in sync.
-import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP } from './weapons-data.js';
+import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H } from './weapons-data.js';
 import { defuseDamage, defuseKill } from './arena-defuse.js';
 import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
@@ -24,7 +24,7 @@ export const isDown = (game, name, now = Date.now()) => (game.combat?.down?.[key
 // knife, grenades, the bomb.
 const DARJA = n => /^darja$/.test(key(n));
 export const teamPistol = (game, name) => defaultPistol(game?.combat?.d?.teams?.[key(name)] || null);
-export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary === undefined ? teamPistol(game, name) : l.secondary, DARJA(name) ? 'karambit' : 'knife', ...new Set(Array.isArray(l.nades) ? l.nades : []), game.combat?.d?.bomb?.carrier === key(name) ? 'c4' : null].filter(Boolean); }
+export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary === undefined ? teamPistol(game, name) : l.secondary, (DARJA(name) && !['default', 'butterfly', 'stiletto', 'm9'].includes(game.arena?.knives?.[key(name)])) || game.arena?.knives?.[key(name)] === 'karambit' ? 'karambit' : 'knife',   /* (Darja's karambit; or one she equipped on you) */ ...new Set(Array.isArray(l.nades) ? l.nades : []), game.combat?.d?.bomb?.carrier === key(name) ? 'c4' : null].filter(Boolean); }
 export const ownedWeapons = (game, name) => game.mode === 'arena' ? arenaArsenalOf(game, name) : [];
 // Guns exist only in Global Defensive (the arena): never in Campaign, Free Build, Challenges or Payday.
 export const combatOn = game => game.mode === 'arena';
@@ -101,14 +101,14 @@ const damageCap = wpn => Math.round((wpn.dmg || 30) * 4);
 
 // Line of fire: shooter's eye to the target point is clear of the map's walls and crates (3D). Lenient: refused only
 // when the head, chest and the zone hit are all hidden (positions are a few frames old on the host).
-const ZONE_Y = { head: 9.6, chest: 7.6, stomach: 5.6, legs: 2.6 };
+const ZONE_Y = { head: 10.2, chest: 7.9, stomach: 5.8, legs: 2.7 };   // (the middle of each zone: weapons-data.js zoneAt)
 let boxCache = { map: null, boxes: [] };
 const boxesOf = game => { const m = game.arena?.map; if (!m || !ARENA_MAPS[m]) return []; if (boxCache.map !== m) boxCache = { map: m, boxes: mapBoxes(ARENA_MAPS[m], ARENA.cx, ARENA.cz) }; return boxCache.boxes; };
 // Returns the damage multiplier: 1 in the open, less through crates / thin walls (wallbang, `pen` = the gun's
 // penetration budget), 0 when blocked. The best of the zone hit, the head and the chest.
 export function lineOfFire(game, from, to, zone = 'chest', pen = 0) {
   const boxes = boxesOf(game); if (!boxes.length || !from || !to) return 1; const feet = Math.max(0, (to.y ?? EYE) - (to.crouched ? 5.9 : EYE)), ey = from.y ?? EYE;
-  let best = 0; for (const z of [zone, 'head', 'chest']) { const tx = to.x, ty = feet + (ZONE_Y[z] ?? 7) * (to.crouched ? .62 : 1), tz = to.z, dx = tx - from.x, dy = ty - ey, dz = tz - from.z, L = Math.hypot(dx, dy, dz) || 1e-6;
+  let best = 0; for (const z of [zone, 'head', 'chest']) { const tx = to.x, ty = feet + (ZONE_Y[z] ?? 7) * (to.crouched ? CROUCH_H : 1), tz = to.z, dx = tx - from.x, dy = ty - ey, dz = tz - from.z, L = Math.hypot(dx, dy, dz) || 1e-6;
     const f = pen > 0 ? bulletPath(boxes, from.x, ey, from.z, dx / L, dy / L, dz / L, L + .01, pen).factor(L) : segmentClear(boxes, from.x, ey, from.z, tx, ty, tz) ? 1 : 0; if (f > best) best = f; if (best >= 1) break; }
   return best;
 }

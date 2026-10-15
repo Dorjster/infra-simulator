@@ -4,13 +4,13 @@
 // one (else the built-in soldiers, gd-soldiers.js). Never shipped: the models are Valve's.
 // The pose is made here from the same state the soldiers get (speed, crouch, holding a gun, reload / throw, dead):
 // legs and arms by two-bone IK (feet planted, knees bending as the body crouches; both hands on the gun), the spine
-// leaning in. Hit boxes come from the pose, never from the model: the agent is scaled so its head starts where the
-// head zone does (HEAD_Y) and drops by the crouch's 18 HU, like the capsule. Allocation-free per frame.
+// leaning in. Hit boxes come from the pose, never from the model: the agent stands at its true size (CS2's 72 u, the
+// capsule's height; its head where the head zone is, weapons-data.js) and drops as the capsule does crouched. Allocation-free per frame.
 import * as THREE from './three.module.js';
 import { GLTFLoader } from './post/GLTFLoader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { weaponModel, knifeFor, MUZZLE } from './weapon-models.js';
-import { weaponById, HEAD_Y } from './weapons-data.js';
+import { weaponById } from './weapons-data.js';
 import { addRim, rimFor } from './rim-light.js';
 import { live } from './live-settings.js';
 import { fitImage, anisotropy } from './texture-quality.js';
@@ -18,9 +18,18 @@ import { fitImage, anisotropy } from './texture-quality.js';
 const templates = {}; let loading = null;
 // Load the imported agents (once): resolves to the sides that have one.
 export function loadAgents() {
-  return loading ??= userAssets().then(ua => Promise.all(Object.entries(ua.models.agents || {}).map(([side, a]) =>
-    new GLTFLoader().loadAsync(userAssetURL(ua, a.file)).then(async g => { await fitTextures(g.scene); templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))))).then(() => Object.keys(templates));
+  return loading ??= userAssets().then(ua => Promise.all([...Object.entries(ua.models.agents || {}).map(([side, a]) =>
+    new GLTFLoader().loadAsync(userAssetURL(ua, a.file)).then(async g => { await fitTextures(g.scene); templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))),
+    ua.models.agentAnims ? new GLTFLoader().loadAsync(userAssetURL(ua, ua.models.agentAnims.file)).then(g => { CLIPS = splitClips(g.animations); }, e => console.warn('agent animations', e?.message)) : null])).then(() => Object.keys(templates));
 }
+// CS2's own third-person animations (one file for both sides, user-assets: models.agentAnims — CS2's world-model clips,
+// the agents' own bone names; ~/CS2-extract/build/agent_anims.py). Each clip in two halves: the legs and hips (walking,
+// running, crouching: lower) and the chest, arms and hands (the gun's own hold, its reload, shot, a throw: upper), so the
+// legs can walk while the arms do something else, as CS2's animation graph layers them.
+let CLIPS = null;
+const UPPER = /^(spine_[123]|neck_|head_|clavicle_|arm_|hand_|finger_|wpn|weapon|eye|jiggle)/i;
+function splitClips(list) { const m = new Map(); for (const c of list) { const up = [], lo = []; for (const t of c.tracks) (UPPER.test(t.name.split('.')[0]) ? up : lo).push(t);
+  m.set(c.name, { full: c, upper: new THREE.AnimationClip(c.name + '#up', c.duration, up), lower: new THREE.AnimationClip(c.name + '#lo', c.duration, lo) }); } return m; }
 export const hasAgent = side => !!templates[side];
 // Its pictures at the size Settings → Texture quality asks for (stored at 2048), filtered as set.
 async function fitTextures(root) { const ts = new Set(); root.traverse(o => { if (o.isMesh) for (const m of [].concat(o.material)) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) if (m[k]) ts.add(m[k]); });
@@ -32,7 +41,7 @@ const FINGERS = ['index', 'middle', 'ring', 'pinky', 'thumb'].flatMap(f => [0, 1
 const POSED0 = ['pelvis', 'spine_0', 'spine_1', 'spine_2', 'spine_3', 'neck_0', 'head_0', 'clavicle_l', 'clavicle_r', 'arm_upper_l', 'arm_upper_r', 'arm_lower_l', 'arm_lower_r', 'hand_l', 'hand_r', 'leg_upper_l', 'leg_upper_r', 'leg_lower_l', 'leg_lower_r', 'ankle_l', 'ankle_r'], TWIST = ['arm_lower_l_twist', 'arm_lower_l_twist1', 'arm_lower_r_twist', 'arm_lower_r_twist1'], POSED = [...POSED0, ...TWIST, ...FINGERS];
 // Rest measurements of a template (model space, metres): bone positions, limb lengths, the scale to game units.
 function prepare(scene) {
-  scene.updateMatrixWorld(true); const bones = {}; scene.traverse(o => { if (o.isBone && !bones[o.name]) bones[o.name] = o; if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false; o.geometry.userData.shared = true; for (const m of [].concat(o.material)) m.userData.shared = true; } });
+  scene.updateMatrixWorld(true); const bones = {}; scene.traverse(o => { if (o.isBone && !bones[o.name.toLowerCase()]) bones[o.name.toLowerCase()] = o;   /* (either case: CS2 names them _L / _R) */ if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false; o.geometry.userData.shared = true; for (const m of [].concat(o.material)) m.userData.shared = true; } });
   const at = n => bones[n].getWorldPosition(new THREE.Vector3()), P = {}; for (const n of POSED0) if (bones[n]) P[n] = at(n); else throw Error('agent without bone ' + n);
   const len = (a, b) => P[a].distanceTo(P[b]);
   // Each hand's own frame (from its finger bones): toward the knuckles (d), the palm's facing (n, the side the thumb
@@ -40,7 +49,7 @@ function prepare(scene) {
   const hands = {}; for (const sd of ['l', 'r']) { const q = bones['hand_' + sd].getWorldQuaternion(new THREE.Quaternion()).invert(), p0 = at('hand_' + sd), loc = n => at(n).sub(p0).applyQuaternion(q);
     const knuckle = loc('finger_middle_0_' + sd), d = knuckle.clone().normalize(), across = loc('finger_index_0_' + sd).sub(loc('finger_pinky_0_' + sd)), n = new THREE.Vector3().crossVectors(d, across).normalize();
     if (n.dot(loc('finger_thumb_1_' + sd)) < 0) n.negate(); n.addScaledVector(d, -n.dot(d)).normalize(); hands[sd] = { d, n, m: new THREE.Vector3().crossVectors(d, n), palm: knuckle.length() }; }
-  return { scene, P, hands, k: HEAD_Y / P.head_0.y, arm: [len('arm_upper_l', 'arm_lower_l'), len('arm_lower_l', 'hand_l')], leg: [len('leg_upper_l', 'leg_lower_l'), len('leg_lower_l', 'ankle_l')] };
+  return { scene, P, hands, k: 100 / 16.5,   /* true size: the models are in metres, a game unit is 16.5 cm (CS2's agents stand 72 u, the hit capsule's height) */ arm: [len('arm_upper_l', 'arm_lower_l'), len('arm_lower_l', 'hand_l')], leg: [len('leg_upper_l', 'leg_lower_l'), len('leg_lower_l', 'ankle_l')] };
 }
 // A copy with its own bones (meshes, materials and pictures shared).
 function cloneSkinned(src) {
@@ -94,12 +103,13 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   const T = templates[team]; if (!T) return null;
   const g = new THREE.Group(), fallG = new THREE.Group(), face = new THREE.Group(), model = new THREE.Group(), body = cloneSkinned(T.scene);
   g.add(fallG); fallG.add(face); face.rotation.y = Math.PI; face.add(model); model.scale.setScalar(T.k); model.add(body);   // the avatar convention: facing −z in g
-  const B = {}; body.traverse(o => { if (o.isBone && POSED.includes(o.name) && !B[o.name]) B[o.name] = o; });
+  const B = {}; body.traverse(o => { const n = o.name.toLowerCase(); if (o.isBone && POSED.includes(n) && !B[n]) B[n] = o; });
   const own = [], rim = { value: rimFor(1) }; if (lightAt) body.traverse(o => { if (o.isMesh) { o.material = [].concat(o.material).map(m => { const c = addRim(m.clone()); c.userData = { rim }; own.push(c); return c; }); if (o.material.length === 1) o.material = o.material[0]; } });
   let shade = 1, shadeAt = 0; const feetW = new THREE.Vector3();
   const rest = POSED.filter(n => B[n]).map(n => [B[n], B[n].position.clone(), B[n].quaternion.clone()]), fingers = FINGERS.filter(n => B[n]).map(n => [B[n], /thumb/.test(n), +n.split('_')[2], n.endsWith('_l')]), curlAx = new THREE.Vector3(), curlQ = new THREE.Quaternion(), ankleRest = { l: new THREE.Quaternion(), r: new THREE.Quaternion() };
   g.updateMatrixWorld(true); for (const s of ['l', 'r']) { B['ankle_' + s].getWorldQuaternion(ankleRest[s]); model.getWorldQuaternion(q1); ankleRest[s].premultiply(q1.invert()); }   // feet flat: their rotation in model space
   const holder = new THREE.Group(); holder.scale.setScalar(1 / T.k); holder.rotation.y = Math.PI; model.add(holder);   // the gun, in game units, muzzle → +z
+  const A = CLIPS ? animator(body, T) : null;   // CS2's own clips when the room has them; else posed here (below)
   let gun = null, gunId = null, kind = 'none', fall = 0, phase = 0, stock = .3, reachFwd = .6; const st = { speed: 0, crouch: 0, gun: 0, reload: 0, throwA: 0 };
   const side = T.P.arm_upper_r.x < 0 ? -1 : 1;   // which way (model x) the right shoulder is
   const M = (x, y, z, out) => model.localToWorld(out.set(x, y, z));   // model space (metres) → world
@@ -107,9 +117,9 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   const dR = new THREE.Vector3(), nR = new THREE.Vector3(), dL = new THREE.Vector3(), nL = new THREE.Vector3(), w1 = new THREE.Vector3(), w2 = new THREE.Vector3(), qm = new THREE.Quaternion();
   const shR = new THREE.Vector3(), shL = new THREE.Vector3(), hR = new THREE.Vector3(), hL = new THREE.Vector3(), poleW = new THREE.Vector3(), fwdW = new THREE.Vector3(), rightW = new THREE.Vector3(), upW = new THREE.Vector3(), footW = new THREE.Vector3();
   function setWeapon(id) {
-    id = id ? knifeFor(id, team) : null; if (id === gunId) return; gunId = id; if (gun) { holder.remove(gun); gun = null; } if (!id) { kind = 'none'; return; }
+    id = id ? knifeFor(id, team) : null; if (id === gunId) return; gunId = id; if (gun) { gun.removeFromParent(); gun = null; } if (!id) { kind = 'none'; A?.setGun(null, 'none'); return; }
     const w = weaponById(id === 'knife-t' ? 'knife' : id); kind = /knife|karambit/.test(id) ? 'knife' : ['he', 'flash', 'smoke', 'molotov', 'c4', 'incgrenade', 'decoy'].includes(id) ? 'item' : w?.kind === 'pistol' ? 'pistol' : 'rifle';
-    gun = weaponModel(id, 1); gun.traverse(o => { if (o.isMesh) o.castShadow = true; }); holder.add(gun);
+    gun = weaponModel(id, 1); gun.traverse(o => { if (o.isMesh) o.castShadow = true; }); (A ? A.carry : holder).add(gun); A?.setGun(id, kind);
     { const box = new THREE.Box3().setFromObject(gun); stock = Math.max(.12, box.max.z / T.k); reachFwd = Math.max(.1, -box.min.z / T.k); }   // grip → butt and grip → muzzle, metres
   }
   function update(dt, s = {}) {
@@ -117,6 +127,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     const k = Math.min(1, dt * 10); st.speed += ((s.speed || 0) - st.speed) * Math.min(1, dt * 8); st.crouch += ((s.crouch ? 1 : 0) - st.crouch) * k; st.gun += ((s.aim && !s.dead ? 1 : 0) - st.gun) * k;
     st.reload += ((s.act === 'reload' ? 1 : 0) - st.reload) * Math.min(1, dt * 9); st.throwA += ((s.act === 'throw' ? 1 : 0) - st.throwA) * Math.min(1, dt * 14);
     fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); fallG.rotation.x = -fall * Math.PI / 2; fallG.position.y = fall * 1.3;
+    if (A) { A.update(dt, s, g); return; }   // (the clips pose it)
     const P = T.P, vm = st.speed / T.k, moving = Math.min(1, vm / 2), cr = st.crouch;   // vm: metres a second
     phase = (phase + dt * Math.PI * 2 * vm / 2.6) % (Math.PI * 2);
     for (const [b, p, q] of rest) { b.position.copy(p); b.quaternion.copy(q); } g.updateMatrixWorld(true); const ws = model.getWorldScale(v4).x;
@@ -170,6 +181,58 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     const gripR = .35 + .65 * palm, gripL = .35 + .65 * two; curlAx.set(CURL.axis === 'x' ? 1 : 0, CURL.axis === 'y' ? 1 : 0, CURL.axis === 'z' ? 1 : 0);
     for (const [b, thumb, seg, left] of fingers) { curlQ.setFromAxisAngle(curlAx, CURL.sign * (thumb ? CURL.thumb : CURL.fingers)[seg] * (left ? gripL : gripR)); b.quaternion.multiply(curlQ); }
   }
-  function dispose() { g.removeFromParent(); if (gun) holder.remove(gun); for (const m of own) m.dispose(); }
+  function dispose() { g.removeFromParent(); if (gun) gun.removeFromParent(); A?.mixer.stopAllAction(); for (const m of own) m.dispose(); }
   return { g, team, update, setWeapon, dispose };
+}
+// The animated agent (CS2's clips; see CLIPS): legs from the walking / running / crouching clips of the gun's class
+// (rifle, pistol, knife), blended by the speed and the direction moved relative to the facing (CS2's eight
+// directions), their time kept in step with the feet; the upper body in the gun's own hold, and a reload, a shot, a
+// throw or a knife swing played over it once; a plant or a defuse moves the whole body. The gun rides CS2's weapon
+// bone (wpn). Allocation-free per frame.
+const DIR8 = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'], U = 2.54 / 16.5;
+const WALK = 130 * U, RUN = 250 * U, CROUCH = 85 * U;   // CS2's speeds (u/s) in game units: the clips' own pace
+const NADE_IDS = new Set(['he', 'flash', 'smoke', 'molotov', 'incgrenade', 'decoy']);
+const fq = new THREE.Quaternion(), fv = new THREE.Vector3();
+function animator(body, T) {
+  const mixer = new THREE.AnimationMixer(body), acts = new Map();
+  const get = (name, part) => { const c = CLIPS.get(name); if (!c) return null; const k = name + '|' + part; let a = acts.get(k); if (!a) { a = mixer.clipAction(c[part]); a.enabled = true; a.setEffectiveWeight(0); a.play(); acts.set(k, a); } return a; };
+  const loco = {}; for (const cls of ['rifle', 'pistol', 'knife']) { loco[cls] = { idle: get(cls + '/idle', 'lower'), idleC: get(cls + '/idle_crouch', 'lower'), walk: DIR8.map(d => get(`${cls}/walk_${d}`, 'lower')), run: DIR8.map(d => get(`${cls}/run_${d}`, 'lower')), crouch: DIR8.map(d => get(`${cls}/crouch_${d}`, 'lower')) };
+    for (const a of [loco[cls].idle, loco[cls].idleC, ...loco[cls].walk, ...loco[cls].run, ...loco[cls].crouch]) if (a) a.timeScale = 0; }   // (time set here, in step with the feet)
+  const all = Object.values(loco).flatMap(L => [L.idle, L.idleC, ...L.walk, ...L.run, ...L.crouch]).filter(Boolean);
+  let phase = 0, hold = null, holdC = null, one = null, oneT = 0, oneFull = null, lastAct = null, lastShot = 0, gid = null, cls = 'rifle', cr = 0;
+  const wpn = body.getObjectByName('wpn'), carry = new THREE.Group(); if (wpn) { wpn.add(carry); carry.scale.setScalar(1 / T.k); carry.rotation.set(0, Math.PI / 2, 0); }   // the gun in game units, muzzle → +z, along the bone's x
+  function setGun(id, kind) {   // which clips: the gun's own (ak, m4, …), the knife's, a grenade's, the bomb's
+    gid = !id ? null : /knife|karambit/.test(id) ? 'knife' : NADE_IDS.has(id) ? 'nade' : id === 'c4' ? 'c4' : id;
+    cls = kind === 'pistol' ? 'pistol' : kind === 'rifle' ? 'rifle' : 'knife';
+    const h = gid && (CLIPS.has(gid + '/hold') ? gid : cls === 'rifle' ? 'ak' : cls === 'pistol' ? 'pistol' : 'knife');
+    if (hold) hold.setEffectiveWeight(0); if (holdC) holdC.setEffectiveWeight(0);
+    hold = h ? get(h + '/hold', 'upper') : get(cls + '/idle', 'upper'); holdC = h ? get(h + '/hold_crouch', 'upper') || hold : get(cls + '/idle_crouch', 'upper') || hold; }
+  function play(name, full = false) { const a = get(name, 'upper'); if (!a) return; if (one && one !== a) one.setEffectiveWeight(0); one = a; a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.timeScale = 1; oneT = 0;
+    if (oneFull) oneFull.setEffectiveWeight(0); oneFull = full ? get(name, 'lower') : null; if (oneFull) { oneFull.reset(); oneFull.setLoop(THREE.LoopOnce, 1); oneFull.clampWhenFinished = true; oneFull.timeScale = 1; } }
+  function update(dt, s, g) {
+    // Moving which way, relative to where the agent faces (−z in g)?
+    const sp = s.speed || 0; g.getWorldQuaternion(fq); fv.set(0, 0, -1).applyQuaternion(fq);
+    const fwd = (s.vx || 0) * fv.x + (s.vz || 0) * fv.z, right = -(s.vx || 0) * fv.z + (s.vz || 0) * fv.x, dirA = Math.atan2(right, fwd);
+    let k = (dirA / (Math.PI / 4) + 8) % 8, i0 = Math.floor(k) % 8, i1 = (i0 + 1) % 8, f = k - Math.floor(k); if (!(sp > .5)) { i0 = 0; i1 = 1; f = 0; }
+    cr += ((s.crouch ? 1 : 0) - cr) * Math.min(1, dt * 10); const moving = Math.min(1, sp / 4), run = Math.min(1, Math.max(0, (sp - WALK) / (RUN - WALK)));
+    // In step: the walk at its pace, the run at its own, a crouch walk at its; the phase is shared, so blends don't slide.
+    const L = loco[cls] || loco.rifle, dw = L.walk[0]?.getClip().duration || 1, dr = L.run[0]?.getClip().duration || 1, dc = L.crouch[0]?.getClip().duration || 1;
+    const rate = cr > .5 ? sp / (CROUCH * dc) : (1 - run) * sp / (WALK * dw) + run * sp / (RUN * dr); phase = (phase + dt * rate) % 1;
+    // A plant / defuse / reload / throw / shot / swing starts once, as it happens.
+    const act = s.act || null; if (act !== lastAct) { lastAct = act;
+      if (act === 'reload') play((CLIPS.has(gid + '/reload') ? gid : cls === 'pistol' ? 'pistol' : 'ak') + (cr > .5 && CLIPS.has(gid + '/reload_crouch') ? '/reload_crouch' : '/reload'));
+      else if (act === 'throw') play('nade/throw'); else if (act === 'plant') play(cr > .5 ? 'c4/plant_crouch' : 'c4/plant', true); else if (act === 'defuse') play(cr > .5 ? 'defuse/enter_crouch' : 'defuse/enter', true); }
+    if (s.shotAt && s.shotAt !== lastShot) { lastShot = s.shotAt; if (!one || oneT > .2) play(gid === 'knife' ? 'knife/swing' : (CLIPS.has(gid + '/shoot') ? gid : cls === 'pistol' ? 'pistol' : 'ak') + '/shoot'); }
+    let ow = 0; if (one) { oneT += dt; const D = one.getClip().duration; ow = Math.min(1, oneT / .08, (D - oneT) / .15); if (oneT >= D) { if (lastAct === 'defuse' && one.getClip().name.startsWith('defuse/enter')) play(cr > .5 ? 'defuse/loop_crouch' : 'defuse/loop', true); else { one.setEffectiveWeight(0); one = null; if (oneFull) { oneFull.setEffectiveWeight(0); oneFull = null; } ow = 0; } } }
+    if (one) one.setEffectiveWeight(ow); const fw = oneFull ? ow : 0; if (oneFull) oneFull.setEffectiveWeight(fw);
+    // Legs: idle ↔ (walk ↔ run) or crouch idle ↔ crouch walk, between the two nearest of the eight directions.
+    for (const a of all) a.setEffectiveWeight(0);
+    const lw = 1 - fw, set = (list, w) => { if (w <= 0) return; const a0 = list[i0], a1 = list[i1]; if (a0) { a0.setEffectiveWeight(w * (1 - f)); a0.time = phase * a0.getClip().duration; } if (a1) { a1.setEffectiveWeight(w * f); a1.time = phase * a1.getClip().duration; } };
+    if (L.idle) L.idle.setEffectiveWeight(lw * (1 - moving) * (1 - cr)); if (L.idleC) L.idleC.setEffectiveWeight(lw * (1 - moving) * cr);
+    set(L.walk, lw * moving * (1 - cr) * (1 - run)); set(L.run, lw * moving * (1 - cr) * run); set(L.crouch, lw * moving * cr);
+    // Upper body: the gun's hold (crouched: its crouched hold), under whatever plays once.
+    if (hold) hold.setEffectiveWeight((1 - ow) * (holdC === hold ? 1 : 1 - cr)); if (holdC && holdC !== hold) holdC.setEffectiveWeight((1 - ow) * cr);
+    mixer.update(s.dead ? 0 : dt);
+  }
+  return { mixer, update, setGun, carry };
 }

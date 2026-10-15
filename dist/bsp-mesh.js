@@ -24,10 +24,13 @@ const DRAWN = /^func_(wall|wall_toggle|breakable|door|door_rotating|illusionary|
 
 function releaseArray() { this.array = null; }
 
-export function buildBspMeshes(bsp, { toGame, lightScale = 1.25, lightGamma = .6 } = {}) {
+export function buildBspMeshes(bsp, { toGame, lightScale = 1.25, lightGamma = .6, movers = [] } = {}) {
+  // Doors and breakables (bsp-map.js movers) get meshes of their own: a group per mover, a rotating door's about its
+  // hinge (the group sits on it), so it can swing, slide or vanish (arena-scene.js).
+  const moverOf = new Map(movers.map((m, id) => [m.e, id]));
   // 1. Which faces, with which entity's render settings (rendermode 2 / 3 / 5: see-through by renderamt; 4: alpha test).
-  const items = []; const addModel = (mi, ent) => { const m = bsp.models[mi]; if (!m) return; for (let f = m.firstFace; f < m.firstFace + m.numFaces; f++) items.push({ f, ent }); };
-  addModel(0, null); for (const e of bsp.entities) { const mi = modelOf(e); if (mi > 0 && DRAWN.test(e.classname || '')) addModel(mi, e); }
+  const items = []; const addModel = (mi, ent, mover = null) => { const m = bsp.models[mi]; if (!m) return; for (let f = m.firstFace; f < m.firstFace + m.numFaces; f++) items.push({ f, ent, mover }); };
+  addModel(0, null); bsp.entities.forEach((e, ei) => { const mi = modelOf(e); if (mi > 0 && DRAWN.test(e.classname || '')) addModel(mi, e, moverOf.get(ei) ?? null); });
   // 2. Lightmap rectangles: each lit face's texture-space extent in 16-unit luxels.
   const rects = [], info = new Map();
   for (const it of items) { const f = bsp.faces[it.f], ti = bsp.texinfo[f.texinfo], tex = bsp.textures[ti.tex]; if (!tex || HIDDEN.test(tex.name)) continue; const V = faceVerts(bsp, f); if (V.length < 3) continue;
@@ -54,11 +57,11 @@ export function buildBspMeshes(bsp, { toGame, lightScale = 1.25, lightGamma = .6
   const groups = new Map();
   for (const r of info.values()) { const ent = r.it.ent, mode = +(ent?.rendermode || 0), amt = ent?.renderamt !== undefined ? +ent.renderamt / 255 : 1, alphaT = r.tex.name[0] === '{' || mode === 4, water = r.tex.name[0] === '!';
     if ((mode === 2 || mode === 5) && amt <= .02) continue;   // fully transparent brushes
-    const key = r.ti.tex + '|' + (alphaT ? 'a' : '') + ((mode === 2 || mode === 3 || mode === 5) && amt < 1 ? 't' + amt.toFixed(2) : '') + (water ? 'w' : ''); let G = groups.get(key);
-    if (!G) groups.set(key, G = { tex: r.tex, P: [], UV: [], UV2: [], N: [], alphaT, opacity: water ? .72 : (mode === 2 || mode === 3 || mode === 5) ? amt : 1, water, add: mode === 5 });
+    const mv = r.it.mover, key = (mv !== null ? 'M' + mv + '|' : '') + r.ti.tex + '|' + (alphaT ? 'a' : '') + ((mode === 2 || mode === 3 || mode === 5) && amt < 1 ? 't' + amt.toFixed(2) : '') + (water ? 'w' : ''); let G = groups.get(key);
+    if (!G) groups.set(key, G = { mover: mv, pivot: mv !== null && movers[mv].kind === 'rotdoor' ? toGame(...vec(ent.origin)) : [0, 0, 0], tex: r.tex, P: [], UV: [], UV2: [], N: [], alphaT, opacity: water ? .72 : (mode === 2 || mode === 3 || mode === 5) ? amt : 1, water, add: mode === 5 });
     const off = ent?.origin ? vec(ent.origin) : [0, 0, 0], pl = r.f.plane, sgn = r.f.side ? -1 : 1, nx = bsp.planes[pl * 4] * sgn, ny = bsp.planes[pl * 4 + 1] * sgn, nz = bsp.planes[pl * 4 + 2] * sgn;
     const tw = r.tex.rgba ? r.tex.width : 128, th = r.tex.rgba ? r.tex.height : 128, uv = j => [r.st[j][0] / tw, r.st[j][1] / th]   /* a stand-in photo: one tile per 128 units */, uv2 = j => r.lit ? [(r.ax + (r.st[j][0] / 16 - r.bs) + .5) / AW, (r.ay + (r.st[j][1] / 16 - r.bt) + .5) / AH] : [(GREY[0] + .5) / AW, (GREY[1] + .5) / AH];
-    for (let j = 1; j + 1 < r.V.length; j++) for (const k of [0, j + 1, j]) { const v = r.V[k], g = toGame(v[0] + off[0], v[1] + off[1], v[2] + off[2]); G.P.push(g[0], g[1], g[2]); G.N.push(nx, nz, -ny); const a = uv(k), b = uv2(k); G.UV.push(a[0], a[1]); G.UV2.push(b[0], b[1]); } }   // fan, wound for y-up
+    for (let j = 1; j + 1 < r.V.length; j++) for (const k of [0, j + 1, j]) { const v = r.V[k], g = toGame(v[0] + off[0], v[1] + off[1], v[2] + off[2]); G.P.push(g[0] - G.pivot[0], g[1] - G.pivot[1], g[2] - G.pivot[2]); G.N.push(nx, nz, -ny); const a = uv(k), b = uv2(k); G.UV.push(a[0], a[1]); G.UV2.push(b[0], b[1]); } }   // fan, wound for y-up
   // 5. Textures and materials (unlit: the light is baked; a little more light than the raw lightmap, as the game drew it).
   const texCache = new Map(), meshes = [];
   const texOf = t => { if (texCache.has(t)) return texCache.get(t); let tx = null; if (t.rgba) { tx = new THREE.DataTexture(textureRGBA(t), t.width, t.height, THREE.RGBAFormat); tx.onUpdate = () => { tx.image.data = null; };   /* decoded for the upload, then let go (the file keeps the pixels) */ tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.magFilter = THREE.LinearFilter; tx.minFilter = THREE.LinearMipmapLinearFilter; tx.generateMipmaps = true; tx.anisotropy = anisotropy(); tx.colorSpace = THREE.SRGBColorSpace; tx.needsUpdate = true; } texCache.set(t, tx); return tx; };
@@ -66,6 +69,9 @@ export function buildBspMeshes(bsp, { toGame, lightScale = 1.25, lightGamma = .6
     // On the GPU once drawn: the arrays are let go (never aimed at — shots use the collision boxes; bounds computed above).
     for (const a of Object.values(g.attributes)) a.onUpload(releaseArray);
     const own = texOf(G.tex), sub = own ? null : standin(G.tex.name), map = own || photo(sub[1]), m = new THREE.MeshBasicMaterial({ map, color: own ? 0xffffff : sub[2], lightMap: lightTex, lightMapIntensity: lightScale * Math.PI,   /* (three.js divides a lightmap by π on unlit materials) */ transparent: G.opacity < 1 || G.water, opacity: G.opacity, alphaTest: G.alphaT ? .5 : 0, side: G.alphaT || G.water ? THREE.DoubleSide : THREE.FrontSide, depthWrite: !(G.opacity < 1) || G.alphaT, blending: G.add ? THREE.AdditiveBlending : THREE.NormalBlending });
-    m.name = G.tex.name; g.userData.shared = false; const mesh = new THREE.Mesh(g, m); mesh.userData.arena = true; mesh.userData.bsp = true; mesh.userData.noShadow = true; mesh.castShadow = false; mesh.receiveShadow = false; meshes.push(mesh); }
-  return { meshes, atlas: { width: AW, height: AH, faces: rects.length } };
+    m.name = G.tex.name; g.userData.shared = false; const mesh = new THREE.Mesh(g, m); if (G.mover !== null) mesh.userData.moverG = G; mesh.userData.arena = true; mesh.userData.bsp = true; mesh.userData.noShadow = true; mesh.castShadow = false; mesh.receiveShadow = false; meshes.push(mesh); }
+  // The movers' meshes into their groups (out of the static list).
+  const groupsOf = new Map(); for (let i = meshes.length - 1; i >= 0; i--) { const G = meshes[i].userData.moverG; if (!G) continue; const [mesh] = meshes.splice(i, 1);
+    let grp = groupsOf.get(G.mover); if (!grp) { grp = new THREE.Group(); grp.position.set(...G.pivot); grp.userData.arena = true; groupsOf.set(G.mover, grp); } grp.add(mesh); delete mesh.userData.moverG; }
+  return { meshes, movers: [...groupsOf].map(([id, group]) => ({ id, group })), atlas: { width: AW, height: AH, faces: rects.length } };
 }

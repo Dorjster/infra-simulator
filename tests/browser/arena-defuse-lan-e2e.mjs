@@ -30,8 +30,8 @@ const siteA = await host.evaluate(async () => { const { ARENA } = await import('
 await host.evaluate(s => { __infra.lab.enter(); __infra.camera.position.x = s.x; __infra.camera.position.z = s.z; }, siteA); await host.waitForTimeout(700);
 await host.keyboard.press('Digit5'); await host.waitForTimeout(800); await host.mouse.move(600, 375); await host.mouse.down(); await host.waitForTimeout(3700); await host.mouse.up(); await host.waitForTimeout(600);
 s = await D(host); check('Host planted the bomb on A', s.phase === 'planted', JSON.stringify(s));
-await guest.waitForFunction(() => /BOMB HAS BEEN PLANTED/.test(document.getElementById('ar-banner').textContent), null, { timeout: 5000 }).catch(() => {});
-check('The guest sees "THE BOMB HAS BEEN PLANTED"', await guest.evaluate(() => /BOMB HAS BEEN PLANTED/.test(document.getElementById('ar-banner').textContent)));
+await guest.waitForFunction(() => /bomb has been planted/i.test(document.getElementById('ar-banner').textContent), null, { timeout: 5000 }).catch(() => {});
+check('The guest sees "Bomb has been planted"', await guest.evaluate(() => /bomb has been planted/i.test(document.getElementById('ar-banner').textContent)));
 check('The guest sees the bomb', await guest.evaluate(() => { let n = 0; __infra.lab.arenaScene.group.traverse(o => { if (o.userData.ground) n++; }); return n >= 1; }));
 // The guest walks to the bomb (teleport) and holds E for 10 s (no kit).
 const bomb = await guest.evaluate(() => __infra.lab.world.operations.game.combat.d.round.planted);

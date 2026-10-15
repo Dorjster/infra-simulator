@@ -45,7 +45,7 @@ await p.mouse.move(640, 400); await p.mouse.down(); await p.waitForTimeout(1500)
 check('Planting progress shown', await p.evaluate(() => !document.getElementById('ar-prog').hidden && /Planting/.test(document.getElementById('ar-prog').textContent)));
 await p.waitForTimeout(2300); await p.mouse.up(); await p.waitForTimeout(500);
 s = await G(); check('Bomb planted on A', s.phase === 'planted', JSON.stringify(s));
-check('"THE BOMB HAS BEEN PLANTED" banner', await p.evaluate(() => /BOMB HAS BEEN PLANTED/.test(document.getElementById('ar-banner').textContent) && !document.getElementById('ar-banner').hidden));
+check('"Bomb has been planted" (CS2: no site, no red box)', await p.evaluate(() => /bomb has been planted/i.test(document.getElementById('ar-banner').textContent) && !document.getElementById('ar-banner').hidden));
 check('Bomb model on the ground', await p.evaluate(() => { let n = 0; __infra.lab.arenaScene.group.traverse(o => { if (o.userData.ground) n++; }); return n >= 1; }));
 await snap({ path: path.join(out, 'defuse-planted.png') });
 await p.waitForFunction(() => __infra.lab.world.operations.game.combat.d.round.phase === 'over', null, { timeout: 50000 });

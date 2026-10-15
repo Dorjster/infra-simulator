@@ -58,11 +58,12 @@ let b1 = await act(host, { type: 'loadout', secondary: 'p250' }), b2 = await act
 check('buying a second pistol drops the first (with its rounds)', !b1?.error && /dropped your P250/.test(String(b2)), String(b1) + ' | ' + String(b2));
 const g1 = await host.evaluate(() => __infra.lab.world.operations.game.combat.ground.find(x => x.item === 'p250'));
 check('…the P250 is on the ground, full', g1 && g1.ammo?.[0] === 13 && g1.ammo?.[1] === 26, JSON.stringify(g1));
-// The guest walks to it (teleport next to it), opens B and sees it as a nearby drop; picks it up from the menu.
-await guest.evaluate(it => { __infra.lab.look(it.x + 2, it.z, it.x, (it.y || 0) + 2, it.z); }, g1);   // stands next to it, on that floor await guest.waitForTimeout(800);
-await guest.evaluate(() => __infra.lab.arenaUI.buy(true)); await guest.waitForTimeout(300);
-check('guest B menu: Nearby dropped weapons lists the P250 (dropped by Host)', await guest.evaluate(() => /NEARBY DROPPED/.test(document.getElementById('ar-buy').textContent) && /P250/.test(document.querySelector('#ar-buy .near')?.textContent || '') && /Host/.test(document.querySelector('#ar-buy .near')?.textContent || '')));
-await guest.evaluate(() => [...document.querySelectorAll('#ar-buy [data-ground]')].find(b => /P250/.test(b.textContent))?.click()); await guest.waitForTimeout(900);
+// The guest walks to it (teleport next to it): it lies within reach (dropped by the host); E picks it up (as CS2 — the buy
+// menu lists no ground items).
+await guest.evaluate(it => { __infra.lab.look(it.x + 2, it.z, it.x, (it.y || 0) + 2, it.z); }, g1);   // stands next to it, on that floor
+await guest.waitForTimeout(800);   // (the room learns where the guest now stands)
+check('the P250 lies within the guest\'s reach, dropped by the host', await guest.evaluate(() => __infra.lab.arenaUI.nearbyGround().includes('P250')) && /host/i.test(g1.by || ''), JSON.stringify(g1.by));
+await guest.evaluate(() => __infra.lab.arenaUI.pickNearest('P250')); await guest.waitForTimeout(900);
 const gl = await guest.evaluate(() => ({ sec: __infra.lab.world.operations.game.arena.loadout.guest?.secondary, ammo: __infra.lab.pistol.ammoOf('p250'), ground: __infra.lab.world.operations.game.combat.ground.filter(x => x.item === 'p250').length }));
 check('the guest has the P250 with its rounds; it left the ground', gl.sec === 'p250' && gl.ammo[0] === 13 && gl.ground === 0, JSON.stringify(gl));
 const twice = await act(host, { type: 'pickup', id: g1.id }); check('nobody else can claim it again', /Already taken/.test(twice?.error || ''), JSON.stringify(twice));
@@ -74,7 +75,8 @@ await guest.keyboard.press('Escape');
     const bn = await act(guest, { type: 'buy-nade', kind: 'flash' }); await guest.waitForTimeout(500); const had = await guest.evaluate(() => (__infra.lab.world.operations.game.arena.loadout.guest?.nades || []).length);
     await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 30000 }).catch(() => {});
     const hw = await host.evaluate(() => __infra.lab.world.operations.game.arena.loadout.host?.secondary || (__infra.lab.world.operations.game.combat.d.teams.host === 'ct' ? 'usps' : 'pistol'));
-    await host.evaluate(() => { const s = __infra.lab.world.operations.game.combat.spawnTo.guest; __infra.lab.look(s.x + 8, s.z, s.x, 9, s.z); }); await host.waitForTimeout(700);
+    await host.evaluate(async () => { const s = __infra.lab.world.operations.game.combat.spawnTo.guest, { segmentClear } = await import('./arena-maps.js'), B = __infra.lab.arenaScene.boxes, y = (s.y ?? 0) + 9.7;   // beside the guest, on a side with a clear line to them (a CS2 map's spawn may stand by a wall)
+      const [dx, dz] = [[8, 0], [-8, 0], [0, 8], [0, -8], [5, 5], [-5, -5], [5, -5], [-5, 5]].find(([dx, dz]) => segmentClear(B, s.x + dx, y, s.z + dz, s.x, y - 1, s.z)) || [8, 0]; __infra.lab.look(s.x + dx, s.z + dz, s.x, y - 1, s.z, y); }); await host.waitForTimeout(700);
     await host.evaluate(w => __infra.lab.pistol.equip(w), hw); await host.waitForTimeout(800); await host.evaluate(() => { __infra.lab.pistol.button(0, true); __infra.lab.pistol.button(0, false); }); await host.waitForTimeout(150);
     const k = await host.evaluate(([id, w]) => __infra.lab.world.operations.game.combat.down?.guest ? 'already down' : __infra.lab.lan.combat({ type: 'hit', target: id, weapon: w, zone: 'head', n: 1 }), [gid, hw]); await guest.waitForFunction(() => !!__infra.lab.world.operations.game.combat.down?.guest, null, { timeout: 30000 }).catch(() => {}); await guest.waitForTimeout(400);   // shot by the host, or by a bot if the host fell first
     const after = await guest.evaluate(() => { const g = __infra.lab.world.operations.game, l = g.arena.loadout.guest || {}; return { down: !!g.combat.down?.guest, nades: (l.nades || []).length, primary: l.primary, util: document.getElementById('gd-hud').hidden ? '(hud hidden while dead)' : document.querySelector('#gd-wp .util')?.textContent || '' }; });

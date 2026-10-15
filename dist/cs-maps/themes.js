@@ -18,6 +18,10 @@ export const THEMES = {
     indoor: { PalaceInterior: 160, Tunnel: 140, LowerTunnel: 130, TunnelStairs: 150, Connector: 150, Walkway: 0 } },
   ancient: { name: 'Ancient', wall: 'stone', floor: 'stone', indoorWall: 'tunnel', indoorFloor: 'tunnelfloor', sky: 0xb7cfc0, sun: 0xfff0d6,
     indoor: { House: 150, MainHall: 180, SideHall: 150, BackHall: 150, Tunnel: 140 } },
+  // Only from a map file (Counter-Strike 2's, tools/maps/import-cs2-map.mjs): no built-in version — no CS:GO navigation
+  // data; its places are CS2's own (bsp-map.js). Listed once the room has the file.
+  overpass: { name: 'Overpass', fileOnly: true, wall: 'concrete', floor: 'concrete', indoorWall: 'concrete', indoorFloor: 'concrete', sky: 0xb2c6d6, sun: 0xfff2dc,
+    indoor: { Tunnels: 130, Restroom: 140, StorageRoom: 140, Connector: 150, UnderA: 130, Pipe: 72 } },
 };
 // The look of the outdoor walls, from reference screenshots of each map: palette (each block of buildings takes one
 // colour — a multiplier on the wall texture), band (a painted stripe, Hammer units above the wall's foot: Nuke's blue)
@@ -30,9 +34,12 @@ const LOOKS = {
   cache: { crate: 'crate-blue', palette: [[1, 1, 1], [.9, .92, .9], [.96, 1, .94], [1.04, 1, .96]], cap: { h: 6, out: 2, shade: .78 } },
   anubis: { crate: 'stoneblock', palette: [[1, 1, 1], [1.04, .96, .84], [.92, .86, .74]], cap: { h: 8, out: 3, shade: .8 } },
   ancient: { crate: 'fieldblock', wall: 'fieldstone', palette: [[.92, .96, .86], [.86, .92, .8], [1, 1, .94]], cap: { h: 8, out: 2, shade: .74 } },
+  overpass: { crate: 'crate-metal', palette: [[1, 1, 1], [.94, .96, .98], [1.02, 1, .96]], cap: { h: 5, out: 2, shade: .82 } },
 };
 for (const [id, L] of Object.entries(LOOKS)) Object.assign(THEMES[id], L);
-export const CS_MAP_IDS = Object.keys(THEMES);
+// The classic maps built in (from their CS:GO navigation data), and every Defuse map a map file can bring (those and the
+// file-only ones).
+export const CS_MAP_IDS = Object.keys(THEMES).filter(id => !THEMES[id].fileOnly), FILE_MAP_IDS = Object.keys(THEMES);
 // 'TopofMid' → 'Top of Mid', 'BombsiteA' → 'A Site', 'CTSpawn' → 'CT Spawn'.
-export const calloutName = p => ({ BombsiteA: 'A Site', BombsiteB: 'B Site', TSpawn: 'T Spawn', CTSpawn: 'CT Spawn', TopofMid: 'Top of Mid', BackofB: 'Back of B', CTSideUpper: 'CT Upper', TSideUpper: 'T Upper', TSideLower: 'T Lower', SnipersNest: 'Window' }[p]
+export const calloutName = p => ({ BombsiteA: 'A Site', BombsiteB: 'B Site', TSpawn: 'T Spawn', CTSpawn: 'CT Spawn', TopofMid: 'Top of Mid', BackofA: 'Back of A', BackofB: 'Back of B', CTSideUpper: 'CT Upper', TSideUpper: 'T Upper', TSideLower: 'T Lower', SnipersNest: 'Window' }[p]
   || p.replace(/([a-z])([A-Z0-9])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2'));

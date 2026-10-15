@@ -3,14 +3,14 @@
 // molotov fire, each with 3D sound. Materials are made once and shared (the graphics warm-up compiles them).
 import * as THREE from './three.module.js';
 import { weaponModel } from './weapon-models.js';
-import { NADES, flashAmount, fireCells, smokeShape, holeOpen, smokeDensity } from './arena-nades.js';
+import { NADES, flashAmount, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeOpenness, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
 import { audioCtx, outAt, reverb, listenerAt } from './spatial-audio.js';
 import { fx as rec } from './sound-bank.js';
 
 const soft = (inner, outer) => { try { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); if (typeof g?.createRadialGradient !== 'function') return null;
   const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, inner); r.addColorStop(1, outer); g.fillStyle = r; g.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; } catch { return null; } };
 const MAT = {
-  smoke: new THREE.SpriteMaterial({ map: soft('rgba(205,208,212,1)', 'rgba(205,208,212,0)'), color: 0xd8dade, transparent: true, depthWrite: false, opacity: 0 }),
+  smoke: new THREE.SpriteMaterial({ map: soft('rgba(176,179,184,1)', 'rgba(176,179,184,0)'), color: 0x8e9196, transparent: true, depthWrite: false, opacity: 0 }),   // CS2's grey: darker than a cloud
   fire: new THREE.SpriteMaterial({ map: soft('rgba(255,220,120,1)', 'rgba(255,90,0,0)'), color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
   boom: new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
   scorch: new THREE.MeshBasicMaterial({ color: 0x1a120c, transparent: true, opacity: .6, depthWrite: false }),
@@ -23,12 +23,67 @@ const CORE = (() => { const g = new THREE.IcosahedronGeometry(1, 4), p = g.attri
 MAT.core = new THREE.MeshBasicMaterial({ color: 0xc3c6ca, transparent: true, opacity: 0, depthWrite: true });   /* unlit: no facets, the same grey as the puffs */ MAT.core.userData.shared = true;
 // Fire: crossed flame quads per burning cell (one instanced mesh), and a glowing floor so the area reads clearly.
 const FLAME = (() => { const a = new THREE.PlaneGeometry(2.6, 3.4).translate(0, 1.7, 0), b = a.clone().rotateY(Math.PI / 2); const m = new THREE.BufferGeometry(); const P = [...a.attributes.position.array, ...b.attributes.position.array], U = [...a.attributes.uv.array, ...b.attributes.uv.array], I = [...a.index.array, ...b.index.array.map(i => i + 4)]; m.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); m.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); m.setIndex(I); return m; })();
-MAT.flame = new THREE.MeshBasicMaterial({ map: MAT.fire.map, color: 0xffb060, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }); MAT.flame.userData.shared = true;
-MAT.glow = new THREE.MeshBasicMaterial({ color: 0xff5a10, transparent: true, opacity: .45, blending: THREE.AdditiveBlending, depthWrite: false }); MAT.glow.userData.shared = true;
-const CELL = new THREE.PlaneGeometry(3.1, 3.1).rotateX(-Math.PI / 2);
+// Molotov flames (CS2): crossed quads per burning cell, each an animated flame drawn by its shader — a noise-torn
+// teardrop licking upward, white-yellow at the core to deep orange at the edges, additive (the glow picks it up on High).
+const NOISE2 = (() => { const n = 64, a = new Uint8Array(n * n); let r = 98765; for (let i = 0; i < a.length; i++) { r = (r * 16807) % 2147483647; a[i] = r & 255; }
+  const t = new THREE.DataTexture(a, n, n, THREE.RedFormat); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t; })();
+MAT.flame = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uNoise: { value: NOISE2 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+  vertexShader: `varying vec2 vUv; varying float vPhase; void main() { vUv = uv; vPhase = fract(float(gl_InstanceID) * 0.6180339); gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `uniform float uTime; uniform sampler2D uNoise; varying vec2 vUv; varying float vPhase;
+void main() { float t = uTime + vPhase * 7.3, n = texture2D(uNoise, vec2(vUv.x * 0.9 + vPhase, vUv.y * 0.7 - t * 1.3)).r, n2 = texture2D(uNoise, vec2(vUv.x * 1.9 - vPhase * 3.1, vUv.y * 1.4 - t * 2.1)).r;
+  float x = (vUv.x - 0.5) * 2.0 + (n - 0.5) * 0.8 * vUv.y, w = mix(1.0, 0.3, pow(vUv.y, 1.3)), body = 1.0 - smoothstep(w * 0.3, w, abs(x)), tip = 1.0 - smoothstep(0.3, 1.0, vUv.y + (n2 - 0.5) * 0.6);
+  float a = body * tip * smoothstep(0.0, 0.12, vUv.y) * (0.55 + 0.45 * n2); if (a < 0.01) discard; float core = clamp(a * 1.3 - vUv.y * 0.9, 0.0, 1.0);
+  vec3 c = mix(vec3(0.55, 0.09, 0.01), vec3(0.95, 0.42, 0.08), core); c = mix(c, vec3(1.0, 0.75, 0.38), core * core); gl_FragColor = vec4(c * a * 0.75, a); }` }); MAT.flame.userData.shared = true;
+MAT.glow = new THREE.MeshBasicMaterial({ map: soft('rgba(255,140,40,1)', 'rgba(255,60,0,0)'), color: 0xff7a26, transparent: true, opacity: .32, blending: THREE.AdditiveBlending, depthWrite: false }); MAT.glow.userData.shared = true;   // a soft round glow per cell, overlapping: one glowing floor
+const CELL = new THREE.PlaneGeometry(5.2, 5.2).rotateX(-Math.PI / 2);
 // Trajectory preview: dashed line + landing ring.
 MAT.path = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 1.2, gapSize: .8, transparent: true, opacity: .75, depthTest: false }); MAT.path.userData.shared = true;
 MAT.ring = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .7, depthTest: false }); MAT.ring.userData.shared = true;
+// CS2's smoke on screen: the cells it fills (arena-nades.js smokeVoxels — the same the rules use) in a small 3D
+// texture (how far along its spread each cell is; 1: never filled), drawn as camera-facing slices through it, far to
+// near: the spread front grows through the cells (it pours round corners and down corridors the way it went),
+// billowing noise at its edges drifts up, lighter on top and darker under, HE holes cleared. Slices are ordinary
+// transparent quads, so walls and players in front hide what is behind them and smoke in front covers them (no depth
+// texture needed). One program for every smoke.
+const NOISE3 = (() => { const n = 32, a = new Uint8Array(n * n * n); let s = 1234567; for (let i = 0; i < a.length; i++) { s = (s * 16807) % 2147483647; a[i] = s & 255; }
+  const t = new THREE.Data3DTexture(a, n, n, n); t.format = THREE.RedFormat; t.type = THREE.UnsignedByteType; t.minFilter = t.magFilter = THREE.LinearFilter; t.wrapS = t.wrapT = t.wrapR = THREE.RepeatWrapping; t.unpackAlignment = 1; t.needsUpdate = true; return t; })();
+const SLICES = { Low: 16, Medium: 24, High: 32, Ultra: 44 };
+const sliceGeo = n => { const P = [], I = []; for (let i = 0; i < n; i++) { const z = 1 - 2 * (i + .5) / n, b = i * 4; P.push(-1, -1, z, 1, -1, z, 1, 1, z, -1, 1, z); I.push(b, b + 1, b + 2, b, b + 2, b + 3); }   // far (z = 1) first
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setIndex(I); return g; };
+const SLICE_GEO = {}; const slicesFor = q => SLICE_GEO[q] ??= sliceGeo(SLICES[q] || SLICES.Medium);
+const SMOKE_VS = `uniform vec3 uCenter; uniform float uRadius; uniform float uSlices; uniform float uEvery; varying vec3 vWorld;
+void main() { if (uEvery > 1.0 && mod(floor((1.0 - position.z) * uSlices * 0.5), uEvery) > 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // (a skipped slice: off screen)
+  vec3 f = uCenter - cameraPosition; float fl = length(f); f = fl > 1e-3 ? f / fl : vec3(0.0, 0.0, -1.0);
+  vec3 r = cross(f, vec3(0.0, 1.0, 0.0)); r = length(r) > 1e-3 ? normalize(r) : vec3(1.0, 0.0, 0.0); vec3 u = cross(r, f);
+  vWorld = uCenter + (r * position.x + u * position.y + f * position.z) * uRadius; gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0); }`;
+const SMOKE_FS = `precision highp sampler3D; uniform sampler3D uVol; uniform sampler3D uNoise; uniform vec3 uMin; uniform vec3 uSize; uniform float uFront; uniform float uScaleD; uniform float uFill;
+uniform float uFade; uniform float uTime; uniform float uStep; uniform float uVoxel; uniform vec4 uHoles[2]; uniform float uHoleR; uniform vec3 uLight; uniform vec3 uDark; varying vec3 vWorld;
+void main() { vec3 uvw = (vWorld - uMin) / uSize; if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) discard;
+  float d = texture(uVol, uvw).r * uScaleD, dens = clamp((uFront - d) / (2.0 * uVoxel), 0.0, 1.0) * clamp((uFill - d) / (3.0 * uVoxel) + 0.4, 0.0, 1.0); if (dens <= 0.003) discard;
+  vec3 q = vWorld * 0.05 + vec3(0.0, -uTime * 0.035, uTime * 0.012); float n = texture(uNoise, q).r * 0.62 + texture(uNoise, q * 2.9 + 0.37).r * 0.38;
+  dens *= clamp((n - 0.5) * 2.4 + dens * 1.4 - 0.2, 0.0, 1.0);
+  for (int h = 0; h < 2; h++) if (uHoles[h].w > 0.0) { vec3 dh = vWorld - uHoles[h].xyz; dh.y *= 0.8; float k = length(dh) / uHoleR; dens *= 1.0 - uHoles[h].w * clamp(1.0 - k * k, 0.0, 1.0); }
+  dens *= uFade; if (dens <= 0.003) discard;
+  float a = 1.0 - exp(-dens * 0.5 * uStep); vec3 c = mix(uDark, uLight, clamp(0.28 + 0.6 * clamp(uvw.y * 1.6, 0.0, 1.0) + 0.45 * (n - 0.5), 0.0, 1.0));
+  gl_FragColor = vec4(c * a, a);
+  #include <colorspace_fragment>
+}`;
+const smokeMaterial = () => new THREE.ShaderMaterial({ vertexShader: SMOKE_VS, fragmentShader: SMOKE_FS, transparent: true, depthWrite: false, depthTest: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+  uniforms: { uVol: { value: null }, uNoise: { value: NOISE3 }, uMin: { value: new THREE.Vector3() }, uSize: { value: new THREE.Vector3(1, 1, 1) }, uCenter: { value: new THREE.Vector3() }, uRadius: { value: 1 }, uSlices: { value: 1 }, uEvery: { value: 1 }, uFront: { value: 0 }, uScaleD: { value: 1 }, uFill: { value: 1 },
+    uFade: { value: 1 }, uTime: { value: 0 }, uStep: { value: 1 }, uVoxel: { value: VOX }, uHoles: { value: [new THREE.Vector4(), new THREE.Vector4()] }, uHoleR: { value: SMOKE.holeR }, uLight: { value: new THREE.Color(.66, .67, .69) }, uDark: { value: new THREE.Color(.3, .31, .33) } } });
+// A smoke's volume (its cells as a texture; the slices round the cells it fills), or null without the map.
+function smokeVolume(game, g, quality) {
+  const v = smokeVoxels(game, g); if (!v) return null; const N = v.nx * v.ny * v.nz, a = new Uint8Array(N), scaleD = v.dFill * 1.25; let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let k = 0, c = 0; k < v.nz; k++) for (let j = 0; j < v.ny; j++) for (let i = 0; i < v.nx; i++, c++) { const d = v.d[c]; if (d === Infinity) { a[c] = 255; continue; } a[c] = Math.min(254, Math.round(d / scaleD * 255));
+    if (i < lo[0]) lo[0] = i; if (j < lo[1]) lo[1] = j; if (k < lo[2]) lo[2] = k; if (i > hi[0]) hi[0] = i; if (j > hi[1]) hi[1] = j; if (k > hi[2]) hi[2] = k; }
+  if (lo[0] === Infinity) return null;
+  const t = new THREE.Data3DTexture(a, v.nx, v.ny, v.nz); t.format = THREE.RedFormat; t.type = THREE.UnsignedByteType; t.minFilter = t.magFilter = THREE.LinearFilter; t.unpackAlignment = 1; t.needsUpdate = true;
+  const m = smokeMaterial(), U = m.uniforms, q = quality(), n = SLICES[q] || SLICES.Medium; U.uVol.value = t; U.uMin.value.set(v.x0, v.y0, v.z0); U.uSize.value.set(v.nx * VOX, v.ny * VOX, v.nz * VOX); U.uScaleD.value = scaleD; U.uFill.value = v.dFill;
+  const cmin = new THREE.Vector3(v.x0 + lo[0] * VOX, v.y0 + lo[1] * VOX, v.z0 + lo[2] * VOX), cmax = new THREE.Vector3(v.x0 + (hi[0] + 1) * VOX, v.y0 + (hi[1] + 1) * VOX, v.z0 + (hi[2] + 1) * VOX);
+  U.uCenter.value.addVectors(cmin, cmax).multiplyScalar(.5); U.uRadius.value = cmin.distanceTo(cmax) / 2 + VOX; U.uSlices.value = n; U.uStep.value = 2 * U.uRadius.value / n;
+  const mesh = new THREE.Mesh(slicesFor(q), m); mesh.frustumCulled = false; mesh.renderOrder = 2; mesh.userData.noShadow = true; mesh.userData.vox = v; return mesh;
+}
+
 // Shared effect particles, made once (no allocation while playing): hot sparks / debris / embers (one instanced mesh),
 // soft puffs (dark blast smoke, dust, steam, fire smoke; a fixed pool of sprites) and ground shock rings.
 const SPARK = new THREE.BoxGeometry(.13, .13, .13), RING = new THREE.RingGeometry(.82, 1, 40).rotateX(-Math.PI / 2);
@@ -74,7 +129,7 @@ function createFxSystem(group, quality) {
   };
 }
 // One of each effect, for the warm-up.
-export const nadeWarmObjects = () => [new THREE.Sprite(MAT.smoke), new THREE.Sprite(MAT.fire), new THREE.Mesh(BALL, MAT.boom), new THREE.Mesh(DISC, MAT.scorch), new THREE.Mesh(CORE, MAT.core), new THREE.InstancedMesh(SPARK, MAT.spark, 1), new THREE.Mesh(RING, MAT.wave), (() => { const m = new THREE.InstancedMesh(FLAME, MAT.flame, 1); m.setColorAt(0, new THREE.Color(1, .6, .2)); return m; })(), new THREE.InstancedMesh(CELL, MAT.glow, 1), new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), MAT.path)];
+export const nadeWarmObjects = () => [(() => { const m = new THREE.Mesh(slicesFor('Low'), smokeMaterial()); m.material.uniforms.uVol.value = NOISE3; m.frustumCulled = false; return m; })(), new THREE.Sprite(MAT.smoke), new THREE.Sprite(MAT.fire), new THREE.Mesh(BALL, MAT.boom), new THREE.Mesh(DISC, MAT.scorch), new THREE.Mesh(CORE, MAT.core), new THREE.InstancedMesh(SPARK, MAT.spark, 1), new THREE.Mesh(RING, MAT.wave), (() => { const m = new THREE.InstancedMesh(FLAME, MAT.flame, 1); m.setColorAt(0, new THREE.Color(1, .6, .2)); return m; })(), new THREE.InstancedMesh(CELL, MAT.glow, 1), new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), MAT.path)];
 
 // Sounds: recorded explosions, flash bang, glass, burn and bounces (sound-bank fx), layered with synthesized body,
 // flashbang ringing, smoke hiss, fire crackle and the throw whoosh.
@@ -100,7 +155,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-flash" style="position:fixed;inset:0;z-index:39;background:#fff;opacity:0;pointer-events:none"></div>');
   const white = document.getElementById('gd-flash') || { style: {} };
   // Inside a smoke you see smoke: a veil as thick as the smoke at your eye (the same density the rules use).
-  document.body.insertAdjacentHTML('beforeend', '<div id="gd-smokeveil" style="position:fixed;inset:0;z-index:20;background:#c9ccd0;opacity:0;pointer-events:none"></div>');
+  document.body.insertAdjacentHTML('beforeend', '<div id="gd-smokeveil" style="position:fixed;inset:0;z-index:20;background:#7f8287;opacity:0;pointer-events:none"></div>');
   const veil = document.getElementById('gd-smokeveil') || { style: {} }; let veilNow = 0;
   function effect(g) {
     const fx = new THREE.Group(); fx.position.set(g.x, g.y, g.z); group.add(fx); const at = { x: g.x, y: g.y, z: g.z }, parts = []; let fireLoop = null;
@@ -110,22 +165,23 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
     if (g.phase === 'pop') { const b = new THREE.Mesh(BALL, MAT.boom.clone()); b.material.color.setHex(0xffffff); fx.add(b); parts.push(b); FXP.spark(g.x, g.y, g.z, 22, { speed: 16, up: 4, life: .45, size: .7 }); FXP.puff(g.x, g.y, g.z, 3, { color: 0xc8c8c8, size: 2, grow: 1.2, life: 1.4, rise: 1, spread: .8, alpha: .5 }); if (!rec('flash', { at, kind: 'explosion', volume: 1.1, rate: 1.35, wet: .6, lowpass: dull(at) })) burst(at, { len: .6, decay: 4, freq: 2600, vol: 1, thump: .4 }); else burst(at, { len: .15, decay: 3, freq: 5000, vol: .5, type: 'highpass' });
       camera.getWorldDirection(dir); const a = flashAmount(boxes(), g.x, g.y, g.z, camera.position.x, camera.position.y, camera.position.z, dir.x, dir.y, dir.z, world.operations.game);
       if (a > .05) { flashPeak = Math.max(flashPeak * Math.max(0, (flashUntil - performance.now()) / 4000), a); flashAt = performance.now(); flashUntil = flashAt + 600 + 3400 * a; if (a > .4) ring(1 + 2.5 * a); } }
-    if (g.phase === 'smoke') { // a dense volume: an opaque core you can't see through, wrapped in soft puffs (fewer on Low)
-      const R = NADES.smoke.radius, core = new THREE.Mesh(CORE, MAT.core.clone()); core.userData.core = true; core.scale.set(R * .58, R * .44, R * .58); core.position.y = R * .12; fx.add(core); parts.push(core);
-      const n = quality() === 'Low' ? 20 : quality() === 'Medium' ? 34 : 48; for (let i = 0; i < n; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), y = 1 - (i + .5) / n * 1.15, rr = Math.sqrt(Math.max(0, 1 - y * y)), a = i * 2.39996, f = .62 + (i % 3) * .1; sp.position.set(Math.cos(a) * rr * R * f, Math.max(1.2, R * .12 + y * R * .5 * f), Math.sin(a) * rr * R * f); sp.userData.size = R * (.5 + (i % 4) * .07); fx.add(sp); parts.push(sp); }   // a shell of soft puffs around the core: a fluffy outline
-      FXP.puff(g.x, g.y + .3, g.z, 8, { color: 0xd4d6da, size: 3, grow: 3, life: 1.6, rise: 1.5, spread: 1.5, alpha: .8 }); if (rec('poof', { at, volume: .9, wet: .3 })) rec('smoke', { at, volume: .7, delay: .05 }); else burst(at, { len: 2.5, decay: .8, freq: 3000, vol: .35, type: 'highpass' }); }
-    if (g.phase === 'fire') { // exactly where the host burns (fireCells): a glowing floor and flames on every cell
-      const cells = fireCells(boxes(), g.x, g.z, g.y), flames = new THREE.InstancedMesh(FLAME, MAT.flame, Math.max(1, cells.length)), glow = new THREE.InstancedMesh(CELL, MAT.glow, Math.max(1, cells.length)), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
-      cells.forEach(([cx, cz], i) => { const h = .7 + ((i * 7919) % 13) / 13 * .7; q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (i * 2.4) % 6.28); m4.compose(new THREE.Vector3(cx - g.x, .05, cz - g.z), q, sc.set(1, h, 1)); flames.setMatrixAt(i, m4); m4.compose(new THREE.Vector3(cx - g.x, .06, cz - g.z), new THREE.Quaternion(), sc.set(1, 1, 1)); glow.setMatrixAt(i, m4); });
-      const tint = new THREE.Color(); cells.forEach((_, i) => flames.setColorAt(i, tint.setHSL(.06 + ((i * 3571) % 11) / 11 * .06, 1, .55 + ((i * 131) % 7) / 7 * .15)));
-      flames.count = glow.count = cells.length; fx.userData.cells = cells; fx.userData.flames = flames; fx.userData.rot = cells.map((_, i) => (i * 2.4) % 6.28); fx.userData.h = cells.map((_, i) => .7 + ((i * 7919) % 13) / 13 * .7); flames.frustumCulled = glow.frustumCulled = false; fx.add(glow, flames); parts.push(flames); F_CELLS.set(fx, cells.length);
+    if (g.phase === 'smoke') { // CS2's volume (smokeVolume); without the map's boxes: an opaque core wrapped in soft puffs (fewer on Low)
+      const vol = smokeVolume(world.operations.game, g, quality); if (vol) { group.add(vol); parts.push(vol); }
+      if (!vol) { const R = NADES.smoke.radius, core = new THREE.Mesh(CORE, MAT.core.clone()); core.userData.core = true; core.scale.set(R * .58, R * .44, R * .58); core.position.y = R * .12; fx.add(core); parts.push(core);
+      const n = quality() === 'Low' ? 20 : quality() === 'Medium' ? 34 : 48; for (let i = 0; i < n; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), y = 1 - (i + .5) / n * 1.15, rr = Math.sqrt(Math.max(0, 1 - y * y)), a = i * 2.39996, f = .62 + (i % 3) * .1; sp.position.set(Math.cos(a) * rr * R * f, Math.max(1.2, R * .12 + y * R * .5 * f), Math.sin(a) * rr * R * f); sp.userData.size = R * (.5 + (i % 4) * .07); fx.add(sp); parts.push(sp); } }   // a shell of soft puffs around the core: a fluffy outline
+      FXP.puff(g.x, g.y + .3, g.z, 8, { color: 0x9a9da1, size: 3, grow: 3, life: 1.6, rise: 1.5, spread: 1.5, alpha: .8 }); if (rec('poof', { at, volume: .9, wet: .3 })) rec('smoke', { at, volume: .7, delay: .05 }); else burst(at, { len: 2.5, decay: .8, freq: 3000, vol: .35, type: 'highpass' }); }
+    if (g.phase === 'fire') { // exactly where the host burns (fireCells, on each cell's own floor): a glowing floor and flames, lit as the spread reaches them
+      const cells = fireCells(boxes(), g.x, g.z, g.y), flames = new THREE.InstancedMesh(FLAME, MAT.flame, Math.max(1, cells.length)), glow = new THREE.InstancedMesh(CELL, MAT.glow, Math.max(1, cells.length)), m4 = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < cells.length; i++) { flames.setMatrixAt(i, m4); glow.setMatrixAt(i, m4); }   // (none lit yet)
+      flames.count = glow.count = cells.length; fx.userData.cells = cells; fx.userData.flames = flames; fx.userData.glow = glow; fx.userData.rot = cells.map((_, i) => (i * 2.4) % 6.28); fx.userData.h = cells.map((_, i) => ((i * 7919) % 17) % 3 === 0 ? 0 : (.8 + ((i * 7919) % 13) / 13 * 1) * (((i * 4253) % 11) === 0 ? 1.6 : 1)); fx.userData.jx = cells.map((_, i) => (((i * 3571) % 23) / 23 - .5) * 2.4); fx.userData.jz = cells.map((_, i) => (((i * 1663) % 19) / 19 - .5) * 2.4); fx.userData.end = cells.map(cellEnd);   /* (h 0: this cell only glows)*/
+      flames.frustumCulled = glow.frustumCulled = false; fx.add(glow, flames); parts.push(flames); F_CELLS.set(fx, cells.length);
       if (rec('glass', { at, volume: 1, wet: .3 })) { rec('glass', { at, volume: .6, rate: .8, delay: .05 }); burst(at, { len: .9, decay: 1.2, freq: 600, vol: .5, thump: .25 }); } else burst(at, { len: 1.2, decay: 1.5, freq: 1200, vol: .7, thump: .3 });
       FXP.spark(g.x, g.y + .3, g.z, 30, { speed: 9, up: 6, life: 1.2, size: .8, gravity: 8 });
       fireLoop = rec('fire', { at, volume: .55, rate: .8, lowpass: 2600, loop: NADES.molotov.lasts / 1000 }) || null; }
     if (g.phase === 'out') { // put out by smoke: a puff of steam and a hiss where the fire was
       for (let i = 0; i < 10; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), a = i * 2.4; sp.position.set(Math.cos(a) * 5 * (i % 3) / 2, 1 + (i % 4), Math.sin(a) * 5 * (i % 3) / 2); sp.userData.size = 5 + (i % 3) * 2; fx.add(sp); parts.push(sp); }
       FXP.puff(g.x, g.y + .5, g.z, 8, { color: 0xe4e6e8, size: 4, grow: 2, life: 2, rise: 4, spread: 4, alpha: .6 }); burst(at, { len: 1, decay: 2.5, freq: 4200, vol: .45, type: 'highpass' }); }
-    return { fx, parts, start: performance.now(), phase: g.phase, crackle: 0, loop: fireLoop };
+    return { fx, parts, start: performance.now(), phase: g.phase, crackle: 0, loop: fireLoop, vol: parts.find(p => p.userData.vox) || null };
   }
   return {
     group,
@@ -141,11 +197,17 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
             v.vx = vx; v.vy = vy; v.vz = vz; } else v.vx = v.vy = v.vz = 0;
           v.hx = g.x; v.hy = g.y; v.hz = g.z; }
         if (g.phase === 'air') { const k = 1 - Math.exp(-dt * 18); v.model.position.x += (g.x - v.model.position.x) * k; v.model.position.y += (g.y - v.model.position.y) * k; v.model.position.z += (g.z - v.model.position.z) * k; v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; continue; }
-        if (v.fx && v.fx.phase !== g.phase) { v.fx.loop?.stop?.(); v.fx.fx.removeFromParent(); for (const p of v.fx.parts) if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); v.fx = null; }   // fire → out
+        if (v.fx && v.fx.phase !== g.phase) { v.fx.loop?.stop?.(); v.fx.fx.removeFromParent(); for (const p of v.fx.parts) { if (p.userData.vox) { p.material.uniforms.uVol.value?.dispose(); p.removeFromParent(); } if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); } v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); v.fx = null; }   // fire → out
         if (!v.fx) { v.fx = effect(g); if (g.phase !== 'fire' && g.phase !== 'smoke') v.model.visible = false; else v.model.position.set(g.x, g.y + .3, g.z); }
         const t = (now - v.fx.start) / 1000, F = v.fx;
         if (g.phase === 'boom' || g.phase === 'pop') { const b = F.parts[0], k = Math.min(1, t / .35), e = 1 - (1 - k) ** 3; b.scale.setScalar(.5 + e * (g.phase === 'boom' ? 24 : 4)); b.material.opacity = Math.max(0, 1 - t / .45) ** 1.5; b.visible = t < .45;
           const c = g.phase === 'boom' && F.parts[1]; if (c) { c.scale.setScalar(.4 + Math.min(1, t / .08) * 11); c.material.opacity = Math.max(0, 1 - t / .25); c.visible = t < .25; } }
+        if (g.phase === 'smoke' && F.vol) { // the volume: its front, fade and holes now (the host's clock); hidden while the veil already shows solid smoke
+          const hn = hostNow(), U = F.vol.material.uniforms, H = g.holes || [], c = camera.position; U.uFront.value = smokeFront(F.vol.userData.vox, g, hn); U.uFade.value = smokeShape(g, hn).dens; U.uTime.value = (now / 1000) % 1000;
+          for (let i = 0; i < 2; i++) { const h = H[H.length - 1 - i]; if (h) U.uHoles.value[i].set(h.x, h.y, h.z, holeOpenness(h, hn)); else U.uHoles.value[i].w = 0; }
+          F.vol.visible = veilNow < .93 || Math.hypot(c.x - g.x, c.z - g.z) > NADES.smoke.radius * 2;
+          { const every = c.distanceTo(U.uCenter.value) < U.uRadius.value * 1.6 ? 2 : 1; if (U.uEvery.value !== every) { U.uEvery.value = every; U.uStep.value = 2 * U.uRadius.value / U.uSlices.value * every; } }   // up close the cloud covers the screen: every other slice, each twice as thick (half the cost)
+          continue; }
         if (g.phase === 'smoke') { // the shared smoke shape (arena-nades smokeShape): grows, thins at the end; HE holes clear puffs near the blast
           const hn = hostNow(), S = smokeShape(g, hn), k = S.r / NADES.smoke.radius, fade = S.dens * Math.min(1, t / .5); let coreCut = 0;
           // Your eye deep inside this cloud: the veil already shows solid smoke, so the puffs around you are skipped (they only cost fill-rate).
@@ -153,14 +215,17 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
           for (const sp of F.parts) { if (sp.userData.core) { sp.scale.set(NADES.smoke.radius * .58 * k, NADES.smoke.radius * .44 * k, NADES.smoke.radius * .58 * k); sp.material.opacity = Math.max(0, Math.min(1, (t - .7) / .8)) * S.dens * (1 - coreCut * .9); sp.visible = sp.material.opacity > .02; continue; }
             const cut = g.holes?.length ? holeOpen(g, g.x + sp.position.x * k, g.y + sp.position.y, g.z + sp.position.z * k, hn) : 0; sp.position.multiplyScalar(1); sp.scale.setScalar(sp.userData.size * k * (1 + .08 * Math.sin(now / 900 + sp.id))); sp.material.opacity = .95 * fade * (1 - cut); } }
         if (g.phase === 'out') { for (const sp of F.parts) { sp.position.y += dt * 4; sp.scale.setScalar(sp.userData.size * (1 + t * 1.5)); sp.material.opacity = Math.max(0, .8 - t); } }
-        if (g.phase === 'fire') { const left = NADES.molotov.lasts / 1000 - t, k = Math.max(0, Math.min(1, left / 1.2)); if (quality() === 'Low') F.parts[0].scale.set(1, (.8 + .2 * Math.sin(now / 80)) * k, 1); MAT.glow.opacity = .45 * k;
-          const U = F.fx.userData, fl = U.flames; if (fl && quality() !== 'Low') { for (let i = 0; i < U.cells.length; i++) { const c = U.cells[i], w = .78 + .22 * Math.sin(now / 85 + i * 1.7) * Math.sin(now / 137 + i * .9);
-              FQ.setFromAxisAngle(UP, U.rot[i] + Math.sin(now / 400 + i) * .25); FM.compose(FV.set(c[0] - g.x, .05, c[1] - g.z), FQ, FS.set(.85 + .3 * w, U.h[i] * w * k, .85 + .3 * w)); fl.setMatrixAt(i, FM); } fl.instanceMatrix.needsUpdate = true; }
-          const cl = U.cells; if (cl?.length && k > .2) { if (now - (F.ember || 0) > 90) { F.ember = now; const c = cl[(Math.random() * cl.length) | 0]; FXP.spark(c[0] + (Math.random() - .5) * 2, g.y + .4, c[1] + (Math.random() - .5) * 2, 2, { speed: 2, up: 5, life: 1.4, size: .55, gravity: -3 }); }
-            if (now - (F.smk || 0) > 450) { F.smk = now; const c = cl[(Math.random() * cl.length) | 0]; FXP.puff(c[0], g.y + 2.5, c[1], 1, { color: 0x221d1a, size: 3.5, grow: 2, life: 2.6, rise: 4.5, spread: 1, alpha: .5 }); } }
+        if (g.phase === 'fire') { const left = NADES.molotov.lasts / 1000 - t, k = Math.max(0, Math.min(1, left / 1.2)); MAT.flame.uniforms.uTime.value = (now / 1000) % 1000;
+          // Each cell: grows in once the spread reaches it, flickers, shrinks away at its own end (the host's clock: as it burns there).
+          const U = F.fx.userData, fl = U.flames, gw = U.glow, ft = hostNow() - (g.firedAt || 0); if (fl) { for (let i = 0; i < U.cells.length; i++) { const c = U.cells[i], on = Math.min(1, Math.max(0, (ft - c[3] * FIRE.spread) / 300)) * Math.min(1, Math.max(0, (U.end[i] - ft) / 450));
+              if (on <= 0) { FM.makeScale(0, 0, 0); fl.setMatrixAt(i, FM); gw.setMatrixAt(i, FM); continue; } const w = .8 + .2 * Math.sin(now / 85 + i * 1.7) * Math.sin(now / 137 + i * .9);
+              FQ.setFromAxisAngle(UP, U.rot[i] + Math.sin(now / 400 + i) * .25); FV.set(c[0] - g.x + U.jx[i], c[2] - g.y + .05, c[1] - g.z + U.jz[i]); const hh = U.h[i] * w * on; FM.compose(FV, FQ, hh > 0 ? FS.set((.7 + .3 * w) * (.6 + U.h[i] * .5), hh, (.7 + .3 * w) * (.6 + U.h[i] * .5)) : FS.set(0, 0, 0)); fl.setMatrixAt(i, FM);
+              FQ.identity(); FV.set(c[0] - g.x, c[2] - g.y + .06, c[1] - g.z); FM.compose(FV, FQ, FS.set(on, 1, on)); gw.setMatrixAt(i, FM); } fl.instanceMatrix.needsUpdate = true; gw.instanceMatrix.needsUpdate = true; }
+          const cl = U.cells; if (cl?.length && k > .2) { if (now - (F.ember || 0) > 90) { F.ember = now; const c = cl[(Math.random() * cl.length) | 0]; FXP.spark(c[0] + (Math.random() - .5) * 2, (c[2] ?? g.y) + .4, c[1] + (Math.random() - .5) * 2, 2, { speed: 2, up: 5, life: 1.4, size: .55, gravity: -3 }); }
+            if (now - (F.smk || 0) > 450) { F.smk = now; const c = cl[(Math.random() * cl.length) | 0]; FXP.puff(c[0], (c[2] ?? g.y) + 2.5, c[1], 1, { color: 0x221d1a, size: 3.5, grow: 2, life: 2.6, rise: 4.5, spread: 1, alpha: .5 }); } }
           if (now - F.crackle > 380) { F.crackle = now; burst({ x: g.x, y: g.y, z: g.z }, { len: .2, decay: 3, freq: 2200, vol: .25, type: 'bandpass' }); } }
       }
-      for (const [id, v] of live) if (!seen.has(id)) { v.model.removeFromParent(); if (v.fx) { v.fx.loop?.stop?.(); v.fx.fx.removeFromParent(); for (const p of v.fx.parts) if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); } live.delete(id); }
+      for (const [id, v] of live) if (!seen.has(id)) { v.model.removeFromParent(); if (v.fx) { v.fx.loop?.stop?.(); v.fx.fx.removeFromParent(); for (const p of v.fx.parts) { if (p.userData.vox) { p.material.uniforms.uVol.value?.dispose(); p.removeFromParent(); } if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); } v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); } live.delete(id); }
       // Flashbang white-out: full for a moment, then fades.
       const left = flashUntil - now; white.style.opacity = left > 0 ? String(Math.min(1, flashPeak * Math.min(1, left / 1800))) : '0';
       { const c = camera.position, want = list.some(n => n.phase === 'smoke') ? Math.min(.97, smokeDensity(G, c.x, c.y, c.z, hostNow()) * 1.25) : 0; veilNow += (want - veilNow) * Math.min(1, dt * 10); const o = veilNow < .01 ? '0' : veilNow.toFixed(2); if (veil.style.opacity !== o) veil.style.opacity = o; }

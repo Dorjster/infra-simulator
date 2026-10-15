@@ -1,24 +1,29 @@
 // The seven classic Defuse maps (Dust II, Mirage, Inferno, Nuke, Cache, Anubis, Ancient), built from their
 // navigation areas and overviews (cs-mapbuild.js). Checks, per map:
 //  · a player with the game's own movement (arena-move.js, CS2 rules), steering round corners like a player, walks every bot route — each spawn to A, to B
-//    and (Terrorists) to mid — without getting stuck: real walkability, not just a path on a grid;
+//    and (Terrorists) to mid — without getting stuck: real walkability, not just a path on a grid (a shut door in the
+//    way is opened, E, as a player does — the bots open them too);
 //  · the spawns: ten per side, each on open floor, and no Terrorist spawn can see a Counter-Terrorist spawn;
 //  · both bomb sites have plantable area on their own floor, and planting off-site is refused;
 //  · the callouts cover the map, and the overview is fully used.
 import assert from 'node:assert/strict';
-import { ARENA_MAPS, mapBoxes } from '../dist/arena-maps.js';
-import { CS_MAP_IDS } from '../dist/cs-maps/themes.js';
+import { ARENA_MAPS, mapBoxes, applyMapState } from '../dist/arena-maps.js';
+import { CS_MAP_IDS, FILE_MAP_IDS } from '../dist/cs-maps/themes.js';
 import { createMoveState, moveStep, blocked, MOVE } from '../dist/arena-move.js';
 import { EYE } from '../dist/weapons-data.js';
 import { locationOf } from '../dist/gd-radar-art.js';
 let n = 0; const ok = (name, c, d = '') => { n++; assert(c, name + (d ? ' · ' + d : '')); };
 // --files <dir>: test the maps made from map files in <dir> (<id>.bsp) instead of the built-in ones.
 const argv = process.argv.slice(2), fi = argv.indexOf('--files'), filesDir = fi >= 0 ? argv.splice(fi, 2)[1] : null, only = argv, report = [];
-if (filesDir) { const { readdirSync, readFileSync } = await import('node:fs'), { useMapFile } = await import('../dist/arena-maps.js'); for (const f of readdirSync(filesDir)) { const id = f.replace(/\.bsp$/i, ''); if (f.toLowerCase().endsWith('.bsp') && CS_MAP_IDS.includes(id)) useMapFile(id, readFileSync(filesDir + '/' + f)); } }
-for (const id of CS_MAP_IDS) { if (only.length && !only.includes(id)) continue; if (filesDir && !(await import('../dist/arena-maps.js')).mapFileOf(id)) continue;
+if (filesDir) { const { readdirSync, readFileSync } = await import('node:fs'), { useMapFile } = await import('../dist/arena-maps.js'); for (const f of readdirSync(filesDir)) { const id = f.replace(/\.bsp$/i, ''); if (f.toLowerCase().endsWith('.bsp') && FILE_MAP_IDS.includes(id)) useMapFile(id, readFileSync(filesDir + '/' + f)); } }
+// Built in: the classic maps; map files: the file-only ones (Overpass) too.
+for (const id of filesDir ? FILE_MAP_IDS : CS_MAP_IDS) { if (only.length && !only.includes(id)) continue; if (filesDir && !(await import('../dist/arena-maps.js')).mapFileOf(id)) continue;
   const M = ARENA_MAPS[id], boxes = mapBoxes(M, 0, 0), [W, D] = M.size, bounds = { minX: -W / 2, maxX: W / 2, minZ: -D / 2, maxZ: D / 2 }, nav = M.nav;
   // Walk a route with the real movement: steer at the next waypoint, 64 ticks a second; stuck = no progress for 4 s.
-  const walk = (from, pts) => { const s = createMoveState(from[2] ?? nav.floorAt(from[0], from[1])); /* a spawn's own floor when it has a height */ s.x = from[0]; s.z = from[1]; let i = 0, best = Infinity, since = 0, t = 0; const dt = 1 / 64;
+  // A shut door within reach (a player's E: 7 units), opened — the other way round if it swung into you.
+  const doorState = { doors: {}, broken: {} }, openNear = (s, side) => { let n = 0; (M.movers || []).forEach((m, id) => { if (m.kind === 'break' || doorState.doors[id]?.side === side) return; const b = m.box; if (s.y + 6 < b[4] || s.y > b[5]) return;
+    if (Math.hypot(Math.max(b[0] - s.x, 0, s.x - b[1]), Math.max(b[2] - s.z, 0, s.z - b[3])) < 7) { doorState.doors[id] = { open: 1, side }; n++; } }); if (n) applyMapState(boxes, doorState); return n; };
+  const walk = (from, pts) => { doorState.doors = {}; applyMapState(boxes, null); const s = createMoveState(from[2] ?? nav.floorAt(from[0], from[1])); /* a spawn's own floor when it has a height */ s.x = from[0]; s.z = from[1]; let i = 0, best = Infinity, since = 0, t = 0; const dt = 1 / 64;
     // A waypoint is reached on its own floor (routes carry heights on stacked maps); still above it (a drop ahead), keep
     // going the way the route goes until off the edge — as the bots do.
     while (i < pts.length && t < 240) { const [px, pz, py] = pts[i], above = Number.isFinite(py) && s.y - py > 6, dd = Math.hypot(px - s.x, pz - s.z); if (dd < 1.5 && (!above || since > 1)) { i++; best = Infinity; since = 0; continue; }   // reached within 1.5 units, as the bots (a looser 3 let the walker drift off the checked line onto a ledge beside it)   // (above it a second already: on to the next point — a vent's way down)
@@ -29,7 +34,7 @@ for (const id of CS_MAP_IDS) { if (only.length && !only.includes(id)) continue; 
       const sp = 30, vx = dx / d * sp - s.vx * .7, vz = dz / d * sp - s.vz * .7, vl = Math.hypot(vx, vz) || 1;
       let wx2 = vx / vl, wz2 = vz / vl; if (since > 1 && since % 1.5 < .5) { const side = Math.floor(since / 1.5) % 2 ? 1 : -1; [wx2, wz2] = [-wz2 * side - wx2 * .4, wx2 * side - wz2 * .4]; }   // no progress for a second: sidestep (and back off a little), like a player would
       else for (const turn of [0, .4, -.4, .8, -.8, 1.2, -1.2]) { const c = Math.cos(turn), sn = Math.sin(turn), ux = wx2 * c - wz2 * sn, uz = wx2 * sn + wz2 * c; if (!blocked(boxes, bounds, s.x + ux * .8, s.z + uz * .8, s.y, MOVE.height)) { wx2 = ux; wz2 = uz; break; } }
-      moveStep(s, { wish: [wx2, wz2], weapon: 'knife' }, { boxes, bounds }, dt); t += dt; if (d < best - .2) { best = d; since = 0; } else if ((since += dt) > 4) return { stuck: [+s.x.toFixed(1), +s.z.toFixed(1), +s.y.toFixed(1)], at: i, of: pts.length, t: +t.toFixed(1) }; }
+      moveStep(s, { wish: [wx2, wz2], weapon: 'knife' }, { boxes, bounds }, dt); t += dt; if (d < best - .2) { best = d; since = 0; } else if ((since += dt) > .6 && since - dt <= .6) openNear(s, 1); else if (since > 1.8 && since - dt <= 1.8) openNear(s, -1); else if (since > 4) return { stuck: [+s.x.toFixed(1), +s.z.toFixed(1), +s.y.toFixed(1)], at: i, of: pts.length, t: +t.toFixed(1) }; }
     return i >= pts.length ? { t: +t.toFixed(1) } : { stuck: [s.x, s.z], timeout: true }; };
   const times = {};
   for (const [side, R] of Object.entries(M.routes)) for (const [goal, pts] of Object.entries(R)) { const from = side === 't' ? M.t[0] : M.ct[0], r = walk(from, pts);
