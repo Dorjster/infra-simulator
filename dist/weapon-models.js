@@ -332,7 +332,11 @@ const fromFile = new Set();
 // Is this weapon drawn from an imported file (a CS2 model)?
 export const modelFromFile = id => fromFile.has(id);
 // The knife a side carries: the Terrorists' own default knife when one is imported.
-export const knifeFor = (id, team) => id === 'knife' && team === 't' && real.has('knife-t') ? 'knife-t' : id;
+// The knife a player holds: their chosen CS2 knife (arena-logic.js 'knife': Butterfly, Stiletto, M9 Bayonet — on the
+// knife, the same blade for the rules), else their side's default (the T knife). `fp`: for the first-person view (each
+// has its own CS2 set: model and clips); in third person only when its model is imported, else the side's default.
+export const KNIFE_SKINS = { butterfly: '★ Butterfly Knife', stiletto: '★ Stiletto Knife', m9: '★ M9 Bayonet' };
+export const knifeFor = (id, team, skin = null, fp = false) => id === 'knife' && skin && KNIFE_SKINS[skin] && (fp || real.has(skin)) ? skin : id === 'knife' && team === 't' && real.has('knife-t') ? 'knife-t' : id;
 export function loadRealWeapons() {
   if (typeof fetch !== 'function' || typeof document === 'undefined') return Promise.resolve(0);
   const one = (id, f, fallback) => f(id).then(m => { real.set(id, m); cache.delete(id); if (m.userData.muzzle) MUZZLE[id] = m.userData.muzzle; }, e => { console.warn('model', id, e?.message); fromFile.delete(id); return fallback && one(id, fallback); });

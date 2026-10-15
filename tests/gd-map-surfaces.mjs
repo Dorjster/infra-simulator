@@ -20,7 +20,7 @@ if (existsSync(new URL('dust2.bsp', files))) {
     if (id === 'dust2') { check('Dust II CT spawn: sand among the paving', M.ct.some(p => at(p) === 'grass') && M.ct.some(p => at(p) === 'concrete'), M.ct.map(at)); check('Dust II T spawn: paving', M.t.slice(0, 5).every(p => at(p) === 'concrete'), M.t.slice(0, 5).map(at)); }
     // Floors lit by a switchable light (CS 1.6 light styles 32+) keep that light: Nuke's spawns were black.
     { const spots = [...M.t.slice(0, 5), ...M.ct.slice(0, 5)], lit = spots.map(p => +M.lightAt(p[0], p[1], M.nav.floorAt(p[0], p[1])).toFixed(2)); check(id + ': spawn floors lit (not black)', lit.every(v => v > .15), lit.join(' ')); }
-    if (id === 'nuke') check('Nuke spawns: asphalt (grey ground is hard)', [...M.t.slice(0, 3), ...M.ct.slice(0, 3)].every(p => at(p) === 'concrete'), [...M.t.slice(0, 3), ...M.ct.slice(0, 3)].map(at));
+    if (id === 'nuke') { const sp = [...M.t.slice(0, 3), ...M.ct.slice(0, 3)]; check('Nuke spawns: asphalt (grey ground is hard)' + (M.cs2 ? ' — CS2\'s: one CT spawn on a metal floor plate' : ''), M.cs2 ? sp.filter(p => at(p) === 'concrete').length >= 5 : sp.every(p => at(p) === 'concrete'), sp.map(at)); }
     const [W, D] = M.size; let seed = 3, known = 0, all = 0; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     for (let i = 0; i < 4000; i++) { const x = (rnd() - .5) * W, z = (rnd() - .5) * D, f = M.nav.floorAt(x, z); if (!Number.isFinite(f)) continue; all++; if (M.surfaceAt(x, z, f)) known++; }
     check(id + ': floors known', known / all > .95, known + '/' + all); }

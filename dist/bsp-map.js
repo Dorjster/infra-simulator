@@ -11,10 +11,17 @@ import { finishMap, U } from './cs-mapbuild.js';
 import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
 
 const CROUCH = 36, SOLID = /^func_(wall|wall_toggle|breakable|door|door_rotating|pushable|train|tracktrain|plat|rotating|button|brush)$/, Q = 2;
+// Counter-Strike 1.6 doors (sliding, and rotating about an upright hinge) and breakables (glass, vents, crates) move or
+// break in play: they are not part of the fixed collision but boxes of their own, switched by the round's state
+// (arena-maps.js applyMapState), and drawn as meshes of their own (bsp-mesh.js). Unbreakable glass (material 7),
+// trigger-only breakables and doors turning about a level axis stay fixed.
+export const moverOf = (e, src) => { if (src) return null;   /* (Source map files: none; Counter-Strike 2's: its doors and breakables, cs2-map.js) */ const c = e.classname || '', f = +e.spawnflags || 0;
+  if (c === 'func_door_rotating') return f & (64 | 128) ? null : 'rotdoor'; if (c === 'func_door') return f & 8 ? null : 'door';
+  if (c === 'func_breakable') return +e.material === 7 || f & 1 ? null : 'break'; return null; };
 export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // Solid parts: the world and the solid brush entities (with their origin offset), each with its bounds.
   const parts = [{ head: bsp.models[0].head, off: [0, 0, 0], mi: 0, ...bounds(bsp.models[0], [0, 0, 0]) }];
-  for (const e of bsp.entities) { const mi = modelOf(e); if (mi > 0 && SOLID.test(e.classname || '') && bsp.models[mi]) { const off = e.origin ? vec(e.origin) : [0, 0, 0]; parts.push({ head: bsp.models[mi].head, off, mi, ...bounds(bsp.models[mi], off) }); } }
+  for (const e of bsp.entities) { const mi = modelOf(e); if (mi > 0 && SOLID.test(e.classname || '') && bsp.models[mi] && !moverOf(e, bsp.format === 'vbsp' && !bsp.cs2)) { const off = e.origin ? vec(e.origin) : [0, 0, 0]; parts.push({ head: bsp.models[mi].head, off, mi, ...bounds(bsp.models[mi], off) }); } }
   // Source maps (vbsp.js: toGoldSrc) keep their 3D sky box — a miniature far outside the play area — inside the world's
   // bounds: there the area is the spawns' and bomb sites' surroundings (1 500 units round them) and their height range.
   // Source places a spawn at the feet (Counter-Strike 1.6: the body's centre, 36 up).
@@ -44,7 +51,8 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // drops, and up and down the map's ladders. Roofs inside the sky box and sealed spaces are not floors (their solid
   // still blocks), so "the floor here" is never a roof nobody can reach.
   { const ents0 = c => bsp.entities.filter(e => e.classname === c), cellOf0 = (x, y) => { const c = Math.floor((x - x0) / CELL), r = Math.floor((y1 - y) / CELL); return c < 0 || r < 0 || c >= cols || r >= rows ? -1 : r * cols + c; };
-    const ladder = new Float32Array(N).fill(-Infinity); for (const e of ents0('func_ladder')) { const mi = modelOf(e); if (mi <= 0 || !bsp.models[mi]) continue; const b = bounds(bsp.models[mi], e.origin ? vec(e.origin) : [0, 0, 0]); for (let x = b.mins[0] - 24; x <= b.maxs[0] + 24; x += CELL / 2) for (let y = b.mins[1] - 24; y <= b.maxs[1] + 24; y += CELL / 2) { const i = cellOf0(x, y); if (i >= 0) ladder[i] = Math.max(ladder[i], b.maxs[2]); } }
+    const ladder = new Float32Array(N).fill(-Infinity), ladderVols = [...ents0('func_ladder').map(e => { const mi = modelOf(e); return mi > 0 && bsp.models[mi] ? bounds(bsp.models[mi], e.origin ? vec(e.origin) : [0, 0, 0]) : null; }).filter(Boolean), ...(bsp.ladderBoxes || [])];   // (Source: ladder brushes)
+    for (const b of ladderVols) { for (let x = b.mins[0] - 24; x <= b.maxs[0] + 24; x += CELL / 2) for (let y = b.mins[1] - 24; y <= b.maxs[1] + 24; y += CELL / 2) { const i = cellOf0(x, y); if (i >= 0) ladder[i] = Math.max(ladder[i], b.maxs[2]); } }
     // A floor a standing player fits on, by the game's own player hull (clip brushes included: the roofs the real game
     // keeps you off stay out). Floors right by a wall (the hull's centre can't get that close) join their neighbours below.
     const hull1 = bsp.models[0].hulls[1], fits = v => { if (!bsp.clipnodes) return ceil[v] - z[v] >= 54;   /* Source keeps no player hulls: room to crouch over the floor */ const i = (v / MAXF) | 0, x = x0 + (i % cols + .5) * CELL, y = y1 - (((i / cols) | 0) + .5) * CELL; for (const up of [38, 44, 50, 56, 72, 92, 112, 132]) if (!hullSolid(bsp, hull1, x, y, z[v] + up)) return true; return false; };   // centre 36 above the feet, up to a step more on ramps and stairs (the hull rests on the highest point under it), or on an invisible clip floor up to 96 above (Train's tracks); roof clips reach up to the sky
@@ -74,13 +82,24 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   if (nav && tSp.length && ctSp.length) { const navC = p => { const a = nav.areas.filter(x => nav.places[x[7]] === p); return a.length ? centre(a.map(x => [(x[0] + x[2]) / 2, (x[1] + x[3]) / 2, (x[4] + x[5]) / 2])) : null; };
     const dst = { T: navC('TSpawn'), CT: navC('CTSpawn'), A: navC('BombsiteA'), B: navC('BombsiteB') };
     for (const order of siteBoxes.length >= 2 ? [['A', 'B'], ['B', 'A']] : [['A']]) { const src = [centre(tSp), centre(ctSp), ...siteBoxes.slice(0, order.length).map(boxC)], to = [dst.T, dst.CT, ...order.map(L => dst[L])]; if (to.some(v => !v)) continue;
-      const fit = similarity(src, to); if (!align || fit.err < align.err) { align = fit; labels = order; } } }
+      const fit = bsp.cs2 ? { s: 1, th: 0, dz: 0, map: (x, y, h) => [x, y, h], err: Math.hypot(...src.slice(2).flatMap((p, k) => [p[0] - to[k + 2][0], p[1] - to[k + 2][1], p[2] - to[k + 2][2]])) }   // (Counter-Strike 2 maps: the navigation's own coordinates — no fitting, just which site is which; by height too: Nuke's B lies under A)
+        : similarity(src, to); if (!align || fit.err < align.err) { align = fit; labels = order; } } }
   // Place names: each floor takes the place of the CS:GO area under its aligned position (its height near).
   if (align) { const P = nav.places, grid = new Map(), K = 128, key = (a, b) => a + ',' + b; G.places = [...P];
     for (const [ai, a] of nav.areas.entries()) for (let gx = Math.floor(a[0] / K); gx <= Math.floor(a[2] / K); gx++) for (let gy = Math.floor(a[1] / K); gy <= Math.floor(a[3] / K); gy++) { const k = key(gx, gy); (grid.get(k) || grid.set(k, []).get(k)).push(ai); }
     for (let i = 0; i < N; i++) for (let k = 0; k < n[i]; k++) { const cx = x0 + (i % cols + .5) * CELL, cy = y1 - (((i / cols) | 0) + .5) * CELL, [X, Y, H] = align.map(cx, cy, z[i * MAXF + k]); let best = -1, bd = Infinity;
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const ai of grid.get(key(Math.floor(X / K) + dx, Math.floor(Y / K) + dy)) || []) { const a = nav.areas[ai], ex = Math.max(a[0] - X, 0, X - a[2]), ey = Math.max(a[1] - Y, 0, Y - a[3]), dz = Math.abs((a[4] + a[5]) / 2 - H), d = Math.hypot(ex, ey) + dz * .5; if (d < bd && dz < 160) { bd = d; best = ai; } }
       if (best >= 0 && bd < 200) place[i * MAXF + k] = nav.areas[best][7]; } }
+  // A Counter-Strike 2 map with no CS:GO navigation data (Overpass): each floor takes the place of CS2's own place volume
+  // it stands in (env_cs_place — the game's callouts; the smallest where they overlap), and each bomb target the letter
+  // of the site volume round it.
+  if (!align && bsp.cs2 && bsp.places?.length) { const P = bsp.places, K = 256, grid = new Map(), key = (a, b) => a + ',' + b, ids = new Map();
+    for (const p of P) if (!ids.has(p.name)) { ids.set(p.name, G.places.length); G.places.push(p.name); }
+    for (const [pi, p] of P.entries()) for (let gx = Math.floor(p.mins[0] / K); gx <= Math.floor(p.maxs[0] / K); gx++) for (let gy = Math.floor(p.mins[1] / K); gy <= Math.floor(p.maxs[1] / K); gy++) { const k = key(gx, gy); (grid.get(k) || grid.set(k, []).get(k)).push(pi); }
+    const inside = (p, x, y, h) => x >= p.mins[0] && x <= p.maxs[0] && y >= p.mins[1] && y <= p.maxs[1] && h >= p.mins[2] && h <= p.maxs[2], vol = p => (p.maxs[0] - p.mins[0]) * (p.maxs[1] - p.mins[1]) * (p.maxs[2] - p.mins[2]);
+    for (let i = 0; i < N; i++) { const cx = x0 + (i % cols + .5) * CELL, cy = y1 - (((i / cols) | 0) + .5) * CELL, L = grid.get(key(Math.floor(cx / K), Math.floor(cy / K))); if (!L) continue;
+      for (let k = 0; k < n[i]; k++) { const h = z[i * MAXF + k] + 8; let best = -1, bv = Infinity; for (const pi of L) { const p = P[pi]; if (inside(p, cx, cy, h) && vol(p) < bv) { bv = vol(p); best = pi; } } if (best >= 0) place[i * MAXF + k] = ids.get(P[best].name); } }
+    labels = siteBoxes.map((b, j) => { const [x, y, h] = boxC(b), p = P.find(p => /^Bombsite[AB]$/.test(p.name) && inside(p, x, y, h + 8)); return p ? p.name.slice(-1) : 'AB'[j]; }); }
   // A separate lower level (Nuke): the CS:GO data's split height, brought into this file's heights by the alignment.
   if (align && nav.split) G.split = { top: (nav.split.top - align.dz) / align.s, bottom: -1e9 };
   const placeId = name => { let p = G.places.indexOf(name); if (p < 0) { p = G.places.length; G.places.push(name); } return p; };
@@ -105,10 +124,34 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // climbing (arena-move.js).
   const ladders = []; for (const e of ents('func_ladder')) { const mi = modelOf(e); if (mi <= 0 || !bsp.models[mi]) continue; const b = bounds(bsp.models[mi], e.origin ? vec(e.origin) : [0, 0, 0]), a = toGame(b.mins[0], b.maxs[1], b.mins[2]), c = toGame(b.maxs[0], b.mins[1], b.maxs[2]);
     ladders.push([a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(2))); }
-  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: { data: bsp, toGame }, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders } });
+  // Movers (moverOf): each with its shut box, its open box(es) and how it moves — game units relative to the map
+  // centre, boxes as [minX, maxX, minZ, maxZ, y0, y1]. Rotating doors turn about their origin (the hinge) by
+  // `distance` degrees either way (they open away from whoever uses them); sliding doors move along `angle` (−1 up,
+  // −2 down) by their own size less `lip`.
+  const movers = [], boxOf = (lo, hi) => { const a = toGame(lo[0], hi[1], lo[2]), c = toGame(hi[0], lo[1], hi[2]); return [a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(3)); };
+  bsp.entities.forEach((e, ei) => { const kind = moverOf(e, bsp.format === 'vbsp' && !bsp.cs2), mi = modelOf(e); if (!kind || mi <= 0 || !bsp.models[mi]) return; const off = e.origin ? vec(e.origin) : [0, 0, 0], b = bounds(bsp.models[mi], off), box = boxOf(b.mins, b.maxs), m = { e: ei, mi, kind, box };
+    if (kind === 'rotdoor') { const h = toGame(off[0], off[1], off[2]), deg = +e.distance || 90; m.hinge = h.map(v => +v.toFixed(3)); m.angle = deg * Math.PI / 180; m.open = {};
+      for (const sg of [1, -1]) { const t = sg * m.angle, c = Math.cos(t), sn = Math.sin(t), xs = [], zs = []; for (const x of [box[0], box[1]]) for (const z of [box[2], box[3]]) { const dx = x - h[0], dz = z - h[2]; xs.push(h[0] + dx * c + dz * sn); zs.push(h[2] - dx * sn + dz * c); }
+        m.open[sg > 0 ? '+' : '-'] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs), box[4], box[5]].map(v => +v.toFixed(3)); } }
+    else if (kind === 'door') { const ang = +e.angle || 0, d = ang === -1 ? [0, 0, 1] : ang === -2 ? [0, 0, -1] : [Math.cos(ang * Math.PI / 180), Math.sin(ang * Math.PI / 180), 0], size = [0, 1, 2].map(k => b.maxs[k] - b.mins[k]);
+      const len = Math.max(0, Math.abs(d[0]) * size[0] + Math.abs(d[1]) * size[1] + Math.abs(d[2]) * size[2] - (+e.lip || 0)), g = [d[0] * len * U, d[2] * len * U, -d[1] * len * U].map(v => +v.toFixed(3)); m.slide = g;
+      m.open = { open: [box[0] + g[0], box[1] + g[0], box[2] + g[2], box[3] + g[2], box[4] + g[1], box[5] + g[1]] }; }
+    else { m.glass = !+e.material; m.health = Math.max(1, +e.health || 1); }
+    movers.push(m); });
+  // Grenades fly through the map's real shapes, as in CS — not its player clips (the roofs and edges that stop only
+  // players) nor the collision columns (a gap narrower than a column would be shut): a point test on the file. Counter-
+  // Strike 1.6: the world and the solid brush entities by their visible hull; Source: its solid brushes and solid props.
+  // The sky lets them through (a high lob comes back down). Map-relative game units in.
+  const fromGame = (gx, gy, gz) => [x0 + (gx + W / 2) / U, y1 - (gz + D / 2) / U, zLow + gy / U], NS = bsp.source, NMASK = 0x1 | 0x2 | 0x8 | 0x4000;
+  const contentsAt = (B, head, x, y, z) => { const { planes, nodes } = B; let n = head; while (n >= 0) { const q = nodes[n * 3] * 4; n = planes[q] * x + planes[q + 1] * y + planes[q + 2] * z - planes[q + 3] >= 0 ? nodes[n * 3 + 1] : nodes[n * 3 + 2]; } return B.leafContents[-(n + 1)]; };
+  const nadeSolid = bsp.pointSolid ? (gx, gy, gz) => bsp.pointSolid(...fromGame(gx, gy, gz))   // (Counter-Strike 2: its own grenade collision, cs2-map.js)
+    : NS ? (gx, gy, gz) => { const [x, y, z] = fromGame(gx, gy, gz); if (contentsAt(NS, NS.models[0].head, x, y, z) & NMASK) return true; const sp = bsp.extraSpans?.(x, y); if (sp) for (const s of sp) if (z >= s[0] && z <= s[1]) return true; return false; }
+    : (gx, gy, gz) => { const [x, y, z] = fromGame(gx, gy, gz); for (const q of parts) { if (x < q.mins[0] || x > q.maxs[0] || y < q.mins[1] || y > q.maxs[1] || z < q.mins[2] || z > q.maxs[2]) continue; if (contentsAt(bsp, q.head, x - q.off[0], y - q.off[1], z - q.off[2]) === -2) return true; } return false; };
+  for (const L of bsp.ladderBoxes || []) { const a = toGame(L.mins[0], L.maxs[1], L.mins[2]), c = toGame(L.maxs[0], L.mins[1], L.maxs[2]); ladders.push([a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(2))); }   // (Source: ladder brushes)
+  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: bsp.cs2 ? null : { data: bsp, toGame }, cs2: !!bsp.cs2, hammer: bsp.cs2 ? { x0, y1, W, D, zLow, U } : null, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders, movers, nadeSolid } });
   // The segments only made the collision boxes: these maps are drawn from their own faces (bsp-mesh.js), never from
   // the columns, and a large map holds some 200 000 of them (60 MB).
-  map.columns.segs = null;
+  if (!bsp.cs2) map.columns.segs = null;   // (Counter-Strike 2 maps: drawn from their columns until their own meshes are converted)
   // The baked light on each floor and what it is made of (map-light.js), by spot in game units (x, z, feet):
   // lightAt — 1 ≈ a sunlit floor; surfaceAt — a footstep surface, or null where the map's faces don't say.
   const light = floorLight(bsp, G, { x0, y1 }), surface = floorSurface(bsp, G, { x0, y1 }), cw = CELL * U;

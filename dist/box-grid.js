@@ -16,7 +16,8 @@ export function indexBoxes(boxes, cell = 8) {
   return boxes;
 }
 const nextMark = G => { if (++G.mark > 4e9) { G.stamp.fill(0); G.mark = 1; } return G.mark; };
-const addCell = (boxes, G, i, m, out) => { for (let k = G.start[i]; k < G.start[i + 1]; k++) { const j = G.items[k]; if (G.stamp[j] !== m) { G.stamp[j] = m; out.push(boxes[j]); } } };
+// (A box switched off — an open door's shut box, broken glass: arena-maps.js applyMapState — is left out.)
+const addCell = (boxes, G, i, m, out) => { for (let k = G.start[i]; k < G.start[i + 1]; k++) { const j = G.items[k]; if (G.stamp[j] !== m) { G.stamp[j] = m; if (!boxes[j].off) out.push(boxes[j]); } } };
 // Boxes whose footprint may overlap the rectangle [x0, x1] × [z0, z1].
 export function boxesNear(boxes, x0, z0, x1, z1, out) {
   const G = boxes?.grid; if (!G) return boxes; out.length = 0; const m = nextMark(G);

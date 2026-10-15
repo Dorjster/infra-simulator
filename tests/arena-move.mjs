@@ -1,6 +1,6 @@
 // CS2-style arena movement (dist/arena-move.js): speeds per weapon, walk / crouch, friction stop, jump height,
 // climbing low cover but not containers, walls, and the movement inaccuracy factor.
-import { createMoveState, moveStep, moveSpread, maxSpeed, HU, MOVE } from '../dist/arena-move.js';
+import { createMoveState, moveStep, moveFor, moveSpread, maxSpeed, HU, MOVE } from '../dist/arena-move.js';
 let ok = 0, n = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (d !== '' ? ' · ' + d : '')); };
 const dt = 1 / 64, at = (x = 0, z = 0) => Object.assign(createMoveState(0), { x, z });
 const run = (s, input, world, secs) => { for (let t = 0; t < secs; t += dt) moveStep(s, input, world, dt); return s; };
@@ -34,6 +34,17 @@ check('Walking is far more accurate than running', moveSpread(run(at(), { ...fwd
 // No bunny hopping: landing faster than 1.1× top speed (from air strafing), the next jump trims you to it.
 { const b = at(); b.vx = 0; b.vz = -400 * HU; moveStep(b, { wish: [0, -1], weapon: 'knife', jump: true }, open, dt); const sp = Math.hypot(b.vx, b.vz) / HU;
   check('No bunny hopping: a jump at 400 u/s leaves at 1.1× the knife\'s 250 (275)', Math.abs(sp - 275) < 3 && !b.onGround, sp.toFixed(0)); }
+// Angled walls are staircases of 16-unit cells: sliding along one keeps (nearly) full speed, no stutter at each step;
+// running at a flat wall at 45° still loses the part into it (Source's clip).
+{ const C = 16 * HU, boxes = []; for (let k = -40; k < 40; k++) boxes.push({ minX: k * C, maxX: k * C + C, minZ: -k * C - C - 50, maxZ: -k * C - C, y0: 0, y1: 40 });
+  const w = { boxes, bounds: null, ladders: [] }, a = at(2, -.5), inp = { wish: [Math.SQRT1_2 - .15, -Math.SQRT1_2 - .15], weapon: 'knife', look: [Math.SQRT1_2, -Math.SQRT1_2], pitch: 0 }, pts = [];
+  for (let i = 0; i < 240; i++) { moveFor(a, inp, w, 1 / 60); pts.push([a.x, a.z]); }
+  const sp = []; for (let i = 61; i < pts.length; i++) sp.push(Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) * 60 / HU);
+  const mean = sp.reduce((x, y) => x + y) / sp.length, low = Math.min(...sp);
+  check('Sliding along an angled (staircase) wall keeps its pace: no dip at each step', mean > 235 && low > 180, `mean ${mean.toFixed(0)} · lowest ${low.toFixed(0)} u/s`);
+  const flat = { boxes: [{ minX: 10, maxX: 20, minZ: -2000, maxZ: 100, y0: 0, y1: 40 }], bounds: null, ladders: [] }, f = at(0, 0); f.vx = f.vz = 0;
+  for (let i = 0; i < 240; i++) moveFor(f, { wish: [Math.SQRT1_2, -Math.SQRT1_2], weapon: 'knife', look: [Math.SQRT1_2, -Math.SQRT1_2], pitch: 0 }, flat, 1 / 60);
+  const fsp = Math.hypot(f.vx, f.vz) / HU; check('…a flat wall run into at 45° still takes the part into it away (Source)', fsp > 150 && fsp < 200, fsp.toFixed(0) + ' u/s'); }
 // Ladders: a ladder on the north face of a wall 30 units tall, with a ledge (the wall's top) to step onto.
 { const wall = { minX: -10, maxX: 10, minZ: -12, maxZ: -2, y0: 0, y1: 30 }, ladder = { minX: -2, maxX: 2, minZ: -2.1, maxZ: -1.8, y0: 0, y1: 30 }, world = { boxes: [wall], bounds: null, ladders: [ladder] };
   const up = { wish: [0, -1], weapon: 'knife', look: [0, -1], pitch: .2 }, s = at(0, 0);

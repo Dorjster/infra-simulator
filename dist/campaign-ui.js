@@ -3,7 +3,8 @@
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
 import { getVolumes, setVolumes } from './spatial-audio.js';
-import { ARENA_MAPS, MAP_LIST } from './arena-maps.js';
+import { ARENA_MAPS, MAP_LIST, mapOffered } from './arena-maps.js';
+import { userMapList, refreshUserMaps } from './user-maps.js';
 import { APP_VERSION } from './version.js';
 import * as THREE from './three.module.js';
 import {CONTEXTS, actionsIn, labelOf, rebind, unbind, resetContext, resetAll, exportBindings, importBindings} from './input.js';
@@ -197,7 +198,7 @@ export function createCampaignUI(ctx) {
         { const nm = (el.querySelector('#ss-ar-name')?.value || '').trim() || 'Player'; try { localStorage.setItem('infra-name', nm); } catch {} dispatchEvent(new CustomEvent('gd-name', { detail: nm })); }
         const kind = el.querySelector('#ss-ar-kind').value, map = el.querySelector('#ss-ar-map').value, bots = +el.querySelector('#ss-ar-bots').value;
         const practice = kind === 'practice' ? { bots: el.querySelector('#ss-pr-bots').value, ...Object.fromEntries(['ammo', 'impacts', 'recoil', 'paths'].map(k => [k, el.querySelector('#ss-pr-' + k).checked])) } : null, want = practice ? 'dm' : kind;
-        if (!MAP_LIST.some(m => m.id === map && (practice || m.kind === kind))) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
+        if (!MAP_LIST.some(m => m.id === map && (practice || m.kind === kind) && mapOffered(m, userMapList().map(u => u.id)))) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
         const before = lan.epoch;
         if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); if (h?.rebound && lan.connected) { status.textContent = 'Opening the room to your network…'; if (!(await lan.whenReady(12000, before))) return fail('The room did not come back after opening it to the LAN. Check the firewall and try Host again.'); } } catch (e) { return fail(e.message); } }
         if (!(await joinLocalRoom())) return fail('The arena runs on this computer’s room · start the game from the desktop app or the room server');
@@ -210,7 +211,8 @@ export function createCampaignUI(ctx) {
         busy = false; notify('Global Defensive · ' + (practice ? 'Practice · Esc for its settings' : kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + ARENA_MAPS[map].name + (host ? ' · hosting on your network' : '')); begin();
       };
       // Maps for the chosen mode (deathmatch: Freight Yard, Old Town · defuse: Dune, Plaza, Hamlet).
-      const maps = () => { const k = el.querySelector('#ss-ar-kind').value; el.querySelector('#ss-ar-map').innerHTML = MAP_LIST.filter(m => k === 'practice' || m.kind === k).map(({ id, ...m }) => `<option value="${id}">${m.name}</option>`).join(''); el.querySelector('#ss-ar-practice').hidden = k !== 'practice'; };   // practice: every map
+      const maps = () => { const k = el.querySelector('#ss-ar-kind').value, sel = el.querySelector('#ss-ar-map'), cur = sel.value, room = userMapList().map(u => u.id); sel.innerHTML = MAP_LIST.filter(m => (k === 'practice' || m.kind === k) && mapOffered(m, room)).map(({ id, ...m }) => `<option value="${id}">${m.name}</option>`).join(''); if ([...sel.options].some(o => o.value === cur)) sel.value = cur; el.querySelector('#ss-ar-practice').hidden = k !== 'practice'; };   // practice: every map (file-only ones once the room has them: mapOffered)
+      refreshUserMaps().then(() => maps());   // (the room's map files can add Overpass)
       el.querySelector('#ss-ar-kind').addEventListener('change', maps); maps();
       el.querySelector('#ss-ar-solo').addEventListener('click', () => go(false));
       el.querySelector('#ss-ar-host')?.addEventListener('click', () => go(true));

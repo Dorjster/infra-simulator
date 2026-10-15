@@ -72,7 +72,7 @@ await p?.goto('http://assets.local/');
 await p?.evaluate(() => { const s = document.createElement('script'); s.type = 'importmap'; s.textContent = JSON.stringify({ imports: { three: 'https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js', 'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/' } }); document.head.append(s); });
 
 const old = existsSync(path.join(out, 'manifest.json')) ? JSON.parse(readFileSync(path.join(out, 'manifest.json'), 'utf8')) : { models: {} };
-const models = { weapons: { ...(old.models.weapons || {}) }, agents: { ...(old.models.agents || {}) }, viewmodels: { ...(old.models.viewmodels || {}) } };
+const models = { ...old.models, weapons: { ...(old.models.weapons || {}) }, agents: { ...(old.models.agents || {}) }, viewmodels: { ...(old.models.viewmodels || {}) } };   // (and what other tools added: CS2 maps' looks, models.maps)
 const put = (rel, data) => { mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); writeFileSync(path.join(out, rel), data); };
 const url = f => 'http://assets.local/file' + f.split('/').map(encodeURIComponent).join('/');
 const done = new Set(), { WEAPON_IDS } = await import(new URL('../dist/weapons-data.js', import.meta.url).href), known = new Set([...WEAPON_IDS, 'knife', 'knife-t', 'karambit', 'c4', 'kit']);
@@ -133,7 +133,7 @@ if (app) { copyTree(out, path.join(app, 'assets')); if (existsSync(mapsOut)) cop
 // One asset pack with everything: for other computers.
 if (!noPack && (existsSync(path.join(out, 'manifest.json')) || existsSync(mapsOut))) {
   const maps = existsSync(mapsOut) ? readdirSync(mapsOut).filter(f => /\.bsp$/i.test(f)) : [], man = existsSync(path.join(out, 'manifest.json')) ? JSON.parse(readFileSync(path.join(out, 'manifest.json'), 'utf8')) : { models: {} };
-  const info = { version: 1, made: new Date().toISOString(), weapons: Object.keys(man.models.weapons || {}), agents: Object.keys(man.models.agents || {}), viewmodels: Object.keys(man.models.viewmodels || {}), maps: maps.map(f => f.replace(/\.bsp$/i, '')) };
+  const info = { version: 1, made: new Date().toISOString(), weapons: Object.keys(man.models.weapons || {}), agents: Object.keys(man.models.agents || {}), viewmodels: Object.keys(man.models.viewmodels || {}), maps: maps.map(f => f.replace(/\.bsp$/i, '')), looks: Object.keys(man.models.maps || {}) };
   const entries = [{ name: 'infra-pack.json', data: Buffer.from(JSON.stringify(info, null, 1)) }, ...(existsSync(out) ? walk(out).map(f => ({ name: 'assets/' + path.relative(out, f).split(path.sep).join('/'), data: readFileSync(f) })) : []), ...maps.map(f => ({ name: 'maps/' + f, data: readFileSync(path.join(mapsOut, f)) }))];
   writeFileSync(PACK, writeZip(entries)); console.log(`→ ${PACK}: ${info.weapons.length} weapons, ${info.agents.length} agents, ${info.viewmodels.length} first-person, ${info.maps.length} maps (${(statSync(PACK).size / 1048576).toFixed(0)} MB) — on another computer: Settings → Models and maps → Import asset pack`);
 }

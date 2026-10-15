@@ -5,8 +5,8 @@
 // metal-blue, metal-green, roof, stone. kind: 'dm' (deathmatch) or 'defuse' (bomb sites A / B, T / CT spawns, bot routes).
 import { DRESS } from './arena-maps-more.js';
 import { buildCsMap } from './cs-mapbuild.js';
-import { parseBsp } from './bsp30.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js'; import { compactVbsp } from './vbsp-compact.js'; import { indexBoxes, boxesNear, boxesAlong } from './box-grid.js';
-import { THEMES, CS_MAP_IDS } from './cs-maps/themes.js';
+import { parseBsp } from './bsp30.js'; import { isCs2Map, parseCs2Map } from './cs2-map.js'; import { buildBspMap } from './bsp-map.js'; import { isVbsp, parseVbsp, toGoldSrc, playBounds } from './vbsp.js'; import { sourceSolids } from './vbsp-solids.js'; import { compactVbsp } from './vbsp-compact.js'; import { indexBoxes, boxesNear, boxesAlong } from './box-grid.js';
+import { THEMES, CS_MAP_IDS, FILE_MAP_IDS } from './cs-maps/themes.js';
 import dust2 from './cs-maps/dust2-nav.js'; import mirage from './cs-maps/mirage-nav.js'; import inferno from './cs-maps/inferno-nav.js'; import nuke from './cs-maps/nuke-nav.js';
 import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js';
 import { textureSize } from './texture-quality.js';
@@ -62,22 +62,29 @@ export const ARENA_MAPS = {
 // (cs-mapbuild.js). Each is built the first time it is used (a fraction of a second) and kept.
 for (const id of CS_MAP_IDS) Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() {
   const m = buildCsMap(id, NAV[id], THEMES[id]); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } });
+// Maps there are only as files (Overpass: CS2's): a stand-in with just the name until the file is in (menus and the HUD
+// read it; nothing plays on it — the host refuses it, arena-logic.js; the radar and the scene wait for the file).
+for (const id of FILE_MAP_IDS) if (!CS_MAP_IDS.includes(id)) Object.defineProperty(ARENA_MAPS, id, { enumerable: false, configurable: true, writable: true,   // (not counted among the maps: Object.keys / entries skip it)
+  value: { id, name: THEMES[id].name, kind: 'defuse', classic: true, stub: true, size: [1, 1], solids: [], decor: [], t: [], ct: [], spawns: [], sites: {}, siteGoals: {}, callouts: [] } });
 // Maps from files (Counter-Strike 1.6 .bsp, imported on this computer, never shipped): useMapFile puts one in place of
 // the built-in version of the same map — drawn from the file, walked on its own geometry (bsp-map.js). Built the first
 // time it is used. The host and every client load the same file (the room serves it), so all build the same map.
 const FILE_MAPS = new Map();
-// Counter-Strike 1.6 (BSP 30) or Source (VBSP: CS:S / CS:GO ports; its terrain and solid props join the collision when the map is built).
-export function useMapFile(id, buffer, info = {}) { if (!CS_MAP_IDS.includes(id)) throw Error('No such Defuse map: ' + id); const bsp = isVbsp(buffer) ? (sb => { const g = toGoldSrc(sb); g.extraSpans = (x, y) => (g._solids ??= sourceSolids(sb, { bounds: playBounds(sb) })).extraSpans(x, y); return g; })(compactVbsp(parseVbsp(buffer), { maxSize: textureSize() })) : parseBsp(buffer); FILE_MAPS.set(id, { size: buffer.byteLength, ...info });
+// Counter-Strike 1.6 (BSP 30), Source (VBSP: CS:S / CS:GO ports; its terrain and solid props join the collision when the
+// map is built), or Counter-Strike 2 (converted here: cs2-map.js).
+export function useMapFile(id, buffer, info = {}) { if (!FILE_MAP_IDS.includes(id)) throw Error('No such Defuse map: ' + id); const bsp = isCs2Map(buffer) ? parseCs2Map(buffer) : isVbsp(buffer) ? (sb => { const g = toGoldSrc(sb); g.extraSpans = (x, y) => (g._solids ??= sourceSolids(sb, { bounds: playBounds(sb) })).extraSpans(x, y); return g; })(compactVbsp(parseVbsp(buffer), { maxSize: textureSize() })) : parseBsp(buffer); FILE_MAPS.set(id, { size: buffer.byteLength, cs2: !!bsp.cs2, ...info });
   Object.defineProperty(ARENA_MAPS, id, { enumerable: true, configurable: true, get() { const m = buildBspMap(id, bsp, { T: THEMES[id], nav: NAV[id] }); m.spawns = [...m.t, ...m.ct]; Object.defineProperty(ARENA_MAPS, id, { value: m, enumerable: true, configurable: true, writable: true }); return m; } }); }
 export const mapFileOf = id => FILE_MAPS.get(id) || null;
 // Every map's id, name and kind without building any (menus, settings).
-export const MAP_LIST = [...Object.keys(ARENA_MAPS).filter(id => !CS_MAP_IDS.includes(id)).map(id => ({ id, name: ARENA_MAPS[id].name, kind: ARENA_MAPS[id].kind })), ...CS_MAP_IDS.map(id => ({ id, name: THEMES[id].name, kind: 'defuse' }))];
+export const MAP_LIST = [...Object.keys(ARENA_MAPS).filter(id => !FILE_MAP_IDS.includes(id)).map(id => ({ id, name: ARENA_MAPS[id].name, kind: ARENA_MAPS[id].kind })), ...FILE_MAP_IDS.map(id => ({ id, name: THEMES[id].name, kind: 'defuse', ...(THEMES[id].fileOnly ? { fileOnly: true } : {}) }))];   // (fileOnly: offered once the room has its file — mapOffered)
 // In a team's buy zone? (dx, dz relative to the arena centre.) Classic maps: within reach of any of the team's spawn
 // points (their spawn areas are large); others: around the spawns' centre.
 export function inBuyZone(m, side, dx, dz, radius) { const sp = side === 'ct' ? m.ct : m.t; if (!sp?.length) return true;
   if (m.classic) return sp.some(([x, z]) => Math.hypot(dx - x, dz - z) <= radius * .9);
   const cx = sp.reduce((a, q) => a + q[0], 0) / sp.length, cz = sp.reduce((a, q) => a + q[1], 0) / sp.length; return Math.hypot(dx - cx, dz - cz) <= radius; }
 export const mapMeta = id => MAP_LIST.find(m => m.id === id) || null;
+// Can a match be started on it here: built in, or a file-only map the room has (`roomMaps`: the ids of the room's map files).
+export const mapOffered = (m, roomMaps = []) => !m.fileOnly || roomMaps.includes(m.id) || !!FILE_MAPS.get(m.id);
 // The older maps get their props, windows and callouts (arena-maps-more.js).
 for (const [id, dress] of Object.entries(DRESS)) { if (CS_MAP_IDS.includes(id) || !Object.getOwnPropertyDescriptor(ARENA_MAPS, id)?.value || ARENA_MAPS[id]?.grid) continue; const M = ARENA_MAPS[id], d = dress(); M.solids = [...M.solids, ...d.solids]; M.decor = [...(M.decor || []), ...d.decor]; M.props = [...(M.props || []), ...d.props]; }
 
@@ -87,9 +94,18 @@ for (const [id, dress] of Object.entries(DRESS)) { if (CS_MAP_IDS.includes(id) |
 const BOX_CACHE = new Map();
 export function mapBoxes(map, cx, cz) {
   const key = (map.id || '') + '@' + cx + ',' + cz, hit = BOX_CACHE.get(key); if (hit && hit.map === map) return hit.boxes;
-  const boxes = indexBoxes(map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk }; }));
+  const list = map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk, mover: null, role: null, off: false }; });
+  // Doors and breakables (map files: bsp-map.js movers): a shut / intact box, and the open ones, off until opened.
+  for (const [id, m] of (map.movers || []).entries()) { const add = (bx, role) => list.push({ minX: cx + bx[0], maxX: cx + bx[1], minZ: cz + bx[2], maxZ: cz + bx[3], y0: bx[4], y1: bx[5], mat: m.glass ? 'glass' : m.kind === 'break' ? 'crate' : 'door', prop: null, walk: false, mover: id, role, off: role !== 'shut' });
+    add(m.box, 'shut'); for (const [role, bx] of Object.entries(m.open || {})) add(bx, role); }
+  const boxes = indexBoxes(list); boxes.movers = list.filter(b => b.mover !== null);
+  if (map.nadeSolid) boxes.nadeSolid = (x, y, z) => map.nadeSolid(x - cx, y, z - cz);   // (map files: grenades by the real shapes, arena-nades.js)
   BOX_CACHE.delete(key); BOX_CACHE.set(key, { map, boxes }); while (BOX_CACHE.size > 4) BOX_CACHE.delete(BOX_CACHE.keys().next().value); return boxes;
 }
+// The round's doors and breakables (game.combat.mapState: doors[id] = { open, side }, broken[id]) on these boxes: a
+// door's shut box while shut, its open box on the side it swung to while open; a broken one's none.
+export function applyMapState(boxes, state) { for (const b of boxes?.movers || []) { const d = state?.doors?.[b.mover];
+  b.off = !!state?.broken?.[b.mover] || (d?.open ? !(b.role === 'open' || b.role === (d.side < 0 ? '-' : '+')) : b.role !== 'shut'); } }
 // The highest walk-on floor (raised floor, stair) under (x, z) whose top is at most `below` (0 if none).
 const FT = [];
 export function floorTop(boxes, x, z, below = Infinity) { let y = 0; for (const b of boxesNear(boxes, x, z, x, z, FT)) if (b.walk && b.y1 <= below && b.y1 > y && x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) y = b.y1; return y; }
@@ -143,15 +159,19 @@ export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }
     if (!out && t1 > 0 && t0 < far) hits.push({ t0, t1, mat: b.mat, b }); }
   hits.sort((a, b) => a.t0 - b.t0);
-  let spent = 0, stop = Infinity; const crossed = [];
+  let spent = 0, stop = Infinity, stopBox = null; const crossed = [];
   for (const h of hits) {
     const thick = h.t1 - h.t0, unit = PEN_COST[h.mat] ?? 3, soft = h.mat === 'crate' || h.mat === 'wood' || h.mat === 'door' || h.mat === 'glass', cost = (!soft && thick > SOLID_THICK) ? Infinity : thick * unit;
-    if (spent + cost > budget) { stop = h.t0; break; } spent += cost; crossed.push({ t0: h.t0, t1: h.t1, mat: h.mat, spent });
+    if (spent + cost > budget) { stop = h.t0; stopBox = h.b; break; } spent += cost; crossed.push({ t0: h.t0, t1: h.t1, mat: h.mat, spent, b: h.b });
   }
   // Damage multiplier for a target at distance t: 1 in the open; less behind each thing the bullet went through.
   const factor = t => { if (t >= stop) return 0; let s = 0; for (const c of crossed) if (c.t1 <= t + 1e-6) s = c.spent; return s ? Math.max(.15, 1 - s / (budget * 1.25)) : 1; };
-  return { stop, crossed, factor };
+  // A door, vent or pane set into a wall (its collision a 16-unit cell, so the thin mover sits inside the wall's box):
+  // reached when it starts within MOVER_SLOP past where the wall stopped the bullet.
+  let embedded = null; if (stopBox && stopBox.mover == null) for (const h of hits) if (h.b.mover != null && h.t0 >= stop - 1e-6 && h.t0 <= stop + MOVER_SLOP) { embedded = h.b; break; }
+  return { stop, stopBox, crossed, factor, embedded };
 }
+export const MOVER_SLOP = 16 * 2.54 / 16.5 + .3;   // (one collision cell, 16 Hammer units, in game units)
 // Spawn spots for a side ('t', 'ct', or 'dm' for every spawn): the map's points plus walkable spots around each
 // (6 units apart), so a full team never stands inside each other. Coordinates relative to the arena centre.
 const slotCache = new Map();

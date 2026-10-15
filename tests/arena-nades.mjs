@@ -39,8 +39,9 @@ tickAll(players, 18200); assert(clearView(g, [], cx - 30, cz, cx + 30, cz), 'smo
 players = [P('Ann', cx - 90, cz), P('Dee', cx - 20, cz)];   // Ann well clear of her own fire
 tickAll(players, 2100);   // Dee just joined: past her deathmatch spawn protection
 arenaApply(g, { type: 'throw', kind: 'molotov', x: cx - 20, y: 9.7, z: cz, dx: 0, dy: -1, dz: 0, strength: 'short' }, 'Ann', players, t); tickAll(players, 600);
-const fire = g.combat.nades.find(n => n.kind === 'molotov'); assert.equal(fire?.phase, 'fire'); const hp0 = hpOf(g, 'Dee'); tickAll(players, 1000); assert(hpOf(g, 'Dee') <= hp0 - 30, 'about 40 HP a second in the fire: ' + hpOf(g, 'Dee'));
-tickAll(players, 7000); assert(!g.combat.nades.some(n => n.kind === 'molotov'), 'fire out');
+const fire = g.combat.nades.find(n => n.kind === 'molotov'); assert.equal(fire?.phase, 'fire'); const hp0 = hpOf(g, 'Dee'); tickAll(players, 1000); const hp1 = hpOf(g, 'Dee'); assert(hp1 <= hp0 - 12 && hp1 > hp0 - 40, 'CS2: the burn ramps up (1, 2, 3 … a hit): ' + hp0 + ' → ' + hp1);
+tickAll(players, 1000); assert(hp1 - hpOf(g, 'Dee') >= 36, 'then 40 HP a second (8 a hit): ' + hp1 + ' → ' + hpOf(g, 'Dee'));
+tickAll(players, 6000); assert(!g.combat.nades.some(n => n.kind === 'molotov'), 'fire out');
 // Flashbang: blinds a bot that sees it; for players it depends on where they look.
 arenaApply(g, { type: 'add-bot' }, 'Ann', [], t); const bot = g.arena.bots[0]; bot.x = cx; bot.z = cz;
 arenaApply(g, { type: 'throw', kind: 'flash', x: cx + 10, y: 9.7, z: cz, dx: 0, dy: -1, dz: 0, strength: 'short' }, 'Ann', [], t); for (let i = 0; i < 34; i++) { t += 50; nadesTick(g, [], .05, t, {}); }
@@ -53,7 +54,8 @@ const pl = [P('Ann', cx, cz), P('Bo', cx, cz - 6)]; assert.match(arenaApply(g3, 
 assert.match(arenaApply(g3, { type: 'pickup', id: g3.combat.ground[0].id }, 'Bo', pl, t), /Picked up Smoke/); assert(arenaArsenalOf(g3, 'Bo').includes('smoke'));
 // Throw strengths: full ≫ medium ≫ short; the client's preview is exactly the host's flight.
 { const dist = strength => { const pts = predictThrow('smoke', { x: 0, y: 9.7, z: 0, dx: 0, dy: .3, dz: -1, strength }); const e = pts.at(-1); return Math.hypot(e[0], e[2]); };
-  const L = dist('long'), M = dist('medium'), S = dist('short'); assert(L > 250 && M < L * .75 && S < M * .6 && S > 15, `full ${L | 0} · medium ${M | 0} · short ${S | 0}`);
+  // (CS2 on flat ground: a full throw flies ~1 150 u and its bounces, each keeping 45 % of the speed, add ~300: ~220 game units.)
+  const L = dist('long'), M = dist('medium'), S = dist('short'); assert(L > 200 && M < L * .75 && S < M * .6 && S > 15, `full ${L | 0} · medium ${M | 0} · short ${S | 0}`);
   const gq = { kind: 'he', x: 0, y: 9.7, z: 0, ...launch({ dx: 0, dy: .2, dz: -1, strength: 'long' }), still: 0 }, pred = predictThrow('he', { x: 0, y: 9.7, z: 0, dx: 0, dy: .2, dz: -1, strength: 'long' });
   for (let i = 1; i < pred.length; i++) { stepNade(gq, [], null, .05); assert(Math.hypot(gq.x - pred[i][0], gq.y - pred[i][1], gq.z - pred[i][2]) < 1e-9, 'preview = host flight'); } }
 // Fire: about 4× the old area in the open; never through a wall; only on the floor it landed on.

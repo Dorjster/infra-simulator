@@ -124,12 +124,19 @@ export function playBounds(bsp) { const pts = []; for (const e of bsp.entities) 
 // Counter-Strike 1.6's shape of a map for bsp-map.js: the tree's leaves as solid (−2) / empty (−1), entities under
 // their CS 1.6 class names, and hull tests made from the brushes (Source keeps no player hulls), plus the solid
 // stretches displacements and props add (extraSpans: in a column, [bottom, top] HU).
+// Ladder brushes (CONTENTS_LADDER: tools/toolsinvisibleladder, the brush's own box from its axis-aligned sides), in
+// Hammer units: [{ mins, maxs }].
+export function ladderBoxes(bsp) { const { planes, brushes, brushsides } = bsp, out = [];
+  for (let b = 0; b < brushes.length / 3; b++) { if (!(brushes[b * 3 + 2] & CONTENTS.LADDER)) continue; const s0 = brushes[b * 3], n = brushes[b * 3 + 1], mins = [-Infinity, -Infinity, -Infinity], maxs = [Infinity, Infinity, Infinity];
+    for (let j = s0; j < s0 + n; j++) { const p = brushsides[j * 3] * 4, d = planes[p + 3]; for (let k = 0; k < 3; k++) { const c = planes[p + k]; if (c > .999) maxs[k] = Math.min(maxs[k], d); else if (c < -.999) mins[k] = Math.max(mins[k], -d); } }
+    if (mins.every(Number.isFinite) && maxs.every(Number.isFinite) && maxs.every((v, k) => v > mins[k])) out.push({ mins, maxs }); }
+  return out; }
 export function toGoldSrc(bsp, { extraSpans = null } = {}) {
   const solidMask = CONTENTS.SOLID | CONTENTS.PLAYERCLIP | CONTENTS.WINDOW | CONTENTS.GRATE | CONTENTS.MOVEABLE;
   const leafContents = Int32Array.from(bsp.leafContents, c => c & solidMask ? -2 : -1);
   const CLASS = { info_player_terrorist: 'info_player_deathmatch', info_player_counterterrorist: 'info_player_start' };
   const entities = bsp.entities.map(e => CLASS[e.classname] ? { ...e, classname: CLASS[e.classname] } : e);
   const models = bsp.models.map(m => ({ ...m, hulls: [m.head, m.head, m.head, m.head] }));
-  return { format: 'vbsp', version: bsp.version, planes: bsp.planes, nodes: bsp.nodes, leafContents, models, entities, textures: [], faces: [], texinfo: [], vertices: bsp.vertices, edges: bsp.edges, surfedges: bsp.surfedges, lighting: new Uint8Array(0), clipnodes: null, extraSpans, source: bsp,
+  return { format: 'vbsp', version: bsp.version, planes: bsp.planes, nodes: bsp.nodes, leafContents, models, entities, textures: [], faces: [], texinfo: [], vertices: bsp.vertices, edges: bsp.edges, surfedges: bsp.surfedges, lighting: new Uint8Array(0), clipnodes: null, extraSpans, source: bsp, ladderBoxes: ladderBoxes(bsp),
     solidSpans: (head, x, y, z0, z1) => brushSpans(bsp, head, x, y, z0, z1) };
 }

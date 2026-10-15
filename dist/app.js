@@ -138,20 +138,30 @@ function benchmark(dt){if(!benchNeeded||benchFrames===null||!lab.active)return;b
 // when the desktop window isn't focused (another app is in front). Casino panels and seat views stay at full rate. The game logic and LAN keep running at any rate; the
 // laptop stays cool and other apps stay responsive.
 // Adaptive resolution: every 0.5 s while playing at full rate (never on capped menus or a background window),
-// scale the pixel ratio in proportion to how slow frames are, so a GPU-bound laptop recovers within a second or
-// two; climb back slowly when there is headroom. Stays within [floor, ceiling] of the chosen preset.
-let scaleAt=0,lastDownscale=0,slowChecks=0,loadingAt=0;const bootAt=performance.now();
-function scaleResolution(){const now=performance.now();if(now-scaleAt<500||now-bootAt<6000||frameCap()<60)return;scaleAt=now;if(document.getElementById('ar-load')?.hidden===false)loadingAt=now;if(now-loadingAt<3000){slowChecks=0;return;}/* a match loading (a big map file building) and the few seconds after it (the browser tidying up) are not play: their slow frames never lower the resolution */
- const recent=[...frameRing].filter(Boolean).slice(-40).sort((a,b)=>a-b),median=recent[Math.floor(recent.length/2)]||16.7;   // median: a loading hitch doesn't count
+// Dynamic resolution: the pixel ratio follows the GPU's real load (EXT_disjoint_timer_query_webgl2: each frame's GPU
+// time, read back a few frames later — no stall), in a few fixed steps within [floor, ceiling] of the chosen preset.
+// A change resizes the drawing buffer and the effect buffers (a 50–100 ms hitch on a Retina screen), so it changes
+// rarely: down after a second of real overload (the frames late too), up after five seconds of headroom, never twice
+// within four seconds. Without timer queries: the frame times alone (down only; up while uncapped frames are quick).
+let scaleAt=0,lastScale=0,slowChecks=0,fastChecks=0,loadingAt=0,mainWarm=false;const bootAt=performance.now();
+const gpuTQ=(()=>{try{return renderer.getContext().getExtension('EXT_disjoint_timer_query_webgl2');}catch{return null;}})(),gpuQ=[],gpuRing=new Float32Array(60),sortBuf=new Float32Array(240);let gpuAt=0,gpuN=0,gpuQi=0,gpuOpen=null;
+function gpuBegin(){if(!gpuTQ)return;const gl=renderer.getContext();if(gpuQ.length<6)gpuQ.push({q:gl.createQuery(),busy:false});let slot=null;for(let i=0;i<gpuQ.length;i++)if(!gpuQ[i].busy){slot=gpuQ[i];break;}if(!slot)return;gl.beginQuery(gpuTQ.TIME_ELAPSED_EXT,slot.q);slot.busy=true;gpuOpen=slot;}
+function gpuEnd(){if(!gpuOpen)return;const gl=renderer.getContext();gl.endQuery(gpuTQ.TIME_ELAPSED_EXT);gpuOpen.at=++gpuQi;gpuOpen=null;
+ for(let i=0;i<gpuQ.length;i++){const x=gpuQ[i];if(!x.busy||x.at===gpuQi||!gl.getQueryParameter(x.q,gl.QUERY_RESULT_AVAILABLE))continue;x.busy=false;if(!gl.getParameter(gpuTQ.GPU_DISJOINT_EXT)){gpuRing[gpuAt++%gpuRing.length]=gl.getQueryParameter(x.q,gl.QUERY_RESULT)/1e6;gpuN++;}}}
+const medianOf=(ring,count)=>{const n=Math.min(count,ring.length);if(!n)return 0;for(let i=0;i<n;i++)sortBuf[i]=ring[i];const a=sortBuf.subarray(0,n).sort();return a[n>>1];};
+function scaleResolution(){const now=performance.now();if(now-scaleAt<500||now-bootAt<6000||frameCap()<60)return;scaleAt=now;if(document.getElementById('ar-load')?.hidden===false)loadingAt=now;if(now-loadingAt<3000){slowChecks=fastChecks=0;return;}/* a match loading (a big map file building) and the few seconds after it (the browser tidying up) are not play: their slow frames never lower the resolution */
+ let n=0;for(let i=0;i<40;i++){const v=frameRing[(ringAt-1-i+frameRing.length*4)%frameRing.length];if(v)sortBuf[n++]=v;}const median=n?sortBuf.subarray(0,n).sort()[n>>1]:16.7;   // the last 40 frames' median: a loading hitch doesn't count
+ const gpu=gpuN>=20?medianOf(gpuRing,gpuN):null,cap=frameCap(),budget=Math.min(14,1000/Math.max(60,cap)*.85);   // the GPU's share of a 60 fps frame (or the cap's)
  const current=renderer.getPixelRatio(),ceiling=graphicsCeiling(),floor=Math.min(ceiling,(softwareGL?.35:preferences.graphics==='Low'?.6:Math.min(devicePixelRatio,1)*.75)*(+preferences.resolutionScale||1));
- slowChecks=median>19?slowChecks+1:0;let next=current;
- if(slowChecks>=2){next=Math.max(floor,current*Math.max(.75,Math.min(.95,16.7/median)));slowChecks=0;lastDownscale=now;}
- else if(median<15.5&&now-lastDownscale>3000)next=Math.min(ceiling,current+.1);
- if(Math.abs(next-current)>.01)renderer.setPixelRatio(Math.round(next*100)/100);}
+ const steps=[1,.85,.72,.6,.5].map(k=>Math.max(floor,Math.round(ceiling*k*20)/20));let i=steps.findIndex(v=>v<=current+.01);if(i<0)i=steps.length-1;
+ const slow=median>18.5&&(gpu===null||gpu>budget*1.15),fast=gpu!==null?gpu<budget*.6&&median<20:median<15.5&&cap>60;
+ slowChecks=slow?slowChecks+1:0;fastChecks=fast?fastChecks+1:0;let next=current;
+ if(now-lastScale>4000){if(slowChecks>=2&&i<steps.length-1)next=steps[i+1];else if(fastChecks>=10&&current<ceiling-.01)next=steps[Math.max(0,i-1)];}
+ if(Math.abs(next-current)>.01){renderer.setPixelRatio(next);lastScale=now;slowChecks=fastChecks=0;}}
 function frameCap(){const user=+preferences.fpsCap||60;if(document.hidden||(globalThis.infraDesktop&&!document.hasFocus()))return Math.min(user,20);if(lab.onStartScreen)return Math.min(user,30);return user;}
 function animate(now){requestAnimationFrame(animate);if(document.hidden){lastFrame=now;return;}
  {const cap=frameCap();if(cap&&now-lastDrawn<1000/cap-2)return;}const frameStart=performance.now();const frameMs=lastDrawn?now-lastDrawn:16.7;lastDrawn=now;frameRing[ringAt++%frameRing.length]=frameMs;benchmark(frameMs);const dt=Math.min((now-lastFrame)/1000,.1);smoothedFrame=smoothedFrame*.97+(now-lastFrame)*.03;lastFrame=now;const t=now/1000;frame++;if(frame>180)scaleResolution();
- if(frame===240)setTimeout(()=>gfx.prewarm(lab.prewarmObjects?.(),lab.prewarmReveal),0);if(frame===2)lab.setWarmer?.((o,r,k)=>gfx.prewarm(o,r,k));if(frame===60)lab.warmArena?.().catch(()=>{});if(frame===1){detailCuller.register(scene);jobs.add('detail-register',()=>detailCuller.register(scene),1500);jobs.add('detail-update',()=>detailCuller.update(),140);}
+ if(frame>=240&&!mainWarm&&!(lab.active&&lab.world?.operations?.game?.mode==='arena')){mainWarm=true;setTimeout(()=>gfx.prewarm(lab.prewarmObjects?.(),lab.prewarmReveal),0);}/* the hall's shaders, warmed while not in a match (never mid-match: it compiles the whole hall) */if(frame===2)lab.setWarmer?.((o,r,k)=>gfx.prewarm(o,r,k));if(frame===60)lab.warmArena?.().catch(()=>{});if(frame===1){detailCuller.register(scene);jobs.add('detail-register',()=>detailCuller.register(scene),1500);jobs.add('detail-update',()=>detailCuller.update(),140);}
  lab.update(dt);if(!lab.active){if(cameraFlight){const amount=1-Math.exp(-dt*4);camera.position.lerp(goalCamera,amount);orbitControls.target.lerp(goalTarget,amount);if(camera.position.distanceTo(goalCamera)<.025&&orbitControls.target.distanceTo(goalTarget)<.025)cameraFlight=false;}orbitControls.update();target.copy(orbitControls.target);}
  const focus=selected||hovered?.node,focusLink=selectedLink||hovered?.link;for(const n of nodes){const off=isOffline(n),focused=focus===n;const color=n.physical?.fault?0xf3aa52:off?0xa64538:n.color;if(n.ledMat){let st=null;if(n.spec&&n.active!==false)st=n.__statusLed||null;if(st&&st.color!=='green')n.ledMat.color.setHex(ledColor(st,now,n.pos.x));else n.ledMat.color.setHex(color).multiplyScalar(off?.35:1);}if(n.body?.material?.isMeshStandardMaterial){n.body.material.emissive.setHex(color);n.body.material.emissiveIntensity=focused?.22:off?.025:.015;}if(n.edge)n.edge.material.opacity=focused?.9:.28;if(n.type==='cloud'&&!reduced)n.group.rotation.y=t*.025;const assembly=reduced?1:THREE.MathUtils.smoothstep(now-startedAt,100,1400);n.group.scale.setScalar(Math.max(.001,assembly));n.label.visible=n.active!==false&&(n.type==='cloud'||focused);n.label.material.opacity=off?.45:.95;}
 
@@ -163,7 +173,7 @@ function animate(now){requestAnimationFrame(animate);if(document.hidden){lastFra
  if(!reduced){for(const f of fans)if(!f.parent?.userData?.node||!isOffline(f.parent.userData.node))f.rotation.z=t*5;stars.rotation.y=t*.003;stars.position.x=mouse.x*.3;stars.position.z=mouse.y*.3;}
  if(frame%60===0){$('fabric-throughput').innerHTML=(state.pending?'0.0':(state.site?146.3:284.6)+Math.sin(t)*3.2).toString().slice(0,5)+'<small>Gbps</small>';$('fabric-latency').innerHTML=(.18+Math.sin(t*.5)*.01).toFixed(2)+'<small>ms</small>';$('availability').innerHTML=(state.pending?'—':'100')+'<small>%</small>';fpsDisplay.hidden=!preferences.showFPS;if(preferences.showFPS){const s=perfStats();fpsDisplay.textContent=s.fps+' FPS · p95 '+s.p95+' ms · '+renderer.info.render.calls+' draws · '+Math.round(innerWidth*renderer.getPixelRatio())+'×'+Math.round(innerHeight*renderer.getPixelRatio())+' · '+preferences.graphics;}if(frame>180){activeParticleCount=smoothedFrame>23?Math.min(particleCount,900):Math.min(particleCount,1800);particleGeo.setDrawRange(0,activeParticleCount);}}
  const marked=selectedLink||hovered?.link||hovered?.port?.link;if(marked&&portLabels){showPortEndpoints(marked);endpointMarkers.forEach((m,i)=>{const p=m.position.clone().project(camera),el=$('endpoint-'+i);const visible=p.z<1&&p.z>-1&&Math.abs(p.x)<.95&&Math.abs(p.y)<.93;el.hidden=!visible;el.style.left=((p.x+1)/2*innerWidth)+'px';el.style.top=((1-p.y)/2*innerHeight-25-i*5)+'px';});}else{endpointMarkers.forEach(m=>m.visible=false);$('endpoint-0').hidden=true;$('endpoint-1').hidden=true;}
- lab.beforeRender?.();gfx.render();lab.afterRender?.();jobs.run(frameStart,12);lab.emotes?.renderPreview(renderer);
+ lab.beforeRender?.();gpuBegin();gfx.render();gpuEnd();lab.afterRender?.();jobs.run(frameStart,12);lab.emotes?.renderPreview(renderer);
  cpuSmoothed=cpuSmoothed*.95+(performance.now()-frameStart)*.05;
 }
 requestAnimationFrame(animate);

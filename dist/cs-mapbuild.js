@@ -60,6 +60,15 @@ export function finishMap(id, G, T, { segs, above, zLow, spawns = null, extra = 
       const b = B((gx(c) + gx(c1)) / 2, (gz(r) + gz(r1)) / 2, (c1 - c + 1) * CELL * U, (r1 - r + 1) * CELL * U, (s[1] - s[0]) * U, s[2], gy(s[0])); if (s[3]) b.walk = true; solids.push(b); } }
   // Spawns: spread over the spawn place's open columns (farthest-point picks, away from walls).
   const roomy = i => { const c = i % cols, r = (i / cols) | 0; for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) { const j = (r + dr) * cols + c + dc; if (j < 0 || j >= N || !n[j] || flags[j] & CRATE || Math.abs(top(j) - top(i)) > 10) return false; } return true; };
+  // Walked into: some straight line of 12 columns leads to it with no rise of more than a step (the inside of Inferno's
+  // B fountain is roomy, but its rim is a jump up from the site's floor — a bot goal there can't be reached).
+  const enterable = i => { const c0 = i % cols, r0 = (i / cols) | 0;
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) { let h = top(i), ok = true;
+      for (let s = 1; s <= 12 && ok; s++) { const c = c0 + dc * s, r = r0 + dr * s; if (c < 0 || r < 0 || c >= cols || r >= rows) { ok = false; break; } const j = r * cols + c; let best = NONE;
+        for (let k = 0; k < n[j]; k++) { const f = z[j * MAXF + k]; if (f >= h - STEP && f <= h + DROP && (best === NONE || Math.abs(f - h) < Math.abs(best - h))) best = f; }   // (outward: down at most a step — up a step coming in — or up as far as one drops)
+        if (best === NONE) ok = false; else h = best; }
+      if (ok) return true; }
+    return false; };
   const cellsOf = name => { const out = []; for (let i = 0; i < N; i++) if (n[i] && placeOf(i, n[i] - 1) === name && !(flags[i] & CRATE)) out.push(i); return out; };
   const spread = (cells, k) => { const pool = cells.filter(roomy), src = pool.length >= k ? pool : cells; if (!src.length) return []; let cx = 0, cz = 0; for (const i of src) { cx += i % cols; cz += (i / cols) | 0; } cx /= src.length; cz /= src.length;
     let first = src[0], bd = Infinity; for (const i of src) { const d = (i % cols - cx) ** 2 + (((i / cols) | 0) - cz) ** 2; if (d < bd) { bd = d; first = i; } }
@@ -71,7 +80,7 @@ export function finishMap(id, G, T, { segs, above, zLow, spawns = null, extra = 
   for (const L of ['A', 'B']) if (!siteCells[L].length) siteCells[L] = cellsOf('Bombsite' + L);
   const circle = cells => { let x = 0, zz = 0; for (const i of cells) { x += gx(i % cols); zz += gz((i / cols) | 0); } x /= cells.length; zz /= cells.length; let r = 0; for (const i of cells) r = Math.max(r, Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz)); return [+x.toFixed(1), +zz.toFixed(1), +Math.max(6, r).toFixed(1)]; };
   // Where bots head on each site: its open (not crate) column nearest the site's centre, with room round it.
-  const goalOf = (cells, [x, zz]) => { let best = null, bd = Infinity; for (const i of cells) { if (flags[i] & CRATE || !roomy(i)) continue; const d = Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz); if (d < bd) { bd = d; best = i; } } if (best === null) for (const i of cells) { if (flags[i] & CRATE) continue; const d = Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz); if (d < bd) { bd = d; best = i; } } return best === null ? [x, zz] : at(best); };
+  const goalOf = (cells, [x, zz]) => { let best = null, bd = Infinity; for (const i of cells) { if (flags[i] & CRATE || !roomy(i) || !enterable(i)) continue; const d = Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz); if (d < bd) { bd = d; best = i; } } if (best === null) for (const i of cells) { if (flags[i] & CRATE) continue; const d = Math.hypot(gx(i % cols) - x, gz((i / cols) | 0) - zz); if (d < bd) { bd = d; best = i; } } return best === null ? [x, zz] : at(best); };
   const sites = { A: circle(siteCells.A), B: circle(siteCells.B) }, siteGoals = { A: goalOf(siteCells.A, sites.A), B: goalOf(siteCells.B, sites.B) }, goalH = L => { const i = (() => { const [x, zz] = siteGoals[L]; const c = Math.round((x + W / 2) / (CELL * U) - .5), r = Math.round((zz + D / 2) / (CELL * U) - .5); return r * cols + c; })(); for (let k = 0; k < n[i]; k++) if (placeOf(i, k) === 'Bombsite' + L) return z[i * MAXF + k]; return null; }, midCells = cellsOf('Middle').length ? cellsOf('Middle') : cellsOf('TopofMid'), midGoal = midCells.length ? goalOf(midCells, circle(midCells)) : [(siteGoals.A[0] + siteGoals.B[0]) / 2, (siteGoals.A[1] + siteGoals.B[1]) / 2], siteMask = new Uint8Array(N); for (const i of siteCells.A) siteMask[i] = 1; for (const i of siteCells.B) siteMask[i] = 2;
   // Each site goal with its floor's height ([x, z, y]): a site may lie under another floor (Nuke's B under A).
   for (const L of ['A', 'B']) { const h = goalH(L); if (h !== null && siteGoals[L].length === 2) siteGoals[L].push(+gy(h).toFixed(2)); }

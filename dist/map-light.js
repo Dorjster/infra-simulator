@@ -53,6 +53,12 @@ export function surfaceOf(name) {
 }
 export function floorSurface(bsp, G, opts) {
   const { cols, rows, n, z } = G, N = cols * rows, out = new Uint8Array(N * MAXF).fill(UNKNOWN), near = new Float32Array(N * MAXF).fill(Infinity);
+  // A Counter-Strike 2 map (cs2-map.js): its collision says what each floor is made of (concrete, sand, metal…).
+  if (bsp.cs2) { if (!bsp.surfaceAt) return null; const { x0, y1 } = opts;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const i = r * cols + c; for (let k = 0; k < n[i]; k++) { const name = bsp.surfaceAt(x0 + (c + .5) * CELL, y1 - (r + .5) * CELL, z[i * MAXF + k]); if (name) out[i * MAXF + k] = surfaceOf(name); } }
+    fillUnknown(G, out); const cnt = [0, 0, 0, 0, 0]; for (const v of out) if (v < 5) cnt[v]++; const common = cnt.indexOf(Math.max(...cnt));
+    for (let j = 0; j < out.length; j++) if (out[j] === UNKNOWN) out[j] = common;   // (collision-only floors, no face of the look near: the map's common ground)
+    return out; }
   const vbsp = bsp.format === 'vbsp', src = vbsp ? bsp.source : bsp; if (!src?.faces?.length) return null;
   // Per texture: [first, second] surface (the second only for terrain blending two materials).
   const kinds = new Map(), kindOf = ti => { const key = vbsp ? ti.texdata : ti.tex; let k = kinds.get(key); if (k) return k;
@@ -76,7 +82,10 @@ export function floorSurface(bsp, G, opts) {
       const m = g.n - 1, cu = Math.min(m - 1e-6, Math.max(0, u * m)), cv = Math.min(m - 1e-6, Math.max(0, v * m)), c0 = cu | 0, r0 = cv | 0, fu = cu - c0, fv = cv - r0, P = g.pts;
       const at = (c, r, o) => P[(r * g.n + c) * 4 + o], bl = o => (at(c0, r0, o) * (1 - fu) + at(c0 + 1, r0, o) * fu) * (1 - fv) + (at(c0, r0 + 1, o) * (1 - fu) + at(c0 + 1, r0 + 1, o) * fu) * fv;
       const d = Math.abs(z[j] - bl(2)); if (d > 16 || d >= near[j]) return; near[j] = d; out[j] = k[1] != null && bl(3) >= 128 ? k[1] : k[0]; }; });
-  // Floors no face was found for (props): their neighbours' at about the same height.
+  return fillUnknown(G, out);
+}
+// Floors no face was found for (props, clips): their neighbours' at about the same height.
+function fillUnknown({ cols, rows, n, z }, out) { const N = cols * rows;
   for (let pass = 0; pass < 3; pass++) for (let i = 0; i < N; i++) for (let k = 0; k < n[i]; k++) { if (out[i * MAXF + k] !== UNKNOWN) continue; const h = z[i * MAXF + k];
     found: for (const j of [i - 1, i + 1, i - cols, i + cols]) { if (j < 0 || j >= N) continue; for (let q = 0; q < n[j]; q++) { const v = out[j * MAXF + q]; if (v !== UNKNOWN && Math.abs(z[j * MAXF + q] - h) < 24) { out[i * MAXF + k] = v; break found; } } } }
   return out;

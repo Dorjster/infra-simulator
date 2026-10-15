@@ -9,10 +9,10 @@
 //  · Bots: added and removed by any player; they walk between spawn points, need real line of sight (map walls),
 //    react after a short delay, miss more at range and reload. They hit through the same damage rules as players.
 import { ARENA } from './facility-layout.js';
-import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt } from './arena-maps.js';
+import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
-import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks } from './arena-nades.js';
+import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks, setSmokeSolids } from './arena-nades.js';
 import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS } from './arena-defuse.js';
 import { hurt } from './combat-logic.js';
 
@@ -37,11 +37,13 @@ const clampS = (v, [lo, hi], dflt) => { const n = Math.round(+v); return Number.
 // normal match.
 export function cleanPractice(p = {}) { return { bots: ['stand', 'move', 'fight'].includes(p.bots) ? p.bots : 'stand', ammo: p.ammo !== false, impacts: p.impacts !== false, recoil: p.recoil !== false, paths: p.paths !== false }; }
 export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs = 0, difficulty = 'normal', freezeS = 15, warmupS = null, rules = null, practice = null } = {}, now = Date.now()) {
-  if (!ARENA_MAPS[map]) throw Error('Unknown arena map');
+  if (!ARENA_MAPS[map] || ARENA_MAPS[map].stub) throw Error(ARENA_MAPS[map]?.stub ? ARENA_MAPS[map].name + ': the room has no map file for it' : 'Unknown arena map');   // (a file-only map's stand-in: arena-maps.js)
   if (practice) kind = 'dm';
   else if (ARENA_MAPS[map].kind !== kind) throw Error(ARENA_MAPS[map].name + ' is not a ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' map');
   game.mode = 'arena'; game.payday = false;
+  const knives = game.arena?.knives || {};   // (the knives people chose stay theirs from match to match)
   game.arena = { kind, map, startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null, difficulty: DIFFICULTY[difficulty] ? difficulty : 'normal', lobby: lobbyMs > 0 ? { until: now + lobbyMs, started: false, ready: {}, note: '' } : null, freezeMs: clampS(freezeS, TIMER_LIMITS.freeze, 15) * 1000, warmupS: Math.round(lobbyMs / 1000), nextMap: null };
+  game.arena.knives = knives;
   game.arena.rules = cleanRules(rules || {});   // Defuse match rules (host settings), fixed for this match
   if (practice) { game.arena.practice = cleanPractice(practice); game.arena.endsAt = 4e15; }   // no time limit
   game.combat = { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: 0, nades: [], nadeSeq: 0 };
@@ -50,12 +52,21 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs 
 }
 const geo = game => { const map = ARENA_MAPS[game.arena.map], [sw, sd] = map.size; return { map, boxes: mapBoxes(map, ARENA.cx, ARENA.cz), bounds: { minX: ARENA.cx - sw / 2, maxX: ARENA.cx + sw / 2, minZ: ARENA.cz - sd / 2, maxZ: ARENA.cz + sd / 2 } }; };
 let cache = { map: null, g: null }; const G = game => cache.map === game.arena.map ? cache.g : (cache = { map: game.arena.map, g: geo(game) }).g;
+setSmokeSolids(game => game?.arena?.map && ARENA_MAPS[game.arena.map] ? G(game).boxes : null);   // (smoke fills the map's space: arena-nades.js smokeVoxels)
 
 // Bot movement and sight. Classic maps (map.nav): the bot walks the map's columns — up steps and stairs, down ledges,
 // on its own level of stacked floors — and keeps its feet height (bot.y); it sees along a real 3D line. Other maps:
 // the flat checks against the boxes.
 const feetOf = (g, bot) => { if (!g.map.nav) return 0; if (!Number.isFinite(bot.y)) { const f = g.map.nav.floorAt(bot.x - ARENA.cx, bot.z - ARENA.cz); bot.y = Number.isFinite(f) ? f : 0; } return bot.y; };
+// Bots open the doors on their way, as CS2's do (their walking map has no doors): a shut door their step reaches swings
+// open away from them. TICK: the game and time of the tick running (arenaTick sets them).
+const TICK = { game: null, now: 0 };
+function openDoorOnPath(g, bot, nx, nz) { const movers = g.map.movers, game = TICK.game; if (!movers?.length || !game) return; const st = mapStateOf(game), y = feetOf(g, bot), x1 = nx - ARENA.cx, z1 = nz - ARENA.cz, r = 1.7;   /* (a body's radius and a little) */
+  for (let id = 0; id < movers.length; id++) { const m = movers[id]; if (m.kind === 'break' || st.broken[id] || st.doors[id]?.open) continue; const b = m.box;
+    if (y + 6 < b[4] || y > b[5] || x1 < b[0] - r || x1 > b[1] + r || z1 < b[2] - r || z1 > b[3] + r) continue;
+    st.doors[id] = { open: 1, side: awaySide(m, bot.x - ARENA.cx, bot.z - ARENA.cz), at: TICK.now }; st.v++; syncMapState(game); } }
 function tryMove(g, bot, nx, nz) { const nav = g.map.nav; if (!nav) { if (!walkable(g.boxes, g.bounds, nx, nz)) return false; bot.x = nx; bot.z = nz; return true; }
+  openDoorOnPath(g, bot, nx, nz);
   const y = nav.step(bot.x - ARENA.cx, bot.z - ARENA.cz, feetOf(g, bot), nx - ARENA.cx, nz - ARENA.cz); if (!Number.isFinite(y)) return false; bot.x = nx; bot.z = nz; bot.y = y; return true; }
 const standable = (g, x, z, nearY = Infinity) => g.map.nav ? Number.isFinite(g.map.nav.floorAt(x - ARENA.cx, z - ARENA.cz, nearY)) : walkable(g.boxes, g.bounds, x, z);
 // Can a (eye at ay) see b (eye at by)? Walls, levels and smoke block.
@@ -125,11 +136,16 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   if (a.type === 'practice') { if (!A.practice) throw Error('Only in practice'); A.practice = cleanPractice({ ...A.practice, ...(a.settings || {}) }); return 'Practice: ' + ({ stand: 'bots stand still', move: 'bots move', fight: 'bots fight back' })[A.practice.bots]; }   // its settings, changed during the session
   if (a.type === 'ready') { if (!A.lobby || A.lobby.started) throw Error('The match is running'); A.lobby.ready[key(name)] = a.ready !== false; return a.ready === false ? 'Not ready' : 'Ready'; }
   if (a.type === 'start-match') { if (!perm.isHost) throw Error('Only the host starts the match'); if (!A.lobby || A.lobby.started) throw Error('The match is already running'); const e = lobbyShort(game, players); if (e) throw Error(e); beginMatch(game, players, now); return 'Match started'; }
+  // Your knife (the M menu): a CS2 knife on the knife slot — Butterfly, Stiletto, M9 Bayonet (the same blade for the
+  // rules), Darja's karambit (hers alone), or the default. Any time; it's yours from match to match.
+  // Darja may equip any knife on anyone in the room (a.for: their name), the karambit too.
+  if (a.type === 'knife') { const k = String(a.knife || ''), darja = /^darja$/.test(key(name)), who = a.for != null && darja ? String(a.for).trim().slice(0, 40) : name; if (!['default', 'butterfly', 'stiletto', 'm9', 'karambit'].includes(k)) throw Error('Unknown knife'); if (a.for != null && !darja) throw Error('Only Darja equips knives on others'); if (k === 'karambit' && !darja) throw Error('The karambit is Darja\'s');
+    const kn = (A.knives ??= {}); kn[key(who)] = k; return { butterfly: 'Butterfly Knife', stiletto: 'Stiletto Knife', m9: 'M9 Bayonet', karambit: 'Karambit | Ruby', default: 'Default knife' }[k] + ' equipped' + (key(who) !== key(name) ? ' on ' + who : ''); }
   if (a.type === 'team') return changeTeam(game, name, a.team, players, now);
   // Host administration (the room checks the host): pause, restart the round, move someone to spectator, the next
   // match's map. Disruptive ones are confirmed in the host's menu first.
   if (['pause', 'restart-round', 'move-spec', 'next-map'].includes(a.type)) { if (!perm.isHost) throw Error('Only the host can do that'); const d = game.combat?.d;
-    if (a.type === 'next-map') { if (a.map && !ARENA_MAPS[a.map]) throw Error('That map is not available'); A.nextMap = a.map || null; return A.nextMap ? 'Next match: ' + ARENA_MAPS[A.nextMap].name : 'Next match: same map'; }
+    if (a.type === 'next-map') { if (a.map && (!ARENA_MAPS[a.map] || ARENA_MAPS[a.map].stub)) throw Error('That map is not available'); A.nextMap = a.map || null; return A.nextMap ? 'Next match: ' + ARENA_MAPS[A.nextMap].name : 'Next match: same map'; }
     if (!d) throw Error('Defuse matches only');
     if (a.type === 'pause') { const on = !!a.on; if (on === !!d.paused) return on ? 'Already paused' : 'Not paused'; if (on) { d.paused = { at: now }; return 'Match paused'; }
       const dt = now - d.paused.at, r = d.round; d.paused = null; if (r) { for (const f of ['freezeUntil', 'buyUntil', 'endsAt', 'overAt']) if (Number.isFinite(r[f]) && r[f] < 4e15) r[f] += dt; if (r.planted) r.planted.explodeAt += dt; if (r.plant) r.plant.start += dt; if (r.defuse) r.defuse.start += dt; }
@@ -223,7 +239,18 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   if (a.type === 'throw') { if (isDown(game, name, now)) throw Error('You are dead'); return throwNade(game, name, a.kind, a, now); }
   if (a.type === 'add-bot') { const n = Math.max(1, Math.min(MAX_BOTS, Math.floor(+a.count || 1))); let added = 0; for (let i = 0; i < n && A.bots.length < MAX_BOTS; i++, added++) addBot(game, now, players); return added ? 'Added ' + added + ' bot' + (added > 1 ? 's' : '') : 'The arena is full of bots'; }
   if (a.type === 'remove-bot') { const b = removeBot(game); if (!b) throw Error('No bots to remove'); return 'Removed ' + b.name; }
-  if (a.type === 'restart') { if (a.map && !ARENA_MAPS[a.map]) throw Error('That map is not available'); const map = a.map && ARENA_MAPS[a.map]?.kind === A.kind ? a.map : A.map; startArena(game, { map, kind: A.kind, bots: A.bots.length, difficulty: A.difficulty, rules: A.rulesNext || A.rules }, now); return 'New match · ' + ARENA_MAPS[game.arena.map].name; }
+  if (a.type === 'restart') { if (a.map && (!ARENA_MAPS[a.map] || ARENA_MAPS[a.map].stub)) throw Error('That map is not available'); const map = a.map && ARENA_MAPS[a.map]?.kind === A.kind ? a.map : A.map; startArena(game, { map, kind: A.kind, bots: A.bots.length, difficulty: A.difficulty, rules: A.rulesNext || A.rules }, now); return 'New match · ' + ARENA_MAPS[game.arena.map].name; }
+  // E at a door: opens it away from you, or shuts it. A shot into a breakable: its damage, broken at its health (glass:
+  // a hit) — the client sends what its bullet crossed (weapons.js).
+  if (a.type === 'use' || a.type === 'break') { const m = ARENA_MAPS[A.map]?.movers?.[+a.id], id = +a.id, p = poseOf(players, name); if (!m) throw Error('Nothing to use there');
+    const st = mapStateOf(game);
+    if (a.type === 'use') { if (m.kind === 'break') throw Error('Nothing to use there'); if (isDown(game, name, now)) throw Error('You are dead'); if (st.broken[id]) throw Error('The door is broken');
+      if (p && boxDist(m.box, p.x - ARENA.cx, p.z - ARENA.cz) > 7) throw Error('Too far from the door'); const d = st.doors[id];
+      if (d && now - (d.at || 0) < 300) return d.open ? 'Door open' : 'Door shut';   // (a double press)
+      st.doors[id] = d?.open ? { open: 0, side: d.side, at: now } : { open: 1, side: p ? awaySide(m, p.x - ARENA.cx, p.z - ARENA.cz) : 1, at: now }; st.v++; syncMapState(game); return st.doors[id].open ? 'Door open' : 'Door shut'; }
+    if (m.kind !== 'break') throw Error('Not breakable'); if (st.broken[id]) return 'Already broken';
+    st.hp[id] = (st.hp[id] ?? m.health) - Math.max(1, Math.min(500, +a.dmg || 1)); if (st.hp[id] > 0 && !m.glass) return 'Hit';
+    st.broken[id] = 1; st.v++; syncMapState(game); return 'Broken'; }
   throw Error('Unknown arena action');
 }
 
@@ -266,8 +293,34 @@ export function applyTeam(game, k, team, players, now) {
 }
 // Host tick (~20×/s): bots think, move and shoot; respawned players get a spawn point; the match clock.
 // Returns true when the streamed combat state changed.
-export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
+// The round's doors and breakables (map files: bsp-map.js movers), shared on the combat frame: doors[id] = { open, side,
+// at }, broken[id], hp[id] (damage taken so far); v counts changes. A new map starts them fresh; so does every round
+// (arena-defuse.js newRound: CS closes the doors and puts the glass back).
+export function mapStateOf(game) { const A = game.arena, C = game.combat; if (!C.mapState || C.mapState.map !== A.map) C.mapState = { map: A.map, v: (C.mapState?.v || 0) + 1, doors: {}, broken: {}, hp: {} }; return C.mapState; }
+let appliedState = null, appliedV = -1;
+const syncMapState = game => { const st = game.combat?.mapState; if (!st || st === appliedState && st.v === appliedV) return; appliedState = st; appliedV = st.v; applyMapState(geo(game).boxes, st); };
+const boxDist = (b, x, z) => Math.hypot(Math.max(b[0] - x, 0, x - b[1]), Math.max(b[2] - z, 0, z - b[3]));
+// An HE blast at (x, y, z) (map-relative): each door and breakable within its radius takes its damage (falling off as a
+// player's does); a door breaks off its hinges at DOOR_HP, glass and grates at their own health.
+export const DOOR_HP = 60;
+function blastMovers(game, x, y, z, r, dmg) { const movers = ARENA_MAPS[game.arena.map]?.movers; if (!movers?.length) return false; let hit = false;
+  movers.forEach((m, id) => { const st = mapStateOf(game); if (st.broken[id]) return; const b = m.box, d = Math.hypot(Math.max(b[0] - x, 0, x - b[1]), Math.max(b[4] - y, 0, y - b[5]), Math.max(b[2] - z, 0, z - b[3]));
+    if (d >= r) return; const take = dmg * Math.pow(1 - d / r, 1.3); st.hp[id] = (st.hp[id] ?? (m.kind === 'break' ? m.health : DOOR_HP)) - take;
+    if (st.hp[id] <= 0 || (m.kind === 'break' && m.glass)) { st.broken[id] = 1; if (st.doors[id]) delete st.doors[id]; } st.v++; hit = true; });
+  if (hit) syncMapState(game); return hit; }
+// The way a rotating door swings open from (x, z) (map-relative): away from you (CS) — the side whose swung middle is farther.
+function awaySide(m, x, z) { if (m.kind !== 'rotdoor') return 1; const cx = (m.box[0] + m.box[1]) / 2 - m.hinge[0], cz = (m.box[2] + m.box[3]) / 2 - m.hinge[2], far = sg => { const t = sg * m.angle; return Math.hypot(m.hinge[0] + cx * Math.cos(t) + cz * Math.sin(t) - x, m.hinge[2] - cx * Math.sin(t) + cz * Math.cos(t) - z); };
+  return far(1) >= far(-1) ? 1 : -1; }
+export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK.game = game; TICK.now = now;
   if (game.mode !== 'arena' || !game.arena) return false; const A = game.arena, C = game.combat, g = G(game); let changed = false;
+  // Doors and breakables: bots open the doors they reach and smash what blocks their way (they walk the map's paths,
+  // which run through doorways and vents); the host's collision follows the state.
+  { const movers = ARENA_MAPS[A.map]?.movers; if (movers?.length && A.bots.length) { let st = null;
+      for (const b of A.bots) { if (isDown(game, b.name, now)) continue; const x = b.x - ARENA.cx, z = b.z - ARENA.cz;
+        movers.forEach((m, id) => { const d = boxDist(m.box, x, z); if (d > 2.2) return; st ??= mapStateOf(game);
+          if (m.kind === 'break') { if (!st.broken[id] && d < 1.2) { st.broken[id] = 1; st.v++; changed = true; } }
+          else if (!st.doors[id]?.open) { st.doors[id] = { open: 1, side: awaySide(m, x, z), at: now }; st.v++; changed = true; } }); } } }
+  syncMapState(game);
   // Lobby: start at the timeout when there are enough players, else wait 30 s more and say why.
   if (A.lobby && !A.lobby.started) { A.endsAt = now + DM_MS; if (now >= A.lobby.until) { const e = lobbyShort(game, players); if (e) { A.lobby.until = now + LOBBY_MORE_MS; A.lobby.note = e; } else beginMatch(game, players, now); changed = true; } }
   // Spawn orders for players who just respawned (their client moves them there).
@@ -297,7 +350,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) {
       else if (slot === 'nades') { if (canCarry(l.nades ??= [], it.item)) { l.nades.push(it.item); took = true; } }
       else if (slot === 'primary' ? !l.primary : slot === 'secondary' && l.secondary === null) { l[slot] = it.item; setAmmo(game, p.name, it.item, it.ammo || fullAmmo(it.item)); took = true; }
       if (took) { C.ground.splice(i, 1); (C.picked ??= {})[k] = { item: it.item, at: now, ammo: it.ammo || null }; A.dirty = true; changed = true; } } }
-  if (nadesTick(game, players, dt, now, g)) changed = true;
+  if (nadesTick(game, players, dt, now, g, (x, y, z, r, dmg) => { if (blastMovers(game, x - ARENA.cx, y, z - ARENA.cz, r, dmg)) changed = true; })) changed = true;
   if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => it.item === 'c4' || now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
   for (const bot of A.bots) {
     if (isDown(game, bot.name, now)) { bot.dead = true; continue; }

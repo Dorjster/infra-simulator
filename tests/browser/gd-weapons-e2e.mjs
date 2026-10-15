@@ -52,8 +52,8 @@ await p.screenshot({ path: path.join(out, 'gd-ak.png') });
 await p.evaluate(() => __infra.lab.arenaUI.buy(true)); await p.evaluate(() => document.querySelector('#ar-buy [data-pick="m4"]').click()); await p.waitForTimeout(900);
 const drop = await p.evaluate(() => { const g = __infra.lab.world.operations.game, it = g.combat.ground.find(x => x.item === 'ak'); return { it, primary: g.arena.loadout.tester.primary }; });
 check('second rifle: the AK lies on the ground with its rounds, the M4A4 in the slot', drop.it && drop.it.ammo?.[0] === 30 && drop.primary === 'm4', JSON.stringify(drop));
-check('…and it is listed under Nearby dropped weapons', await p.evaluate(() => /NEARBY DROPPED/.test(document.getElementById('ar-buy').textContent) && /AK-47/.test(document.querySelector('#ar-buy .near')?.textContent || '')));
-await p.evaluate(() => document.querySelector('#ar-buy [data-ground]').click()); await p.waitForTimeout(900);
+check('…and it lies within reach to pick up (E)', await p.evaluate(() => __infra.lab.arenaUI.nearbyGround().includes('AK-47')));
+await p.evaluate(() => __infra.lab.arenaUI.pickNearest('AK-47')); await p.waitForTimeout(900);
 check('picking it up from the menu swaps it back (M4 drops)', await p.evaluate(() => { const g = __infra.lab.world.operations.game; return g.arena.loadout.tester.primary === 'ak' && g.combat.ground.some(x => x.item === 'm4'); }));
 await p.keyboard.press('Escape');
 // AWP scope: right click scopes in (two levels, then out); left click fires scoped and the bolt unscopes (CS2).

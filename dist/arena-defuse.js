@@ -67,6 +67,7 @@ export function assignTeam(game, name, players = []) { const d = game.combat.d, 
 // A new round: everyone alive at their team's spawn; the dead lost their gear; the bomb to a random Terrorist.
 export function newRound(game, players, now) {
   const C = game.combat, d = C.d, A = game.arena, m = map(game);
+  if (C.mapState) C.mapState = { map: A.map, v: (C.mapState.v || 0) + 1, doors: {}, broken: {}, hp: {} };   // doors shut and glass whole again (CS)
   const RU = d.rules || DEFAULT_RULES, half = RU.win - 1, reg = 2 * half, ot = RU.ot === 'mr3' && d.n >= reg ? d.n - reg : -1;   // ot: rounds played into overtime
   if (ot >= 0 && ot % 6 === 0) { for (const k of Object.keys(d.teams)) { d.money[k] = OT_MONEY; delete A.loadout[k]; } d.loss = { t: 0, ct: 0 }; C.armor = {}; d.kits = {}; }   // an overtime block: $10,000 each, fresh gear
   if (d.n === half || (ot > 0 && ot % 6 === 3)) { // halftime (and overtime halves): swap sides, money and gear back to the start

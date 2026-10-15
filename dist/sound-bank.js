@@ -3,6 +3,7 @@
 // play() returns false and callers fall back to their synthesized sounds.
 import { audioCtx, outAt, reverb, listenerAt, musicBus } from './spatial-audio.js';
 import { weaponById, WEAPONS, isFirearm } from './weapons-data.js';
+import { userAssets, userAssetURL } from './user-assets.js';
 const DIR = new URL('./sounds/', import.meta.url).href;
 const GUNS = [...WEAPONS.filter(isFirearm).map(w => w.id), 'cannon'];   // (every gun's own shots: shot-<id>[-b|-c|-far])
 const NAMES = [...GUNS.flatMap(id => ['shot-' + id, 'shot-' + id + '-b', 'shot-' + id + '-c', 'shot-' + id + '-far']), ...['rifle', 'smg', 'lmg', 'pistol', 'bolt', 'pump'].flatMap(k => ['grab', 0, 1, 2].map(p => `reload-${k}-${p}`)), 'music-freeze'];
@@ -13,7 +14,12 @@ const buffers = new Map(); let loading = null;
 export function loadSounds() {
   if (typeof fetch !== 'function' || typeof AudioContext === 'undefined') return Promise.resolve(0);
   return loading ??= (async () => { const c = audioCtx(), names = [...NAMES, ...Object.entries(FX).flatMap(([n, k]) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}`)), ...STEPS.flatMap(s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}`))];
-    await Promise.all(names.map(async n => { for (const ext of ['.wav', '.ogg']) { try { const r = await fetch(DIR + n + ext); if (!r.ok) continue; buffers.set(n, await c.decodeAudioData(await r.arrayBuffer())); return; } catch {} } }));
+    // The room's own sounds first (CS2's, imported on the host's computer: user-assets/sounds, models.sounds — never
+    // shipped), then the shipped ones; the room's may add some (each gun's own reload: reload-<id>-0/1/2).
+    const ua = await userAssets().catch(() => null), mine = ua?.models?.sounds || {}, from = async url => { try { const r = await fetch(url); return r.ok ? await c.decodeAudioData(await r.arrayBuffer()) : null; } catch { return null; } };
+    await Promise.all([...new Set([...names, ...Object.keys(mine)])].map(async n => { let b = mine[n] ? await from(userAssetURL(ua, mine[n].file)) : null;
+      if (!b && names.includes(n)) for (const ext of ['.wav', '.ogg']) if ((b = await from(DIR + n + ext))) break;
+      if (b) buffers.set(n, b); }));
     return buffers.size; })();
 }
 // Play a sound; `at` = where it happens ({x, y, z}, 3D) or null for your own. Returns false if not loaded.
@@ -67,10 +73,11 @@ export function shotSound(id, { at = null, volume = 1 } = {}) {
 }
 export const isQuiet = id => !!SHOT[id]?.[2];
 // Reload parts per weapon: magazine out, magazine in, bolt / slide / pump.
-// Reload sets per weapon class: [mag out, mag in, bolt / slide / pump]; the class's handling grab plays with the mag
+// Reload sets per weapon class: [mag out, mag in, bolt / slide / pump] — each gun's own when the room has them (CS2's:
+// reload-<id>-<part>); the class's handling grab plays with the mag
 // out, so a reload is heard as one sequence (grab, out, in, charge) over its whole CS2 length.
 const kindOf = id => { const k = weaponById(id)?.kind; return ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : k === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
-export function reloadSound(part, id, at = null) { const k = kindOf(id), r = .97 + Math.random() * .06; if (part === 0) play(`reload-${k}-grab`, { at, volume: .55, rate: r, kind: 'handling' }); return play(`reload-${k}-${part}`, { at, volume: .9, rate: r, delay: part === 0 ? .12 : 0, kind: 'handling' }); }
+export function reloadSound(part, id, at = null) { const k = kindOf(id), r = .97 + Math.random() * .06, own = `reload-${id}-${part}`; if (part === 0) play(`reload-${k}-grab`, { at, volume: .55, rate: r, kind: 'handling' }); return play(buffers.has(own) ? own : `reload-${k}-${part}`, { at, volume: .9, rate: r, delay: part === 0 ? .12 : 0, kind: 'handling' }); }
 // Footstep on a surface (concrete, wood, grass, carpet, metal); a random take each step.
 export const stepSound = (surface, at = null, volume = .6) => play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12, kind: 'step' });
 

@@ -11,7 +11,8 @@ let n = 0; const ok = (name, c, d = '') => { n++; assert(c, name + (d ? ' · ' +
 const root = new URL('../dist/', import.meta.url);
 const src = readFileSync(new URL('weapon-models.js', root), 'utf8');
 // The model tables, read from the source (the module needs a browser to load the models themselves).
-const table = (name, text = src, decl = 'export const ') => { const i = text.indexOf(decl + name + ' = {'); assert(i >= 0, name); let d = 0, j = text.indexOf('{', i); const s = j; for (; j < text.length; j++) { if (text[j] === '{') d++; else if (text[j] === '}' && !--d) break; } return Function('"use strict"; return (' + text.slice(s, j + 1) + ');')(); };
+const table = (name, text = src, decl = 'export const ') => { const i = text.indexOf(decl + name + ' = {'); assert(i >= 0, name); let d = 0, j = text.indexOf('{', i); const s = j; for (; j < text.length; j++) { if (text[j] === '{') d++; else if (text[j] === '}' && !--d) break; } const consts = [...text.matchAll(/^const (NADE_VIEW) = (\[[^\]]*\]);/gm)].map(m => `const ${m[1]} = ${m[2]};`).join(' ');   /* (shared values the table names) */
+  return Function('"use strict"; ' + consts + ' return (' + text.slice(s, j + 1) + ');')(); };
 const REAL = table('REAL_FIT'), Q = table('QGUNS'), V = table('VARIANTS');
 const PROCEDURAL = ['knife', 'karambit'];   // drawn in code (knife(), karambit()) as well as REAL_FIT's karambit
 const guns = WEAPONS.map(w => w.id), knives = KNIVES.map(k => k.id), nades = GRENADES.map(g => g.id);

@@ -1,6 +1,6 @@
 // Ladders in play (needs the map files: user-maps/nuke.bsp, from tools/import-cs2-models.mjs): on Nuke, standing at
 // the foot of a ladder and facing it, holding W climbs it (no gravity), letting go holds on, S climbs back down. And
-// footsteps there sound like the map's own floor (its faces' materials, map-light.js), not the theme's default.
+// every ladder you can walk up to climbs to its top; footsteps there sound like the map's own floor (its faces' materials, map-light.js), not the theme's default.
 //   node tests/browser/gd-ladders-e2e.mjs <repo-root> <out-dir>
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync, mkdirSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 const [root, out] = process.argv.slice(2); mkdirSync(out, { recursive: true });
@@ -35,5 +35,14 @@ if (spot) {
   await p.keyboard.down('KeyS'); await p.waitForTimeout(900); await p.keyboard.up('KeyS'); const y3 = await feet(); check('S climbs back down', y3 < y2 - 4, (y3 - y2).toFixed(1));
   await p.screenshot({ path: path.join(out, 'ladder.jpg'), type: 'jpeg', quality: 80 });
 }
+// Every ladder with floor at its foot, walked up to from a step back and climbed with W, takes you to its top (no
+// walking through it, no head stuck under the floor it climbs through).
+{ const L = await p.evaluate(() => __infra.lab.arenaScene.ladders.map(l => ({ ...l }))), res = [], eye = () => p.evaluate(() => __infra.camera.position.y);
+  for (const l of L) { const spot = await p.evaluate(async l => { const { ARENA_MAPS } = await import('/arena-maps.js'), { ARENA } = await import('/facility-layout.js'), nav = ARENA_MAPS.nuke.nav, thinX = l.maxX - l.minX < l.maxZ - l.minZ, cx = (l.minX + l.maxX) / 2, cz = (l.minZ + l.maxZ) / 2;
+      for (const sd of [-1, 1]) { const x = thinX ? (sd < 0 ? l.minX - 3 : l.maxX + 3) : cx, z = thinX ? cz : (sd < 0 ? l.minZ - 3 : l.maxZ + 3), f = nav.floorAt(x - ARENA.cx, z - ARENA.cz, l.y0 + 9.7); if (Number.isFinite(f) && Math.abs(f - l.y0) < 3) return { x, z, y: f, cx, cz }; } return null; }, l);
+    if (!spot) continue; await p.evaluate(s => __infra.lab.look(s.x, s.z, s.cx, s.y + 9.7, s.cz, s.y + 9.7), spot); await p.waitForTimeout(250);
+    await p.keyboard.down('KeyW'); let top = -Infinity; for (let t = 0; t < 22; t++) { await p.waitForTimeout(150); top = Math.max(top, await eye()); } await p.keyboard.up('KeyW'); await p.waitForTimeout(300);
+    res.push(top - 9.7 >= l.y1 - 1.5 ? 'top' : 'stuck at ' + (top - 9.7).toFixed(1) + ' of ' + l.y1.toFixed(1)); }
+  check('every ladder from a step back: climbed to its top', res.length >= 4 && res.every(r => r === 'top'), res.join(', ')); }
 check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 console.log(ok + '/' + n); await b.close(); server.kill(); process.exit(ok === n ? 0 : 1);

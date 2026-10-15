@@ -116,10 +116,11 @@ export function hitDamage(wpn, zone, distance, pellets = 1, armor = null, base =
   if (lost > kev) { lost = kev; hp = Math.round(raw - kev * 2); }
   return { hp: Math.max(1, hp), armor: lost, headKill: false };
 }
-// Hit group from the height of the hit above the feet (body capsule ~10.6 units tall).
-export const zoneAt = y => y > HEAD_Y ? 'head' : y > 6.6 ? 'chest' : y > 4.6 ? 'stomach' : 'legs';
-// Player capsule (game units): feet at pose.y − eye height; heads above HEAD_Y count as head shots.
-export const EYE = 9.7, BODY_R = 1.5, BODY_H = 10.6, HEAD_Y = 8.6;
+// Hit group from the height of the hit above the feet (body capsule 11 units tall: CS2's 72 u).
+export const zoneAt = y => y > HEAD_Y ? 'head' : y > 6.85 ? 'chest' : y > 4.77 ? 'stomach' : 'legs';
+// Player capsule (game units): feet at pose.y − eye height; heads above HEAD_Y count as head shots. As CS2's agents stand
+// at their true size (a rifle stance: head from ~61 u — the chin — to 72 u; crouched, 78 % of that height).
+export const EYE = 9.7, BODY_R = 1.5, BODY_H = 11.0, HEAD_Y = 9.4, CROUCH_H = .78;
 
 // ── Aim (client and tests) ───────────────────────────────────────────────────────────────────────────────────
 // Spray offset [pitch°, yaw°] at a (fractional) pattern position: the first bullet is exactly [0, 0].
