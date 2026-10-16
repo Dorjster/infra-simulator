@@ -99,6 +99,10 @@ export function mapBoxes(map, cx, cz) {
   for (const [id, m] of (map.movers || []).entries()) { const add = (bx, role) => list.push({ minX: cx + bx[0], maxX: cx + bx[1], minZ: cz + bx[2], maxZ: cz + bx[3], y0: bx[4], y1: bx[5], mat: m.glass ? 'glass' : m.kind === 'break' ? 'crate' : 'door', prop: null, walk: false, mover: id, role, off: role !== 'shut' });
     add(m.box, 'shut'); for (const [role, bx] of Object.entries(m.open || {})) add(bx, role); }
   const boxes = indexBoxes(list); boxes.movers = list.filter(b => b.mover !== null);
+  // CS2 maps: what bullets (and sight, knives, smoke) meet — its own boxes, without player clips and the fences bullets
+  // pass, each made of what CS2 says (wallbangs: PEN_COST); the doors and breakables the same objects as above.
+  if (map.bulletSolids) { const bl = map.bulletSolids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: null, walk: false, mover: null, role: null, off: false }; });
+    boxes.bullets = indexBoxes(bl.concat(boxes.movers)); }
   if (map.nadeSolid) boxes.nadeSolid = (x, y, z) => map.nadeSolid(x - cx, y, z - cz);   // (map files: grenades by the real shapes, arena-nades.js)
   BOX_CACHE.delete(key); BOX_CACHE.set(key, { map, boxes }); while (BOX_CACHE.size > 4) BOX_CACHE.delete(BOX_CACHE.keys().next().value); return boxes;
 }
@@ -120,15 +124,16 @@ export function walkable(boxes, bounds, x, z, r = 1.3) {
 // Line of sight at eye height between two points (segment vs boxes that cover y = 8…10).
 const LS = [], SC = [], RB = [], WK = [], BP = [];   // nearby boxes per query (box-grid.js)
 export function lineOfSight(boxes, ax, az, bx, bz, y = 9) {
-  for (const b of boxesAlong(boxes, ax, az, bx, bz, 0, LS)) { if (b.y0 > y || b.y1 < y) continue; let t0 = 0, t1 = 1; const dx = bx - ax, dz = bz - az;
+  for (const b of boxesAlong(boxes.bullets || boxes, ax, az, bx, bz, 0, LS)) { if (b.y0 > y || b.y1 < y) continue; let t0 = 0, t1 = 1; const dx = bx - ax, dz = bz - az;
     for (const [p, d, lo, hi] of [[ax, dx, b.minX, b.maxX], [az, dz, b.minZ, b.maxZ]]) { if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { t0 = 2; break; } continue; } let a = (lo - p) / d, c = (hi - p) / d; if (a > c) [a, c] = [c, a]; t0 = Math.max(t0, a); t1 = Math.min(t1, c); if (t0 > t1) break; }
     if (t0 <= t1 && t0 < 1 && t1 > 0) return false; }
   return true;
 }
-// Is the 3D segment a→b clear of every box? (slab test; used for bullets, knife, grenades and pickups)
+// Is the 3D segment a→b clear of every box? (slab test; used for bullets, knife, grenades and pickups) CS2 maps: the
+// bullets' boxes (no player clips: they stop players only).
 export function segmentClear(boxes, ax, ay, az, bx, by, bz) {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
-  for (const b of boxesAlong(boxes, ax, az, bx, bz, 0, SC)) { let t0 = 0, t1 = 1, out = false;
+  for (const b of boxesAlong(boxes.bullets || boxes, ax, az, bx, bz, 0, SC)) { let t0 = 0, t1 = 1, out = false;
     for (const [p, d, lo, hi] of [[ax, dx, b.minX, b.maxX], [ay, dy, b.y0, b.y1], [az, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p <= lo || p >= hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 >= t1) { out = true; break; } }
@@ -138,7 +143,7 @@ export function segmentClear(boxes, ax, ay, az, bx, by, bz) {
 // Distance along a ray (origin o, unit direction d) to the first box it enters, or Infinity.
 export function rayBoxes(boxes, ox, oy, oz, dx, dy, dz, far = 2000) {
   let best = far;
-  for (const b of boxesAlong(boxes, ox, oz, ox + dx * far, oz + dz * far, 0, RB)) { let t0 = 0, t1 = best, out = false;
+  for (const b of boxesAlong(boxes.bullets || boxes, ox, oz, ox + dx * far, oz + dz * far, 0, RB)) { let t0 = 0, t1 = best, out = false;
     for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }
@@ -153,7 +158,7 @@ export const PEN_COST = { adobe: 2.6, metal: 1.6, crate: .8, wood: 1, door: .7, 
 const SOLID_THICK = 4;   // thicker than this, only crates and wood are crossed (a 15-unit container is not)
 export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0) {
   const hits = [];
-  for (const b of boxesAlong(boxes, ox, oz, ox + dx * far, oz + dz * far, 0, BP)) { let t0 = 0, t1 = far, out = false;
+  for (const b of boxesAlong(boxes.bullets || boxes, ox, oz, ox + dx * far, oz + dz * far, 0, BP)) { let t0 = 0, t1 = far, out = false;
     for (const [p, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.y0, b.y1], [oz, dz, b.minZ, b.maxZ]]) {
       if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { out = true; break; } continue; }
       let u = (lo - p) / d, v = (hi - p) / d; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); if (t0 > t1) { out = true; break; } }

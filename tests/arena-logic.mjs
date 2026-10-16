@@ -52,7 +52,7 @@ arenaTick(g2, players, .05, g2.arena.endsAt + 1); assert(g2.arena.over); arenaTi
   const pl = [{ name: 'Ann', pose: { x: cx, y: 9.7, z: cz, yaw: 0 } }, { name: 'Bo', pose: { x: cx + 40, y: 9.7, z: cz, yaw: 0 } }];
   arenaApply(g3, { type: 'loadout', primary: 'ak' }, 'Ann', pl, t);
   assert.match(arenaApply(g3, { type: 'drop', slot: 'primary' }, 'Ann', pl, t), /Dropped AK-47/); assert.deepEqual(arenaArsenalOf(g3, 'Ann'), ['pistol', 'knife']);
-  const it = g3.combat.ground[0]; assert.equal(it.item, 'ak'); assert(Math.abs(it.z - (cz - 6)) < .01, 'lands ~1 m ahead');
+  const it = g3.combat.ground[0]; assert.equal(it.item, 'ak'); assert(it.z < cz - 6 && it.z > cz - 40 && Math.abs(it.x - cx) < 1 && it.fly?.ms > 0, 'tossed ahead where you face (1–6 m), as CS2 throws it: ' + (cz - it.z).toFixed(1));
   assert.throws(() => arenaApply(g3, { type: 'pickup', id: it.id }, 'Bo', pl, t), /Too far/);
   pl[1].pose.x = cx; pl[1].pose.z = cz - 5; assert.match(arenaApply(g3, { type: 'pickup', id: it.id }, 'Bo', pl, t), /Picked up AK-47/); assert.equal(g3.arena.loadout.bo.primary, 'ak'); assert.equal(g3.combat.ground.length, 0);
   assert.throws(() => arenaApply(g3, { type: 'pickup', id: it.id }, 'Ann', pl, t), /Already taken/);

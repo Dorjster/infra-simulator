@@ -6,6 +6,7 @@
 // Imported on this computer (user-assets, never shipped): CS2's gloves are worn on every pair of arms, and CS2's own
 // first-person M4A1-S animations (cs2rifle) hold every rifle, sniper and machine gun.
 import * as THREE from './three.module.js';
+import { prepareSkins } from './skin-render.js';
 import { GLTFLoader } from './post/GLTFLoader.js';
 import { weaponModel, MUZZLE, VARIANTS, modelFromFile } from './weapon-models.js';
 import { weaponById, CS_UNITS_PER_UNIT } from './weapons-data.js';
@@ -115,13 +116,22 @@ export const onFPReady = fn => { readyFns.add(fn); return () => readyFns.delete(
 export function wantFP(id) { const i = queue.findIndex(q => q[0] === id); if (i > 0) queue.unshift(...queue.splice(i, 1)); }
 let held = () => false;   // (lab.js: true while a match is being played — no loading then, not even a short stall)
 export const holdFPLoads = fn => { held = fn; };
+// Behind a loading card nothing is seen: no pacing (the sets load as fast as they parse — the arena's loading screen
+// waits for them all, fpSetsReady, so a match never loads one while it is played; it used to load them in buy time:
+// a 60–90 ms frame every half second there).
+const behindCard = () => typeof document !== 'undefined' && document.getElementById('ar-load')?.hidden === false;
+let drained = null;
+// Every CS2 first-person set's root not in use (lab.js prewarmArena: all of them compiled behind the map's loading
+// card as a match draws them — the C4 used to build its shader on being drawn at the plant, a 70–220 ms frame).
+export const fpSetRoots = () => [...authored.values()].map(s => s.root);
+export function fpSetsReady() { return drained ??= (() => { const p = loadAuthored().then(() => new Promise(res => { const chk = () => (!queue.length && !busy) ? res() : setTimeout(chk, 50); chk(); })).then(() => { p.done = true; }); p.done = false; return p; })(); }
 function pump() {
   if (busy || !queue.length || !ctx) return; if (held()) { setTimeout(pump, 400); return; } busy = true; const [id, v] = queue.shift();
   new GLTFLoader().loadAsync(userAssetURL(ctx.ua, v.file)).then(async g => { const set = buildAuthored(g, ctx.glove), I = globalThis.__infra;
-      if (I?.renderer?.compileAsync && I.camera && I.scene) await I.renderer.compileAsync(set.root, I.camera, I.scene).catch(() => {});   // (its shaders built off the frame)
-      for (const t of set.textures) { while (held()) await new Promise(r => setTimeout(r, 400)); I?.renderer?.initTexture(t); await new Promise(r => setTimeout(r, 16)); }   // (its textures on the GPU, one per frame, between plays)
+      await I?.gfx?.compileFor(set.root).catch(() => {});   // (its shaders built off the frame, for where a frame draws: graphics.js; in a match's own lights by the arena's warm-up, lab.js)
+      for (const t of set.textures) { while (held()) await new Promise(r => setTimeout(r, 400)); I?.renderer?.initTexture(t); if (!behindCard()) await new Promise(r => setTimeout(r, 16)); }   // (its textures on the GPU, one per frame, between plays)
       authored.set(id, set); for (const fn of readyFns) fn(id); })   // only now ready: its first showing costs nothing
-    .catch(e => console.warn('first-person set', id, e?.message)).finally(() => { busy = false; setTimeout(pump, 150); });
+    .catch(e => console.warn('first-person set', id, e?.message)).finally(() => { busy = false; setTimeout(pump, behindCard() ? 0 : 150); });
 }
 function loadAuthored() {
   return authoredLoading ??= Promise.all([userAssets(), loadGlove()]).then(([ua, glove]) => { ctx = { ua, glove };
@@ -132,10 +142,10 @@ function loadAuthored() {
 // textures go to the GPU as they load, so a weapon's first appearance costs nothing.
 function buildAuthored(gltf, glove) {
   const sc = gltf.scene, root = new THREE.Group(), fix = new THREE.Group(); root.add(fix); fix.add(sc); fix.matrixAutoUpdate = false;
-  let cam = null, muzzle = null, hand = null; const sleeves = {}, textures = [];
+  let cam = null, muzzle = null, hand = null; const sleeves = {}, textures = [], weaponMats = [];   // (weaponMats: the gun's or knife's own materials — a skin paints them, skin-render.js)
   sc.traverse(o => { if (o.isCamera && !cam) cam = o; if (o.name === 'muzzle') muzzle = o; if (o.isBone && /^hand_[rR]$/.test(o.name)) hand = o; if (/^sleeve_ctm/.test(o.name)) sleeves.ct = o; if (/^sleeve_tm/.test(o.name)) sleeves.t = o;
     if (o.isMesh) { o.frustumCulled = false; o.castShadow = o.receiveShadow = false; if (glove && o.material?.name === 'cs2_glove') { o.material.dispose(); o.material = glove.material; } else if (o.material?.name === 'cs2_sleeve') { o.material.dispose(); o.material = shirt(PACKS.cs2rifle.sleeve.from); }   // (the forearms in the black camo sleeve every other first-person view wears)
-      for (const m of [].concat(o.material)) { m.userData.shared = true; if (m !== glove?.material && m !== shirts.get(PACKS.cs2rifle.sleeve.from)) m.envMapIntensity = .35; for (const t of [m.map, m.normalMap, m.roughnessMap]) if (t && !textures.includes(t)) textures.push(t); } } });
+      for (const m of [].concat(o.material)) { m.userData.shared = true; if (m !== glove?.material && m !== shirts.get(PACKS.cs2rifle.sleeve.from) && m.map && !/glove|sleeve|arm|hand/i.test(m.name || '') && !weaponMats.includes(m)) weaponMats.push(m); if (m !== glove?.material && m !== shirts.get(PACKS.cs2rifle.sleeve.from)) m.envMapIntensity = .35; for (const t of [m.map, m.normalMap, m.roughnessMap]) if (t && !textures.includes(t)) textures.push(t); } } });
   // The authoring camera becomes ours: its frame → the view's, inches (metres: sets built from CS2's own data, its
   // view-model offset in the camera's place) → game units; such sets also carry CS2's view-model field of view.
   sc.updateMatrixWorld(true); const u = (cam?.userData?.metres ? 39.3701 : 1) / CS_UNITS_PER_UNIT, vfov = cam?.userData?.vfov || 0;
@@ -146,7 +156,7 @@ function buildAuthored(gltf, glove) {
   const play = (n, { once = false, fade = .12, ms = 0 } = {}) => { const c = clip(n); if (!c) return 0; const a = mixer.clipAction(c); a.reset(); a.enabled = true; a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat); a.clampWhenFinished = once; a.timeScale = ms ? c.duration * 1000 / ms : 1;
     if (cur && cur !== a && fade > 0) a.crossFadeFrom(cur, fade, false); else if (cur && cur !== a) cur.stop(); a.play(); cur = a; return c.duration * 1000 / a.timeScale; };
   return {
-    root, authored: true, vfov, textures,
+    root, authored: true, vfov, textures, weaponMats: (prepareSkins(weaponMats), weaponMats),
     hold(id, { draw = true, team = 'ct' } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; until = draw && clip('draw') ? now() + play('draw', { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
     fire() { if (cur === mixer.existingAction(clip('reload'))) return; until = now() + play('fire', { once: true, fade: .03 }); },
     // Knife swings: the set's own light / heavy clips (else its fire clip).
@@ -180,7 +190,10 @@ function buildAuthored(gltf, glove) {
 let gloveLoading = null;
 function loadGlove() {
   return gloveLoading ??= userAssets().then(ua => { const v = ua.models.viewmodels?.glove; if (!v) return null;
-    return new GLTFLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { let m = null; g.scene.traverse(o => { if (!m && o.isSkinnedMesh) m = o; }); g.scene.updateMatrixWorld(true); return m; }); }).catch(e => { console.warn('gloves', e?.message); return null; });
+    // (CS2's gloves are textured one hand; the other's UVs run from 0 to −1 — mirrored: both hands read the picture the
+    // same way; with plain repeat one hand read the picture's empty half — the Sport Gloves' right hand plain grey)
+    return new GLTFLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { let m = null; g.scene.traverse(o => { if (!m && o.isSkinnedMesh) m = o; }); g.scene.updateMatrixWorld(true);
+      for (const t of [m?.material?.map, m?.material?.normalMap]) if (t) { t.wrapS = THREE.MirroredRepeatWrapping; t.needsUpdate = true; } return m; }); }).catch(e => { console.warn('gloves', e?.message); return null; });
 }
 const FINGERS = ['index', 'middle', 'ring', 'pinky'];
 // CS2's own hand, measured in Blender on the CS2 arms rig imported on this computer (CS2_MultiRig: Valve's arms and

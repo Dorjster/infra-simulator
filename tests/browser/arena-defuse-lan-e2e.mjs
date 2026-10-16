@@ -20,6 +20,10 @@ await host.waitForFunction(() => document.getElementById('ar-load')?.hidden !== 
 const code = await host.evaluate(() => __infra.lab.lan.roomCode);
 await guest.evaluate(() => document.querySelector('[data-start=join]').click()); await guest.waitForSelector('#ss-code'); await guest.fill('#ss-jname', 'Guest'); await guest.fill('#ss-code', code); await guest.evaluate(() => document.getElementById('ss-join').click());
 await guest.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.world.operations.game.combat?.d?.teams?.guest && __infra.lab.arenaScene?.inArena(__infra.camera.position.z), null, { timeout: 30000 });
+// The host's frames count from here: until the guest's page has its map on the GPU, the two browsers share this one
+// computer's graphics chip (traced: the host's GPU thread waiting on Metal for 140 ms while the guest's page uploaded
+// and compiled its CS2 map), which players on their own computers never do.
+await host.waitForTimeout(1500); await host.evaluate(() => { __lf.length = 0; });
 // Hosting opens a 2-minute lobby; the host starts the match once the guest is in.
 await host.evaluate(() => __infra.lab.lan.act({ type: 'arena', action: { type: 'start-match' } })); await host.waitForFunction(() => __infra.lab.world.operations.game.arena.lobby?.started && __infra.lab.world.operations.game.combat.d.round.phase === 'freeze', null, { timeout: 10000 });
 let s = await D(host); check('Host is T, the guest CT', s.teams.host === 't' && s.teams.guest === 'ct', JSON.stringify(s.teams));

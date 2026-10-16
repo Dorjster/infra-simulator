@@ -112,7 +112,7 @@ setTimeout(()=>{try{renderer.compile(scene,camera);}catch{}},1200);
 const cableBatch=createCableBatch(scene),cableItems=[];const gridHelper=scene.children.find(o=>o.type==='GridHelper');
 // Physical cable colours in gameplay (the orbit explorer keeps its traffic colours): one colour per cable type, see cable-colors.js.
 function mediaColor(l){if(l.__cableKey!==l.media){l.__cableKey=l.media;l.__cableColor=cableColor(linkCableType(l));}return l.__cableColor;}
-globalThis.__infra={lab,renderer,scene,camera,get gfx(){return gfx;},nodes,links,byId,stats:()=>({calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,programs:renderer.info.programs?.length||0,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures})};
+globalThis.__infra={lab,renderer,scene,camera,get gfx(){return gfx;},get gpuMs(){return gpuN>=20&&performance.now()-gpuFresh<2000?medianOf(gpuRing,gpuN):null;},get frameMs(){let n=0;for(let i=0;i<40;i++){const v=frameRing[(ringAt-1-i+frameRing.length*4)%frameRing.length];if(v)sortBuf[n++]=v;}return n?sortBuf.subarray(0,n).sort()[n>>1]:null;},get gfx(){return gfx;},nodes,links,byId,stats:()=>({calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,programs:renderer.info.programs?.length||0,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures})};
 const startedAt=performance.now();
 let slowFor=0,fastFor=0;const preferences=loadPreferences();const fpsDisplay=document.createElement('span');fpsDisplay.id='fps-display';document.body.append(fpsDisplay);// Presets: Low renders at 1 pixel per CSS pixel (no extra density), Medium caps at 1.25× (Windows 125–150 %
 // scaling otherwise doubles the pixels), High up to 2×. The resolution scale multiplies on top; the adaptive
@@ -143,21 +143,28 @@ function benchmark(dt){if(!benchNeeded||benchFrames===null||!lab.active)return;b
 // A change resizes the drawing buffer and the effect buffers (a 50–100 ms hitch on a Retina screen), so it changes
 // rarely: down after a second of real overload (the frames late too), up after five seconds of headroom, never twice
 // within four seconds. Without timer queries: the frame times alone (down only; up while uncapped frames are quick).
-let scaleAt=0,lastScale=0,slowChecks=0,fastChecks=0,loadingAt=0,mainWarm=false;const bootAt=performance.now();
-const gpuTQ=(()=>{try{return renderer.getContext().getExtension('EXT_disjoint_timer_query_webgl2');}catch{return null;}})(),gpuQ=[],gpuRing=new Float32Array(60),sortBuf=new Float32Array(240);let gpuAt=0,gpuN=0,gpuQi=0,gpuOpen=null;
+let scaleAt=0,lastScale=0,slowChecks=0,fastChecks=0,loadingAt=0,mainWarm=false,lastUp=0,upWait=40,downAt=0,lateBefore=0,lateSum=0,lateN=0,noDownUntil=0;   /* upWait: checks (0.5 s) of clean frames before trying a step up without GPU times */const bootAt=performance.now();
+const gpuTQ=(()=>{try{return renderer.getContext().getExtension('EXT_disjoint_timer_query_webgl2');}catch{return null;}})(),gpuQ=[],gpuRing=new Float32Array(60),sortBuf=new Float32Array(240);let gpuAt=0,gpuN=0,gpuQi=0,gpuOpen=null,gpuFresh=0;   /* gpuFresh: when a GPU time last came back — on Apple's Metal they stop coming (every result "disjoint") and the last ones are no measure of now */
 function gpuBegin(){if(!gpuTQ)return;const gl=renderer.getContext();if(gpuQ.length<6)gpuQ.push({q:gl.createQuery(),busy:false});let slot=null;for(let i=0;i<gpuQ.length;i++)if(!gpuQ[i].busy){slot=gpuQ[i];break;}if(!slot)return;gl.beginQuery(gpuTQ.TIME_ELAPSED_EXT,slot.q);slot.busy=true;gpuOpen=slot;}
 function gpuEnd(){if(!gpuOpen)return;const gl=renderer.getContext();gl.endQuery(gpuTQ.TIME_ELAPSED_EXT);gpuOpen.at=++gpuQi;gpuOpen=null;
- for(let i=0;i<gpuQ.length;i++){const x=gpuQ[i];if(!x.busy||x.at===gpuQi||!gl.getQueryParameter(x.q,gl.QUERY_RESULT_AVAILABLE))continue;x.busy=false;if(!gl.getParameter(gpuTQ.GPU_DISJOINT_EXT)){gpuRing[gpuAt++%gpuRing.length]=gl.getQueryParameter(x.q,gl.QUERY_RESULT)/1e6;gpuN++;}}}
+ for(let i=0;i<gpuQ.length;i++){const x=gpuQ[i];if(!x.busy||x.at===gpuQi||!gl.getQueryParameter(x.q,gl.QUERY_RESULT_AVAILABLE))continue;x.busy=false;if(!gl.getParameter(gpuTQ.GPU_DISJOINT_EXT)){gpuRing[gpuAt++%gpuRing.length]=gl.getQueryParameter(x.q,gl.QUERY_RESULT)/1e6;gpuN++;gpuFresh=performance.now();}}}
 const medianOf=(ring,count)=>{const n=Math.min(count,ring.length);if(!n)return 0;for(let i=0;i<n;i++)sortBuf[i]=ring[i];const a=sortBuf.subarray(0,n).sort();return a[n>>1];};
 function scaleResolution(){const now=performance.now();if(now-scaleAt<500||now-bootAt<6000||frameCap()<60)return;scaleAt=now;if(document.getElementById('ar-load')?.hidden===false)loadingAt=now;if(now-loadingAt<3000){slowChecks=fastChecks=0;return;}/* a match loading (a big map file building) and the few seconds after it (the browser tidying up) are not play: their slow frames never lower the resolution */
- let n=0;for(let i=0;i<40;i++){const v=frameRing[(ringAt-1-i+frameRing.length*4)%frameRing.length];if(v)sortBuf[n++]=v;}const median=n?sortBuf.subarray(0,n).sort()[n>>1]:16.7;   // the last 40 frames' median: a loading hitch doesn't count
- const gpu=gpuN>=20?medianOf(gpuRing,gpuN):null,cap=frameCap(),budget=Math.min(14,1000/Math.max(60,cap)*.85);   // the GPU's share of a 60 fps frame (or the cap's)
+ let n=0,late=0;for(let i=0;i<40;i++){const v=frameRing[(ringAt-1-i+frameRing.length*4)%frameRing.length];if(v){sortBuf[n++]=v;if(v>24)late++;}}const median=n?sortBuf.subarray(0,n).sort()[n>>1]:16.7;   // the last 40 frames' median: a loading hitch doesn't count; late: those that missed a 60 Hz refresh
+ const gpu=gpuN>=20&&now-gpuFresh<2000?medianOf(gpuRing,gpuN):null,cap=frameCap(),budget=Math.min(14,1000/Math.max(60,cap)*.85);   // the GPU's share of a 60 fps frame (or the cap's)
  const current=renderer.getPixelRatio(),ceiling=graphicsCeiling(),floor=Math.min(ceiling,(softwareGL?.35:preferences.graphics==='Low'?.6:Math.min(devicePixelRatio,1)*.75)*(+preferences.resolutionScale||1));
  const steps=[1,.85,.72,.6,.5].map(k=>Math.max(floor,Math.round(ceiling*k*20)/20));let i=steps.findIndex(v=>v<=current+.01);if(i<0)i=steps.length-1;
- const slow=median>18.5&&(gpu===null||gpu>budget*1.15),fast=gpu!==null?gpu<budget*.6&&median<20:median<15.5&&cap>60;
+ // Without GPU times (none, or Apple's Metal stopped sending them) the frames say it: a few late ones in every 40 for
+ // a second (a fanless laptop slowing down as it heats: one frame in ten missed its refresh, the median still 16.7) is
+ // a step down; 20 s with none, a step up to try — and if that brings late frames back soon, twice as long before the next try.
+ const slow=gpu===null?(median>18.5||late>=4):median>18.5&&gpu>budget*1.15,fast=gpu!==null?gpu<budget*.6&&median<20:(cap>60?median<15.5:late===0);
  slowChecks=slow?slowChecks+1:0;fastChecks=fast?fastChecks+1:0;let next=current;
- if(now-lastScale>4000){if(slowChecks>=2&&i<steps.length-1)next=steps[i+1];else if(fastChecks>=10&&current<ceiling-.01)next=steps[Math.max(0,i-1)];}
- if(Math.abs(next-current)>.01){renderer.setPixelRatio(next);lastScale=now;slowChecks=fastChecks=0;}}
+ // (and a step down that didn't help — the frames late as often 6 s on: the processor is what can't keep up, not the
+ // pixels — goes back up, and no step down for 30 s: a smaller picture would only blur it)
+ lateSum+=late;lateN++;
+ if(gpu===null&&downAt&&now-downAt>6000){if(lateSum/lateN>=lateBefore*.6&&current<ceiling-.01){next=steps[Math.max(0,i-1)];noDownUntil=now+30000;}downAt=0;}
+ else if(now-lastScale>4000){if(slowChecks>=2&&i<steps.length-1&&now>=noDownUntil){next=steps[i+1];if(gpu===null){if(now-lastUp<8000)upWait=Math.min(upWait*2,160);downAt=now;lateBefore=Math.max(1,lateSum/lateN);}}else if(fastChecks>=(gpu===null?upWait:10)&&current<ceiling-.01){next=steps[Math.max(0,i-1)];lastUp=now;}}
+ if(Math.abs(next-current)>.01){renderer.setPixelRatio(next);lastScale=now;slowChecks=fastChecks=0;lateSum=lateN=0;}}
 function frameCap(){const user=+preferences.fpsCap||60;if(document.hidden||(globalThis.infraDesktop&&!document.hasFocus()))return Math.min(user,20);if(lab.onStartScreen)return Math.min(user,30);return user;}
 function animate(now){requestAnimationFrame(animate);if(document.hidden){lastFrame=now;return;}
  {const cap=frameCap();if(cap&&now-lastDrawn<1000/cap-2)return;}const frameStart=performance.now();const frameMs=lastDrawn?now-lastDrawn:16.7;lastDrawn=now;frameRing[ringAt++%frameRing.length]=frameMs;benchmark(frameMs);const dt=Math.min((now-lastFrame)/1000,.1);smoothedFrame=smoothedFrame*.97+(now-lastFrame)*.03;lastFrame=now;const t=now/1000;frame++;if(frame>180)scaleResolution();

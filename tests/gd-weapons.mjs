@@ -1,4 +1,4 @@
-// Global Defensive weapon rules (host): one confirmed head shot kills with every gun, armor on the body, finite ammo
+// Global Defensive weapon rules (host): CS2's head shots (4×; the helmet takes its share), armor on the body, finite ammo
 // (shots, reloads, an empty magazine can't hit), buying a second gun drops the first with its rounds, pickups keep
 // the rounds and can't go through walls or happen twice, new-round refills after a win and after a death, team guns,
 // purchases never charge without delivering, first-shot accuracy.
@@ -13,7 +13,12 @@ let seed = 77; Math.random = () => (seed = (seed * 16807) % 2147483647) / 214748
 let n = 0; const ok = (name, cond, detail = '') => { n++; assert(cond, name + (detail ? ' · ' + detail : '')); };
 
 // ── Damage: head shots and armor ──
-for (const w of WEAPONS) { const r = hitDamage(w, 'head', 900, 1, { kevlar: 100, helmet: true }); ok(w.name + ': one head shot kills through a helmet at range', r.headKill && r.hp >= MAX_HP); }
+// CS2: one head shot through a helmet kills with these (close up), not with these; without a helmet the pistols kill too.
+{ const H = (id, armor) => hitDamage(weaponById(id), 'head', 5, 1, armor).hp, helm = () => ({ kevlar: 100, helmet: true });
+  for (const id of ['ak', 'deagle', 'sniper', 'ssg08', 'm4s']) ok(weaponById(id).name + ': one head shot kills through a helmet (CS2)', H(id, helm()) >= MAX_HP, H(id, helm()));
+  for (const id of ['pistol', 'usps', 'm4', 'mp9', 'famas', 'galil', 'p250']) ok(weaponById(id).name + ': a head shot through a helmet does not kill (CS2)', H(id, helm()) < MAX_HP, H(id, helm()));
+  for (const id of ['pistol', 'usps', 'p250', 'm4']) ok(weaponById(id).name + ': one head shot kills without a helmet (CS2)', H(id, { kevlar: 100, helmet: false }) >= MAX_HP, H(id, { kevlar: 100, helmet: false }));
+  ok('no gun\'s head shot is an automatic kill (damage decides)', WEAPONS.every(w => !hitDamage(w, 'head', 5, 1, helm()).headKill)); }
 for (const w of WEAPONS) ok(w.name + ': finite magazine and reserve', w.mag > 0 && w.reserve > 0 && Array.isArray(w.pattern) && w.pattern.length >= 1 && w.pattern[0][0] === 0 && w.pattern[0][1] === 0);
 { const ak = weaponById('ak'), bare = hitDamage(ak, 'chest', 0), armored = hitDamage(ak, 'chest', 0, 1, { kevlar: 100, helmet: false }), legs = hitDamage(ak, 'legs', 0, 1, { kevlar: 100 });
   ok('AK chest, no armor: 36', bare.hp === 36); ok('armor takes part of a body hit', armored.hp === Math.round(36 * .775) && armored.armor === Math.round((36 - armored.hp) * .5), JSON.stringify(armored));
@@ -147,4 +152,4 @@ ok('counter-strafed (slow) is exact again', moveInaccuracy(weaponById('ak'), { s
 ok('landing costs accuracy for a moment', moveInaccuracy(weaponById('ak'), { speed: 0, max: 200, onGround: true, landedAgo: .05 }) > 0 && moveInaccuracy(weaponById('ak'), { speed: 0, max: 200, onGround: true, landedAgo: .5 }) === 0);
 ok('an unscoped AWP is inaccurate, scoped exact', moveInaccuracy(weaponById('sniper'), { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: false }) > .05 && moveInaccuracy(weaponById('sniper'), { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: true }) === 0);
 ok('shotgun pellets: a fixed pattern with one in the centre', JSON.stringify(pelletPattern(weaponById('shotgun'))) === JSON.stringify(pelletPattern(weaponById('shotgun'))) && pelletPattern(weaponById('shotgun'))[0][0] === 0 && pelletPattern(weaponById('shotgun')).length === 9);
-console.log('PASS: Global Defensive weapons · ' + n + ' checks (head shots kill through armor with all ' + WEAPONS.length + ' guns, armor, finite ammo + reloads, buy drops the old gun with its rounds, pickups keep rounds, no pickup through walls or twice, no hits through walls, new-round refill after a win and a death, team guns, all-or-nothing purchases, first-shot accuracy, spray patterns)');
+console.log('PASS: Global Defensive weapons · ' + n + ' checks (CS2 head shots: a helmet stops some guns from one-tapping, armor, finite ammo + reloads, buy drops the old gun with its rounds, pickups keep rounds, no pickup through walls or twice, no hits through walls, new-round refill after a win and a death, team guns, all-or-nothing purchases, first-shot accuracy, spray patterns)');

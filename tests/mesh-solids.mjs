@@ -41,4 +41,25 @@ check('a query whose top is inside a solid', eq(s2, [[-50, 100]]), JSON.stringif
   check('a one-face wall: solid where it stands', near(at(100, 50), [[0, 120]]), JSON.stringify(at(100, 50)));
   check('…and not a cell beside it', at(116, 50).length === 0, JSON.stringify(at(116, 50)));
   check('two faces at different heights in a cell keep the gap between', near(at(140, 50), [[0, 40], [80, 120]]), JSON.stringify(at(140, 50))); }
+// A one-face wall slantwise (45°) and the game's 16-unit columns (solid where two of their four lines are, bsp-map.js):
+// with thinCols every column it crosses is solid on all four lines, so a body can't slip through one it met on one
+// line only; a slanted wall of a thick hull stays as traced; a wall square to the lines is unchanged.
+{ const O = [], OI = []; const quad = (x0, y0, x1, y1, z0, z1) => { const b = O.length / 3; O.push(x0, y0, z0, x1, y1, z0, x1, y1, z1, x0, y0, z1); OI.push(b, b + 1, b + 2, b, b + 2, b + 3); };
+  quad(10, 0, 170, 140, 0, 120); quad(300, 0, 300, 160, 0, 120);
+  { const b = O.length / 3; O.push(-40, -40, -100, 340, -40, -100, 340, 200, -100, -40, 200, -100); OI.push(b, b + 1, b + 2, b, b + 2, b + 3); }   // (a ground far below: the mesh's bounds round the walls)
+  const n = OI.length / 3, flags = new Uint8Array(n).fill(1), lines = o => (c, r) => [4, 12].flatMap(dx => [4, 12].map(dy => o.solidSpans(16 * c + dx, 16 * r + dy, -10, 200).some(q => q[0] <= 50 && q[1] >= 51) ? 1 : 0)).reduce((s, v) => s + v, 0);
+  const thin = meshSolids(new Float32Array(O), new Uint32Array(OI), 64, flags, null, 8, 4, null, false, true), was = meshSolids(new Float32Array(O), new Uint32Array(OI), 64, flags, null, 8, 4);
+  const crossed = []; for (let c = 0; c < 10; c++) for (let r = 0; r < 10; r++) if (lines(was)(c, r) > 0) crossed.push([c, r]);
+  const leaky = crossed.filter(([c, r]) => lines(was)(c, r) < 2), shut = crossed.filter(([c, r]) => lines(thin)(c, r) === 4);
+  check('a slanted one-face wall met a column on one line (the leak)', leaky.length > 0, JSON.stringify(leaky));
+  check('…with thinCols, every column it crosses is solid on all four lines', shut.length === crossed.length, shut.length + '/' + crossed.length + ' ' + JSON.stringify(crossed.filter(([c, r]) => lines(thin)(c, r) < 4).map(([c, r]) => [c, r, lines(was)(c, r), lines(thin)(c, r)])));
+  check('…columns it does not cross stay open', lines(thin)(0, 5) === 0 && lines(thin)(5, 0) === 0);
+  check('a square wall is unchanged', [0, 1, 2, 3].every(r => lines(thin)(18, r) === lines(was)(18, r)), JSON.stringify([0, 1, 2, 3].map(r => [lines(was)(18, r), lines(thin)(18, r)])));
+  // A thick slanted hull (a closed box turned 45°, 40 units through): its slanted faces have solid behind them — no change.
+  const H = [], HI = [], pts = [[0, 0], [100, 100], [72, 128], [-28, 28]], v = (x, y, z) => { H.push(x + 200, y, z); return H.length / 3 - 1; };
+  const bot = pts.map(([x, y]) => v(x, y, 0)), top = pts.map(([x, y]) => v(x, y, 120)); HI.push(bot[0], bot[2], bot[1], bot[0], bot[3], bot[2], top[0], top[1], top[2], top[0], top[2], top[3]);
+  for (let k = 0; k < 4; k++) { const a = bot[k], b = bot[(k + 1) % 4], c = top[(k + 1) % 4], d = top[k]; HI.push(a, b, c, a, c, d); }
+  const hn = HI.length / 3, hp = new Int32Array(hn), ha = meshSolids(new Float32Array(H), new Uint32Array(HI), 64, new Uint8Array(hn), hp, 8, 4), hb = meshSolids(new Float32Array(H), new Uint32Array(HI), 64, new Uint8Array(hn), hp, 8, 4, null, false, true);
+  let same = true; for (let c = 10; c < 22; c++) for (let r = -2; r < 10; r++) if (lines(ha)(c, r) !== lines(hb)(c, r)) same = false;
+  check('a thick slanted hull is unchanged', same); }
 console.log((fail ? 'FAIL' : 'PASS') + ': mesh solids · ' + pass + '/' + (pass + fail)); if (fail) process.exitCode = 1;

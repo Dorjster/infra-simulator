@@ -19,10 +19,12 @@ const SO = [], FA = [], FB = [], GU = [];   // nearby boxes per query (box-grid.
 
 const HU = 2.54 / 16.5;
 export const NADES = {
-  he: { id: 'he', name: 'HE Grenade', kind: 'nade', price: 300, fuse: 1800, dmg: 98, radius: 62 },
-  flash: { id: 'flash', name: 'Flashbang', kind: 'nade', price: 200, fuse: 1600, radius: 2000 * HU },
-  smoke: { id: 'smoke', name: 'Smoke Grenade', kind: 'nade', price: 300, fuse: 3500, radius: 44, lasts: 18000 },
-  molotov: { id: 'molotov', name: 'Molotov', kind: 'nade', price: 400, fuse: 2200, radius: 37, lasts: 7000, dps: 40 },
+  // (fuses, CS2's: an HE and a flash go off 1.5 s after the throw; a smoke once it rests, 1.5 s at the earliest; a
+  // molotov on the first floor it hits, or bursts after 2 s in the air)
+  he: { id: 'he', name: 'HE Grenade', kind: 'nade', price: 300, fuse: 1500, dmg: 98, radius: 62 },
+  flash: { id: 'flash', name: 'Flashbang', kind: 'nade', price: 200, fuse: 1500, radius: 2000 * HU },
+  smoke: { id: 'smoke', name: 'Smoke Grenade', kind: 'nade', price: 300, fuse: 1500, radius: 144 * HU, lasts: 18000, maxAir: 12000 },   // (CS2's cloud: 144 units round, about 150 high)
+  molotov: { id: 'molotov', name: 'Molotov', kind: 'nade', price: 400, fuse: 2000, radius: 37, lasts: 7000, dps: 40, airburst: 128 * HU },
 };
 export const NADE_IDS = Object.keys(NADES), MAX_NADES = 4, MAX_FLASH = 2;
 // Flight, exactly CS2's (Source) grenade physics in our units (1 hammer unit = HU): a throw leaves at 675 u/s × the
@@ -36,30 +38,36 @@ export const nadesOf = l => Array.isArray(l?.nades) ? l.nades : [];
 // Room for one more of this kind? (four in all, two flashbangs)
 export const canCarry = (list, kind) => list.length < MAX_NADES && (kind !== 'flash' || list.filter(k => k === 'flash').length < MAX_FLASH) && !(kind !== 'flash' && list.includes(kind));
 // The launch velocity for an aim (dx, dy, dz), a strength and the thrower's run velocity (vx, vz), as CS2 does it:
-// the aim pitch is remapped so a level aim throws 10° up (straight down stays down, straight up stays up), speed is
-// 675 × (power × 0.7 + 0.3), and 1.25 × the thrower's velocity is added (running throws go further).
+// the aim pitch is remapped so a level aim throws 10° up — looking down by 80/90 of the angle, up by 100/90 (Source's
+// ThrowGrenade: a lineup's angles land where CS2's do) — speed is 675 × (power × 0.7 + 0.3), and 1.25 × the
+// thrower's velocity is added (running throws go further).
 export function launch(a) {
   const n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n, dz = (+a.dz || 0) / n, P = POWER[a.strength] ?? 1;
-  const down = -Math.asin(Math.max(-1, Math.min(1, dy))) * 180 / Math.PI, pitch = down >= 0 ? -10 + down * 100 / 90 : -10 + down * 80 / 90, up = -pitch * Math.PI / 180;
+  const down = -Math.asin(Math.max(-1, Math.min(1, dy))) * 180 / Math.PI, pitch = down >= 0 ? -10 + down * 80 / 90 : -10 + down * 100 / 90, up = -pitch * Math.PI / 180;
   const h = Math.hypot(dx, dz) || 1, cu = Math.cos(up), speed = THROW * (P * .7 + .3); const cl = v => Math.max(-60, Math.min(60, +v || 0));   /* run / jump speed only (never a launcher) */
   return { vx: dx / h * cu * speed + cl(a.vx) * 1.25, vy: Math.sin(up) * speed + cl(a.vy) * 1.25, vz: dz / h * cu * speed + cl(a.vz) * 1.25 }; }
-// Where a throw starts: the eye, lower for weaker throws (CS2: power × 12 − 12 units).
-export const throwStart = a => ({ x: +a.x || 0, y: (+a.y || EYE) + ((POWER[a.strength] ?? 1) * 12 - 12) * HU, z: +a.z || 0 });
+// Where a throw starts (Source): the eye, lower for weaker throws (power × 12 − 12 units), then 22 units ahead along
+// the aim — short of a wall in the way (a grenade thrown against a wall starts on this side of it).
+export function throwStart(a, boxes = null, bounds = null) {
+  const x = +a.x || 0, y = (+a.y || EYE) + ((POWER[a.strength] ?? 1) * 12 - 12) * HU, z = +a.z || 0, n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n, dz = (+a.dz || 0) / n;
+  let t = 22 * HU; if (boxes) for (let s = 2 * HU; s <= t; s += 2 * HU) if (solid(boxes, bounds, x + dx * s, y + dy * s, z + dz * s)) { t = Math.max(0, s - 2 * HU - R); break; }
+  return { x: x + dx * t, y: y + dy * t, z: z + dz * t }; }
 // Throw from the eye along (dx, dy, dz): one grenade leaves the loadout (never two for one throw).
 export function throwNade(game, name, kind, a, now = Date.now()) {
   const l = game.arena.loadout[key(name)] ??= { primary: null, secondary: 'pistol' }, list = l.nades ??= [], i = list.indexOf(kind);
   if (!NADES[kind]) throw Error('Unknown grenade'); if (i < 0) throw Error('You have no ' + NADES[kind].name);
-  const r = game.combat?.d?.round; if (r && ['freeze', 'over', 'warmup'].includes(r.phase) || game.arena?.lobby && !game.arena.lobby.started || game.combat?.d?.paused) throw Error('You can’t throw now');
-  list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1; const v = launch(a);
-  C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), ...throwStart(a), ...v, at: now, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long' });
+  const r = game.combat?.d?.round; if (r && (['freeze', 'warmup'].includes(r.phase) || r.phase === 'over' && game.combat.d.matchOver) || game.arena?.lobby && !game.arena.lobby.started || game.combat?.d?.paused) throw Error('You can’t throw now');
+  list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1; const v = launch(a), bx = solidsOf?.(game) || null;
+  C.nades.push({ id: 'n' + C.nadeSeq, kind, by: String(name).slice(0, 40), ...throwStart(a, bx?.length ? bx : null), ...v, at: now, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long' });
   return 'Threw a ' + NADES[kind].name;
 }
-// Solid at (x, y, z)? (map boxes, the floor, the map edge)
+// Solid at (x, y, z)? (map boxes, the floor, the map edge) hitMover: the door or breakable it was, if any.
+let hitMover = null;
 function solid(boxes, bounds, x, y, z) {
   if (y < R) return true; if (bounds && (x < bounds.minX || x > bounds.maxX || z < bounds.minZ || z > bounds.maxZ)) return true;
   // A map file: its own shapes (bsp-map.js nadeSolid: no player clips, gaps as small as the map has them), and its
   // doors and breakables while shut / whole.
-  if (boxes.nadeSolid) { if (boxes.nadeSolid(x, y, z)) return true; for (const b of boxes.movers) if (!b.off && x > b.minX - R && x < b.maxX + R && z > b.minZ - R && z < b.maxZ + R && y > b.y0 - R && y < b.y1 + R) return true; return false; }
+  hitMover = null; if (boxes.nadeSolid) { if (boxes.nadeSolid(x, y, z)) return true; for (const b of boxes.movers) if (!b.off && x > b.minX - R && x < b.maxX + R && z > b.minZ - R && z < b.maxZ + R && y > b.y0 - R && y < b.y1 + R) { hitMover = b; return true; } return false; }
   for (const b of boxesNear(boxes, x - R, z - R, x + R, z + R, SO)) if (x > b.minX - R && x < b.maxX + R && z > b.minZ - R && z < b.maxZ + R && y > b.y0 - R && y < b.y1 + R) return true; return false;
 }
 // One physics step of a flying grenade (host tick and client preview alike), as Source moves a grenade: in short steps
@@ -67,7 +75,7 @@ function solid(boxes, bounds, x, y, z) {
 // reflected off the surface's own direction there (slopes and corners too, not just flat floors and straight walls) and
 // all of it kept at 45 % — a wall takes the run out of it as much as a floor does; on a floor (facing up within ~45°)
 // it stops dead once slower than 30 u/s. Allocation-free. Returns true when it hit a floor.
-const STOP = 30 * HU, SUB = R * .8, N = new Float64Array(3), DIRS = [];
+const STOP = 30 * HU, SUB = R * .8, N = new Float64Array(3), DIRS = [], GLASS_KEEP = .15;
 for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) if (x || y || z) { const l = Math.hypot(x, y, z); DIRS.push([x / l, y / l, z / l]); }
 // The surface's way out at a contact (into N): the mean of the directions round it that are free.
 function normalAt(boxes, bounds, x, y, z) {
@@ -79,18 +87,29 @@ export function stepNade(g, boxes, bounds, dt) {
   if (g.rest && !solid(boxes, bounds, g.x, g.y - R * 1.2, g.z)) g.rest = false;   // (the floor went: a door opened, a crate broke)
   const n = g.rest ? 0 : Math.max(1, Math.min(24, Math.ceil(Math.hypot(g.vx, g.vy, g.vz) * dt / SUB))), h = dt / Math.max(1, n);
   for (let s = 0; s < n; s++) {
-    g.vy -= GRAVITY * h; const x = g.x + g.vx * h, y = g.y + g.vy * h, z = g.z + g.vz * h;
+    g.vy -= (g.grav ?? GRAVITY) * h; const x = g.x + g.vx * h, y = g.y + g.vy * h, z = g.z + g.vz * h;   // (g.grav: a dropped gun falls at the full 800)
     if (!solid(boxes, bounds, x, y, z)) { g.x = x; g.y = y; g.z = z; continue; }
+    // A glass pane in the way: it breaks, and the grenade, its run spent on it, drops on through (g.glass: which pane —
+    // the host breaks it for everyone).
+    if (hitMover && hitMover.mat === 'glass') { (g.glass ??= []).push(hitMover.mover); hitMover.off = true; g.vx *= GLASS_KEEP; g.vz *= GLASS_KEEP; g.vy = Math.min(g.vy, 0) * GLASS_KEEP; continue; }
     normalAt(boxes, bounds, x, y, z); const d = g.vx * N[0] + g.vy * N[1] + g.vz * N[2];
     if (d < 0) { g.vx = (g.vx - 2 * d * N[0]) * BOUNCE; g.vy = (g.vy - 2 * d * N[1]) * BOUNCE; g.vz = (g.vz - 2 * d * N[2]) * BOUNCE; }
     if (N[1] > .7) { hitFloor = true; if (Math.hypot(g.vx, g.vy, g.vz) < STOP) { g.vx = g.vy = g.vz = 0; g.rest = true; break; } } }
   const speed = Math.hypot(g.vx, g.vy, g.vz); g.still = speed < 6 ? (g.still || 0) + dt : 0; return hitFloor;
 }
+// A dropped gun's toss (CS2: thrown forward with your run, it bounces and slides to a stop): the same flight as a
+// grenade's, stepped at TOSS_DT until it rests (at most TOSS_MAX s). The host keeps where it ends up (pickups); every
+// client replays the same steps to show it flying there (arena-ui.js). Returns { x, y (its floor), z, ms }.
+export const TOSS_DT = 1 / 32, TOSS_MAX = 3;
+export const TOSS_GRAVITY = 800 * HU;
+export function tossFlight(boxes, bounds, fly) { const g = { x: fly.x, y: fly.y, z: fly.z, vx: fly.vx, vy: fly.vy, vz: fly.vz, still: 0, grav: TOSS_GRAVITY }; let t = 0;
+  for (; t < TOSS_MAX && !g.rest; t += TOSS_DT) stepNade(g, boxes, bounds, TOSS_DT);
+  return { x: g.x, y: Math.max(0, g.y - R), z: g.z, ms: Math.round(t * 1000) }; }
 // When does it go off? (age in ms since the throw)
-const goesOff = (g, hitFloor, age) => { const N = NADES[g.kind]; return g.kind === 'molotov' ? hitFloor || age > N.fuse : g.kind === 'smoke' ? (g.still > .25 && age > 900) || age > N.fuse : age > N.fuse; };
+const goesOff = (g, hitFloor, age) => { const N = NADES[g.kind]; return g.kind === 'molotov' ? hitFloor || age > N.fuse : g.kind === 'smoke' ? ((g.rest || g.still > .2) && age >= N.fuse) || age > N.maxAir : age >= N.fuse; };
 // The path a throw will take (client preview): points every 50 ms until it goes off (≤ 4 s).
 export function predictThrow(kind, a, boxes = [], bounds = null) {
-  const g = { kind, ...throwStart(a), ...launch(a), still: 0 }, pts = [[g.x, g.y, g.z]];
+  const g = { kind, ...throwStart(a, boxes?.length ? boxes : null, bounds), ...launch(a), still: 0 }, pts = [[g.x, g.y, g.z]];
   for (let t = 50; t <= 4000; t += 50) { const hit = stepNade(g, boxes, bounds, .05); pts.push([g.x, g.y, g.z]); if (goesOff(g, hit, t)) break; }
   return pts;
 }
@@ -108,8 +127,8 @@ const people = (game, players) => { const out = []; for (const p of players) if 
 // host's grenade state: every client opens the same hole at the same place and time). A sightline is blocked when it
 // crosses more than SMOKE.block units of dense smoke — the same rule from outside, at the edge and from inside.
 // Without the map's boxes (a test with no map): the ellipsoid alone, lifted a little off the ground.
-export const SMOKE = { lift: .42, vert: .62, grow: 1800, fade: 3000, holeR: 15, holeOpen: 900, holeClose: 1600, block: 14 };
-export const VOX = 3, VOX_UP = 1.6, VOX_DMAX = 1.7;
+export const SMOKE = { lift: .42, vert: .8, grow: 1800, fade: 3000, holeR: 15, holeOpen: 900, holeClose: 1600, block: 14 };
+export const VOX = 3, VOX_UP = 1, VOX_DMAX = 1.7;   // (CS2's cloud: a dome about 300 units across and 150 high)
 let solidsOf = null;
 // (game) → the arena map's collision boxes (arena-logic.js on the host; the client's scene, which has them built).
 export function setSmokeSolids(fn) { solidsOf = fn; }
@@ -130,7 +149,7 @@ function fillSmoke(boxes, s) {
   const N = nx * ny * nz, solid = new Uint8Array(N), d = new Float32Array(N).fill(Infinity), at = (i, j, k) => (k * ny + j) * nx + i, near = [];
   // Solid cells: a box reaching more than half a unit into the cell (a thin wall always fills one; a doorway always
   // leaves one) — each box near drawn into the grid once.
-  for (const b of boxesNear(boxes, x0, z0, x0 + nx * VOX, z0 + nz * VOX, near)) { if (b.off) continue;
+  for (const b of boxesNear(boxes.bullets || boxes, x0, z0, x0 + nx * VOX, z0 + nz * VOX, near)) { if (b.off) continue;   // (CS2 maps: the bullets' boxes — smoke pours through player clips and fences)
     const i0 = Math.max(0, Math.floor((b.minX - x0 + .5) / VOX)), i1 = Math.min(nx - 1, Math.ceil((b.maxX - x0 - .5) / VOX) - 1), k0 = Math.max(0, Math.floor((b.minZ - z0 + .5) / VOX)), k1 = Math.min(nz - 1, Math.ceil((b.maxZ - z0 - .5) / VOX) - 1);
     const j0 = Math.max(0, Math.floor((b.y0 - y0 + .5) / VOX)), j1 = Math.min(ny - 1, Math.ceil((b.y1 - y0 - .5) / VOX) - 1); if (i0 > i1 || k0 > k1 || j0 > j1) continue;
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) { const row = (k * ny + j) * nx; for (let i = i0; i <= i1; i++) solid[row + i] = 1; } }
@@ -220,15 +239,17 @@ export const cellLit = (g, c, now) => { const t = now - (g.firedAt || now); retu
 // Someone at (x, z), feet at y, standing in the flames? (Without g: any cell, as it stands.)
 export const inFire = (cells, x, z, y = null, g = null, now = 0) => cells.some(c => Math.abs(c[0] - x) < 2.2 && Math.abs(c[1] - z) < 2.2 && (y === null || Math.abs((c[2] ?? 0) - y) < 3) && (!g || cellLit(g, c, now)));
 // One host tick: move, bounce, set off, burn, clean up. Returns true when anything changed.
-export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } = {}, onBlast = null) {   // onBlast(x, y, z, radius, dmg): an HE went off there (arena-logic.js: doors and breakables take it)
+export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } = {}, onBlast = null, onGlass = null) {   // onBlast(x, y, z, radius, dmg): an HE went off there (arena-logic.js: doors and breakables take it)
   const C = game.combat; if (C) C.clock = now; if (!C?.nades?.length) return false; let changed = false;
   for (const g of C.nades) {
     const N = NADES[g.kind], age = now - g.at;
     if (g.phase === 'air') {
       const hitFloor = stepNade(g, boxes, bounds, dt); changed = true;
+      if (g.glass?.length) { for (const id of g.glass) onGlass?.(id); g.glass = null; }   // (panes it broke on the way: broken for everyone)
       if (!goesOff(g, hitFloor, age)) continue;
       g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', molotov: 'fire' }[g.kind]; g.firedAt = now; g.vx = g.vy = g.vz = 0; if (g.phase === 'smoke') smokeVoxels(game, g);   /* its cells now, once (every sightline after reads them) */
-      if (g.kind === 'molotov' || g.kind === 'smoke') g.y = groundUnder(boxes, g.x, g.z, g.y);
+      if (g.kind === 'molotov' && !hitFloor && g.y - groundUnder(boxes, g.x, g.z, g.y) > N.airburst) { g.phase = 'out'; g.airburst = true; }   // timed out high in the air: it bursts there, no fire (CS2)
+      else if (g.kind === 'molotov' || g.kind === 'smoke') g.y = groundUnder(boxes, g.x, g.z, g.y);
       if (g.kind === 'molotov' && smokedAt(game, g.x, g.y, g.z, now)) putOut(g, now);   // into smoke: it fizzles
       if (g.kind === 'smoke') for (const f of C.nades) if (f.phase === 'fire' && fireCells(boxes, f.x, f.z, f.y).some(c => cellLit(f, c, now) && Math.hypot(c[0] - g.x, c[1] - g.z) < NADES.smoke.radius * .35 && Math.abs(c[2] - g.y) < 6)) putOut(f, now);   // popping in the flames: out at once (then its volume reaches the rest)
       if (g.kind === 'he') for (const s of C.nades) if (s.phase === 'smoke' && Math.hypot(s.x - g.x, s.z - g.z) < smokeShape(s, now).r + SMOKE.holeR * .6) { s.holes = [...(s.holes || []), { x: +g.x.toFixed(2), y: +g.y.toFixed(2), z: +g.z.toFixed(2), at: now }].slice(-3); }   // a blast opens the smoke for a moment

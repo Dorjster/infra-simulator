@@ -7,7 +7,7 @@
 // moved, rotated or scaled). The rest (boxes, navigation, routes, radar) is the classic maps' own (finishMap).
 import { solidSpans, solidAt, hullSolid, hullSpans, vec, modelOf } from './bsp30.js';
 import { CELL, MAXF, NONE, SITE, STEP } from './cs-columns.js';
-import { finishMap, U } from './cs-mapbuild.js';
+import { finishMap, mergeSegs, U } from './cs-mapbuild.js';
 import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
 
 const CROUCH = 36, SOLID = /^func_(wall|wall_toggle|breakable|door|door_rotating|pushable|train|tracktrain|plat|rotating|button|brush)$/, Q = 2;
@@ -32,6 +32,9 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   const W0 = parts[0], x0 = Math.floor(W0.mins[0] / CELL) * CELL, y1 = Math.ceil(W0.maxs[1] / CELL) * CELL, cols = Math.ceil((W0.maxs[0] - x0) / CELL), rows = Math.ceil((y1 - W0.mins[1]) / CELL), N = cols * rows, zA = W0.mins[2] - 8, zB = W0.maxs[2] + 8;
   // Solid stretches per column: four rays (±4 units), solid where two or more are.
   const spans = new Array(N), ev = [];
+  // Counter-Strike 2 maps: what bullets hit, sampled the same way (cs2-map.js bulletSpans) with what each stretch is made
+  // of — no player clips (Mirage's mid window, smoothing round corners) or fences that let bullets through.
+  const bspans = bsp.bulletSpans ? new Array(N) : null, evB = [], mB = [];
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const cx = x0 + (c + .5) * CELL, cy = y1 - (r + .5) * CELL; ev.length = 0;
     for (const [dx, dy] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) { const x = cx + dx, y = cy + dy, ray = [];
       for (const p of parts) { if (x < p.mins[0] || x > p.maxs[0] || y < p.mins[1] || y > p.maxs[1]) continue; for (const [b, t] of (bsp.solidSpans ? bsp.solidSpans(p.head, x - p.off[0], y - p.off[1], zA - p.off[2], zB - p.off[2]) : solidSpans(bsp, p.head, x - p.off[0], y - p.off[1], zA - p.off[2], zB - p.off[2]))) ray.push([b + p.off[2], t + p.off[2]]); }   // Source: by its brushes (vbsp.js)
@@ -39,7 +42,13 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
       for (const [b, t] of ray) { ev.push(b, 1, t, -1); } }
     const ord = []; for (let i = 0; i < ev.length; i += 2) ord.push(i); ord.sort((a, b) => ev[a] - ev[b] || ev[b + 1] - ev[a + 1]);
     const out = []; let k = 0, start = null; for (const i of ord) { const was = k; k += ev[i + 1]; if (was < 2 && k >= 2) start = ev[i]; else if (was >= 2 && k < 2 && start !== null) { const lo = Math.floor(start / Q) * Q, hi = Math.round(ev[i] / Q) * Q, last = out[out.length - 1]; if (last && lo - last[1] < 4) last[1] = hi; else if (hi > lo) out.push([lo, hi]); start = null; } }
-    spans[r * cols + c] = out; }
+    spans[r * cols + c] = out;
+    if (bspans) { evB.length = 0; mB.length = 0;
+      for (const [dx, dy] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) for (const [b, t, m] of bsp.bulletSpans(cx + dx, cy + dy, zA, zB)) { evB.push(b, 1, t, -1); mB.push(b, t, m); }
+      const ordB = []; for (let i = 0; i < evB.length; i += 2) ordB.push(i); ordB.sort((a, b) => evB[a] - evB[b] || evB[b + 1] - evB[a + 1]);
+      const outB = []; let kb = 0, sb = null; for (const i of ordB) { const was = kb; kb += evB[i + 1]; if (was < 2 && kb >= 2) sb = evB[i]; else if (was >= 2 && kb < 2 && sb !== null) { const lo = Math.floor(sb / Q) * Q, hi = Math.round(evB[i] / Q) * Q;
+        if (hi > lo) { let mat = 'concrete', best = 0; for (let j = 0; j < mB.length; j += 3) { const ov = Math.min(hi, mB[j + 1]) - Math.max(lo, mB[j]); if (ov > best) { best = ov; mat = mB[j + 2]; } } outB.push([lo, hi, mat]); } sb = null; } }
+      bspans[r * cols + c] = outB; } }
   if (!src) thinWalls(bsp, parts, spans, { x0, y1, cols, rows, zA, zB, src });   // (Source maps: their brushes clipped exactly per ray; none was walked through)
   if (!src) playerClips(bsp, spans, { x0, y1, cols, rows, zA, zB });
   // Floors: a solid's top with crouching room above (its ceiling the next solid's bottom); three per column at most —
@@ -116,6 +125,8 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   for (const [pts, name] of [[tSp, 'TSpawn'], [ctSp, 'CTSpawn']]) { const pid = placeId(name); for (const p of pts) { const i = cellOf(p[0], p[1]); if (i < 0) continue; const k = floorNear(i, p[2]); if (k >= 0 && !G.places[place[i * MAXF + k]]) place[i * MAXF + k] = pid; } }
   // Collision segments: the solid stretches, walk-on where a floor is on top.
   const segs = new Array(N); for (let i = 0; i < N; i++) { const out = []; for (const [b, t] of spans[i]) { if (t <= zLow - 64) continue; const top = floorOf[i].some(f => f.h === t); out.push([Math.max(b, zLow - 64), t, top ? (T.floor || 'concrete') : (T.wall || 'concrete'), top]); } segs[i] = out; }
+  // (CS2 maps: the bullets' own boxes, each with what it is made of — arena-maps.js mapBoxes / bulletPath)
+  const bsegs = bspans ? bspans.map(L => L.filter(([, hi]) => hi > zLow - 64).map(([lo, hi, m]) => [Math.max(lo, zLow - 64), hi, m, false])) : null;
   // Spawns carry their floor's height ([x, z, y]): these maps have floors above the spawns (balconies, bridges).
   const spawnY = p => { const i = cellOf(p[0], p[1]), k = i >= 0 ? floorNear(i, p[2]) : -1; return +(((k >= 0 ? z[i * MAXF + k] : p[2]) - zLow) * U).toFixed(2); };
   const spawns = { t: T10.map(p => [...toGameXZ(p[0], p[1]), spawnY(p)]), ct: CT10.map(p => [...toGameXZ(p[0], p[1]), spawnY(p)]) };
@@ -151,6 +162,8 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: bsp.cs2 ? null : { data: bsp, toGame }, cs2: !!bsp.cs2, hammer: bsp.cs2 ? { x0, y1, W, D, zLow, U } : null, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders, movers, nadeSolid } });
   // The segments only made the collision boxes: these maps are drawn from their own faces (bsp-mesh.js), never from
   // the columns, and a large map holds some 200 000 of them (60 MB).
+  if (bsegs) map.bulletSolids = mergeSegs(cols, rows, bsegs, zLow);
+  map.physProps = (bsp.props || []).map(p => { const a = toGame(p.mins[0], p.maxs[1], p.mins[2]), c = toGame(p.maxs[0], p.mins[1], p.maxs[2]); return { i: p.i, model: p.model, mass: p.mass, breaks: !!p.breaks, x: (a[0] + c[0]) / 2, z: (a[2] + c[2]) / 2, y: a[1], h: c[1] - a[1], rx: Math.abs(c[0] - a[0]) / 2, rz: Math.abs(c[2] - a[2]) / 2 }; });   // (physics props, game units: pushed about — arena-physprops.js)
   if (!bsp.cs2) map.columns.segs = null;   // (Counter-Strike 2 maps: drawn from their columns until their own meshes are converted)
   // The baked light on each floor and what it is made of (map-light.js), by spot in game units (x, z, feet):
   // lightAt — 1 ≈ a sunlit floor; surfaceAt — a footstep surface, or null where the map's faces don't say.

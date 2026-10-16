@@ -32,7 +32,9 @@ const perMap = laps[0].map((s, i) => ({ id: s.id, geo: [s.geo, laps[1][i].geo], 
 // the maps. From then on nothing may grow: each map costs the same on the third lap as on the second. (Maps differ
 // from each other — Train's 1 300 collision boxes against Inferno's 9 000 — so the laps are compared map by map.)
 const grow = laps[1].map((s, i) => [s.id, s.heap, laps[2][i].heap]);
-check('third lap: every map holds the same heap as on the second (nothing grows)', grow.every(([, a, b]) => b - a <= 8), JSON.stringify(grow));
+// (after GC the heap still moves a few MB between samples: with CS2's looks in, ~1.2 GB, ±5–10 MB — five laps of three maps
+// measured steady from the second on — so "the same" is within 1 % of it, at least 8 MB)
+check('third lap: every map holds the same heap as on the second (nothing grows)', grow.every(([, a, b]) => b - a <= Math.max(8, a * .01)), JSON.stringify(grow));
 check('second lap: GPU geometries per map are the same as on the first lap', perMap.every(m => Math.abs(m.geo[1] - m.geo[0]) <= 8), JSON.stringify(perMap.map(m => [m.id, ...m.geo])));
 writeFileSync(path.join(out, 'memory.json'), JSON.stringify(laps, null, 1));
 check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));

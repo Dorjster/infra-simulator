@@ -1,6 +1,7 @@
 // Global Defensive HUD (compact, CS2-like): health + armor (bottom left), weapon · magazine / reserve · fire mode ·
 // reload · grenades · bomb / kit (bottom right), the dynamic crosshair (moves to where the next bullet goes and opens
 // up with movement inaccuracy) and the scope overlay. DOM is touched only when a value changes.
+import { skinTitle } from './skins.js';
 import { weaponById, moveInaccuracy, MAX_HP, isFirearm } from './weapons-data.js';
 import { hpOf, armorOf } from './combat-logic.js';
 import { loadCrosshair, crosshairHTML } from './gd-crosshair.js';
@@ -9,6 +10,7 @@ const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'e
 const MODE = { auto: 'AUTO', semi: 'SEMI', pump: 'PUMP', bolt: 'BOLT' };
 const NADE_ICON = { he: '●', flash: '◆', smoke: '■', molotov: '▲' };
 export function createGdHud({ world, name, weapons, recoil, fov, move, active }) {
+  let tW = null, tS = null, tK = -1, tTitle = '';   // (the weapon title, made again only when the weapon or its skin changes)
   const css = document.createElement('style'); css.textContent = `
 #gd-hud{position:fixed;inset:0;z-index:36;pointer-events:none;font:700 14px system-ui;color:#fff;text-shadow:0 1px 3px #000c}#gd-hud[hidden]{display:none}
 #gd-hp{position:absolute;left:22px;bottom:22px;display:flex;align-items:flex-end;gap:18px}#gd-hp .v{display:flex;align-items:baseline;gap:6px}#gd-hp b{font:800 40px ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.02em}#gd-hp small{font:700 11px system-ui;letter-spacing:.12em;opacity:.75}#gd-hp .ico{font:900 22px system-ui;opacity:.9}#gd-hp .low b,#gd-hp .low .ico{color:#ff4d4d}#gd-hp .arm.none{opacity:.35}
@@ -32,7 +34,7 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
       set('hp', els.hp, 'text', String(hp)); set('hpc', els.hpBox, 'class', 'v hp' + (hp <= 25 ? ' low' : '')); set('bar', els.bar, 'width', Math.max(0, hp) / MAX_HP * 100 + '%');
       set('arm', els.arm, 'text', String(arm.kevlar || 0)); set('armc', els.armBox, 'class', 'v arm' + (arm.kevlar ? '' : ' none')); set('armi', els.armIco, 'text', arm.helmet ? '⛑' : '⛨');
       if (w) {
-        set('wn', els.name, 'text', w.name.toUpperCase());
+        { const sk = g.arena?.skins?.[key(me)]?.[w.id] || null, kills = sk?.kills | 0; if (w !== tW || sk !== tS || kills !== tK) { tW = w; tS = sk; tK = kills; tTitle = (sk ? skinTitle(w.name, sk) + (sk.st ? ' · ' + kills + ' kills' : '') : w.name).toUpperCase(); } set('wn', els.name, 'text', tTitle); }   // (its skin's name: StatTrak™ count, name tag — skins.js)
         if (isFirearm(w)) { const m = weapons.ammo, r = weapons.reserve; set('wa', els.ammo, 'html', `${m}<small> / ${r}</small>`); set('wac', els.ammo, 'class', 'ammo' + (m <= Math.ceil(w.mag * .2) ? ' low' : '')); set('wm', els.meta, 'text', MODE[w.mode] + (w.suppressed ? ' · SUPPRESSED' : '') + (weapons.reloading ? ' · RELOADING' : m === 0 && r > 0 ? ' · R TO RELOAD' : m === 0 ? ' · EMPTY' : '')); }
         else { set('wa', els.ammo, 'html', ''); set('wm', els.meta, 'text', w.kind === 'knife' ? 'LEFT SLASH · RIGHT STAB' : w.kind === 'nade' ? (weapons.nade?.state === 'priming' ? 'PULLING THE PIN…' : weapons.nade?.state === 'held' ? '▲ ' + ({ long: 'LONG THROW', medium: 'MEDIUM THROW', short: 'SHORT UNDERHAND' })[weapons.nade.strength] + ' · RELEASE TO THROW' : 'HOLD LEFT: LONG · RIGHT: SHORT · BOTH: MEDIUM') : w.kind === 'bomb' ? 'HOLD LEFT ON A SITE TO PLANT' : ''); }
         set('rl', els.rl, 'width', weapons.reloading ? (1 - weapons.reloadLeft) * 100 + '%' : '0');

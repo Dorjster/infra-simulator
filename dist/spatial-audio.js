@@ -19,19 +19,24 @@ function buses(c) {
 export function master(c) { buses(c); return bus; }
 export function uiBus(c) { buses(c); return busUI; }
 export function musicBus(c) { buses(c); return busMusic; }
+// The room you are in (CS2's sound zones, Sabine's RT60 ∝ volume / absorbing surface): 0 = open air (a site under the
+// sky: most of a sound's energy flies off), 1 = enclosed (a tunnel, a vent, a hall: hard walls ring). The game sets it a
+// few times a second from what is over and round you; the shared reverb's send follows it smoothly.
+let verbGain = null; export function setRoom(k) { if (!verbGain || !ctx) return; const v = .2 + .55 * Math.max(0, Math.min(1, k)); verbGain.gain.setTargetAtTime(v, ctx.currentTime, .35); }
 // A shared outdoor reverb, used sparingly: a short early slap off the walls and a ~1.2 s tail.
 export function reverb(c) {
   if (verb) return verb;
   const len = Math.ceil(c.sampleRate * 1.2), ir = c.createBuffer(2, len, c.sampleRate);
   for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) { const t = i / c.sampleRate; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.6) * (t < .012 ? 0 : 1) * .45; }
     for (const [at, g] of [[.023, .7], [.041, .45], [.067, .35]]) { const i = Math.floor((at + ch * .004) * c.sampleRate); if (i < len) d[i] += g; } }
-  const conv = c.createConvolver(); conv.buffer = ir; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 220; const g = c.createGain(); g.gain.value = .32;
+  const conv = c.createConvolver(); conv.buffer = ir; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 220; const g = c.createGain(); g.gain.value = .32; verbGain = g;
   verb = hp; hp.connect(conv).connect(g).connect(master(c)); return verb;
 }
 // How far each kind of sound carries (game units; a player is 11 tall). Footsteps fade to nothing by ~175 units
 // (about CS's footstep range), handling noises (reloads, bolts, pins, knife swings) by ~70, gunfire carries across
 // the map but quieter and duller with distance (sound-bank), explosions furthest.
 export const RANGE = { effect: ['inverse', 10, 1.3, 700], step: ['linear', 6, 1, 175], handling: ['linear', 4, 1, 70], gun: ['inverse', 14, 1.1, 900], explosion: ['inverse', 20, .8, 1200], beep: ['inverse', 10, 1.2, 320] };
+export const SOUND_SPEED = 13504, HU_UNITS = 2.54 / 16.5;   // (Hammer units a second; game units per Hammer unit)
 // Walls between you and a sound muffle it (quieter, fewer highs): the game sets how blocked a point is (0 … 1).
 let occlusion = null; export const setOcclusion = fn => { occlusion = fn; };
 // Where to connect a sound: the effects bus directly (your own sounds: never distance-muffled) or a panner at `at`.
@@ -40,8 +45,10 @@ export function outAt(c, at, kind = 'effect') {
   const [model, ref, roll, max] = RANGE[kind] || RANGE.effect, p = c.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = model; p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = max;
   p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z;
   let occ = 0; try { occ = occlusion ? Math.max(0, Math.min(1, +occlusion(at) || 0)) : 0; } catch {}
-  if (occ > 0) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 18000 - occ * 17200; const g = c.createGain(); g.gain.value = 1 - occ * .5; p.connect(f).connect(g).connect(master(c)); }
-  else p.connect(master(c));
+  // Sound takes time to arrive: 343 m/s (13 504 Hammer units a second) — a shot across the map is heard a moment after.
+  let head = p; const L = c.listener; if (L.positionX) { const d = Math.hypot(at.x - L.positionX.value, at.y - L.positionY.value, at.z - L.positionZ.value) / HU_UNITS; if (d > 150) { const dl = c.createDelay(1.5); dl.delayTime.value = Math.min(1.4, d / SOUND_SPEED); head.connect(dl); head = dl; } }
+  if (occ > 0) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 18000 - occ * 17200; const g = c.createGain(); g.gain.value = 1 - occ * .5; head.connect(f).connect(g).connect(master(c)); }
+  else head.connect(master(c));
   return p;
 }
 const fwd = { x: 0, y: 0, z: -1 };

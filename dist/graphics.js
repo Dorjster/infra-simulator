@@ -131,9 +131,12 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   }
   // renderer.compileAsync, but a material disposed while its shader still compiles (a bot removed meanwhile) no longer
   // throws in the readiness check ("reading 'isReady'"): it just stops being waited for.
+  // Compiled for where a frame draws: into the post-processing's target when it is on (a linear target, tone-mapped
+  // later), else the screen — a program built for the other is built again on first sight in play.
   function compileWarm(root) {
-    if (!renderer.compileAsync) { renderer.compile(root, camera, scene); return Promise.resolve(); }
-    const mats = renderer.compile(root, camera, scene);
+    const was = renderer.getRenderTarget(); let mats;
+    try { renderer.setRenderTarget(composer ? composer.renderTarget1 : null); mats = renderer.compile(root, camera, scene); } finally { renderer.setRenderTarget(was); }
+    if (!renderer.compileAsync) return Promise.resolve();
     return new Promise(res => { const check = () => { for (const m of mats) { const pr = renderer.properties.get(m).currentProgram; if (!pr || pr.isReady()) mats.delete(m); } if (!mats.size) res(); else setTimeout(check, 10); }; check(); });
   }
   async function warm(objs, reveal, whole) {
@@ -163,6 +166,10 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
 
   return {
     prewarm,
+    // root's shaders built now as a frame would draw them (the settings applied, the lights a frame draws — with
+    // scene.userData.renderOnly only the top-level objects it keeps — and its target): fp-view.js's first-person sets.
+    compileFor(root) { apply(); const only = scene.userData.renderOnly, all = scene.children, was = root.visible; let job = null; if (only) scene.children = all.filter(only); root.visible = true;
+      try { job = compileWarm(root); } catch {} finally { scene.children = all; root.visible = was; } return job || Promise.resolve(); },
     get post() { return !!composer; },
     get settings() { return G; },
     get passes() { return composer?.passes || []; },
@@ -185,7 +192,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
         sun.intensity = base.sun * (shadowOn ? 1.55 : 1) * (O ? O.sunK : 1); if (hemi) hemi.intensity = base.hemi * (shadowOn ? .72 : 1) * (O ? O.hemiK : 1); }   // more light from the shadow-casting key
       if (jobs) jobs.add('metal-shine', metalShine, 3000); else if (frame % 180 === 2) metalShine();
       if (fxOn && jobs) jobs.add('shadow-flags', () => { if (shadowOn) flagShadows(); if (G.glow) glow(true); }, 2000); else if (fxOn && frame % 120 === 1) { if (shadowOn) flagShadows(); if (G.glow) glow(true); }
-      AVATAR_SHADOW.visible = !shadowOn || !!scene.userData.baked;   // contact shadows without real ones — or on a map whose light is baked (it takes no shadow map)
+      AVATAR_SHADOW.visible = scene.userData.baked ? preset() === 'Low' : !shadowOn;   // contact shadows without real ones (a baked map: the players' own sun shadows from Medium up, sun-shadows.js)
       if (shadowOn) { const O = scene.userData.outdoor, tx = O ? 2 * OUT_BOX / sun.shadow.mapSize.x : 0;   // whole shadow texels: shadows don't crawl as you move
         sun.target.position.set(tx ? Math.round(camera.position.x / tx) * tx : camera.position.x, 0, tx ? Math.round(camera.position.z / tx) * tx : camera.position.z); sun.position.copy(sun.target.position).add(SUN_DIR.copy(sunOffset).multiply(O ? OUT_TILT : ONE3).setLength(O ? 260 : LIGHT_DIST)); }   // just under the ceilings, so they don't shade the rooms
       if (composer) {

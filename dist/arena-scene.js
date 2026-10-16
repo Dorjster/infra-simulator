@@ -12,7 +12,7 @@ import { buildVbspMeshes } from './vbsp-mesh.js';
 import { buildVbspProps } from './vbsp-props-mesh.js';
 import { mapRender, placeRender } from './cs2-render.js';
 import { warmSmoke } from './arena-nades.js';
-import { boxesNear } from './box-grid.js';
+import { boxesNear } from './box-grid.js'; import { createPhysProps } from './arena-physprops.js'; import { CASTER } from './sun-shadows.js';
 const SURF_NEAR = [];
 const warmCam = new THREE.PerspectiveCamera(70, 1.6, .1, 5000);
 let mapTextures = null;   // a Source map's texture cache (all of it is freed when the map goes, used by a mesh or not)
@@ -102,7 +102,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.userData.gd = true; group.visible = false; scene.add(group);
   let current = null, boxes = [], ladders = [], bounds = null, savedBg = null, savedFog = null;
   // Doors and breakables of a map file (bsp-map.js movers): their mesh groups and how far each has swung / slid.
-  let movers = [], lastState = null, lastV = -1;
+  let movers = [], lastState = null, lastV = -1, phys = null; const PHYS_NEAR = [];   // (phys: a CS2 look's physics props, arena-physprops.js)
   // Glass shards when a pane breaks: one small instanced pool, made once (no allocation in play).
   const SH = 72, shards = new THREE.InstancedMesh(new THREE.BoxGeometry(.32, .2, .02), new THREE.MeshBasicMaterial({ color: 0xcfe6ee, transparent: true, opacity: .7, depthWrite: false }), SH), shP = new Float32Array(SH * 3), shV = new Float32Array(SH * 3), shL = new Float32Array(SH), shM = new THREE.Matrix4(), shQ = new THREE.Quaternion(), shE = new THREE.Euler(), shS = new THREE.Vector3(1, 1, 1), shT = new THREE.Vector3(); let shI = 0, shAlive = 0;
   shards.frustumCulled = false; shards.visible = false; shards.userData.keep = true; shards.userData.noShadow = true; for (let i = 0; i < SH; i++) { shM.makeScale(0, 0, 0); shards.setMatrixAt(i, shM); } group.add(shards);
@@ -120,16 +120,22 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   function outdoor(id) { const T = THEMES[id] || {}, base = new THREE.Color(T.sky ?? ARENA_MAPS[id]?.sky ?? 0x9fb8cc), warm = !/nuke|cache/.test(id);
     const zenith = base.clone().lerp(new THREE.Color(0x2f6fc8), .6), horizon = base.clone().lerp(new THREE.Color(0xeef3f6), .3);
     return { sun: T.sun ?? 0xfff0d6, sunK: 1.3, sky: base.clone().lerp(new THREE.Color(0xffffff), .25).getHex(), ground: warm ? 0x9a8464 : 0x7d8188, hemiK: .85, zenith: zenith.getHex(), horizon: horizon.getHex(), fill: warm ? 0xfff1dc : 0xeef2f6 }; }
+  // CS2's own sky (cs2-render.js: a CS2 look's sky panorama, graded as the map) on the dome, turned as its env_sky; the
+  // haze and the background take its horizon. Without one, the dome's gradient.
+  function cs2Sky() { const S = builtLook?.userData.sky, C = DOME.attributes.color;
+    if (!S?.tex) { if (domeMat.map !== WHITE) { domeMat.map = WHITE; if (current) sky(outdoor(current)); } dome.rotation.y = 0; return; }
+    if (domeMat.map === S.tex) return; domeMat.map = S.tex; for (let i = 0; i < C.count; i++) C.setXYZ(i, 1, 1, 1); C.needsUpdate = true; dome.rotation.y = S.yaw * Math.PI / 180;
+    if (S.horizon) { const h = new THREE.Color().setRGB(S.horizon[0], S.horizon[1], S.horizon[2], THREE.SRGBColorSpace); if (scene.fog) scene.fog.color.copy(h); if (scene.background?.isColor) scene.background.copy(h); } }
   function sky(L) { fill.color.setHex(L.fill); const P = DOME.attributes.position, C = DOME.attributes.color, z = new THREE.Color(L.zenith), h = new THREE.Color(L.horizon), c = new THREE.Color();
     for (let i = 0; i < P.count; i++) { const t = Math.max(0, P.getY(i) / 1000); c.copy(h).lerp(z, Math.pow(t, .4)); C.setXYZ(i, c.r, c.g, c.b); } C.needsUpdate = true; }
-  function clearMap() { movers = []; lastState = null; lastV = -1;
+  function clearMap() { movers = []; lastState = null; lastV = -1; phys = null; builtLook?.userData.propBatch?.rest();   // (its props back in their batches, as they stand)
     for (const o of [...group.children]) { if (o.userData.cs2Mover) { o.position.copy(o.userData.base0 ?? o.position); o.rotation.set(0, 0, 0); o.visible = true; o.updateMatrixWorld(true); for (const c of [...o.children]) o.userData.home.attach(c); group.remove(o); continue; }   // (a CS2 look's door: back into the look, shut)
       if (o.userData.mover) { group.remove(o); for (const c of o.children) { c.geometry?.dispose(); c.material.map?.dispose(); c.material.lightMap?.dispose(); c.material.dispose(); } continue; }
       if (o.userData.ground || o.userData.keep) continue;   // dropped guns (arena-ui), the sky dome and fill light stay   // dropped guns: arena-ui owns them
     group.remove(o); if (!o.geometry?.userData.shared) o.geometry?.dispose(); if (o.userData.bsp) { o.material.map?.dispose(); o.material.userData.map2?.dispose(); o.material.lightMap?.dispose(); o.material.dispose(); if (o.isBatchedMesh) o.dispose(); }   /* a prop batch: its own instance textures too */   /* a map file's own textures and light */ const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } boxes = []; current = null; mapTextures?.dispose(); mapTextures = null; }
   let builtFrom = null, builtLook = null;   // the map object drawn (a map file loaded later replaces it: draw again) and its CS2 look
   function build(id) {
-    if (current === id && builtFrom === ARENA_MAPS[id] && builtLook === mapRender(id)) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id; builtFrom = map; builtLook = mapRender(id);
+    if (current === id && builtFrom === ARENA_MAPS[id] && builtLook === mapRender(id)) return; clearMap(); const map = ARENA_MAPS[id]; if (!map) return; current = id; builtFrom = map; builtLook = mapRender(id); if (group.visible) cs2Sky();
     const cx = ARENA.cx, cz = ARENA.cz, [sw, sd] = map.size; boxes = mapBoxes(map, cx, cz); { const sp = map.spawns?.[0] || [0, 0, 0]; warmSmoke(boxes, cx + sp[0], (sp[2] || 0) + .35, cz + sp[1]); }   /* the first smoke fills at full speed (arena-nades.js) */ ladders = (map.ladders || []).map(([a, b, c, d, y0, y1]) => ({ minX: cx + a, maxX: cx + b, minZ: cz + c, maxZ: cz + d, y0, y1 })); bounds = { minX: cx - sw / 2, maxX: cx + sw / 2, minZ: cz - sd / 2, maxZ: cz + sd / 2 };
     // A map from a file: its own faces, textures and baked light (bsp-mesh.js); collision is the columns, as always.
     if (map.bsp) { const T = map.bsp.toGame, toGame = (x, y, z) => { const g = T(x, y, z); return [cx + g[0], g[1], cz + g[2]]; };
@@ -149,6 +155,17 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
       // file maps' movers do (mapState); on leaving they go back into the look (it is kept for the next time).
       (map.movers || []).forEach((m, id) => { const G = builtLook.userData.movers?.get(m.e); if (!G) return; const pv = new THREE.Group(); pv.userData.cs2Mover = true; pv.userData.home = builtLook;
         if (m.kind === 'rotdoor') pv.position.set(cx + m.hinge[0], m.hinge[1], cz + m.hinge[2]); pv.userData.base0 = pv.position.clone(); group.add(pv); pv.updateMatrixWorld(true); pv.attach(G); movers.push({ id, m, g: pv, base: pv.position.clone(), at: 0, broken: false }); });
+      // Its physics props (pots, cans, stools): each on a pivot at its foot, pushed, knocked and tipped over in play
+      // (arena-physprops.js); on leaving they go back into the look where they stood, as the doors do.
+      const pivots = new Map(); for (const p of map.physProps || []) { const G = builtLook.userData.props?.get(p.i); if (!G) continue; const pv = new THREE.Group(); pv.userData.cs2Mover = true; pv.userData.home = builtLook;
+        pv.position.set(cx + p.x, p.y, cz + p.z); pv.userData.base0 = pv.position.clone(); group.add(pv); pv.updateMatrixWorld(true); pv.attach(G); pivots.set(p.i, pv); }
+      // The doors, panes and props that move cast the sun's live shadows too (sun-shadows.js; the map's own tiles: cs2-render.js).
+      for (const M of movers) M.g.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });
+      for (const pv of pivots.values()) pv.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });
+      if (pivots.size) phys = createPhysProps(map.physProps, pivots, { cx, cz, floorAt: (x, z, y) => map.nav?.floorAt?.(x, z, y),
+        blocked: (x, z, y, h, r) => { for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, PHYS_NEAR)) if (!b.off && b.y1 > y + .3 && b.y0 < y + h && x + r > b.minX && x - r < b.maxX && z + r > b.minZ && z - r < b.maxZ) return true; return false; },
+        wake: k => builtLook.userData.propBatch?.wake(map.physProps[k].i),
+        onBreak: (k, x, y, z, r) => shatter({ minX: x - r, maxX: x + r, minZ: z - r, maxZ: z + r, y0: y - r * .6, y1: y + r * .6 }, /bottle|glass|jug/i.test(map.physProps[k].model)) });
       const r = globalThis.__infra?.renderer; if (r) r.compile(group, warmCam); return; }
     if (map.columns) { for (const mesh of buildColumnMeshes(map, shadedMaterial, tileOf, cx, cz)) group.add(mesh);   // classic maps: drawn from their columns (not aim-raycast: shots and the arena use the collision boxes)
       for (const [L, [x, z, r]] of Object.entries(map.sites || {})) { const s = new THREE.Mesh(SITE_GEO, SITE_MAT[L]); s.rotation.x = -Math.PI / 2; const g = map.siteGoals?.[L] || [x, z], fy = g[2] ?? map.nav.floorAt(g[0], g[1]); s.position.set(cx + g[0], (Number.isFinite(fy) ? fy : 0) + .08, cz + g[1]); s.scale.setScalar(Math.min(r, 30) * 1.2); s.renderOrder = 1; group.add(s); }
@@ -161,6 +178,13 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   }
   return {
     group,
+    // Physics props (a CS2 look's pots, cans, stools — arena-physprops.js): bodies' feet (xyz triplets) push them each
+    // frame; a shot or a blast knocks them; a new round puts them back.
+    physUpdate(dt, pos, count) { phys?.update(dt, pos, count); },
+    physShot(ox, oy, oz, dx, dy, dz, far, power) { return phys ? phys.shot(ox, oy, oz, dx, dy, dz, far, power) : -1; },
+    physBlast(x, y, z, r) { phys?.blast(x, y, z, r); },
+    physReset() { phys?.reset(); builtLook?.userData.propBatch?.rest(); },
+    get physProps() { return phys; },
     // The round's doors and breakables (game.combat.mapState) — called every frame: collision switched when the state
     // changes, doors swung / slid toward it at their own pace (CS: about 100°/s), panes broken with shards and a crash.
     mapState(state, dt) { if (!movers.length) return; const first = lastV < 0, v = state?.v ?? 0;
@@ -183,8 +207,8 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     breakableOf: b => b && b.mover !== null && b.mover !== undefined && b.role === 'shut' && movers.some(q => q.id === b.mover && q.m.kind === 'break') ? b.mover : null,
     get map() { return current; }, get boxes() { return boxes; }, get ladders() { return ladders; }, get bounds() { return bounds; },
     // Show / hide the arena (and swap the dark indoor background for a sky while inside it).
-    show(id) { group.visible = true; build(id); scene.userData.baked = !!(builtLook?.userData.baked && ARENA_MAPS[id]?.hammer);   /* a CS2 look with its baked light: graphics.js shows contact shadows */ if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id], L = outdoor(id); scene.background = new THREE.Color(L.horizon); scene.fog = new THREE.FogExp2(L.horizon, .0011); scene.userData.outdoor = L; sky(L); },   // light haze: the far side of the map stays visible   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
-    hide() { group.visible = false; delete scene.userData.outdoor; delete scene.userData.baked; if (savedBg !== null) { scene.background = savedBg; scene.fog = savedFog; savedBg = null; } },
+    show(id) { group.visible = true; build(id); scene.userData.baked = !!(builtLook?.userData.baked && ARENA_MAPS[id]?.hammer);   /* a CS2 look with its baked light: graphics.js shows contact shadows */ if (savedBg === null) { savedBg = scene.background; savedFog = scene.fog; } const map = ARENA_MAPS[id], L = outdoor(id); scene.background = new THREE.Color(L.horizon); scene.fog = new THREE.FogExp2(L.horizon, .0011); scene.userData.outdoor = L; sky(L); domeMat.map = WHITE; cs2Sky(); },   // light haze: the far side of the map stays visible   // same fog type as the hall: every compiled shader is reused (no hitch on entering)
+    hide() { group.visible = false; delete scene.userData.outdoor; delete scene.userData.baked; if (domeMat.map !== WHITE) domeMat.map = WHITE; if (savedBg !== null) { scene.background = savedBg; scene.fog = savedFog; savedBg = null; } },
     inArena: z => z < ARENA.maxZ,
     clear(x, z) { return !!bounds && walkable(boxes, bounds, x, z); },
     // What the feet are on at (x, z) with feet at height y, for footstep sounds: wood, metal, grass (sand) or concrete.

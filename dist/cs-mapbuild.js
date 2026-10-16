@@ -44,13 +44,12 @@ export function buildCsMap(id, nav, T) {
 // bsp-map.js): collision boxes from the segments, spawns, bomb sites, callouts, navigation, bot routes, the radar grid.
 // opts: segs (per column [bottom, top, material, walk] HU), above (ceiling per column or NONE), zLow, and optionally
 // spawns { t, ct } ([x, z] game units) to use instead of picking them from the TSpawn / CTSpawn places.
-export function finishMap(id, G, T, { segs, above, zLow, spawns = null, extra = {} }) {
-  const { cols, rows, n, z, place, flags } = G, N = cols * rows, P = G.places;
-  const W = cols * CELL * U, D = rows * CELL * U, gx = c => -W / 2 + (c + .5) * CELL * U, gz = r => -D / 2 + (r + .5) * CELL * U, gy = h => (h - zLow) * U;
-  const top = i => n[i] ? z[i * MAXF + n[i] - 1] : NONE, placeOf = (i, k) => P[place[i * MAXF + k]] || '', lowerLevel = h => !!G.split && h <= G.split.top && h >= G.split.bottom;
-  // Merge equal segments of neighbouring columns into boxes (grow right, then down). Each kind of segment keeps the
-  // list of its columns (row order) and marks them on one shared grid, so the work is its own columns, not the map's
-  // (a Source map's terrain has thousands of kinds: heights vary continuously).
+// Merge equal segments of neighbouring columns into boxes (grow right, then down). Each kind of segment keeps the
+// list of its columns (row order) and marks them on one shared grid, so the work is its own columns, not the map's
+// (a Source map's terrain has thousands of kinds: heights vary continuously). segs: per column [bottom, top, material,
+// walk] (Hammer units). Also the bullets' boxes of a CS2 map (bsp-map.js).
+export function mergeSegs(cols, rows, segs, zLow) {
+  const N = cols * rows, W = cols * CELL * U, D = rows * CELL * U, gx = c => -W / 2 + (c + .5) * CELL * U, gz = r => -D / 2 + (r + .5) * CELL * U, gy = h => (h - zLow) * U;
   const solids = [], keyOf = s => s[0] + '|' + s[1] + '|' + s[2] + '|' + s[3], byKey = new Map(), cells = new Uint8Array(N);
   for (let i = 0; i < N; i++) for (const s of segs[i]) { const k = keyOf(s); let e = byKey.get(k); if (!e) byKey.set(k, e = { s, list: [] }); e.list.push(i); }
   for (const { s, list } of byKey.values()) { for (const i of list) cells[i] = 1;
@@ -58,6 +57,13 @@ export function finishMap(id, G, T, { segs, above, zLow, spawns = null, extra = 
       let r1 = r; grow: while (r1 + 1 < rows) { for (let cc = c; cc <= c1; cc++) if (!cells[(r1 + 1) * cols + cc]) break grow; r1++; }
       for (let rr = r; rr <= r1; rr++) cells.fill(0, rr * cols + c, rr * cols + c1 + 1);
       const b = B((gx(c) + gx(c1)) / 2, (gz(r) + gz(r1)) / 2, (c1 - c + 1) * CELL * U, (r1 - r + 1) * CELL * U, (s[1] - s[0]) * U, s[2], gy(s[0])); if (s[3]) b.walk = true; solids.push(b); } }
+  return solids;
+}
+export function finishMap(id, G, T, { segs, above, zLow, spawns = null, extra = {} }) {
+  const { cols, rows, n, z, place, flags } = G, N = cols * rows, P = G.places;
+  const W = cols * CELL * U, D = rows * CELL * U, gx = c => -W / 2 + (c + .5) * CELL * U, gz = r => -D / 2 + (r + .5) * CELL * U, gy = h => (h - zLow) * U;
+  const top = i => n[i] ? z[i * MAXF + n[i] - 1] : NONE, placeOf = (i, k) => P[place[i * MAXF + k]] || '', lowerLevel = h => !!G.split && h <= G.split.top && h >= G.split.bottom;
+  const solids = mergeSegs(cols, rows, segs, zLow);
   // Spawns: spread over the spawn place's open columns (farthest-point picks, away from walls).
   const roomy = i => { const c = i % cols, r = (i / cols) | 0; for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) { const j = (r + dr) * cols + c + dc; if (j < 0 || j >= N || !n[j] || flags[j] & CRATE || Math.abs(top(j) - top(i)) > 10) return false; } return true; };
   // Walked into: some straight line of 12 columns leads to it with no rise of more than a step (the inside of Inferno's

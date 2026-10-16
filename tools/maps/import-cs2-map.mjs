@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'; import path from 'node:path'; import os from 'node:os'; import { fileURLToPath } from 'node:url';
 import { meshSolids } from '../../dist/mesh-solids.js';
 import { surfaceOf, SURFACES } from '../../dist/map-light.js';
+import { radarMask } from './radar-mask.mjs';
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..'), [id, dir, outDir = path.join(repo, 'user-maps')] = process.argv.slice(2);
 if (!id || !dir) { console.log('usage: node tools/maps/import-cs2-map.mjs <id> <export dir> [out dir]'); process.exit(1); }
 // GLB → { meshes: [{ name, pos: Float32Array (Hammer x y z), idx: Uint32Array }] }
@@ -46,6 +47,14 @@ const isLadder = m => /ladder/.test(m.name), isSky = m => /physics_sky/.test(m.n
 // lob comes back down) — fences and grates stop them too (they only let bullets through).
 const players = join([...meshes.filter(m => !/grenadeclip/.test(m.name) && !isLadder(m)), ...solidEnts.filter(m => !/grenadeclip/.test(m.name))]);
 const nades = join([...meshes.filter(m => !/playerclip/.test(m.name) && !isLadder(m) && !isSky(m)), ...solidEnts.filter(m => !/playerclip/.test(m.name))]);
+// Bullets: what CS2's bullets hit — no player or grenade clips (Mirage's mid window, smoothing round corners), nothing
+// marked to pass bullets (chain-link fences, grates), no ladders, sky or glass panes (a pane breaks at the first shot).
+const passBullets = m => /playerclip|npcclip|passbullets|grenadeclip|navclip|window_glass|_glass\b|^physics_group_glass/.test(m.name) || isLadder(m) || isSky(m);
+const bullets = join([...meshes.filter(m => !passBullets(m)), ...solidEnts.filter(m => !passBullets(m))]);
+// What a stretch of it is made of, for wallbangs (arena-maps.js PEN_COST): CS2's surface property, in a few classes.
+const PENS = ['concrete', 'wood', 'crate', 'metal', 'plaster', 'brick', 'sand', 'stone', 'glass'];
+const penOf = g => { const n = SURF[g] || ''; return PENS.indexOf(/glass/.test(n) ? 'glass' : /wood_crate|wood_basket|cardboard|paper|cloth|upholstery|carpet|rubber|plastic|canister|computer|foliage|leaves/.test(n) ? 'crate' : /wood/.test(n) ? 'wood'
+  : /metal|chainlink|brass|grate|vent|dumpster|vehicle|barrel/.test(n) ? 'metal' : /plaster|tile|pottery|porcelain|clay|drywall/.test(n) ? 'plaster' : /brick/.test(n) ? 'brick' : /sand|dirt|gravel|mud|grass/.test(n) ? 'sand' : /rock|boulder|stone/.test(n) ? 'stone' : 'concrete'); };
 console.log('physics:', meshes.map(m => `${m.name} ${m.idx.length / 3}`).join(' · '));
 // Brush-like entities (models '*N' with their bounds, as a map file's): buy zones, bomb sites, places.
 const models = [null], out = [];
@@ -69,6 +78,16 @@ for (const e of entList.filter(e => (e.kind === 'door' || e.kind === 'break') &&
   out.push(e.kind === 'door' ? { classname: 'func_door_rotating', model: '*' + (models.length - 1), origin: hinge.join(' '), distance: String(e.distance || 90), spawnflags: '0', cs2: e.model }
     : { classname: 'func_breakable', model: '*' + (models.length - 1), origin: '0 0 0', material: e.glass ? '0' : '2', health: String(Math.max(1, e.health || 1)), spawnflags: '0', cs2: e.model });
   moverLooks.push({ ent: out.length - 1, kind: e.kind, look: e.look, physics: e.physics, origin: e.origin, angles: e.angles, scale: e.scale }); }
+// Physics props (pots, cans, bottles, stools, cinder blocks — prop_physics): no collision for players (CS2 pushes them
+// about); the game moves their look (cs2-render.js / arena-physprops.js). Each: where it stands and its box (Hammer).
+const props = [];
+for (const e of entList.filter(e => e.kind === 'phys' && e.look)) {
+  const src = e.physics ? readGlb(e.physics) : lookBox(e.look), pm = placed(src, e); let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const m of pm) for (let i = 0; i < m.pos.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], m.pos[i + k]); hi[k] = Math.max(hi[k], m.pos[i + k]); }
+  if (!Number.isFinite(lo[0]) || hi[2] - lo[2] > 120 || hi[0] - lo[0] > 160 || hi[1] - lo[1] > 160) continue;   // (a bus or a car is no pot: it stays as scenery)
+  const name = path.basename(e.model).replace(/\.vmdl$/, ''); props.push({ i: props.length, model: name, mins: lo.map(v => +v.toFixed(1)), maxs: hi.map(v => +v.toFixed(1)), mass: e.mass || 1,
+    breaks: /pot|pottery|bottle|glass|jug|mug|cup|breakable|vase|melon|watermelon/i.test(name) });
+  moverLooks.push({ ent: 'p' + (props.length - 1), kind: 'phys', look: e.look, physics: e.physics, origin: e.origin, angles: e.angles, scale: e.scale }); }
 // Ladders: each piece of CS2's ladder surface (its triangles joined where they touch), as a climbing volume as thin as
 // the surface (a player touching its face climbs: arena-move.js reaches round it).
 const ladderBoxes = []; { const L = meshes.filter(isLadder); for (const m of L) { const nt = m.idx.length / 3, used = new Uint8Array(nt);
@@ -76,7 +95,7 @@ const ladderBoxes = []; { const L = meshes.filter(isLadder); for (const m of L) 
     while (st.length) { const t = st.pop(); for (let c = 0; c < 3; c++) { const v = m.idx[t * 3 + c]; for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], m.pos[v * 3 + k]); hi[k] = Math.max(hi[k], m.pos[v * 3 + k]); } }
       for (let u = 0; u < nt; u++) if (!used[u]) { let share = false; for (let a = 0; a < 3 && !share; a++) for (let b = 0; b < 3; b++) { const va = m.idx[t * 3 + a], vb = m.idx[u * 3 + b]; if (Math.abs(m.pos[va * 3] - m.pos[vb * 3]) + Math.abs(m.pos[va * 3 + 1] - m.pos[vb * 3 + 1]) + Math.abs(m.pos[va * 3 + 2] - m.pos[vb * 3 + 2]) < .1) { share = true; break; } } if (share) { used[u] = 1; st.push(u); } } }
     ladderBoxes.push({ mins: [lo[0] - 1, lo[1] - 1, lo[2]], maxs: [hi[0] + 1, hi[1] + 1, hi[2] + 4] }); } } }   // (thin, as the surface is: the game climbs it from its face, arena-move.js)
-console.log(`entities: ${entList.filter(e => e.kind === 'solid' && e.physics).length} solid (collision added), ${moverLooks.filter(m => m.kind === 'door').length} doors, ${moverLooks.filter(m => m.kind === 'break').length} breakables; ladders: ${ladderBoxes.length}`);
+console.log(`entities: ${entList.filter(e => e.kind === 'solid' && e.physics).length} solid (collision added), ${moverLooks.filter(m => m.kind === 'door').length} doors, ${moverLooks.filter(m => m.kind === 'break').length} breakables, ${props.length} physics props; ladders: ${ladderBoxes.length}`);
 // The play area: the spawns, buy zones and bomb sites, 1 500 round them (the map's far scenery left out), and its heights.
 const pts = []; for (const e of out) { if (e.origin && !e.model) pts.push(vec3(e.origin)); else if (e.model && /^func_(buyzone|bomb_target)$/.test(e.classname)) { const m = models[+e.model.slice(1)]; pts.push(m.mins, m.maxs); } }
 const lo = [0, 1, 2].map(k => Math.min(...pts.map(p => p[k]))), hi = [0, 1, 2].map(k => Math.max(...pts.map(p => p[k])));
@@ -121,15 +140,16 @@ function lookFloors(file) {
   const mul = (A, B) => { const o = new Array(16).fill(0); for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) for (let k = 0; k < 4; k++) o[c * 4 + r] += A[k * 4 + r] * B[c * 4 + k]; return o; };
   const local = nd => { if (nd.matrix) return nd.matrix; const [tx, ty, tz] = nd.translation || [0, 0, 0], [qx, qy, qz, qw] = nd.rotation || [0, 0, 0, 1], [sx, sy, sz] = nd.scale || [1, 1, 1];
     return [(1 - 2 * (qy * qy + qz * qz)) * sx, 2 * (qx * qy + qz * qw) * sx, 2 * (qx * qz - qy * qw) * sx, 0, 2 * (qx * qy - qz * qw) * sy, (1 - 2 * (qx * qx + qz * qz)) * sy, 2 * (qy * qz + qx * qw) * sy, 0, 2 * (qx * qz + qy * qw) * sz, 2 * (qy * qz - qx * qw) * sz, (1 - 2 * (qx * qx + qy * qy)) * sz, 0, tx, ty, tz, 1]; };
-  const T = [], MAT = [], names = []; const nameId = new Map(), idOf = nm => { let i = nameId.get(nm); if (i === undefined) { i = names.length; names.push(nm); nameId.set(nm, i); } return i; };
+  const T = [], MAT = [], names = [], WT = []; const nameId = new Map(), idOf = nm => { let i = nameId.get(nm); if (i === undefined) { i = names.length; names.push(nm); nameId.set(nm, i); } return i; };
   const walk = (ni, P) => { const nd = g.nodes[ni], W = mul(P, local(nd));
-    if (nd.mesh != null) for (const pr of g.meshes[nd.mesh].primitives) { const mname = pr.material != null ? (g.materials[pr.material].name || '') : ''; if (/sky|clip|nodraw|invisible|toolsblock|water|decal|overlay|glass/i.test(mname)) continue;
+    if (nd.mesh != null) for (const pr of g.meshes[nd.mesh].primitives) { const mname = pr.material != null ? (g.materials[pr.material].name || '') : '', water = /water/i.test(mname) && !/fall|drip|puddle|wet|decal|overlay|glass/i.test(mname); if (!water && /sky|clip|nodraw|invisible|toolsblock|water|decal|overlay|glass/i.test(mname)) continue;
       const pos = arr(pr.attributes.POSITION, Float32Array, 3); if (!pos) continue; const ia = g.accessors[pr.indices], idx = pr.indices == null ? null : arr(pr.indices, ia.componentType === 5125 ? Uint32Array : Uint16Array, 1); const mid = idOf(mname);
       const H = new Float32Array(pos.length); for (let v = 0; v < pos.length; v += 3) { const x = pos[v], y = pos[v + 1], z = pos[v + 2], gx = W[0] * x + W[4] * y + W[8] * z + W[12], gy = W[1] * x + W[5] * y + W[9] * z + W[13], gz = W[2] * x + W[6] * y + W[10] * z + W[14]; H[v] = gz * K; H[v + 1] = gx * K; H[v + 2] = gy * K; }
       const nt = idx ? idx.length / 3 : pos.length / 9;
       for (let t = 0; t < nt; t++) { const a = (idx ? idx[t * 3] : t * 3) * 3, b2 = (idx ? idx[t * 3 + 1] : t * 3 + 1) * 3, c = (idx ? idx[t * 3 + 2] : t * 3 + 2) * 3;
         const ux = H[b2] - H[a], uy = H[b2 + 1] - H[a + 1], uz = H[b2 + 2] - H[a + 2], vx = H[c] - H[a], vy = H[c + 1] - H[a + 1], vz = H[c + 2] - H[a + 2], nz = ux * vy - uy * vx, nl = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, nz);
         if (nl < 1e-6 || Math.abs(nz) / nl < .5) continue;   // (floors: faces turned up — either winding)
+        if (water) { WT.push(H[a], H[a + 1], H[a + 2], H[b2], H[b2 + 1], H[b2 + 2], H[c], H[c + 1], H[c + 2]); continue; }
         T.push(H[a], H[a + 1], H[a + 2], H[b2], H[b2 + 1], H[b2 + 2], H[c], H[c + 1], H[c + 2]); MAT.push(mid); } }
     for (const c of nd.children || []) walk(c, W); };
   const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; for (const ni of g.scenes[g.scene || 0].nodes) walk(ni, I);
@@ -139,32 +159,66 @@ function lookFloors(file) {
   for (let t = 0; t < nt; t++) { const o = t * 9, lx = Math.min(tri[o], tri[o + 3], tri[o + 6]), hx = Math.max(tri[o], tri[o + 3], tri[o + 6]), ly = Math.min(tri[o + 1], tri[o + 4], tri[o + 7]), hy = Math.max(tri[o + 1], tri[o + 4], tri[o + 7]);
     for (let r = Math.floor((ly - y0) / C); r <= Math.floor((hy - y0) / C); r++) for (let q = Math.floor((lx - x0) / C); q <= Math.floor((hx - x0) / C); q++) { const k = r * cols + q; let L = buckets.get(k); if (!L) buckets.set(k, L = []); L.push(t); } }
   console.log(`  look floors: ${nt} faces, ${names.length} materials (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+  // Water's surfaces (its faces turned up) on a 64-unit grid: the highest over (x, y), or null.
+  const wb = new Map(); for (let t = 0; t < WT.length; t += 9) { const lx = Math.min(WT[t], WT[t + 3], WT[t + 6]), hx = Math.max(WT[t], WT[t + 3], WT[t + 6]), ly = Math.min(WT[t + 1], WT[t + 4], WT[t + 7]), hy = Math.max(WT[t + 1], WT[t + 4], WT[t + 7]);
+    for (let r = Math.floor(ly / C); r <= Math.floor(hy / C); r++) for (let q = Math.floor(lx / C); q <= Math.floor(hx / C); q++) { const k = r * 100000 + q; let L = wb.get(k); if (!L) wb.set(k, L = []); L.push(t); } }
+  const waterTop = (x, y) => { const L = wb.get(Math.floor(y / C) * 100000 + Math.floor(x / C)); if (!L) return null; let best = null;
+    for (const t of L) { const ax = WT[t], ay = WT[t + 1], bx = WT[t + 3], by = WT[t + 4], cx = WT[t + 6], cy = WT[t + 7], d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (Math.abs(d) < 1e-9) continue;
+      const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, w = 1 - u - v; if (u < -.001 || v < -.001 || w < -.001) continue;
+      const h = u * WT[t + 2] + v * WT[t + 5] + w * WT[t + 8]; if (best === null || h > best) best = h; }
+    return best; };
+  if (WT.length) console.log(`  water: ${WT.length / 9} faces`);
   // The material of the floor face under (x, y) nearest height z (within 8 units), or null.
-  return (x, y, z) => { const L = buckets.get(Math.floor((y - y0) / C) * cols + Math.floor((x - x0) / C)); if (!L) return null; let best = null, bd = 8;
+  const at = (x, y, z) => { const L = buckets.get(Math.floor((y - y0) / C) * cols + Math.floor((x - x0) / C)); if (!L) return null; let best = null, bd = 8;
     for (const t of L) { const o = t * 9, ax = tri[o], ay = tri[o + 1], bx = tri[o + 3], by = tri[o + 4], cx = tri[o + 6], cy = tri[o + 7], d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (Math.abs(d) < 1e-9) continue;
       const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, w = 1 - u - v; if (u < -.001 || v < -.001 || w < -.001) continue;
       const h = u * tri[o + 2] + v * tri[o + 5] + w * tri[o + 8], dz = Math.abs(h - z); if (dz < bd) { bd = dz; best = names[mat[t]]; } }
     return best; };
+  // Is any floor drawn under (x, y) between heights lo and hi (or a few units round it: a floor's own edge)?
+  at.drawnIn = (x, y, lo, hi) => { for (const [dx, dy] of [[0, 0], [6, 6], [-6, -6], [6, -6], [-6, 6]]) { const px = x + dx, py = y + dy, L = buckets.get(Math.floor((py - y0) / C) * cols + Math.floor((px - x0) / C)); if (!L) continue;
+    for (const t of L) { const o = t * 9, ax = tri[o], ay = tri[o + 1], bx = tri[o + 3], by = tri[o + 4], cx = tri[o + 6], cy = tri[o + 7], d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (Math.abs(d) < 1e-9) continue;
+      const u = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d, v = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d, w = 1 - u - v; if (u < -.001 || v < -.001 || w < -.001) continue;
+      const h = u * tri[o + 2] + v * tri[o + 5] + w * tri[o + 8]; if (h >= lo && h <= hi) return true; } } return false; };
+  at.waterTop = waterTop; return at;
 }
 const LOOK = lookFloors(path.join(dir, 'world2', 'world.glb'));
 // A stretch's footstep surface (SURFACES index): its look's floor material; where the look has none, the collision's group
 // (clips and sound blockers say nothing: their floors take their neighbours' in the game).
 const surfClass = (x, y, top, g) => { const nm = LOOK?.(x, y, top); if (nm) return surfaceOf(nm); const pg = SURF[g]; return g === 255 || !pg || /clip|block|pass|sky|default|unknown/.test(pg) ? 255 : surfaceOf(pg); };   // (no face of the look there — collision only, under or outside the play space: the collision's group)
-function grid(soup, ladderCut = false) { const F = openFlags(soup), S = meshSolids(soup.pos, soup.idx, 64, F.open, F.piece, 8, 4, soup.grp), offs = new Uint32Array(cols * rows + 1), vals = [], surf = []; let t = Date.now();
+const DEEP = 60; let deepN = 0, voidN = 0, outN = 0;
+// The play space: CS2's radar of the map (radar-mask.mjs; export/radar, extracted from the game), 128 units round its
+// drawn floor. Past it the players' layer is solid all the way up — CS2 keeps its players in with clips its collision
+// export lacks in places (Anubis: past the ropes across its canal, out over the sand round the map).
+const RADAR = radarMask(path.join(dir, '..', 'radar'), id); console.log(RADAR ? `  radar: ${RADAR.pictures} picture(s), ${RADAR.scale} units a pixel` : '  radar: none (no play-space bound)');   // (water deeper than this, HU: over a standing player's eyes)
+function grid(soup, ladderCut = false, pens = false) { const F = openFlags(soup), S = meshSolids(soup.pos, soup.idx, 64, F.open, F.piece, 8, 4, soup.grp, pens, !pens), offs = new Uint32Array(cols * rows + 1), vals = [], surf = []; let t = Date.now();
   const cuts = ladderCut ? ladderClears(S) : []; if (cuts.length) console.log(`  ${cuts.length} ladders cleared of their rungs`); if (process.env.CUTS) console.log(JSON.stringify(cuts.map(k => Object.fromEntries(Object.entries(k).map(([a, v]) => [a, Math.round(v)])))), JSON.stringify(ladderBoxes.map(L => [L.mins.map(Math.round), L.maxs.map(Math.round)])));
   for (let r = 0; r < rows; r++) { for (let c = 0; c < cols; c++) { const x = X0 + c * 8, y = Y0 + r * 8; let sp = S.solidSpans(x, y, Z0, Z1);
+      if (ladderCut && RADAR && !RADAR.inPlay(x, y)) { sp = [[Z0, Z1, 255]]; outN++; }   // (off the radar: out of the play space)
+      // Deep water (players only): over water deeper than a player's eyes — Anubis' river past the boats, out of the play
+      // space; CS2's collision has no wall there, its players don't wade in — a body can't go in: solid from its bed to
+      // well over its surface. (Shallow water, the canals players walk in, stays.)
+      if (ladderCut && LOOK?.waterTop) { const wt = LOOK.waterTop(x, y); if (wt !== null) { let bed = -Infinity; for (const [b, tp] of sp) if (tp <= wt + 1 && tp > bed) bed = tp;
+        if (wt - bed > DEEP) { sp = sp.concat([[Number.isFinite(bed) ? bed : Z0, wt + 80, 255]]).sort((p, q) => p[0] - q[0]); const m = []; for (const s of sp) { const l = m[m.length - 1]; if (l && s[0] <= l[1] + .5) { if (s[1] > l[1]) { l[1] = s[1]; l[2] = s[2]; } } else m.push([...s]); } sp = m; deepN++; } } }
+      // Floors over nothing (players only): a floor of the collision with no floor drawn on it or under it (200 units down)
+      // is no floor CS2 shows anyone — the bottom of the world under Anubis' canal, where its bed stops short under a
+      // walkway and the collision has no side: a body walked off the bed and fell 500 units under the map. Solid up to the
+      // next solid over it (a wall where the drawn world has none: the side the canal shows). Clip tops over drawn floors,
+      // and every floor drawn, stay.
+      if (ladderCut && LOOK?.drawnIn) for (let k = 0; k < sp.length; k++) { const tp = sp[k][1], up = k + 1 < sp.length ? sp[k + 1][0] : Z1; if (up - tp < 54 || tp <= Z0 + 1) continue;
+        if (!LOOK.drawnIn(x, y, tp - 200, tp + 12)) { sp[k] = [sp[k][0], k + 1 < sp.length ? sp[k + 1][1] : Z1, k + 1 < sp.length ? sp[k + 1][2] : 255]; if (k + 1 < sp.length) sp.splice(k + 1, 1); k--; voidN++; } }
       for (const k of cuts) if (x >= k.x0 && x <= k.x1 && y >= k.y0 && y <= k.y1) sp = sp.flatMap(([b, tp, g]) => tp <= k.z0 || b >= k.z1 ? [[b, tp, g]] : [...(b < k.z0 ? [[b, k.z0, 255]] : []), ...(tp > k.z1 ? [[k.z1, tp, g]] : [])]);
-      for (const [b, tp, g] of sp) { vals.push(Math.max(-32768, Math.round(b * 2)), Math.min(32767, Math.round(tp * 2))); surf.push(ladderCut ? surfClass(x, y, tp, g ?? 255) : 255); } offs[r * cols + c + 1] = vals.length; }
+      for (const [b, tp, g] of sp) { vals.push(Math.max(-32768, Math.round(b * 2)), Math.min(32767, Math.round(tp * 2))); surf.push(ladderCut ? surfClass(x, y, tp, g ?? 255) : pens ? Math.max(0, penOf(g ?? 255)) : 255); } offs[r * cols + c + 1] = vals.length; }
     if (Date.now() - t > 5000) { t = Date.now(); console.log(`  ${Math.round(100 * r / rows)}%`); } }
+  if (ladderCut && deepN) console.log(`  deep water: ${deepN} lines walled off`); if (ladderCut && voidN) console.log(`  floors over nothing filled: ${voidN}`); if (ladderCut && outN) console.log(`  off the radar: ${outN} lines solid`);
   return { offs, vals: Int16Array.from(vals), surf: Uint8Array.from(surf) }; }
 console.log(`grid ${cols} × ${rows} (8 units) over x ${X0}…${X0 + cols * 8}, y ${Y0}…${Y0 + rows * 8}, z ${Z0.toFixed(0)}…${Z1.toFixed(0)}`);
-const P = grid(players, true), N = grid(nades);
+const P = grid(players, true), N = grid(nades), B = grid(bullets, false, true);
 // The file: "CS2M", version, header length, header JSON, then the grids (each: offsets Uint32 × (cols·rows+1), values Int16),
 // then a byte per player stretch: what its top is made of (a footstep surface: header.surfaces; 255: unknown).
 const header = Buffer.from(JSON.stringify({ id, source: 'Counter-Strike 2 (' + path.basename(dir) + ')', grid: { x0: X0, y0: Y0, step: 8, cols, rows, z0: Z0, z1: Z1 }, models, entities: out, ladderBoxes,
-  sizes: { players: [P.offs.length, P.vals.length], nades: [N.offs.length, N.vals.length], surfaces: P.surf.length }, surfaces: SURFACES }));
+  sizes: { players: [P.offs.length, P.vals.length], nades: [N.offs.length, N.vals.length], surfaces: P.surf.length, bullets: [B.offs.length, B.vals.length, B.surf.length] }, surfaces: SURFACES, pens: PENS, props }));
 const pad = b => Buffer.concat([b, Buffer.alloc((4 - b.length % 4) % 4)]), u32 = v => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
-const file = Buffer.concat([Buffer.from('CS2M'), u32(1), u32(header.length), pad(header), ...[P, N].flatMap(g => [Buffer.from(g.offs.buffer), pad(Buffer.from(g.vals.buffer))]), pad(Buffer.from(P.surf.buffer))]);   // (then each player stretch's surface: an index into the header's `surfaces`)
+const file = Buffer.concat([Buffer.from('CS2M'), u32(1), u32(header.length), pad(header), ...[P, N].flatMap(g => [Buffer.from(g.offs.buffer), pad(Buffer.from(g.vals.buffer))]), pad(Buffer.from(P.surf.buffer)), Buffer.from(B.offs.buffer), pad(Buffer.from(B.vals.buffer)), pad(Buffer.from(B.surf.buffer))]);   // (then the bullets' layer and what each of its stretches is made of: header.pens)   // (then each player stretch's surface: an index into the header's `surfaces`)
 const target = path.join(outDir, id + '.bsp'); mkdirSync(path.dirname(target), { recursive: true });
 if (existsSync(target) && readFileSync(target).subarray(0, 4).toString() !== 'CS2M') { const bk = path.join(os.homedir(), 'CS2-extract', 'backup'); mkdirSync(bk, { recursive: true }); const to = path.join(bk, id + '-before-cs2.bsp'); if (!existsSync(to)) { copyFileSync(target, to); console.log('kept the earlier map file:', to); } }
 writeFileSync(target, file); writeFileSync(path.join(dir, 'movers.json'), JSON.stringify(moverLooks, null, 1));   /* (for the look: convert_world.py) */ console.log(`→ ${target} (${(file.length / 1048576).toFixed(1)} MB): ${out.filter(e => /^info_player/.test(e.classname)).length} spawns, ${out.filter(e => e.classname === 'func_buyzone').length} buy zones, ${out.filter(e => e.classname === 'func_bomb_target').length} bomb sites, ${out.filter(e => e.classname === 'env_cs_place').length} places`);

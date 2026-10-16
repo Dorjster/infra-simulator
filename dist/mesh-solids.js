@@ -10,7 +10,11 @@ export const SHEET = 4;
 // along a line — its hits paired, whichever way its triangles face (some hulls come wound inside out).
 // `group` (optional, per triangle): what each is made of (an id); every stretch then carries the id of the face its top
 // is ([bottom, top, id]; 255: no face — a wall's top, the query's bounds) — the footstep surface of a floor.
-export function meshSolids(pos, idx, cell = 64, open = null, piece = null, wall = 0, wallOff = 0, group = null) {
+// `wallGroups`: a wall face's stretch carries its own group too (the bullets' layer: what a wall is made of — wood,
+// metal, plaster — decides what a bullet gets through); else 255 (the players' layer: a wall's top says no floor).
+// `thinCols` (with `wall`): thin walls a column thick (see below) — the players' and grenades' layers.
+export function meshSolids(pos, idx, cell = 64, open = null, piece = null, wall = 0, wallOff = 0, group = null, wallGroups = false, thinCols = false) {
+  const WS = wallGroups && group ? 3 : 2;
   const nt = idx.length / 3; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let i = 0; i < pos.length; i += 3) { const x = pos[i], y = pos[i + 1]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
   const cols = Math.max(1, Math.ceil((x1 - x0) / cell) + 1), rows = Math.max(1, Math.ceil((y1 - y0) / cell) + 1);
@@ -39,9 +43,9 @@ export function meshSolids(pos, idx, cell = 64, open = null, piece = null, wall 
       for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) { const s = i / nu, r = j / nv; if (s + r > 1.0001) continue;
         const px = pos[a] + ux * s + vx * r, py = pos[a + 1] + uy * s + vy * r, pz = pos[a + 2] + uz * s + vz * r, key = Math.round((px - wallOff) / wall) * 1e6 + Math.round((py - wallOff) / wall);
         const L = mine.get(key); if (!L) mine.set(key, [pz, pz]); else { if (pz < L[0]) L[0] = pz; if (pz > L[1]) L[1] = pz; } }
-      for (const [key, L] of mine) { const list = wallCells.get(key); if (list) list.push(L[0], L[1]); else wallCells.set(key, [L[0], L[1]]); } } }
+      for (const [key, L] of mine) { const list = wallCells.get(key); if (list) { list.push(L[0], L[1]); if (WS === 3) list.push(group[t]); } else wallCells.set(key, WS === 3 ? [L[0], L[1], group[t]] : [L[0], L[1]]); } } }
   const hz = [], hs = [], ht = [], gOf = t => group && t >= 0 ? group[t] : 255;   // (reused per query; ht: each hit's triangle)
-  function solidSpans(x, y, z0, z1) {
+  function solidSpans(x, y, z0, z1, noWalls = false) {
     const q = Math.floor((x - x0) / cell), r = Math.floor((y - y0) / cell); if (q < 0 || r < 0 || q >= cols || r >= rows) return [];
     hz.length = 0; hs.length = 0; ht.length = 0; const sheets = [], byPiece = new Map(), i = r * cols + q;
     for (let k = count[i]; k < count[i + 1]; k++) { const t = items[k], a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
@@ -64,9 +68,33 @@ export function meshSolids(pos, idx, cell = 64, open = null, piece = null, wall 
       else out.push([z, z1, 255]); }   // an underside with nothing above it: solid from here up (the line starts inside)
     if (depth > 0) out.push([z0, top, gOf(topT)]);
     for (const sh of sheets) out.push(sh);
-    if (wall > 0) { const W = wallCells.get(Math.round((x - wallOff) / wall) * 1e6 + Math.round((y - wallOff) / wall)); if (W) for (let k = 0; k < W.length; k += 2) if (W[k + 1] > z0 && W[k] < z1) out.push([Math.max(W[k], z0), Math.min(W[k + 1] + .5, z1), 255]); }   // (the walls' faces through this cell)
+    if (wall > 0 && !noWalls) { const W = wallCells.get(Math.round((x - wallOff) / wall) * 1e6 + Math.round((y - wallOff) / wall)); if (W) for (let k = 0; k < W.length; k += WS) if (W[k + 1] > z0 && W[k] < z1) out.push([Math.max(W[k], z0), Math.min(W[k + 1] + .5, z1), WS === 3 ? W[k + 2] : 255]); }   // (the walls' faces through this cell)
     out.sort((p, s) => p[0] - s[0]); const merged = []; for (const s of out) { const last = merged[merged.length - 1]; if (last && s[0] <= last[1] + .5) { if (s[1] > last[1] || (s[1] > last[1] - .5 && last[2] === 255)) { last[1] = Math.max(last[1], s[1]); last[2] = s[2]; } } else merged.push([s[0], s[1], s[2]]); }   // (a merged stretch: the surface of its highest top)
     if (!group) for (const m of merged) m.length = 2;   // (no surfaces asked for: [bottom, top])
     return merged; }
+  // Thin walls a column thick: the game's columns (16 units, bsp-map.js) are solid where two of their four lines are
+  // (lines 8 apart, at wallOff), so a thin wall crossing a column slantwise — through one line's cell only — left that
+  // column open: a slanted one-face wall (Mirage's buildings round Side Alley are shells) let a body walk inside. Where a
+  // slanted steep face has nothing solid 10 units behind it (a sheet, or a hull that thin), every line of each column
+  // it crosses is solid over the heights it covers there. (Square to the lines, a wall meets two lines a column: kept.)
+  if (thinCols && wall > 0) { const step = wall / 2, add = new Map(), col = k => 2 * Math.floor(k / 2), PROBES = [[1 / 3, 1 / 3], [.6, .2], [.2, .6], [.2, .2]];
+    let zl = Infinity, zh = -Infinity; for (let i = 2; i < pos.length; i += 3) { if (pos[i] < zl) zl = pos[i]; if (pos[i] > zh) zh = pos[i]; }
+    const at = (x, y, z) => { for (const s of solidSpans(x, y, zl - 1, zh + 1, true)) if (s[0] <= z && s[1] >= z) return true; return false; };   // (the whole line: a hull's top and bottom say what is between)
+    for (let t = 0; t < nt; t++) { const a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
+      const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2], vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nzz = ux * vy - uy * vx, nl = Math.hypot(nx, ny, nzz); if (nl < 1e-6 || Math.abs(nzz) / nl > .35) continue;
+      const hl = Math.hypot(nx, ny), hx = nx / hl, hy = ny / hl; if (Math.min(Math.abs(hx), Math.abs(hy)) < .17) continue;   // (within 10° of square to the lines)
+      // (thin: at any of four points over the face, nothing solid 10 units behind it — on the hull's side, if either)
+      let thin = false; for (const [s, r] of PROBES) { const px = pos[a] + ux * s + vx * r, py = pos[a + 1] + uy * s + vy * r, pz = pos[a + 2] + uz * s + vz * r;
+        const back = at(px - hx * 1.5, py - hy * 1.5, pz), front = !back && at(px + hx * 1.5, py + hy * 1.5, pz), sg = back ? -1 : front ? 1 : 0;
+        if (!sg || !at(px + sg * hx * 10, py + sg * hy * 10, pz)) { thin = true; break; } }
+      if (!thin) continue;   // thick: its lines have it
+      const lu = Math.hypot(ux, uy, uz), lv = Math.hypot(vx, vy, vz), nu = Math.max(1, Math.ceil(lu / step)), nv = Math.max(1, Math.ceil(lv / step)), mine = new Map();
+      for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) { const s = i / nu, r = j / nv; if (s + r > 1.0001) continue;
+        const px = pos[a] + ux * s + vx * r, py = pos[a + 1] + uy * s + vy * r, pz = pos[a + 2] + uz * s + vz * r;
+        const kx = col(Math.round((px - wallOff) / wall)), ky = col(Math.round((py - wallOff) / wall));
+        for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) { const key = (kx + dx) * 1e6 + ky + dy, L = mine.get(key); if (!L) mine.set(key, [pz, pz]); else { if (pz < L[0]) L[0] = pz; if (pz > L[1]) L[1] = pz; } } }
+      for (const [key, L] of mine) { const list = add.get(key); if (list) { list.push(L[0], L[1]); if (WS === 3) list.push(group[t]); } else add.set(key, WS === 3 ? [L[0], L[1], group[t]] : [L[0], L[1]]); } }
+    for (const [key, L] of add) { const list = wallCells.get(key); if (list) for (const v of L) list.push(v); else wallCells.set(key, L); } }
   return { solidSpans, bounds: { mins: [x0, y0], maxs: [x1, y1] }, triangles: nt };
 }

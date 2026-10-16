@@ -9,6 +9,11 @@ export function parseCs2Map(buf) {
   const H = JSON.parse(new TextDecoder().decode(new Uint8Array(ab, 12, hl))), G = H.grid, n = G.cols * G.rows + 1; let o = 12 + hl + (4 - hl % 4) % 4;
   const grid = () => { const offs = new Uint32Array(ab, o, n); o += n * 4; const nv = offs[n - 1], vals = new Int16Array(ab, o, nv); o += nv * 2 + (4 - (nv * 2) % 4) % 4; return { offs, vals }; };
   const P = grid(), N = grid(), SURF = H.sizes?.surfaces ? new Uint8Array(ab, o, H.sizes.surfaces) : null;   // (what each player stretch's top is made of: CS2's surface property, header.surfaces)
+  if (SURF) o += SURF.length + (4 - SURF.length % 4) % 4;
+  // The bullets' layer (newer files): what bullets hit — no player clips or bullet-passing fences — and what each stretch
+  // is made of (header.pens: wood, metal, plaster… — wallbangs). Older files: the players' layer stands in.
+  const B = H.sizes?.bullets ? grid() : null, PEN = B ? new Uint8Array(ab, o, H.sizes.bullets[2]) : null, PENS = H.pens || [];
+  if (PEN) o += PEN.length + (4 - PEN.length % 4) % 4;
   const at = (g, x, y) => { const c = Math.round((x - G.x0) / G.step), r = Math.round((y - G.y0) / G.step); return c < 0 || r < 0 || c >= G.cols || r >= G.rows ? -1 : r * G.cols + c; };
   // Solid stretches [bottom, top] (Hammer units) on the line through (x, y), clipped to [z0, z1].
   const spans = (g, x, y, z0, z1) => { const i = at(g, x, y), out = []; if (i < 0) return out; for (let k = g.offs[i]; k < g.offs[i + 1]; k += 2) { const b = g.vals[k] / 2, t = g.vals[k + 1] / 2; if (t > z0 && b < z1) out.push([Math.max(b, z0), Math.min(t, z1)]); } return out; };
@@ -21,6 +26,8 @@ export function parseCs2Map(buf) {
   const SPAWN = { info_player_terrorist: 'info_player_deathmatch', info_player_counterterrorist: 'info_player_start' }; H.entities = H.entities.map(e => SPAWN[e.classname] ? { ...e, classname: SPAWN[e.classname] } : e);
   return { format: 'vbsp', cs2: true, source: null, id: H.id, origin: H.source, models, entities: H.entities, ladderBoxes: H.ladderBoxes || [],   // (ladders: CS2's ladder surfaces as climbing volumes, import-cs2-map.mjs)
     solidSpans: (head, x, y, z0, z1) => spans(P, x, y, z0, z1),   // (the builder's world part: head 0)
+    bulletSpans: B ? (x, y, z0, z1) => { const i = at(B, x, y), out = []; if (i < 0) return out; for (let k = B.offs[i]; k < B.offs[i + 1]; k += 2) { const b = B.vals[k] / 2, t = B.vals[k + 1] / 2; if (t > z0 && b < z1) out.push([Math.max(b, z0), Math.min(t, z1), PENS[PEN[k >> 1]] || 'concrete']); } return out; } : null,
+    props: H.props || [],                                          // physics props (pots, cans, stools): pushed about, never in the way
     pointSolid: (x, y, z) => pointIn(N, x, y, z),                  // grenades
     surfaceAt,                                                     // footsteps (map-light.js floorSurface)
     places: H.entities.filter(e => e.classname === 'env_cs_place' && e.place_name).map(e => ({ name: e.place_name, ...H.models[+e.model.slice(1)] })) };

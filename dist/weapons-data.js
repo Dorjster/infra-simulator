@@ -100,15 +100,16 @@ export function damageFor(wpn, zone, distance, pellets = 1) {
   const mult = HIT_GROUPS[zone] ?? 1, falloff = Math.pow(wpn.rangeMod ?? 1, (Math.max(0, distance) * CS_UNITS_PER_UNIT) / 500);
   return Math.max(1, Math.round(wpn.dmg * mult * falloff * pellets));
 }
-// THE rule for every hit, used by the host only (clients never decide damage):
-//  · A confirmed head shot from any firearm kills, whatever the HP, armor or helmet (headKill).
-//  · Otherwise, armor (kevlar on chest / stomach; the helmet on the head, for knives) lets `ap` of the damage
-//    through to health and loses half of the rest; when the armor runs out the remainder goes to health (CS2).
+// THE rule for every hit, used by the host only (clients never decide damage), CS2's:
+//  · A head shot does 4× (HIT_GROUPS); the helmet covers the head as kevlar covers chest and stomach — so an AK-47,
+//    a Desert Eagle, an AWP or a Scout kill with one head shot through a helmet, a Glock, a USP-S, an M4A4 or an SMG
+//    don't (without a helmet most do).
+//  · Armor lets `ap` of the damage through to health and loses half of the rest; when the armor runs out the
+//    remainder goes to health (CS2).
 //  · Legs are never armored.
 // armor: { kevlar: 0…100, helmet: bool } or null. Returns { hp: health damage, armor: armor lost, headKill }.
 export const HEAD_KILL_HP = 1000;
 export function hitDamage(wpn, zone, distance, pellets = 1, armor = null, base = null) {
-  if (isFirearm(wpn) && zone === 'head') return { hp: HEAD_KILL_HP, armor: armor?.kevlar ? Math.min(armor.kevlar, Math.round(wpn.dmg * .5)) : 0, headKill: true };
   const raw = base ?? damageFor(wpn, zone, distance, pellets), kev = armor?.kevlar || 0;
   const covered = kev > 0 && (zone === 'chest' || zone === 'stomach' || (zone === 'head' && armor.helmet));
   if (!covered) return { hp: raw, armor: 0, headKill: false };
