@@ -1,0 +1,4 @@
+[{"t": 31.0, "model": {"muzzle_c":[18.27,-4.08,0],"front_sight":[9.31,-4.89,-0.09],"rear_sight":[2.15,-4.95,0],"rear_l":[2.2,-4.9,0.4],"rear_r":[2.2,-4.9,-0.4],"slide_back_top":[1.68,-4.21,0],"slide_back_bottom":[1.53,-2.74,0]},
+  "image": {"muzzle_c":[1102,627],"front_sight":[1176,655],"rear_sight":[1287,722],"rear_l":[1267,723],"rear_r":[1307,723],"slide_back_top":[1287,767],"slide_back_bottom":[1290,855]}},
+ {"t": 29.0, "model": {"sil_front":[18.27,-4.03,0],"sil_rear":[10.04,-4.0,0],"front_sight":[9.31,-4.89,-0.09],"rear_sight":[2.15,-4.95,0],"slide_front_bottom":[9.89,-3.0,0]},
+  "image": {"sil_front":[512,605],"sil_rear":[945,745],"front_sight":[1005,752],"rear_sight":[1592,982],"slide_front_bottom":[965,820]}}]

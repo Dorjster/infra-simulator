@@ -11,8 +11,9 @@
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
+import { cleanSkin, skinTitle } from './skins.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
-import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks, setSmokeSolids } from './arena-nades.js';
+import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks, setSmokeSolids, tossFlight } from './arena-nades.js';
 import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS } from './arena-defuse.js';
 import { hurt } from './combat-logic.js';
 
@@ -41,9 +42,9 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs 
   if (practice) kind = 'dm';
   else if (ARENA_MAPS[map].kind !== kind) throw Error(ARENA_MAPS[map].name + ' is not a ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' map');
   game.mode = 'arena'; game.payday = false;
-  const knives = game.arena?.knives || {};   // (the knives people chose stay theirs from match to match)
+  const knives = game.arena?.knives || {}, skins = game.arena?.skins || {};   // (the knives and skins people chose stay theirs from match to match)
   game.arena = { kind, map, startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null, difficulty: DIFFICULTY[difficulty] ? difficulty : 'normal', lobby: lobbyMs > 0 ? { until: now + lobbyMs, started: false, ready: {}, note: '' } : null, freezeMs: clampS(freezeS, TIMER_LIMITS.freeze, 15) * 1000, warmupS: Math.round(lobbyMs / 1000), nextMap: null };
-  game.arena.knives = knives;
+  game.arena.knives = knives; game.arena.skins = skins;
   game.arena.rules = cleanRules(rules || {});   // Defuse match rules (host settings), fixed for this match
   if (practice) { game.arena.practice = cleanPractice(practice); game.arena.endsAt = 4e15; }   // no time limit
   game.combat = { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: 0, nades: [], nadeSeq: 0 };
@@ -108,9 +109,12 @@ function alive(game, players, but) {
 
 // Put an item on the ground at (x, z), resting at height y.
 // A gun keeps its rounds on the ground ([magazine, reserve]); `by` and their team are shown to whoever finds it.
-function dropItem(game, item, x, z, y, by, now, ammo = null) {
+// fly (optional): tossed from { x, y, z } with { vx, vy, vz } — where it comes to rest is where it lies (tossFlight);
+// the item keeps the toss so every player sees it fly there.
+function dropItem(game, item, x, z, y, by, now, ammo = null, fly = null) {
   const C = game.combat; C.ground ??= []; C.groundSeq = (C.groundSeq || 0) + 1;
-  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(250, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null });
+  if (fly) { const g = G(game), end = tossFlight(g.boxes, g.bounds, fly); x = end.x; z = end.z; y = end.y; fly = { ...Object.fromEntries(Object.entries(fly).map(([k, v]) => [k, +(+v).toFixed(3)])), ms: end.ms }; }
+  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(250, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null, ...(fly ? { fly } : {}) });
   while (C.ground.length > GROUND_MAX) { const i = C.ground.findIndex(it => it.item !== 'c4'); C.ground.splice(i < 0 ? 0 : i, 1); }
   return 'g' + C.groundSeq;
 }
@@ -120,7 +124,10 @@ const botFloor = (game, b) => Number.isFinite(b.y) ? b.y : floorAt(ARENA_MAPS[ga
 // This round's purchases per player (for refunds), newest last.
 function bought(game, name, b) { const d = game.combat.d; ((d.bought ??= {})[key(name)] ??= []).push(b); }
 // Take a gun out of a player's hands onto the ground (with its rounds); forgets their ammo for it.
-function dropFrom(game, name, item, x, z, y, now) { const k = key(name), a = ammoOf(game, name, item); if (game.combat.ammo?.[k]) delete game.combat.ammo[k][item]; return dropItem(game, item, x, z, y, name, now, a); }
+function dropFrom(game, name, item, x, z, y, now, fly = null) { const k = key(name), a = ammoOf(game, name, item); if (game.combat.ammo?.[k]) delete game.combat.ammo[k][item]; return dropItem(game, item, x, z, y, name, now, a, fly); }
+// A toss (CS2's drop): from the hands, forward where you face at 200 u/s and up at 100, plus your own run.
+const tossOf = (p, run = true) => { const yaw = +p.yaw || 0, f = 200 * HU_, vx = run ? Math.max(-40, Math.min(40, +p.vx || 0)) : 0, vz = run ? Math.max(-40, Math.min(40, +p.vz || 0)) : 0; return { x: p.x - Math.sin(yaw) * 1.2, y: Math.max(1.5, (p.y ?? EYE) - 3), z: p.z - Math.cos(yaw) * 1.2, vx: -Math.sin(yaw) * f + vx, vy: 100 * HU_, vz: -Math.cos(yaw) * f + vz }; };
+const HU_ = 2.54 / 16.5;
 // Can a player at pose reach an item on the ground (close enough, no wall between)?
 function reachable(game, p, it) { if (!p) return true; const g = G(game), d = Math.hypot(p.x - it.x, p.z - it.z); if (d > PICK_R + 4) return 'Too far away'; const eye = p.y ?? EYE; return segmentClear(g.boxes, p.x, eye, p.z, it.x, (it.y || 0) + .6, it.z) || segmentClear(g.boxes, p.x, eye - 6, p.z, it.x, (it.y || 0) + .6, it.z) ? true : 'Behind a wall'; }
 const poseOf = (players, name) => players.find(p => key(p.name) === key(name))?.pose || null;
@@ -139,6 +146,11 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   // Your knife (the M menu): a CS2 knife on the knife slot — Butterfly, Stiletto, M9 Bayonet (the same blade for the
   // rules), Darja's karambit (hers alone), or the default. Any time; it's yours from match to match.
   // Darja may equip any knife on anyone in the room (a.for: their name), the karambit too.
+  // A weapon's skin (skins.js: finish, wear, pattern seed, stickers, name tag, StatTrak™): checked here (never trusted),
+  // then everyone's view draws it. { weapon, skin } sets one, { weapon, clear: true } goes back to the default.
+  if (a.type === 'skin') { const w = weaponById(String(a.weapon || '')); if (!w || w.kind === 'nade' || w.kind === 'bomb') throw Error('Choose a weapon to skin');
+    const mine = (A.skins ??= {})[key(name)] ??= {}; if (a.clear) { delete mine[w.id]; return 'Default ' + w.name; }
+    const s = cleanSkin(a.skin, w.kind, mine[w.id]); if (Object.keys(mine).length >= 40 && !mine[w.id]) throw Error('Inventory full (40 skins)'); mine[w.id] = s; return skinTitle(w.name, s) + ' equipped'; }
   if (a.type === 'knife') { const k = String(a.knife || ''), darja = /^darja$/.test(key(name)), who = a.for != null && darja ? String(a.for).trim().slice(0, 40) : name; if (!['default', 'butterfly', 'stiletto', 'm9', 'karambit'].includes(k)) throw Error('Unknown knife'); if (a.for != null && !darja) throw Error('Only Darja equips knives on others'); if (k === 'karambit' && !darja) throw Error('The karambit is Darja\'s');
     const kn = (A.knives ??= {}); kn[key(who)] = k; return { butterfly: 'Butterfly Knife', stiletto: 'Stiletto Knife', m9: 'M9 Bayonet', karambit: 'Karambit | Ruby', default: 'Default knife' }[k] + ' equipped' + (key(who) !== key(name) ? ' on ' + who : ''); }
   if (a.type === 'team') return changeTeam(game, name, a.team, players, now);
@@ -176,7 +188,8 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     // About 1 m ahead of you (the camera looks along (−sin yaw, −cos yaw)); at your feet if a wall is in the way.
     const p = poseOf(players, name) || { x: +a.x || 0, z: +a.z || 0, yaw: +a.yaw || 0 }, g = G(game); let x = p.x - Math.sin(p.yaw || 0) * 6, z = p.z - Math.cos(p.yaw || 0) * 6;
     if (!walkable(g.boxes, g.bounds, x, z, .5)) { x = p.x; z = p.z; }
-    if (slot === 'nades') { l.nades.splice(l.nades.indexOf(item), 1); dropItem(game, item, x, z, a.y, name, now); } else { l[slot] = null; dropFrom(game, name, item, x, z, a.y, now); } return 'Dropped ' + itemName(item);
+    const fly = poseOf(players, name) ? tossOf(p) : null;   // (thrown forward with your run, as CS2's G — bounces, slides, lands where it stops)
+    if (slot === 'nades') { l.nades.splice(l.nades.indexOf(item), 1); dropItem(game, item, x, z, a.y, name, now, null, fly); } else { l[slot] = null; dropFrom(game, name, item, x, z, a.y, now, fly); } return 'Dropped ' + itemName(item);
   }
   if (a.type === 'pickup') {
     if (isDown(game, name, now)) throw Error('You are dead');
@@ -334,9 +347,11 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
     if (C.d?.bomb?.carrier === k) { const bb = A.bots.find(b => key(b.name) === k), bt = bb || players.find(x => key(x.name) === k)?.pose; if (bt) dropItem(game, 'c4', bt.x, bt.z, bb ? botFloor(game, bb) : Math.max(0, (bt.y ?? EYE) - EYE), k, now); C.d.bomb.carrier = null; changed = true; }   // where they fell, on their floor
     if (!C.d) continue;
     const bot = A.bots.find(b => key(b.name) === k), p = bot ? null : players.find(x => key(x.name) === k), at = bot || p?.pose; if (!at) continue;
-    if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, botFloor(game, bot), bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve]); bot.weapon = null; changed = true; } continue; }
+    // (a body's gun falls from its hands with a little toss — CS2: it slides off where it lands)
+    const fall = (x, y, z) => { const a = Math.random() * Math.PI * 2, v = (50 + Math.random() * 40) * HU_; return { x, y, z, vx: Math.sin(a) * v, vy: 60 * HU_, vz: Math.cos(a) * v }; };
+    if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, botFloor(game, bot), bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve], fall(bot.x, botFloor(game, bot) + 4, bot.z)); bot.weapon = null; changed = true; } continue; }
     const l = A.loadout[k] || {}, slot = l.primary ? 'primary' : l.secondary ? 'secondary' : null;
-    if (slot) dropFrom(game, p.name, l[slot], at.x, at.z, Math.max(0, (at.y || 0) - EYE), now);
+    if (slot) dropFrom(game, p.name, l[slot], at.x, at.z, Math.max(0, (at.y || 0) - EYE), now, fall(at.x, Math.max(1, (at.y || EYE) - 5), at.z));
     // Everything else is gone with them right away (pistol, grenades, armor, kit), so nothing old shows while dead or
     // at the next round: they come back with the team's starting pistol only (CS2).
     A.loadout[k] = { primary: null, secondary: defaultPistol(C.d.teams[k]), nades: [] }; delete (C.armor ??= {})[k]; if (C.d.kits) delete C.d.kits[k]; A.dirty = true; changed = true; }
@@ -350,13 +365,13 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
       else if (slot === 'nades') { if (canCarry(l.nades ??= [], it.item)) { l.nades.push(it.item); took = true; } }
       else if (slot === 'primary' ? !l.primary : slot === 'secondary' && l.secondary === null) { l[slot] = it.item; setAmmo(game, p.name, it.item, it.ammo || fullAmmo(it.item)); took = true; }
       if (took) { C.ground.splice(i, 1); (C.picked ??= {})[k] = { item: it.item, at: now, ammo: it.ammo || null }; A.dirty = true; changed = true; } } }
-  if (nadesTick(game, players, dt, now, g, (x, y, z, r, dmg) => { if (blastMovers(game, x - ARENA.cx, y, z - ARENA.cz, r, dmg)) changed = true; })) changed = true;
+  if (nadesTick(game, players, dt, now, g, (x, y, z, r, dmg) => { if (blastMovers(game, x - ARENA.cx, y, z - ARENA.cz, r, dmg)) changed = true; }, id => { const m = ARENA_MAPS[game.arena.map]?.movers?.[id], st = mapStateOf(game); if (m?.kind === 'break' && !st.broken[id]) { st.broken[id] = 1; st.v++; syncMapState(game); changed = true; } })) changed = true;   // (a grenade through a pane breaks it)
   if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => it.item === 'c4' || now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
   for (const bot of A.bots) {
     if (isDown(game, bot.name, now)) { bot.dead = true; continue; }
     if (bot.dead && !C.d) { bot.dead = false; place(game, bot, players); botArm(bot, bot.weapon || 'pistol'); changed = true; }
     if (!bot.weapon) botArm(bot, defaultPistol(C.d?.teams?.[key(bot.name)]));
-    if (C.d && (C.d.round?.phase === 'freeze' || C.d.round?.phase === 'over' || C.d.matchOver || C.d.paused)) continue;   // defuse: frozen while buying, between rounds
+    if (C.d && (C.d.round?.phase === 'freeze' || C.d.matchOver || C.d.paused)) continue;   // defuse: frozen while buying (after a round's end they fight on until the next, as in CS2)
     if (A.lobby && !A.lobby.started) continue;   // lobby: no fighting
     const team = C.d ? C.d.teams[key(bot.name)] : null;
     if (A.practice?.bots === 'stand') continue;   // practice: targets that stand still

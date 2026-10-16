@@ -50,10 +50,10 @@ check('release: exactly one grenade thrown', (await nades()).length === nh + 1 &
 const land = async () => { for (let i = 0; i < 60; i++) { const s = (await nades()).filter(x => x.kind === 'smoke' && x.phase === 'smoke' && !before.has(x.id)); if (s.length) return s.at(-1); await p.waitForTimeout(100); } return null; };
 const s1 = await land(), d1 = s1 && Math.hypot(s1.x - lane.x, s1.z - lane.z);
 await p.waitForTimeout(1500); await snap({ path: path.join(out, 'smoke.png') });
-// Smoke: a sight line through the cloud's middle is blocked by its core (a real volume).
-const blocked = await p.evaluate(async s => { const THREE = await import('./three.module.js'); const r = new THREE.Raycaster(new THREE.Vector3(s.x - 70, s.y + 7, s.z), new THREE.Vector3(1, 0, 0), 0, 140); /* from outside the cloud, through its middle */ r.camera = __infra.camera; const hits = r.intersectObject(__infra.scene.getObjectByName('nades'), true).filter(h => h.object.isMesh && h.object.material.opacity > .9); return hits.length > 0; }, s1);
+// Smoke: a sight line through the cloud's middle, from outside it to outside it, is blocked (the volume the rules use).
+const blocked = await p.evaluate(async s => { const { smokeBlocks } = await import('./arena-nades.js'), R = 144 * 2.54 / 16.5; return smokeBlocks(__infra.lab.world.operations.game, s.x - R - 20, s.y + 7, s.z, s.x + R + 20, s.y + 7, s.z); }, s1);   // (the game's own rule — what bots, sight and the flash use: a line through its middle is blocked by its dense core)
 check('smoke: you cannot see through its middle', blocked);
-check('smoke: ~4× the old area (44-unit radius)', await p.evaluate(async () => (await import('./arena-nades.js')).NADES.smoke.radius >= 44));
+check('smoke: CS2\'s size (144 units round)', await p.evaluate(async () => Math.abs((await import('./arena-nades.js')).NADES.smoke.radius - 144 * 2.54 / 16.5) < .5));
 // Medium and short: shorter.
 const throwSmoke = async (btns) => { await buy('smoke'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150);
   await p.evaluate(b => { for (const x of b) __infra.lab.pistol.button(x, true); }, btns); await p.waitForTimeout(500); await p.evaluate(b => { for (const x of b) __infra.lab.pistol.button(x, false); }, btns); await p.waitForTimeout(400); const before = (await nades()).filter(x => x.phase === 'smoke').length; for (let i = 0; i < 60; i++) { const s = (await nades()).filter(x => x.kind === 'smoke' && x.phase === 'smoke'); if (s.length > before) return s.at(-1); await p.waitForTimeout(100); } return null; };

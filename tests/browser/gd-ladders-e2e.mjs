@@ -38,11 +38,17 @@ if (spot) {
 // Every ladder with floor at its foot, walked up to from a step back and climbed with W, takes you to its top (no
 // walking through it, no head stuck under the floor it climbs through).
 { const L = await p.evaluate(() => __infra.lab.arenaScene.ladders.map(l => ({ ...l }))), res = [], eye = () => p.evaluate(() => __infra.camera.position.y);
-  for (const l of L) { const spot = await p.evaluate(async l => { const { ARENA_MAPS } = await import('/arena-maps.js'), { ARENA } = await import('/facility-layout.js'), nav = ARENA_MAPS.nuke.nav, thinX = l.maxX - l.minX < l.maxZ - l.minZ, cx = (l.minX + l.maxX) / 2, cz = (l.minZ + l.maxZ) / 2;
-      for (const sd of [-1, 1]) { const x = thinX ? (sd < 0 ? l.minX - 3 : l.maxX + 3) : cx, z = thinX ? cz : (sd < 0 ? l.minZ - 3 : l.maxZ + 3), f = nav.floorAt(x - ARENA.cx, z - ARENA.cz, l.y0 + 9.7); if (Number.isFinite(f) && Math.abs(f - l.y0) < 3) return { x, z, y: f, cx, cz }; } return null; }, l);
-    if (!spot) continue; await p.evaluate(s => __infra.lab.look(s.x, s.z, s.cx, s.y + 9.7, s.cz, s.y + 9.7), spot); await p.waitForTimeout(250);
-    await p.keyboard.down('KeyW'); let top = -Infinity; for (let t = 0; t < 22; t++) { await p.waitForTimeout(150); top = Math.max(top, await eye()); } await p.keyboard.up('KeyW'); await p.waitForTimeout(300);
-    res.push(top - 9.7 >= l.y1 - 1.5 ? 'top' : 'stuck at ' + (top - 9.7).toFixed(1) + ' of ' + l.y1.toFixed(1)); }
+  for (const l of L) { const spots = await p.evaluate(async l => { const { ARENA_MAPS } = await import('/arena-maps.js'), { ARENA } = await import('/facility-layout.js'), nav = ARENA_MAPS.nuke.nav, thinX = l.maxX - l.minX < l.maxZ - l.minZ, cx = (l.minX + l.maxX) / 2, cz = (l.minZ + l.maxZ) / 2;
+      // (each side with floor at its foot, a step back or closer: its front is climbed — behind a ladder is its wall;
+      // CS2's ladders may start a little above their floor)
+      const out = []; for (const sd of [-1, 1]) for (const o of [3, 1.5, .75]) { const x = thinX ? (sd < 0 ? l.minX - o : l.maxX + o) : cx, z = thinX ? cz : (sd < 0 ? l.minZ - o : l.maxZ + o), f = nav.floorAt(x - ARENA.cx, z - ARENA.cz, l.y0 + 9.7);
+        if (Number.isFinite(f) && Math.abs(f - l.y0) < 4.5) { out.push({ x, z, y: f, cx, cz }); break; } }
+      return out; }, l);
+    if (!spots.length) continue; let got = -Infinity;
+    for (const spot of spots) { await p.evaluate(s => __infra.lab.look(s.x, s.z, s.cx, s.y + 9.7, s.cz, s.y + 9.7), spot); await p.waitForTimeout(250);
+      await p.keyboard.down('KeyW'); let top = -Infinity; for (let t = 0; t < 22; t++) { await p.waitForTimeout(150); top = Math.max(top, await eye()); } await p.keyboard.up('KeyW'); await p.waitForTimeout(300);
+      got = Math.max(got, top - 9.7); if (got >= l.y1 - 1.5) break; }
+    res.push(got >= l.y1 - 1.5 ? 'top' : 'stuck at ' + got.toFixed(1) + ' of ' + l.y1.toFixed(1)); }
   check('every ladder from a step back: climbed to its top', res.length >= 4 && res.every(r => r === 'top'), res.join(', ')); }
 check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 console.log(ok + '/' + n); await b.close(); server.kill(); process.exit(ok === n ? 0 : 1);

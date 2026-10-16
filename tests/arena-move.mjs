@@ -1,6 +1,6 @@
 // CS2-style arena movement (dist/arena-move.js): speeds per weapon, walk / crouch, friction stop, jump height,
 // climbing low cover but not containers, walls, and the movement inaccuracy factor.
-import { createMoveState, moveStep, moveFor, moveSpread, maxSpeed, HU, MOVE } from '../dist/arena-move.js';
+import { createMoveState, moveStep, moveFor, moveSpread, maxSpeed, HU, MOVE, tag, TAG } from '../dist/arena-move.js';
 let ok = 0, n = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (d !== '' ? ' · ' + d : '')); };
 const dt = 1 / 64, at = (x = 0, z = 0) => Object.assign(createMoveState(0), { x, z });
 const run = (s, input, world, secs) => { for (let t = 0; t < secs; t += dt) moveStep(s, input, world, dt); return s; };
@@ -56,4 +56,9 @@ check('Walking is far more accurate than running', moveSpread(run(at(), { ...fwd
   const t = at(0, -.7); for (let k = 0; k < 400 && !(t.onGround && t.y > 1); k++) moveStep(t, up, world, dt); check('Ladder: at the top, the same push steps onto the ledge', t.onGround && t.y === 30 && t.z < -2, 'y ' + t.y.toFixed(1) + ' z ' + t.z.toFixed(2));
   const j = at(0, -.7); j.y = 15; j.onGround = false; moveStep(j, { wish: [0, 0], weapon: 'knife', look: [0, -1], pitch: 0, jump: true }, world, dt); check('Ladder: jumping pushes you off backwards', j.vz > 0 && !j.onLadder, j.vz.toFixed(1));
   const g = at(0, 0); run(g, { wish: [0, -1], weapon: 'knife', look: [0, -1], pitch: -.8 }, world, .5); check('Ladder: on the floor, looking down, you just walk (no digging in)', g.y === 0, g.y.toFixed(2)); }
+// Tagging (CS): hit while running, you are at half speed at once, and back to full about 1.25 s later.
+{ const t = createMoveState(0), inp = { wish: [1, 0], weapon: 'ak' }, top = maxSpeed('ak'); moveFor(t, inp, null, 1); check('Tagging: running at the AK\'s top speed first', Math.abs(Math.hypot(t.vx, t.vz) - top) < top * .02);
+  tag(t); moveFor(t, inp, null, 1 / 64); const v0 = Math.hypot(t.vx, t.vz); check('Tagging: a hit halves your speed at once', v0 <= top * (TAG.hit + .02), (v0 / top).toFixed(2));
+  moveFor(t, inp, null, .5); const v1 = Math.hypot(t.vx, t.vz); check('Tagging: half a second later still slowed', v1 < top * .75 && v1 > v0, (v1 / top).toFixed(2));
+  moveFor(t, inp, null, 1); check('Tagging: full speed again after ~1.25 s', Math.abs(Math.hypot(t.vx, t.vz) - top) < top * .03 && t.velMod === 1); }
 console.log((ok === n ? 'PASS' : 'FAIL') + ': arena movement · ' + ok + '/' + n); if (ok !== n) process.exitCode = 1;

@@ -32,9 +32,9 @@ const unpack = (file, dir) => { mkdirSync(dir, { recursive: true }); if (/\.zip$
 function walk(dir) { const res = []; for (const e of readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) res.push(...walk(p)); else res.push(p); } return res; }
 const loose = [];
 for (const e of readdirSync(src, { withFileTypes: true })) { if (e.name.startsWith('.') || /^read ?me/i.test(e.name) || (picky && !WANT.test(e.name))) continue; const p = path.join(src, e.name);
-  if (e.isFile() && ARCH.test(e.name)) { const dir = path.join(tmp, e.name.replace(ARCH, '')); try { unpack(p, dir); roots.push({ name: e.name, dir }); } catch (err) { console.warn('skipped', e.name, err.message); } }
+  if (e.isFile() && ARCH.test(e.name)) { const dir = path.join(tmp, e.name.replace(ARCH, '')); try { unpack(p, dir); roots.push({ name: e.name, dir, at: statSync(p).mtimeMs }); } catch (err) { console.warn('skipped', e.name, err.message); } }
   else if (e.isFile() && /\.(glb|fbx|bsp)$/i.test(e.name)) loose.push(p);
-  else if (e.isDirectory()) roots.push({ name: e.name, dir: p }); }
+  else if (e.isDirectory()) roots.push({ name: e.name, dir: p, at: statSync(p).mtimeMs }); }
 // Asset packs (made here on another computer): installed as they are, nothing to convert.
 const copyTree = (from, to) => { for (const f of walk(from)) { const t = path.join(to, path.relative(from, f)); mkdirSync(path.dirname(t), { recursive: true }); writeFileSync(t, readFileSync(f)); } };
 for (const r of roots.splice(0).filter(r => { if (!existsSync(path.join(r.dir, 'infra-pack.json'))) { roots.push(r); return false; } return true; })) {
@@ -43,8 +43,10 @@ for (const r of roots.splice(0).filter(r => { if (!existsSync(path.join(r.dir, '
   console.log('  asset pack installed ←', r.name); }
 // The model files (a .glb before an .fbx of the same thing; .dae copies are not read) with the pictures beside them.
 const jobs = [], bsps = []; for (const r of roots) { const files = walk(r.dir), models = files.filter(f => /\.(glb|fbx|obj)$/i.test(f)), pics = files.filter(f => /\.(png|jpe?g)$/i.test(f));
-  for (const m of models) jobs.push({ from: r.name, file: m, pics }); for (const f of files) if (/\.bsp$/i.test(f)) bsps.push({ from: r.name, file: f }); }
-for (const f of loose) if (/\.bsp$/i.test(f)) bsps.push({ from: path.basename(f), file: f }); else jobs.push({ from: path.basename(f), file: f, pics: walk(path.dirname(f)).filter(x => /\.(png|jpe?g)$/i.test(x)) });
+  for (const m of models) jobs.push({ from: r.name, file: m, pics, at: r.at || 0 }); for (const f of files) if (/\.bsp$/i.test(f)) bsps.push({ from: r.name, file: f }); }
+for (const f of loose) if (/\.bsp$/i.test(f)) bsps.push({ from: path.basename(f), file: f }); else jobs.push({ from: path.basename(f), file: f, pics: walk(path.dirname(f)).filter(x => /\.(png|jpe?g)$/i.test(x)), at: statSync(f).mtimeMs });
+// Oldest download first: of two of the same thing (two pairs of gloves, a gun downloaded again) the newest is the one used.
+jobs.sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
 console.log(`${roots.length + loose.length} downloads in ${src}: ${jobs.length} model files, ${bsps.length} map files`);
 
 // Maps: a Counter-Strike 1.6 map file (BSP 30) or a Source one (VBSP 19–21: CS:S / CS:GO ports) named after one of the

@@ -19,7 +19,11 @@ function ladderAt(list, s, h) { const r = MOVE.radius * .6 + LADDER.reach;
 import { boxesNear } from './box-grid.js';
 const NG = [], NB = [], NC = [];   // nearby boxes (box-grid.js), one list per query site
 
-export function createMoveState(y = 0) { return { vx: 0, vz: 0, vy: 0, y, onGround: true, stamina: 0, ducked: false, landed: 0 }; }
+export function createMoveState(y = 0) { return { vx: 0, vz: 0, vy: 0, y, onGround: true, stamina: 0, ducked: false, landed: 0, velMod: 1 }; }
+// Tagging (CS: m_flVelocityModifier): a hit slows you to half your speed at once; it comes back at 0.4 a second (full
+// again 1.25 s after a hit) — running across a sightline under fire is slow.
+export const TAG = { hit: .5, recover: .4 };
+export function tag(s, to = TAG.hit) { s.velMod = Math.min(s.velMod ?? 1, to); }
 
 // Ground under (x, z): the highest box top within a step of the feet (0 = floor).
 export function groundAt(boxes, x, z, feet, r = MOVE.radius) {
@@ -80,6 +84,7 @@ export function moveStep(s, input, world, dt) {
   let wishspeed = wl > 1e-6 ? maxSpeed(input.weapon, input.scoped) : 0;
   if (s.ducked && s.onGround) wishspeed *= MOVE.duck; else if (input.walk) wishspeed *= MOVE.walk;
   if (s.stamina > 0 && s.onGround) wishspeed *= (100 - s.stamina) / 100;
+  if ((s.velMod ?? 1) < 1) { s.velMod = Math.min(1, s.velMod + TAG.recover * dt); wishspeed *= s.velMod; if (s.onGround) { const top = maxSpeed(input.weapon, input.scoped) * s.velMod, sp = Math.hypot(s.vx, s.vz); if (sp > top) { s.vx *= top / sp; s.vz *= top / sp; } } }   // tagged: slower, and no faster than that on the ground
   // Ladders.
   s.ladderOff = Math.max(0, (s.ladderOff || 0) - dt);
   const lad = world?.ladders?.length && !s.ladderOff ? ladderAt(world.ladders, s, height) : null; let climbing = false;

@@ -2,7 +2,7 @@
 // (killer · weapon · head-shot mark · victim), the match clock, the buy menu (B, CS2-style categories) and
 // bot controls. Reads the shared world (game.arena, game.combat); every change is an arena action to the host.
 import { ARENA_MAPS, MAP_LIST, mapOffered, inBuyZone as buyZoneAt } from './arena-maps.js';
-import { userMapList } from './user-maps.js';
+import { userMapList } from './user-maps.js'; import { progressText } from './load-progress.js';
 import { fx as recFx, freezeMusic } from './sound-bank.js';
 import { ARENA } from './facility-layout.js';
 import { WEAPONS, KNIVES, weaponById, ARMOR, hitDamage, defaultPistol } from './weapons-data.js';
@@ -10,7 +10,9 @@ import { userAssets, userAssetURL } from './user-assets.js';
 import { arenaArsenalOf } from './combat-logic.js';
 import { slotOf, PICK_R, ROUND_BOUND } from './arena-logic.js';
 import { weaponModel } from './weapon-models.js';
-import { NADES } from './arena-nades.js';
+import { NADES, stepNade, TOSS_DT, TOSS_GRAVITY } from './arena-nades.js';
+import { FINISHES, STICKERS, STICKER_IDS, stickerSlots, wearName, skinTitle } from './skins.js';
+import { finishSwatch } from './skin-render.js';
 import { throwSound, explosion, beep } from './arena-nades-view.js';
 import { PRICE, DEFUSE, DEFAULT_RULES } from './arena-defuse.js';
 
@@ -64,7 +66,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
 #ar-banner{position:fixed;top:22%;left:50%;transform:translateX(-50%);z-index:42;padding:10px 26px;border-radius:8px;background:#000b;color:#fff;font:900 26px system-ui;letter-spacing:.08em;text-align:center;pointer-events:none}#ar-banner[hidden]{display:none}#ar-banner.t{border:2px solid #e8a53f}#ar-banner.ct{border:2px solid #5b9be8}#ar-banner.bomb{top:16%;padding:4px 18px;background:none;border:0;color:#fff;font-weight:600;font-size:22px;letter-spacing:.02em;text-shadow:0 1px 3px #000,0 0 8px #000a}#ar-banner small{display:block;font:600 14px system-ui;letter-spacing:.04em;opacity:.85;margin-top:4px}
 #ar-prog{position:fixed;left:50%;top:58%;transform:translateX(-50%);z-index:41;width:260px;background:#000b;border-radius:6px;padding:6px 10px;color:#fff;font:700 13px system-ui;text-align:center;pointer-events:none}#ar-prog[hidden]{display:none}#ar-prog b{display:block;height:6px;background:#ffd36b;border-radius:3px;margin-top:5px}
 #ar-board>div{width:min(1040px,96vw);max-height:88vh;overflow:auto}#ar-board .vc{display:inline-block;margin-left:5px;font-size:12px;opacity:0;transition:opacity .08s}#ar-board .vc.on{opacity:1;filter:drop-shadow(0 0 4px #7dff8e)}#ar-board .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}#ar-board .top small{color:#8aa2b0}#ar-board .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media (max-width:820px){#ar-board .cols{grid-template-columns:1fr}}#ar-board .th{display:flex;align-items:baseline;gap:8px;padding:6px 8px;border-radius:6px 6px 0 0}#ar-board .t .th{background:#4a3410;color:#ffc36b}#ar-board .ct .th{background:#123050;color:#8fc4ff}#ar-board .th b{margin-left:auto;font:900 26px ui-monospace,Menlo,monospace}#ar-board .th small{opacity:.8}#ar-board td.n,#ar-board th.n{text-align:right;font-variant-numeric:tabular-nums}#ar-board tr.me td{color:#ffd36b;font-weight:800;background:#ffd36b14}#ar-board .join,#ar-lobby .join{margin-top:8px;padding:6px 10px;border:1px solid #3fb5c9;border-radius:6px;color:#bfeef7;font:600 12px system-ui}#ar-board .spec{margin-top:6px;color:#8aa2b0;font-size:12px}
-#ar-team{position:fixed;inset:0;z-index:45;display:grid;place-items:center;background:#0008}#ar-team[hidden]{display:none}#ar-team>div{width:min(640px,94vw);background:#0b1118f4;border:1px solid #3d5566;border-radius:12px;color:#e8eef2;font:600 14px system-ui;padding:16px 20px}#ar-team h2{margin:0 0 10px;font:800 20px system-ui}#ar-team h3{margin:14px 0 6px;font:700 12px system-ui;letter-spacing:.14em;color:#8aa2b0}#ar-team .teams{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}#ar-team button{background:#16222c;color:#e8eef2;border:1px solid #3d5566;border-radius:8px;padding:8px 12px;cursor:pointer;font:600 13px system-ui}#ar-team button:hover{border-color:#ffd36b}#ar-team .teams button{display:flex;flex-direction:column;gap:2px;padding:12px}#ar-team .teams .t{border-color:#e8a53f}#ar-team .teams .ct{border-color:#5b9be8}#ar-team .on{background:#2a2410;border-color:#ffd36b!important}#ar-team .note{color:#8aa2b0;font-size:12px;margin:8px 0 0}#ar-team .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}#ar-team select{background:#101a22;color:#e8eef2;border:1px solid #3d5566;border-radius:6px;padding:4px}#ar-team .primary{background:#1f5130;border-color:#7fe3a0}
+#ar-team{position:fixed;inset:0;z-index:45;display:grid;place-items:center;background:#0008}#ar-team[hidden]{display:none}#ar-team>div{width:min(640px,94vw);background:#0b1118f4;border:1px solid #3d5566;border-radius:12px;color:#e8eef2;font:600 14px system-ui;padding:16px 20px}#ar-team h2{margin:0 0 10px;font:800 20px system-ui}#ar-team .finishes{flex-wrap:wrap;gap:6px}#ar-team .finishes button{display:grid;gap:2px;padding:4px;width:76px;font-size:10px}#ar-team .finishes button.on{outline:2px solid #ffd84a}#ar-team .finishes canvas{width:64px;height:28px;border-radius:3px}#ar-team .sticker{flex-wrap:wrap;gap:6px;font-size:12px}#ar-team .sticker input{width:70px}#ar-team h3{margin:14px 0 6px;font:700 12px system-ui;letter-spacing:.14em;color:#8aa2b0}#ar-team .teams{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}#ar-team button{background:#16222c;color:#e8eef2;border:1px solid #3d5566;border-radius:8px;padding:8px 12px;cursor:pointer;font:600 13px system-ui}#ar-team button:hover{border-color:#ffd36b}#ar-team .teams button{display:flex;flex-direction:column;gap:2px;padding:12px}#ar-team .teams .t{border-color:#e8a53f}#ar-team .teams .ct{border-color:#5b9be8}#ar-team .on{background:#2a2410;border-color:#ffd36b!important}#ar-team .note{color:#8aa2b0;font-size:12px;margin:8px 0 0}#ar-team .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}#ar-team select{background:#101a22;color:#e8eef2;border:1px solid #3d5566;border-radius:6px;padding:4px}#ar-team .primary{background:#1f5130;border-color:#7fe3a0}
 #ar-lobby{position:fixed;left:16px;top:50%;transform:translateY(-50%);z-index:38;width:min(300px,40vw);background:#0b1118e6;border:1px solid #3fb5c9;border-radius:10px;padding:10px 12px;color:#e8eef2;font:600 13px system-ui;pointer-events:none}#ar-lobby[hidden]{display:none}#ar-lobby .clock{font:800 22px ui-monospace,Menlo,monospace;margin:4px 0;color:#7fe3f2}#ar-lobby .warn{color:#ffb070;font-size:12px;margin:4px 0}#ar-lobby ul{list-style:none;margin:6px 0;padding:0}#ar-lobby li{display:flex;justify-content:space-between;gap:6px;padding:3px 0;border-top:1px solid #ffffff12}#ar-lobby li.t span{color:#ffc36b}#ar-lobby li.ct span{color:#8fc4ff}#ar-lobby small{color:#8aa2b0}
 #ar-look{position:fixed;left:50%;top:calc(50% + 46px);transform:translateX(-50%);z-index:38;background:#000a;border-radius:6px;padding:4px 12px;color:#fff;font:700 13px system-ui;pointer-events:none}#ar-look[hidden]{display:none}
 #ar-over{position:fixed;top:30%;left:50%;transform:translateX(-50%);z-index:42;background:#000c;border:2px solid #ffd36b;border-radius:10px;padding:16px 30px;color:#fff;font:800 26px system-ui;text-align:center}#ar-over[hidden]{display:none}#ar-over small{display:block;font:600 14px system-ui;margin-top:6px;opacity:.8}`;
@@ -95,7 +97,10 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     const step = now => { if (id !== revealing) return; const d = now - last; last = now; frames++; if (frames > 1) minD = Math.min(minD, d); smooth = frames > 1 && d < Math.max(24, minD * 1.5) ? smooth + 1 : 0;
       if (!loading && frames >= 4 && (smooth >= 6 || now - t0 > 2500)) $('ar-load').hidden = true; else requestAnimationFrame(step); };
     requestAnimationFrame(step); }
-  function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; r.catch(() => {}).finally(() => { loading = false; revealWhenSmooth(); }); } return; } enterNow(); }
+  // While the files come in, the card says which one and how far (a CS2 map from the host over Wi-Fi takes a while).
+  function showProgress() { const small = $('ar-load').querySelector('small'); let last = '';
+    const tick = () => { if (!loading) { small.textContent = 'Loading…'; return; } const t = progressText(); if (t !== last) small.textContent = last = t; setTimeout(tick, 250); }; tick(); }
+  function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; showProgress(); r.catch(() => {}).finally(() => { loading = false; revealWhenSmooth(); }); } return; } enterNow(); }
   function enterNow() { performance.mark?.('arena:enter'); const A = g().arena;
     // The map's first frames (GPU uploads, first shadow pass) are drawn behind the loading card; play starts warm.
     $('ar-load').hidden = false; revealWhenSmooth(); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => ['pistol', 'deagle', 'cannon'].includes(id)) || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
@@ -212,6 +217,35 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   // M: team menu (Terrorists / Counter-Terrorists / Spectator) and, for the host, match settings: map, bots, difficulty.
   // In the lobby: ready, and the host's Start now. Opens with M, closes with M or Escape.
   let teamOpen = false;
+  // Skins (skins.js): pick a weapon, its finish, wear, pattern seed, StatTrak™, a name tag and stickers (where, how big,
+  // turned, worn); Apply sends it to the host, which checks it. The draft stays while the menu redraws.
+  let skinDraft = null;
+  const SKIN_GUNS = () => WEAPONS.filter(w => !['nade', 'bomb', 'knife'].includes(w.kind)).map(w => [w.id, w.name]).concat([['knife', 'Knife']]);
+  function draftFor(id) { const cur = g().arena?.skins?.[me()]?.[id]; return { weapon: id, finish: cur?.finish || 'none', wear: cur?.wear ?? .01, seed: cur?.seed ?? 1, st: !!cur?.st, name: cur?.name || '', stickers: (cur?.stickers || []).map(x => ({ ...x })) }; }
+  function skinsSection() {
+    if (!skinDraft) { const cid = current?.(); skinDraft = draftFor(cid && SKIN_GUNS().some(([i]) => i === cid) ? cid : 'ak'); }
+    const d = skinDraft, w = weaponById(d.weapon), kind = w?.kind || 'rifle', max = stickerSlots(kind), have = g().arena?.skins?.[me()]?.[d.weapon];
+    return `<h3>SKINS</h3><div class="row"><label>Weapon <select id="sk-gun">${SKIN_GUNS().map(([i, n]) => `<option value="${i}"${i === d.weapon ? ' selected' : ''}>${esc(n)}${g().arena?.skins?.[me()]?.[i] ? ' ✓' : ''}</option>`).join('')}</select></label><small class="note">${esc(have ? skinTitle(w?.name || d.weapon, have) + (have.st ? ' · ' + (have.kills | 0) + ' kills' : '') : 'Default')}</small></div>
+      <div class="row finishes">${Object.entries(FINISHES).map(([id, f]) => `<button data-sk-finish="${id}" title="${esc(f.name)}${f.rarity ? ' · ' + f.rarity : ''}"${d.finish === id ? ' class="on"' : ''}><canvas data-sk-swatch="${id}" width="64" height="28"></canvas><small>${esc(f.name)}</small></button>`).join('')}</div>
+      <div class="row"><label>Wear <input id="sk-wear" type="range" min="0" max="1" step="0.001" value="${d.wear}"> <b id="sk-wear-t">${d.wear.toFixed(3)} · ${wearName(d.wear)}</b></label><label>Pattern seed <input id="sk-seed" type="number" min="1" max="1000" step="1" value="${d.seed}"></label><button data-sk-dice title="a random seed">🎲</button></div>
+      <div class="row"><label><input id="sk-st" type="checkbox"${d.st ? ' checked' : ''}> StatTrak™ (counts your kills with it)</label><label>Name tag <input id="sk-name" maxlength="20" value="${esc(d.name)}" placeholder="none"></label></div>
+      ${max ? `<div class="row"><small class="note">Stickers (${d.stickers.length}/${max}) — anywhere on the gun: position, size, turn, wear</small>${d.stickers.length < max ? `<select id="sk-add"><option value="">＋ Add a sticker…</option>${STICKER_IDS.map(i => `<option value="${i}">${esc(STICKERS[i].name)}</option>`).join('')}</select>` : ''}</div>
+      ${d.stickers.map((x, i) => `<div class="row sticker"><b>${esc(STICKERS[x.id]?.name || x.id)}</b>${[['x', 'Across', 0, 1, .01], ['y', 'Along', 0, 1, .01], ['scale', 'Size', .4, 2.5, .05], ['rot', 'Turn', -180, 180, 5], ['wear', 'Wear', 0, 1, .05]].map(([k, t, lo, hi, st]) => `<label>${t} <input data-sk-st="${i}" data-k="${k}" type="range" min="${lo}" max="${hi}" step="${st}" value="${x[k]}"></label>`).join('')}<button data-sk-del="${i}">✕</button></div>`).join('')}` : '<p class="note">Knives take no stickers.</p>'}
+      <div class="row"><button data-sk-apply class="primary">Apply skin</button><button data-sk-reset>Default look</button></div>`; }
+  function skinsWire(R, act) { const d = skinDraft; if (!d) return;
+    R.querySelectorAll('[data-sk-swatch]').forEach(c => { const sw = finishSwatch(c.dataset.skSwatch, d.seed, 64, 28); if (sw) c.getContext('2d').drawImage(sw, 0, 0); });
+    R.querySelector('#sk-gun')?.addEventListener('change', e => { skinDraft = draftFor(e.target.value); drawTeam(); });
+    R.querySelectorAll('[data-sk-finish]').forEach(b => b.onclick = () => { d.finish = b.dataset.skFinish; drawTeam(); });
+    R.querySelector('#sk-wear')?.addEventListener('input', e => { d.wear = +e.target.value; R.querySelector('#sk-wear-t').textContent = d.wear.toFixed(3) + ' · ' + wearName(d.wear); });
+    R.querySelector('#sk-seed')?.addEventListener('change', e => { d.seed = Math.max(1, Math.min(1000, Math.round(+e.target.value) || 1)); drawTeam(); });
+    R.querySelector('[data-sk-dice]')?.addEventListener('click', () => { d.seed = 1 + Math.floor(Math.random() * 1000); drawTeam(); });
+    R.querySelector('#sk-st')?.addEventListener('change', e => { d.st = e.target.checked; });
+    R.querySelector('#sk-name')?.addEventListener('input', e => { d.name = e.target.value; });
+    R.querySelector('#sk-add')?.addEventListener('change', e => { const id = e.target.value; if (!id) return; const used = new Set(d.stickers.map(x => x.slot)); let slot = 0; while (used.has(slot)) slot++; d.stickers.push({ id, slot, x: .3 + .1 * d.stickers.length, y: .5, scale: 1, rot: 0, wear: 0 }); drawTeam(); });
+    R.querySelectorAll('[data-sk-st]').forEach(inp => inp.addEventListener('input', () => { const x = d.stickers[+inp.dataset.skSt]; if (x) x[inp.dataset.k] = +inp.value; }));
+    R.querySelectorAll('[data-sk-del]').forEach(b => b.onclick = () => { d.stickers.splice(+b.dataset.skDel, 1); drawTeam(); });
+    R.querySelector('[data-sk-apply]')?.addEventListener('click', () => act({ type: 'skin', weapon: d.weapon, skin: { finish: d.finish, wear: d.wear, seed: d.seed, st: d.st, name: d.name, stickers: d.stickers } }));
+    R.querySelector('[data-sk-reset]')?.addEventListener('click', () => act({ type: 'skin', weapon: d.weapon, clear: true }, () => { skinDraft = draftFor(d.weapon); })); }
   function teamMenu(open = !teamOpen) {
     teamOpen = !!open && inArena(); $('ar-team').hidden = !teamOpen; if (!teamOpen) { onBuyClose(); return; } document.exitPointerLock?.(); buy(false); drawTeam();
   }
@@ -222,6 +256,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
         const darja = /^darja$/.test(me()), others = darja ? names().filter(n => key(n) !== me() && !/^BOT /.test(n)) : [], all = [['default', 'Default'], ['butterfly', '★ Butterfly Knife'], ['stiletto', '★ Stiletto Knife'], ['m9', '★ M9 Bayonet'], ['karambit', '★ Karambit | Ruby']];
         return `<h3>KNIFE</h3><div class="row knives">${opts.map(([id, t]) => `<button data-knife="${id}"${mine === id ? ' class="on"' : ''}>${t}</button>`).join('')}</div>`
           + (others.length ? `<h3>DARJA · EQUIP A KNIFE ON A PLAYER</h3><div class="row"><label>Player <select id="ar-knife-for">${others.map(n => `<option>${esc(n)}</option>`).join('')}</select></label></div><div class="row knives">${all.map(([id, t]) => `<button data-knife-give="${id}">${t}</button>`).join('')}</div>` : ''); })()}
+      ${skinsSection()}
       ${L ? `<div class="row"><button data-ready="${L.ready[me()] ? 0 : 1}">${L.ready[me()] ? '✓ Ready (click to undo)' : 'Ready'}</button>${host ? '<button data-start-now class="primary">End warmup now</button>' : ''}</div>` : ''}
       ${host ? `<h3>HOST · MATCH SETTINGS</h3><div class="row"><label>Map <select id="ar-mapsel">${MAP_LIST.filter(m => mapOffered(m, userMapList().map(u => u.id))).map(({ id, ...m }) => `<option value="${id}"${id === A.map ? ' selected' : ''}>${esc(m.name)} · ${m.kind === 'defuse' ? 'Defuse' : 'Deathmatch'}</option>`).join('')}</select></label><button data-map-go>Change map</button></div>
         <div class="row"><label>Bots <select id="ar-botn">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(n => `<option${n === A.bots.length ? ' selected' : ''}>${n}</option>`).join('')}</select></label><label>Difficulty <select id="ar-botd">${['easy', 'normal', 'hard'].map(x => `<option value="${x}"${x === A.difficulty ? ' selected' : ''}>${x[0].toUpperCase() + x.slice(1)}</option>`).join('')}</select></label><button data-bots-go>Apply</button></div>
@@ -239,6 +274,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     R.querySelectorAll('[data-team]').forEach(b => b.onclick = () => act({ type: 'team', team: b.dataset.team }));
     R.querySelectorAll('[data-knife]').forEach(b => b.onclick = () => act({ type: 'knife', knife: b.dataset.knife }));
     R.querySelectorAll('[data-knife-give]').forEach(b => b.onclick = () => act({ type: 'knife', knife: b.dataset.knifeGive, for: R.querySelector('#ar-knife-for').value }));
+    skinsWire(R, act);
     R.querySelector('[data-ready]')?.addEventListener('click', e => act({ type: 'ready', ready: e.currentTarget.dataset.ready === '1' }));
     R.querySelector('[data-start-now]')?.addEventListener('click', () => act({ type: 'start-match' }, r => { if (!r?.error) teamMenu(false); }));
     R.querySelector('[data-map-go]')?.addEventListener('click', () => { const id = R.querySelector('#ar-mapsel').value; if (id === A.map && !confirm('Restart ' + ARENA_MAPS[id].name + '?')) return; act({ type: 'change-map', map: id }, r => { if (!r?.error) teamMenu(false); }); });
@@ -283,8 +319,17 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     const list = g().combat?.ground || [], k = (g().combat?.groundSeq || 0) * 1000 + list.length; if (k === groundKey) return; groundKey = k;
     const live = new Set(list.map(it => it.id));
     for (const [id, m] of groundMeshes) if (!live.has(id)) { m.removeFromParent(); groundMeshes.delete(id); }
-    for (const it of list) if (!groundMeshes.has(it.id)) { const m = weaponModel(it.item, 1); m.userData.ground = true; m.rotation.set(0, it.yaw, Math.PI / 2); m.position.set(it.x, it.y + .35, it.z); scene.group.add(m); groundMeshes.set(it.id, m); }
+    for (const it of list) if (!groundMeshes.has(it.id)) { const m = weaponModel(it.item, 1); m.userData.ground = true; m.rotation.set(0, it.yaw, Math.PI / 2); m.position.set(it.x, it.y + .35, it.z); scene.group.add(m); groundMeshes.set(it.id, m);
+      // Tossed (a drop, a body's gun): it flies there first — the host's own flight replayed, landing where it lies.
+      if (it.fly && Date.now() - it.at < it.fly.ms + 600) { const f = it.fly; flying.push({ m, it, g: { x: f.x, y: f.y, z: f.z, vx: f.vx, vy: f.vy, vz: f.vz, still: 0, grav: TOSS_GRAVITY }, t: 0, run: 0, landed: false }); m.position.set(f.x, f.y, f.z); } }
   }
+  // Guns in the air (tossed): stepped like the host stepped them, spinning as they go; a clatter where they land.
+  const flying = []; let flyAt = 0;
+  function flyGround() { const t = performance.now(), dt = flyAt ? Math.min(.1, (t - flyAt) / 1000) : 0; flyAt = t; for (let i = flying.length - 1; i >= 0; i--) { const F = flying[i]; F.run += Math.min(dt, .1);
+      while (F.t < F.run && !F.g.rest && F.t < F.it.fly.ms / 1000) { const hit = stepNade(F.g, scene.boxes, scene.bounds, TOSS_DT); F.t += TOSS_DT; if (hit && !F.landed) { F.landed = true; recFx('bounce', { at: { x: F.g.x, y: F.g.y, z: F.g.z }, volume: .5, rate: .7, kind: 'effect' }); } }
+      const done = F.g.rest || F.t >= F.it.fly.ms / 1000 || !F.m.parent;
+      if (done) { F.m.position.set(F.it.x, F.it.y + .35, F.it.z); F.m.rotation.set(0, F.it.yaw, Math.PI / 2); flying.splice(i, 1); continue; }
+      F.m.position.set(F.g.x, F.g.y, F.g.z); if (!F.landed) { F.m.rotation.x += dt * 9; F.m.rotation.y += dt * 4; } } }
   const nearest = (r, filter = () => true) => { const at = where(); if (!at) return null; let best = null, bd = r; for (const it of g().combat?.ground || []) { const d = Math.hypot(it.x - at.x, it.z - at.z); if (d < bd && filter(it)) { bd = d; best = it; } } return best; };
   // Walking over an item whose slot is empty picks it up (checked 6×/s).
   // Not right after a drop (as CS2: the gun you let go is not taken straight back — dropped by a wall it lands at your feet).
@@ -327,7 +372,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     if (d.n !== lastN) { lastN = d.n; if (r.phase === 'freeze') show(`ROUND ${d.n}<small>${myTeam() === 'ct' ? 'Counter-Terrorist · defend A and B' : 'Terrorist · plant the bomb on A or B'}${d.bomb?.carrier === me() ? ' · you have the bomb (5)' : ''}</small>`, myTeam() || '', 3500); }
     if (r.phase !== lastPhase) { if (r.phase === 'planted') show('Bomb has been planted', 'bomb', 3500);   // (CS2: just that — no site, no red box)
       if (r.phase === 'over') show((r.winner === 't' ? 'TERRORISTS WIN' : 'COUNTER-TERRORISTS WIN') + `<small>${{ elim: 'eliminated', bomb: 'target bombed', defuse: 'bomb defused', time: 'time ran out' }[r.reason]} · ${d.score.t} – ${d.score.ct}</small>`, r.winner, DEFUSE.overMs);
-      if (r.phase === 'over' && r.reason === 'bomb' && r.planted) explosion(scene.group, r.planted, 4); lastPhase = r.phase; }
+      if (r.phase === 'over' && r.reason === 'bomb' && r.planted) explosion(scene.group, r.planted, 4); if ((r.phase === 'freeze' || r.phase === 'warmup') && lastPhase) scene.physReset?.(); lastPhase = r.phase; }   // (a new round: the map's pots and cans back in place)
     if (d.matchOver) show(`MATCH OVER · ${!d.matchOver.winner ? 'DRAW' : d.matchOver.winner === 't' ? 'TERRORISTS WIN' : 'COUNTER-TERRORISTS WIN'}<small>${d.score.t} – ${d.score.ct} · new match soon</small>`, d.matchOver.winner, 2000);
     if (now > bannerUntil) $('ar-banner').hidden = true;
     const act = r.plant?.by === me() ? ['Planting…', (now - r.plant.start) / DEFUSE.plantMs] : r.defuse?.by === me() ? ['Defusing…', (now - r.defuse.start) / r.defuse.ms] : null;
@@ -367,7 +412,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
       // Something outside the arena moved us back to the hall (joining, a menu): return to a spawn point.
       const at = where(); if (at && !scene.inArena(at.z)) { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); }
       const s = g().combat?.spawnTo?.[me()]; if (s && s.at !== spawnAt) { spawnAt = s.at; goSpawn(s); const own = arenaArsenalOf(g(), name()); equip(own[0]); notify('Respawned'); }   // back with your primary in hand (CS2)
-      drawGround(); if (performance.now() - pickAt > 160) { pickAt = performance.now(); autoPick(); lookPrompt(); if (buyOpen && nearby().map(n => n.it.id).join() !== lastNear) { lastNear = nearby().map(n => n.it.id).join(); buy(true); } }
+      drawGround(); flyGround(); if (performance.now() - pickAt > 160) { pickAt = performance.now(); autoPick(); lookPrompt(); if (buyOpen && nearby().map(n => n.it.id).join() !== lastNear) { lastNear = nearby().map(n => n.it.id).join(); buy(true); } }
       bombView(D()?.round?.phase === 'planted' ? D().round.planted : null);
       const ph = D() ? D().n + ':' + D().round?.phase : '';   // round events (planted, round over…) show at once
       if (performance.now() - hudAt > 200 || ph !== hudPhase) { hudAt = performance.now(); hudPhase = ph; trackBuys(); hud(); lobbyPanel(); if (teamOpen && performance.now() - (teamAt || 0) > 1000) { teamAt = performance.now(); } }

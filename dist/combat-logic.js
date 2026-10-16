@@ -90,7 +90,7 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + shown + ' HP', dmg: shown, hp, zone, head: zone === 'head' };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name, wid: wpn.id, head: zone === 'head', at: now };
   const teamKill = c.d && c.d.teams[me] && c.d.teams[me] === c.d.teams[tk];
-  if (me !== tk && !teamKill) c.kills[me] = (c.kills[me] || 0) + 1; c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
+  if (me !== tk && !teamKill) { c.kills[me] = (c.kills[me] || 0) + 1; const sk = game.arena?.skins?.[me]?.[wpn.id]; if (sk?.st) sk.kills = (sk.kills | 0) + 1; }   /* (StatTrak™: the weapon counts its own kills) */ c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
   let assist = null; for (const [a, n] of Object.entries(c.dmg?.[tk] || {})) if (a !== me && a !== tk && n >= 41 && !(c.d && c.d.teams[a] === c.d.teams[tk])) { (c.assists ??= {})[a] = (c.assists[a] || 0) + 1; assist = c.names?.[a] || a; }
   if (c.dmg) delete c.dmg[tk];
   c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head', assist, ...(how ? { how } : {}) }); c.feed.length = Math.min(c.feed.length, 6);

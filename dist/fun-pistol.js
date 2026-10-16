@@ -56,7 +56,8 @@ function bang(volume = .5, pitch = 1, at = null) {
 const flashTexture = (() => { try { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, '#fffbe8'); gr.addColorStop(.3, '#ffd36b'); gr.addColorStop(.7, 'rgba(255,120,30,.35)'); gr.addColorStop(1, 'rgba(255,90,0,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); } catch { return null; } })();
 
 // scene effects shared by the local player and remote players' shots.
-export function createPistolEffects(scene, { pickables = () => [] } = {}) {
+// onShot(origin, dir): each shot's ray (another player's, replayed here: a smoke's bullet tunnels).
+export function createPistolEffects(scene, { pickables = () => [], onShot = null } = {}) {
   const pellets = [], sparks = [], marks = [], flashes = [], ray = new THREE.Raycaster(), floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), tmp = new THREE.Vector3();
   const pelletGeo = new THREE.CylinderGeometry(.02, .02, .9, 5).rotateX(Math.PI / 2), pelletMat = new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: .95 });
   const sparkGeo = new THREE.BoxGeometry(.05, .05, .05), sparkMat = new THREE.MeshBasicMaterial({ color: 0xffc35a }), markGeo = new THREE.CircleGeometry(.09, 10), markMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: .8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
@@ -82,6 +83,7 @@ export function createPistolEffects(scene, { pickables = () => [] } = {}) {
   // One shot: `count` pellets in a small cone from `origin` along `dir`.
   function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null, at = null, id = null } = {}) {
     flash(origin, dir, flashSize); if (!(id && shotSound(id, { at, volume: .8 }))) bang(volume, pitch, at);   // recorded shot (sound-bank.js), else synthesized
+    if (onShot) { if (dirs) for (const d of dirs) onShot(origin, d); else onShot(origin, dir); }
     if (dirs) { for (const d of dirs) { const hit = hitPoint(origin, d), mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(origin.clone().add(d)); mesh.userData.gd = true; scene.add(mesh); pellets.push({ mesh, from: origin.clone(), dir: d, dist: hit.point.distanceTo(origin), travelled: 0, hit }); } return; }
     for (let i = 0; i < count; i++) {
       const d = dir.clone().add(new THREE.Vector3((Math.random() - .5) * 2, (Math.random() - .5) * 2, (Math.random() - .5) * 2).multiplyScalar(spread)).normalize();

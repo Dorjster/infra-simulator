@@ -6,6 +6,8 @@
 // legs and arms by two-bone IK (feet planted, knees bending as the body crouches; both hands on the gun), the spine
 // leaning in. Hit boxes come from the pose, never from the model: the agent stands at its true size (CS2's 72 u, the
 // capsule's height; its head where the head zone is, weapons-data.js) and drops as the capsule does crouched. Allocation-free per frame.
+import { CASTER } from './sun-shadows.js';
+import { skinObject, unskinObject } from './skin-render.js';
 import * as THREE from './three.module.js';
 import { GLTFLoader } from './post/GLTFLoader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
@@ -103,6 +105,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   const T = templates[team]; if (!T) return null;
   const g = new THREE.Group(), fallG = new THREE.Group(), face = new THREE.Group(), model = new THREE.Group(), body = cloneSkinned(T.scene);
   g.add(fallG); fallG.add(face); face.rotation.y = Math.PI; face.add(model); model.scale.setScalar(T.k); model.add(body);   // the avatar convention: facing −z in g
+  body.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });   // (casts its shadow on a baked CS2 map: sun-shadows.js)
   const B = {}; body.traverse(o => { const n = o.name.toLowerCase(); if (o.isBone && POSED.includes(n) && !B[n]) B[n] = o; });
   const own = [], rim = { value: rimFor(1) }; if (lightAt) body.traverse(o => { if (o.isMesh) { o.material = [].concat(o.material).map(m => { const c = addRim(m.clone()); c.userData = { rim }; own.push(c); return c; }); if (o.material.length === 1) o.material = o.material[0]; } });
   let shade = 1, shadeAt = 0; const feetW = new THREE.Vector3();
@@ -117,9 +120,9 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   const dR = new THREE.Vector3(), nR = new THREE.Vector3(), dL = new THREE.Vector3(), nL = new THREE.Vector3(), w1 = new THREE.Vector3(), w2 = new THREE.Vector3(), qm = new THREE.Quaternion();
   const shR = new THREE.Vector3(), shL = new THREE.Vector3(), hR = new THREE.Vector3(), hL = new THREE.Vector3(), poleW = new THREE.Vector3(), fwdW = new THREE.Vector3(), rightW = new THREE.Vector3(), upW = new THREE.Vector3(), footW = new THREE.Vector3();
   function setWeapon(id) {
-    id = id ? knifeFor(id, team) : null; if (id === gunId) return; gunId = id; if (gun) { gun.removeFromParent(); gun = null; } if (!id) { kind = 'none'; A?.setGun(null, 'none'); return; }
+    id = id ? knifeFor(id, team) : null; if (id === gunId) return; gunId = id; if (gun) { unskinObject(gun); gun.removeFromParent(); gun = null; } if (!id) { kind = 'none'; A?.setGun(null, 'none'); return; }
     const w = weaponById(id === 'knife-t' ? 'knife' : id); kind = /knife|karambit/.test(id) ? 'knife' : ['he', 'flash', 'smoke', 'molotov', 'c4', 'incgrenade', 'decoy'].includes(id) ? 'item' : w?.kind === 'pistol' ? 'pistol' : 'rifle';
-    gun = weaponModel(id, 1); gun.traverse(o => { if (o.isMesh) o.castShadow = true; }); (A ? A.carry : holder).add(gun); A?.setGun(id, kind);
+    gun = weaponModel(id, 1); gun.traverse(o => { if (o.isMesh) { o.castShadow = true; o.layers.enable(CASTER); } }); (A ? A.carry : holder).add(gun); A?.setGun(id, kind); if (skinNow) skinObject(gun, skinNow);
     { const box = new THREE.Box3().setFromObject(gun); stock = Math.max(.12, box.max.z / T.k); reachFwd = Math.max(.1, -box.min.z / T.k); }   // grip → butt and grip → muzzle, metres
   }
   function update(dt, s = {}) {
@@ -182,7 +185,9 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     for (const [b, thumb, seg, left] of fingers) { curlQ.setFromAxisAngle(curlAx, CURL.sign * (thumb ? CURL.thumb : CURL.fingers)[seg] * (left ? gripL : gripR)); b.quaternion.multiply(curlQ); }
   }
   function dispose() { g.removeFromParent(); if (gun) gun.removeFromParent(); A?.mixer.stopAllAction(); for (const m of own) m.dispose(); }
-  return { g, team, update, setWeapon, dispose };
+  // Their skin on the gun in their hands (skins.js): set as the room's state changes; drawn by skin-render.js.
+  let skinNow = null; function setSkin(sk) { if (sk === skinNow) return; skinNow = sk || null; if (gun) skinObject(gun, skinNow); }
+  return { g, team, update, setWeapon, setSkin, dispose };
 }
 // The animated agent (CS2's clips; see CLIPS): legs from the walking / running / crouching clips of the gun's class
 // (rifle, pistol, knife), blended by the speed and the direction moved relative to the facing (CS2's eight
@@ -192,7 +197,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
 const DIR8 = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'], U = 2.54 / 16.5;
 const WALK = 130 * U, RUN = 250 * U, CROUCH = 85 * U;   // CS2's speeds (u/s) in game units: the clips' own pace
 const NADE_IDS = new Set(['he', 'flash', 'smoke', 'molotov', 'incgrenade', 'decoy']);
-const fq = new THREE.Quaternion(), fv = new THREE.Vector3();
+const fq = new THREE.Quaternion(), fv = new THREE.Vector3(), aq = new THREE.Quaternion(), aq2 = new THREE.Quaternion();
 function animator(body, T) {
   const mixer = new THREE.AnimationMixer(body), acts = new Map();
   const get = (name, part) => { const c = CLIPS.get(name); if (!c) return null; const k = name + '|' + part; let a = acts.get(k); if (!a) { a = mixer.clipAction(c[part]); a.enabled = true; a.setEffectiveWeight(0); a.play(); acts.set(k, a); } return a; };
@@ -201,12 +206,34 @@ function animator(body, T) {
   const all = Object.values(loco).flatMap(L => [L.idle, L.idleC, ...L.walk, ...L.run, ...L.crouch]).filter(Boolean);
   let phase = 0, hold = null, holdC = null, one = null, oneT = 0, oneFull = null, lastAct = null, lastShot = 0, gid = null, cls = 'rifle', cr = 0;
   const wpn = body.getObjectByName('wpn'), carry = new THREE.Group(); if (wpn) { wpn.add(carry); carry.scale.setScalar(1 / T.k); carry.rotation.set(0, Math.PI / 2, 0); }   // the gun in game units, muzzle → +z, along the bone's x
+  // The chest on the hips as the gun's hold has it (CS2 points the gun where the player looks). The legs come from the
+  // walk clips and the chest, arms and gun from the gun's hold — a full pose CS2 authored over its own turned hips (a
+  // rifle's bladed stance); laid over the walk clips' hips the rifle pointed back over the shoulder. So each frame the
+  // chest (spine_1, the head, arms and gun with it) is set as the hold has it relative to its own hips and lowest spine:
+  // spine_1 ← (hips · spine_0 now)⁻¹ · (hips · spine_0 in the hold) · spine_1. The hold's pair is read once per gun.
+  const pelvis = body.getObjectByName('pelvis'), spine0 = body.getObjectByName('spine_0'), spine = body.getObjectByName('spine_1');
+  const holdBase = new THREE.Quaternion(), holdBaseC = new THREE.Quaternion(), s1clip = new THREE.Quaternion(); let baseOn = false, s1Kept = false;
+  // The gun in the right hand. CS2's weapon bone (wpnPivot → wpn) hangs off the root, put by the clips where the hold's
+  // own hips and chest put the hands; under the walk and run clips' hips (they lean, bob and sway) and the chest set as
+  // above, the hands moved off it — other players saw the gun float beside the hands (5 units off at a run). So the pivot
+  // rides the right hand: each frame where the gun's hold has it relative to that hand, read once per gun from the hold's
+  // first frame over the whole chain (hips, spine, shoulder, arm, hand: each joint's own track there, else its rest).
+  const handR = body.getObjectByName('hand_R'), pivot = body.getObjectByName('wpnPivot'), chain = []; for (let o = handR; o && pivot && o !== pivot.parent; o = o.parent) chain.unshift(o);
+  const restOf = new Map(); for (const b of [...chain, pivot]) if (b) restOf.set(b, [b.position.clone(), b.quaternion.clone(), b.scale.clone()]);
+  const offP = new THREE.Matrix4(), offPC = new THREE.Matrix4(), hm = new THREE.Matrix4(), tm = new THREE.Matrix4(), pvClipP = new THREE.Vector3(), pvClipQ = new THREE.Quaternion(), pvClipS = new THREE.Vector3(1, 1, 1); let offOn = false;
+  const fk = (clip, bones, out) => { out.identity(); for (const b of bones) { const [p, q, sc] = restOf.get(b), tp = clip.tracks.find(t => t.name === b.name + '.position'), tq = clip.tracks.find(t => t.name === b.name + '.quaternion');
+    fv.copy(p); if (tp) fv.fromArray(tp.values, 0); fq.copy(q); if (tq) fq.fromArray(tq.values, 0); out.multiply(tm.compose(fv, fq, sc)); } return out; };
+  const offOf = (name, out) => { const c = CLIPS.get(name)?.full; if (!c || !handR || !pivot || chain[0]?.parent !== pivot.parent) return false; fk(c, chain, hm); fk(c, [pivot], out).premultiply(hm.invert()); return true; };
+  const poseOf = (name, out) => { const c = CLIPS.get(name)?.full; if (!c) return false; const tp = c.tracks.find(t => t.name === 'pelvis.quaternion'), t0 = c.tracks.find(t => t.name === 'spine_0.quaternion');
+    if (!tp || !t0) return false; out.fromArray(tp.values, 0).multiply(aq.fromArray(t0.values, 0)); return true; };
   function setGun(id, kind) {   // which clips: the gun's own (ak, m4, …), the knife's, a grenade's, the bomb's
     gid = !id ? null : /knife|karambit/.test(id) ? 'knife' : NADE_IDS.has(id) ? 'nade' : id === 'c4' ? 'c4' : id;
     cls = kind === 'pistol' ? 'pistol' : kind === 'rifle' ? 'rifle' : 'knife';
     const h = gid && (CLIPS.has(gid + '/hold') ? gid : cls === 'rifle' ? 'ak' : cls === 'pistol' ? 'pistol' : 'knife');
     if (hold) hold.setEffectiveWeight(0); if (holdC) holdC.setEffectiveWeight(0);
-    hold = h ? get(h + '/hold', 'upper') : get(cls + '/idle', 'upper'); holdC = h ? get(h + '/hold_crouch', 'upper') || hold : get(cls + '/idle_crouch', 'upper') || hold; }
+    hold = h ? get(h + '/hold', 'upper') : get(cls + '/idle', 'upper'); holdC = h ? get(h + '/hold_crouch', 'upper') || hold : get(cls + '/idle_crouch', 'upper') || hold;
+    baseOn = !!h && poseOf(h + '/hold', holdBase); if (baseOn && !poseOf(h + '/hold_crouch', holdBaseC)) holdBaseC.copy(holdBase);
+    offOn = !!h && offOf(h + '/hold', offP); if (offOn && !offOf(h + '/hold_crouch', offPC)) offPC.copy(offP); }
   function play(name, full = false) { const a = get(name, 'upper'); if (!a) return; if (one && one !== a) one.setEffectiveWeight(0); one = a; a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.timeScale = 1; oneT = 0;
     if (oneFull) oneFull.setEffectiveWeight(0); oneFull = full ? get(name, 'lower') : null; if (oneFull) { oneFull.reset(); oneFull.setLoop(THREE.LoopOnce, 1); oneFull.clampWhenFinished = true; oneFull.timeScale = 1; } }
   function update(dt, s, g) {
@@ -232,7 +259,12 @@ function animator(body, T) {
     set(L.walk, lw * moving * (1 - cr) * (1 - run)); set(L.run, lw * moving * (1 - cr) * run); set(L.crouch, lw * moving * cr);
     // Upper body: the gun's hold (crouched: its crouched hold), under whatever plays once.
     if (hold) hold.setEffectiveWeight((1 - ow) * (holdC === hold ? 1 : 1 - cr)); if (holdC && holdC !== hold) holdC.setEffectiveWeight((1 - ow) * cr);
-    mixer.update(s.dead ? 0 : dt);
+    // (three.js writes a bone only when its blended value changes: a one-frame hold leaves spine_1 as last set — with last
+    // frame's turn on it, which then built up every frame, the chest spinning round as the hips moved. Its clip value first.)
+    if (s1Kept) { spine.quaternion.copy(s1clip); if (pivot) { pivot.position.copy(pvClipP); pivot.quaternion.copy(pvClipQ); pivot.scale.copy(pvClipS); } }   // (the gun's pivot too: set from the hand below)
+    mixer.update(s.dead ? 0 : dt); if (spine) { s1clip.copy(spine.quaternion); s1Kept = true; if (pivot) { pvClipP.copy(pivot.position); pvClipQ.copy(pivot.quaternion); pvClipS.copy(pivot.scale); } }
+    if (baseOn && pelvis && spine0 && spine && !s.dead && fw < .5) { aq.copy(pelvis.quaternion).multiply(spine0.quaternion).invert(); aq2.copy(cr > .5 ? holdBaseC : holdBase); spine.quaternion.premultiply(aq.multiply(aq2)); }   // (the chest as the hold has it on its hips; not while a plant / defuse moves the whole body)
+    if (offOn && !s.dead && fw < .5) { hm.identity(); for (const b of chain) hm.multiply(tm.compose(b.position, b.quaternion, b.scale)); hm.multiply(cr > .5 ? offPC : offP).decompose(pivot.position, pivot.quaternion, pivot.scale); }   // the gun in the right hand
   }
   return { mixer, update, setGun, carry };
 }

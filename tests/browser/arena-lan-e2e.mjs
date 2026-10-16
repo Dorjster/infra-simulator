@@ -40,6 +40,8 @@ check('Guest joined straight into the arena', (await G(guest)).mode === 'arena' 
 const sees = p => p.evaluate(() => [...__infra.lab.lan.models.values()].map(m => m.name));
 check('Host sees the guest and the bot', (await sees(host)).some(x => /Guest/.test(x)) && (await sees(host)).some(x => /^BOT/.test(x)), JSON.stringify(await sees(host)));
 check('Guest sees the host and the bot', (await sees(guest)).some(x => /Host/.test(x)) && (await sees(guest)).some(x => /^BOT/.test(x)), JSON.stringify(await sees(guest)));
+// Into play on both screens (Escape: the overlay a match opens with — it holds the keys until closed, as for a player).
+for (const pg of [host, guest]) { await pg.keyboard.press('Escape'); await pg.waitForTimeout(200); }
 // Remove the bot now (it could kill someone mid-test and drop a gun of its own).
 await host.evaluate(() => __infra.lab.lan.send({ type: 'arena', action: { type: 'remove-bot' } })); await host.waitForTimeout(600);
 // Host buys an AK and drops it (G).

@@ -17,7 +17,7 @@ function hitSound(kind) { try { hctx = audioCtx(); const out = uiBus(hctx), t = 
   else if (kind === 'head') { thud(.35, 900); for (const [f, v, l] of [[2950, .2, .38], [4870, .12, .3], [7120, .07, .22], [1980, .08, .25]]) note(f, 0, l, v); }
   else { thud(.45); note(1800, 0, .1, .25); note(2700, .09, .18, .25); recFx('kill', { volume: .55, kind: 'ui' }); } } catch {} }
 export const warmHitSound = () => { try { hctx = audioCtx(); } catch {} };
-export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
+export function createCombatHUD({ world, lan, name, onRespawn = () => {}, onHurt = () => {} }) {   // onHurt(damage): you were hit (tagging: arena-move.js)
   const css = document.createElement('style'); css.textContent = `
 #cb-hp{position:fixed;left:22px;bottom:92px;z-index:36;display:flex;align-items:baseline;gap:8px;color:#f2f2f2;text-shadow:0 2px 4px #000c;font:800 40px ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.02em}#cb-hp[hidden]{display:none}
 #cb-hp b{font:900 30px system-ui;color:#e8e8e8;opacity:.9}#cb-hp.low{color:#ff4d4d}#cb-hp.low b{color:#ff4d4d}#cb-hp small{font:600 11px system-ui;letter-spacing:.12em;opacity:.7;align-self:center}
@@ -38,6 +38,7 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {} }) {
       $('cb-hp').hidden = true;
       if (!on) { $('cb-down').hidden = true; return; }
       const hp = hpOf(g, name()); $('cb-hp-t').textContent = 'HP ' + hp; $('cb-hp-n').textContent = hp; $('cb-hp').classList.toggle('low', hp <= 25);
+      if (hp < lastHp && hp > 0) onHurt(lastHp - hp);
       if (hp < lastHp) { const f = $('cb-flash'); f.style.opacity = .85; setTimeout(() => f.style.opacity = 0, 120); } lastHp = hp;
       const d = g.combat?.down?.[key(name())], down = d && d.until > Date.now(); $('cb-down').hidden = !down || arena;   // the arena spectates instead (arena-spectate.js)
       if (down) $('cb-down').innerHTML = `<div>KNOCKED OUT<small>by ${String(d.by).replace(/[<>&]/g, '')} · ${d.weapon} · back in ${Math.max(0, Math.ceil((d.until - Date.now()) / 1000))} s</small></div>`;
