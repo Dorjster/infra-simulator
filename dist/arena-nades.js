@@ -161,16 +161,20 @@ const people = (game, players) => { const out = []; for (const p of players) if 
 // The same map and spot give the same cells on the host and every client (smokeVoxels; the map's boxes come from
 // setSmokeSolids). It spreads over SMOKE.grow ms (its front follows the path length, so it pours round a corner the
 // way it went) and thins over its last SMOKE.fade ms. Density is 1 inside, soft at its front and its outer cells. An
-// HE blast inside punches a hole (holeR) clear for holeOpen ms, closing again over holeClose ms (the holes live in the
-// host's grenade state: every client opens the same hole at the same place and time). A sightline is blocked when it
+// HE blast in or beside it clears the smoke round where it went off: the cells it reaches through the air (CS2: the
+// blast empties the voxels round it, never through a wall — holeField), as far as a cloud is big — one in the middle
+// takes the whole cloud away for a moment, one at its side the part near it (the far side stays); it opens over
+// holeGrow ms, stays open holeOpen ms, then the smoke pours back in from the hole's edge over holeClose ms — about two
+// seconds in all. The holes live in the
+// host's grenade state: every client opens the same hole at the same place and time. A sightline is blocked when it
 // crosses more than SMOKE.block units of dense smoke — the same rule from outside, at the edge and from inside.
 // Without the map's boxes (a test with no map): the ellipsoid alone, lifted a little off the ground.
-export const SMOKE = { lift: .42, vert: .8, grow: 1800, fade: 3000, holeR: 15, holeOpen: 900, holeClose: 1600, block: 14 };
+export const SMOKE = { lift: .42, vert: .8, grow: 1800, fade: 3000, holeR: 190 * HU, holeGrow: 150, holeOpen: 1100, holeClose: 750, block: 14 };   // (in the middle it clears the whole cloud, at its side the part round it; about 2 s)
 export const VOX = 3, VOX_UP = 1, VOX_DMAX = 1.7;   // (CS2's cloud: a dome about 300 units across and 150 high)
 let solidsOf = null;
 // (game) → the arena map's collision boxes (arena-logic.js on the host; the client's scene, which has them built).
 export function setSmokeSolids(fn) { solidsOf = fn; }
-const VOXELS = new Map();
+const VOXELS = new Map(), VOXW = new WeakMap();   // (VOXW: smoke → its cells while it lies where they were made — a look-up per sample with no key string)
 const growOf = (s, now) => { const t = now - (s.firedAt || now); return 1 - Math.pow(1 - Math.min(1, Math.max(0, t) / SMOKE.grow), 3); };
 const fadeOf = (s, now) => Math.max(0, Math.min(1, (NADES.smoke.lasts - (now - (s.firedAt || now))) / SMOKE.fade));
 export function smokeShape(s, now) { return { r: NADES.smoke.radius * (.35 + .65 * growOf(s, now)), dens: fadeOf(s, now), cy: (s.y || 0) + NADES.smoke.radius * SMOKE.lift }; }
@@ -178,9 +182,28 @@ export function smokeShape(s, now) { return { r: NADES.smoke.radius * (.35 + .65
 // from the canister (Infinity: not filled), solid = 1 where the map is (the view stops its rays there); dFill = the
 // longest path filled. Null without the map's boxes.
 export function smokeVoxels(game, s) {
-  const key = s.id + ':' + (game?.arena?.map || '') + ':' + Math.round(s.x * 10) + ',' + Math.round((s.y || 0) * 10) + ',' + Math.round(s.z * 10); let v = VOXELS.get(key); if (v !== undefined) return v;
-  const boxes = solidsOf?.(game); if (!boxes?.length) return null;
-  v = fillSmoke(boxes, s); if (VOXELS.size > 24) VOXELS.delete(VOXELS.keys().next().value); VOXELS.set(key, v); return v;
+  const map = game?.arena?.map || '', w = VOXW.get(s); if (w && w.x === s.x && w.y === (s.y || 0) && w.z === s.z && w.map === map) return w.v;
+  const key = s.id + ':' + map + ':' + Math.round(s.x * 10) + ',' + Math.round((s.y || 0) * 10) + ',' + Math.round(s.z * 10); let v = VOXELS.get(key);
+  if (v === undefined) { const boxes = solidsOf?.(game); if (!boxes?.length) return null; v = fillSmoke(boxes, s); if (VOXELS.size > 24) VOXELS.delete(VOXELS.keys().next().value); VOXELS.set(key, v); }
+  VOXW.set(s, { v, x: s.x, y: s.y || 0, z: s.z, map }); return v;
+}
+// The 26 neighbours of a cell in an nx × ny × nz grid: offsets (NO), steps (NI, NJ, NK) and lengths (NW).
+function neighbours(nx, ny, up = VOX_UP) { const NI = new Int8Array(26), NJ = new Int8Array(26), NK = new Int8Array(26), NO = new Int32Array(26), NW = new Float32Array(26); let m = 0;
+  for (let dk = -1; dk <= 1; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) if (di || dj || dk) { NI[m] = di; NJ[m] = dj; NK[m] = dk; NO[m] = (dk * ny + dj) * nx + di; NW[m] = VOX * Math.hypot(di, dj * up, dk); m++; }
+  return { NI, NJ, NK, NO, NW }; }
+// Nearest first through the open cells of a smoke's grid (Dijkstra, buckets of half a unit) from `start`, path lengths
+// into d (pre-filled with Infinity, d[start] set), never past dMax; stops after `budget` cells. Returns the cells done
+// (in order) and the longest path reached.
+function flood(nx, ny, nz, solid, d, start, dMax, budget = Infinity, up = VOX_UP) {
+  const { NI, NJ, NK, NO, NW } = neighbours(nx, ny, up), done = new Uint8Array(nx * ny * nz), sx = nx * ny, BW = .5, buckets = [[start]]; let filled = 0, far = 0;
+  for (let b = 0; b < buckets.length && filled < budget; b++) { const list = buckets[b]; if (!list) continue;
+    for (let q = 0; q < list.length && filled < budget; q++) { const c = list[q]; if (done[c]) continue; done[c] = 1; filled++; const dc = d[c]; far = dc;
+      const k = (c / sx) | 0, j = ((c - k * sx) / nx) | 0, i = c - k * sx - j * nx, edge = i === 0 || j === 0 || k === 0 || i === nx - 1 || j === ny - 1 || k === nz - 1;
+      for (let t = 0; t < 26; t++) { if (edge) { const ii = i + NI[t], jj = j + NJ[t], kk = k + NK[t]; if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue; }
+        const n = c + NO[t]; if (solid[n] || done[n]) continue;
+        if (NI[t] && NK[t] && (solid[c + NI[t]] || solid[c + NK[t] * sx])) continue;   // (no squeezing diagonally past a wall's corner)
+        const nd = dc + NW[t]; if (nd >= d[n] || nd > dMax) continue; d[n] = nd; const bi = (nd / BW) | 0; (buckets[bi] ??= []).push(n); } } }
+  return { done, far };
 }
 function fillSmoke(boxes, s) {
   const R = NADES.smoke.radius, D = R * VOX_DMAX, nx = Math.ceil(2 * D / VOX), nz = nx, ny = Math.ceil((R * 1.35 + VOX) / VOX), x0 = s.x - nx * VOX / 2, z0 = s.z - nz * VOX / 2, y0 = (s.y || 0) - VOX;
@@ -196,21 +219,39 @@ function fillSmoke(boxes, s) {
     for (let r = 0; r < 4 && start < 0; r++) for (let dj = 0; dj <= r && start < 0; dj++) for (let dk = -r; dk <= r && start < 0; dk++) for (let di = -r; di <= r && start < 0; di++) { const j = cj + dj; if (j < ny && !solid[at(ci + di, j, ck + dk)]) start = at(ci + di, j, ck + dk); } }
   let dFill = 0;
   if (start >= 0) {
-    // Nearest first (Dijkstra, 26 neighbours, buckets of half a unit), until the volume is used up.
-    const budget = Math.round(4 / 3 * Math.PI * R * R * R * SMOKE.vert / VOX ** 3 * .85), BW = .5, buckets = [[start]]; d[start] = 0; let filled = 0;
-    const NI = new Int8Array(26), NJ = new Int8Array(26), NK = new Int8Array(26), NO = new Int32Array(26), NW = new Float32Array(26); let m = 0;
-    for (let dk = -1; dk <= 1; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) if (di || dj || dk) { NI[m] = di; NJ[m] = dj; NK[m] = dk; NO[m] = (dk * ny + dj) * nx + di; NW[m] = VOX * Math.hypot(di, dj * VOX_UP, dk); m++; }
-    const done = new Uint8Array(N), sx = nx * ny;
-    for (let b = 0; b < buckets.length && filled < budget; b++) { const list = buckets[b]; if (!list) continue;
-      for (let q = 0; q < list.length && filled < budget; q++) { const c = list[q]; if (done[c]) continue; done[c] = 1; filled++; const dc = d[c]; dFill = dc;
-        const k = (c / sx) | 0, j = ((c - k * sx) / nx) | 0, i = c - k * sx - j * nx, edge = i === 0 || j === 0 || k === 0 || i === nx - 1 || j === ny - 1 || k === nz - 1;
-        for (let t = 0; t < 26; t++) { if (edge) { const ii = i + NI[t], jj = j + NJ[t], kk = k + NK[t]; if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue; }
-          const n = c + NO[t]; if (solid[n] || done[n]) continue;
-          if (NI[t] && NK[t] && (solid[c + NI[t]] || solid[c + NK[t] * sx])) continue;   // (no squeezing diagonally past a wall's corner)
-          const nd = dc + NW[t]; if (nd >= d[n] || nd > D) continue; d[n] = nd; const bi = (nd / BW) | 0; (buckets[bi] ??= []).push(n); } } }
+    // Nearest first, until the volume is used up.
+    d[start] = 0; const { done, far } = flood(nx, ny, nz, solid, d, start, D, Math.round(4 / 3 * Math.PI * R * R * R * SMOKE.vert / VOX ** 3 * .85)); dFill = far;
     for (let c = 0; c < N; c++) if (!done[c]) d[c] = Infinity;   // (reached but not filled: outside)
   }
   return { x0, y0, z0, nx, ny, nz, d, solid, dFill: Math.max(dFill, VOX) };
+}
+// An HE blast's reach through a smoke's grid: the path length from the blast to each cell through the open cells (the
+// air: never through a wall, round a corner only the long way), Infinity past its reach (SMOKE.holeR × HOLE_OUT). From the blast's cell (or the
+// nearest open one: a grenade lying on the floor); a blast beside the grid starts at its nearest edge, that far already.
+function blastFill(v, x, y, z) {
+  const { nx, ny, nz, x0, y0, z0, solid } = v, R = SMOKE.holeR * HOLE_OUT, d = new Float32Array(nx * ny * nz).fill(Infinity), at = (i, j, k) => (k * ny + j) * nx + i, cl = (q, n) => Math.max(0, Math.min(n - 1, q));
+  const fi = (x - x0) / VOX, fj = (y - y0) / VOX, fk = (z - z0) / VOX, d0 = VOX * Math.hypot(Math.max(0, -fi, fi - nx), Math.max(0, -fj, fj - ny), Math.max(0, -fk, fk - nz)); if (d0 > R) return d;
+  const ci = cl(Math.floor(fi), nx), cj = cl(Math.floor(fj), ny), ck = cl(Math.floor(fk), nz); let start = -1;
+  for (let r = 0; r < 3 && start < 0; r++) for (let dj = 0; dj <= r && start < 0; dj++) for (let dk = -r; dk <= r && start < 0; dk++) for (let di = -r; di <= r && start < 0; di++) { const i = ci + di, j = cj + dj, k = ck + dk; if (i >= 0 && k >= 0 && i < nx && j < ny && k < nz && !solid[at(i, j, k)]) start = at(i, j, k); }
+  if (start < 0) return d; d[start] = d0; flood(nx, ny, nz, solid, d, start, R, Infinity, HOLE_UP); return d;
+}
+// A hole's field (blastFill), once per hole: the host when the grenade goes off, each client when it first sees the hole
+// (the same cells from the same smoke and spot); HOLEW: hole → field without a key string per sample.
+const HOLES = new Map(), HOLEW = new WeakMap();
+function holeField(v, s, h) {
+  const w = HOLEW.get(h); if (w && w.v === v) return w.d;
+  const key = s.id + ':' + h.at + ':' + h.x + ',' + h.y + ',' + h.z; let f = HOLES.get(key);
+  if (!f || f.v !== v) { f = { v, d: blastFill(v, h.x, h.y, h.z) }; if (HOLES.size > 16) HOLES.delete(HOLES.keys().next().value); HOLES.set(key, f); }
+  HOLEW.set(h, f); return f.d;
+}
+// For the view: a hole's field in its smoke's grid (null without the map).
+export function smokeHoleCells(game, s, h) { const v = smokeVoxels(game, s); return v ? holeField(v, s, h) : null; }
+// Does an HE going off at (x, y, z) reach this smoke? The hole it opens (to put in the smoke's state), or null: on a map,
+// a cell of the smoke (as far as it has spread) within the blast's reach through the air; with no map, its ellipsoid.
+function blastHole(game, s, x, y, z, now) {
+  const h = { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2), at: now }, v = smokeVoxels(game, s);
+  if (!v) return Math.hypot(s.x - x, s.z - z) < smokeShape(s, now).r + SMOKE.holeR * .5 ? h : null;
+  const f = holeField(v, s, h), front = smokeFront(v, s, now); for (let c = 0; c < f.length; c++) if (f[c] < SMOKE.holeR * HOLE_OUT && v.d[c] < front) return h; return null;
 }
 // The fill run once on a made-up room (the loading screen): the first real smoke of a match then fills at full speed.
 // With a map's boxes: once more on them (its box grid's lookups warmed too), at a spot of it.
@@ -224,14 +265,23 @@ function oneDensity(game, s, x, y, z, now) {
   const i = Math.floor((x - v.x0) / VOX), j = Math.floor((y - v.y0) / VOX), k = Math.floor((z - v.z0) / VOX); if (i < 0 || j < 0 || k < 0 || i >= v.nx || j >= v.ny || k >= v.nz) return 0;
   const dc = v.d[(k * v.ny + j) * v.nx + i]; if (dc === Infinity) return 0; const front = smokeFront(v, s, now); if (dc >= front) return 0;
   return Math.min(1, (front - dc) / (2 * VOX)) * Math.min(1, (v.dFill - dc) / (3 * VOX) + .4) * fadeOf(s, now); }
+// A hole's radius now (its reach through the air): it opens with the blast, stays, then closes from its edge in as the
+// smoke pours back — 0 when closed.
+export const HOLE_IN = .8, HOLE_OUT = 1.25, HOLE_UP = .6;   // (cleared out to HOLE_IN × the radius; thinned beyond, less and less, to HOLE_OUT × — the smoke the blast pushed aside; HOLE_UP: height counts less, the blast throws smoke up as well as out)
+export const holeRadius = (h, now) => { const a = Math.max(0, now - h.at), G = SMOKE.holeGrow, O = G + SMOKE.holeOpen, u = (a - O) / SMOKE.holeClose;
+  return a < G ? SMOKE.holeR * (1 - (1 - a / G) ** 2) : a < O ? SMOKE.holeR : u < 1 ? SMOKE.holeR * (1 - u * u * (3 - 2 * u)) : 0; };
 // How open the smoke's HE holes are at a point: 0 (untouched) … 1 (fully cleared).
-export const holeOpenness = (h, now) => { const age = now - h.at; return age < SMOKE.holeOpen ? 1 : age < SMOKE.holeOpen + SMOKE.holeClose ? 1 - (age - SMOKE.holeOpen) / SMOKE.holeClose : 0; };   // one hole: 1 open … 0 closed
-export function holeOpen(s, x, y, z, now) { let cut = 0; for (const h of s.holes || []) { const open = holeOpenness(h, now); if (open <= 0) continue;
-    const d = Math.hypot(x - h.x, (y - h.y) * .8, z - h.z); if (d < SMOKE.holeR) cut = Math.max(cut, open * (1 - (d / SMOKE.holeR) ** 2)); } return cut; }
+export function holeOpen(game, s, x, y, z, now) { const H = s.holes; if (!H?.length) return 0; let cut = 0, v;
+  for (let n = 0; n < H.length; n++) { const h = H[n], r = holeRadius(h, now); if (r <= 0) continue; let dist;
+    if (v === undefined) v = smokeVoxels(game, s);
+    if (v) { const i = Math.floor((x - v.x0) / VOX), j = Math.floor((y - v.y0) / VOX), k = Math.floor((z - v.z0) / VOX); dist = i < 0 || j < 0 || k < 0 || i >= v.nx || j >= v.ny || k >= v.nz ? Infinity : holeField(v, s, h)[(k * v.ny + j) * v.nx + i]; }
+    else dist = Math.hypot(x - h.x, (y - h.y) * HOLE_UP, z - h.z);
+    const hi = r * HOLE_OUT; if (dist < hi) cut = Math.max(cut, Math.min(1, (hi - dist) / (hi - r * HOLE_IN))); }
+  return cut; }
 // Smoke density at a point (0 … 1, summed over clouds, capped).
 export const hostNow = game => game?.combat?.clock ?? Date.now();   // the host's clock (stamped each tick; clients keep an offset)
 export function smokeDensity(game, x, y, z, now = hostNow(game)) { let d = 0; for (const s of game.combat?.nades || []) { if (s.phase !== 'smoke') continue; const q = oneDensity(game, s, x, y, z, now); if (q <= 0) continue;
-    d += q * (1 - holeOpen(s, x, y, z, now)); if (d >= 1) return 1; } return d; }
+    d += q * (1 - holeOpen(game, s, x, y, z, now)); if (d >= 1) return 1; } return d; }
 // A smoke's reach (centre and radius of a ball round all it can fill): segments that miss it skip it.
 const reachOf = (game, s) => { const v = smokeVoxels(game, s); return v ? { x: s.x, y: (s.y || 0) + NADES.smoke.radius * .5, z: s.z, r: NADES.smoke.radius * VOX_DMAX * 1.05, vert: 1 } : { x: s.x, y: (s.y || 0) + NADES.smoke.radius * SMOKE.lift, z: s.z, r: NADES.smoke.radius, vert: SMOKE.vert }; };
 // Units of dense smoke between two points (3D), sampled every 1.5 units where the segment passes a cloud.
@@ -239,7 +289,7 @@ export function smokeDepth(game, ax, ay, az, bx, by, bz, now = hostNow(game)) {
   let depth = 0; const dx = bx - ax, dy = by - ay, dz = bz - az, L = Math.hypot(dx, dy, dz) || 1;
   for (const s of game.combat?.nades || []) { if (s.phase !== 'smoke') continue; const C = reachOf(game, s), t = Math.max(0, Math.min(1, ((C.x - ax) * dx + (C.y - ay) * dy + (C.z - az) * dz) / (L * L)));
     if (Math.hypot(ax + dx * t - C.x, (ay + dy * t - C.y) / C.vert, az + dz * t - C.z) > C.r) continue;   // misses this cloud
-    const n = Math.ceil(L / 1.5); for (let i = 0; i <= n; i++) { const u = i / n, x = ax + dx * u, y = ay + dy * u, z = az + dz * u, q = oneDensity(game, s, x, y, z, now); if (q > 0) depth += q * (1 - holeOpen(s, x, y, z, now)) * L / n; } }
+    const n = Math.ceil(L / 1.5); for (let i = 0; i <= n; i++) { const u = i / n, x = ax + dx * u, y = ay + dy * u, z = az + dz * u, q = oneDensity(game, s, x, y, z, now); if (q > 0) depth += q * (1 - holeOpen(game, s, x, y, z, now)) * L / n; } }
   return depth;
 }
 export const smokeBlocks = (game, ax, ay, az, bx, by, bz, now = hostNow(game)) => smokeDepth(game, ax, ay, az, bx, by, bz, now) > SMOKE.block;
@@ -285,12 +335,13 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
       const hitFloor = stepNade(g, boxes, bounds, dt, bodies); changed = true;
       if (g.glass?.length) { for (const id of g.glass) onGlass?.(id); g.glass = null; }   // (panes it broke on the way: broken for everyone)
       if (!goesOff(g, hitFloor, age)) continue;
-      g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', molotov: 'fire' }[g.kind]; g.firedAt = now; g.vx = g.vy = g.vz = 0; if (g.phase === 'smoke') smokeVoxels(game, g);   /* its cells now, once (every sightline after reads them) */
+      g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', molotov: 'fire' }[g.kind]; g.firedAt = now; g.vx = g.vy = g.vz = 0;
       if (g.kind === 'molotov' && !hitFloor && g.y - groundUnder(boxes, g.x, g.z, g.y) > N.airburst) { g.phase = 'out'; g.airburst = true; }   // timed out high in the air: it bursts there, no fire (CS2)
       else if (g.kind === 'molotov' || g.kind === 'smoke') g.y = groundUnder(boxes, g.x, g.z, g.y);
+      if (g.phase === 'smoke') smokeVoxels(game, g);   // its cells now, once, where it lies (every sightline after reads them)
       if (g.kind === 'molotov' && smokedAt(game, g.x, g.y, g.z, now)) putOut(g, now);   // into smoke: it fizzles
       if (g.kind === 'smoke') for (const f of C.nades) if (f.phase === 'fire' && fireCells(boxes, f.x, f.z, f.y).some(c => cellLit(f, c, now) && Math.hypot(c[0] - g.x, c[1] - g.z) < NADES.smoke.radius * .35 && Math.abs(c[2] - g.y) < 6)) putOut(f, now);   // popping in the flames: out at once (then its volume reaches the rest)
-      if (g.kind === 'he') for (const s of C.nades) if (s.phase === 'smoke' && Math.hypot(s.x - g.x, s.z - g.z) < smokeShape(s, now).r + SMOKE.holeR * .6) { s.holes = [...(s.holes || []), { x: +g.x.toFixed(2), y: +g.y.toFixed(2), z: +g.z.toFixed(2), at: now }].slice(-3); }   // a blast opens the smoke for a moment
+      if (g.kind === 'he') for (const s of C.nades) { const h = s.phase === 'smoke' && blastHole(game, s, g.x, g.y, g.z, now); if (h) s.holes = [...(s.holes || []), h].slice(-3); }   // a blast clears the smoke round it for a moment
       if (g.kind === 'he') onBlast?.(g.x, g.y, g.z, N.radius, N.dmg);
       if (g.kind === 'he') for (const t of people(game, players)) { const d = Math.hypot(t.x - g.x, t.z - g.z, t.y + 5 - g.y); if (d > N.radius || !(segmentClear(boxes, g.x, g.y + .5, g.z, t.x, t.y + 5, t.z) || segmentClear(boxes, g.x, g.y + .5, g.z, t.x, t.y + 9, t.z))) continue;
         hurt(game, g.by, t.name, { id: 'he', name: N.name }, Math.round(N.dmg * Math.pow(1 - d / N.radius, 1.3)), 'chest', now); }

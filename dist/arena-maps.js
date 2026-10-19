@@ -180,16 +180,23 @@ export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0
 export const MOVER_SLOP = 16 * 2.54 / 16.5 + .3;   // (one collision cell, 16 Hammer units, in game units)
 // Spawn spots for a side ('t', 'ct', or 'dm' for every spawn): the map's points plus walkable spots around each
 // (6 units apart), so a full team never stands inside each other. Coordinates relative to the arena centre.
-const slotCache = new Map();
+const SLOT_R = 1.3, SLOT_STEP = 18 * 2.54 / 16.5, SLOT_TALL = 72 * 2.54 / 16.5, SLOT_RING = [[0, 0], [SLOT_R, 0], [-SLOT_R, 0], [0, SLOT_R], [0, -SLOT_R]], SN = [];   // (a body: arena-move MOVE.radius, CS2's 18-unit step and 72-unit height)
+const slotCache = new WeakMap();   // (per map object: a map file's build never takes the built-in map's slots, which share its name)
 export function spawnSlots(map, side) {
-  const k = (map.name || '') + ':' + side; if (slotCache.has(k)) return slotCache.get(k);
+  let mine = slotCache.get(map); if (!mine) slotCache.set(map, mine = {}); if (mine[side]) return mine[side];
   const base = side === 't' ? map.t : side === 'ct' ? map.ct : map.spawns, boxes = mapBoxes(map, 0, 0), [sw, sd] = map.size, bounds = { minX: -sw / 2, maxX: sw / 2, minZ: -sd / 2, maxZ: sd / 2 }, out = [];
   // Classic maps: a spot on the spawn's own floor with floor all round it (their columns know the levels).
   const nav = map.nav, levelOf = (x, z, y) => nav ? (Number.isFinite(y) ? nav.floorAt(x, z, y + 9.7) : nav.floorAt(x, z)) : 0;   // (a spawn's own height when it has one: [x, z, y])
   const ground = (x, z, level) => !nav ? walkable(boxes, bounds, x, z, 1.8) : [[0, 0], [1.8, 0], [-1.8, 0], [0, 1.8], [0, -1.8]].every(([dx, dz]) => { const f = nav.floorAt(x + dx, z + dz, level); return Number.isFinite(f) && Math.abs(f - level) < 2.8; });
-  const free = (x, z, level = levelOf(x, z)) => ground(x, z, level) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
+  // Room to stand (a body's width, 72 units tall over a step): no box in it; on a CS2 map none of its own geometry
+  // either (its grenade mesh — a slot in a wall, under a stair or an awning is never handed out).
+  const roomy = (x, z, level) => { const f = Number.isFinite(level) ? level : 0;
+    for (const b of boxesNear(boxes, x - SLOT_R, z - SLOT_R, x + SLOT_R, z + SLOT_R, SN)) if (!b.off && b.y1 > f + SLOT_STEP && b.y0 < f + SLOT_TALL && x > b.minX - SLOT_R && x < b.maxX + SLOT_R && z > b.minZ - SLOT_R && z < b.maxZ + SLOT_R) return false;
+    const NM = boxes.nadeMesh; if (NM) for (const [dx, dz] of SLOT_RING) if (NM.blocked(x + dx, f + SLOT_STEP, z + dz, x + dx, f + SLOT_TALL, z + dz, true)) return false;
+    return true; };
+  const free = (x, z, level = levelOf(x, z)) => ground(x, z, level) && roomy(x, z, level) && out.every(([a, b]) => Math.hypot(a - x, b - z) >= 5.5);
   const lv = l => Number.isFinite(l) ? +l.toFixed(2) : undefined;
   for (const [x, z, y] of base) { const level = levelOf(x, z, y); if (free(x, z, level)) out.push([x, z, lv(level)]); }
   for (const r of [6.5, 13]) for (const [x, z, y] of base) { const level = levelOf(x, z, y); for (let a = 0; a < 8; a++) { const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r; if (free(px, pz, level)) out.push([+px.toFixed(2), +pz.toFixed(2), lv(level)]); } }
-  slotCache.set(k, out); return out;
+  mine[side] = out; return out;
 }

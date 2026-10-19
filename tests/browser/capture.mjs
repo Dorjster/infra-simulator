@@ -8,6 +8,7 @@ const [root, out, playersArg] = process.argv.slice(2), players = +(playersArg ||
 await mkdir(out, { recursive: true });
 const temp = await mkdtemp(path.join(os.tmpdir(), 'cap-'));
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'CAP001', HOST_KEY: 'cap-key', CAMPAIGN_SAVE: path.join(temp, 's.json') }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu'] });
 const report = { base, views: {}, errors: [], gpu: null, players };

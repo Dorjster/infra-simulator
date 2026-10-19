@@ -58,10 +58,16 @@ export function startDefuse(game, now, players = [], teams = null) {
 const warmup = game => !!game.arena?.lobby && !game.arena.lobby.started;
 // Everyone in the match: players present in the arena and bots.
 function members(game, players) {
-  const out = []; for (const p of players) if (p.pose && p.pose.z < ARENA.maxZ) out.push({ k: key(p.name), name: p.name, pose: p.pose });
+  const out = []; for (const p of players) if (!p.bot && p.pose && p.pose.z < ARENA.maxZ) out.push({ k: key(p.name), name: p.name, pose: p.pose });   // (the room's roster lists the bots too: they're counted once, below)
   for (const b of game.arena.bots || []) out.push({ k: key(b.name), name: b.name, bot: b }); return out;
 }
 export function teamCounts(game, players = []) { const d = game.combat.d, c = { t: 0, ct: 0 }; for (const m of members(game, players)) if (d.teams[m.k]) c[d.teams[m.k]]++; return c; }
+// CS2's auto-balance: sides two or more apart (people came and went) → bots move from the bigger side to the smaller,
+// their gun the new side's; people are never moved. True when a bot moved.
+export function balanceBots(game, players = []) { const d = game.combat?.d; let moved = false; if (!d) return moved;
+  for (let i = 0; i < 12; i++) { const c = { t: [], ct: [] }; for (const mem of members(game, players)) { const t = d.teams[mem.k]; if (t === 't' || t === 'ct') c[t].push(mem); }
+    if (Math.abs(c.t.length - c.ct.length) < 2) break; const big = c.t.length > c.ct.length ? 't' : 'ct', bot = c[big].find(x => x.bot); if (!bot) break; d.teams[bot.k] = big === 't' ? 'ct' : 't'; bot.bot.weapon = null; moved = true; }
+  return moved; }
 export function assignTeam(game, name, players = []) { const d = game.combat.d, k = key(name); if (d.teams[k]) return d.teams[k]; const c = teamCounts(game, players); d.teams[k] = c.t <= c.ct ? 't' : 'ct'; d.money[k] ??= (d.rules || DEFAULT_RULES).start; return d.teams[k]; }
 
 // A new round: everyone alive at their team's spawn; the dead lost their gear; the bomb to a random Terrorist.
@@ -84,15 +90,16 @@ export function newRound(game, players, now) {
   C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {}; d.bought = {};
   for (const [k, t] of Object.entries(d.teams)) if (t === 'spec') C.down[k] = { until: 4e15, by: '', weapon: 'spectating' };   // spectators watch
   for (const mem of members(game, players)) { if (!d.teams[mem.k]) assignTeam(game, mem.name, players); if (firstOfHalf) d.money[mem.k] ??= RU.start; }
+  balanceBots(game, players);
   // Every member gets their own spawn spot on their side (no two in the same place, any team size).
   const idx = { t: 0, ct: 0 };
   for (const mem of members(game, players)) { const t = d.teams[mem.k]; if (t !== 't' && t !== 'ct') continue; const slots = spawnSlots(m, t), i = idx[t]++ % slots.length, at = slots[i];
     if (mem.bot) { const b = mem.bot; b.x = ARENA.cx + at[0]; b.z = ARENA.cz + at[1]; b.y = at[2] !== undefined && m.nav ? m.nav.floorAt(at[0], at[1], at[2] + 9.7) : undefined; b.path = null; b.avoid = null; b.retake = false; b.dead = false; arm(b, b.weapon || defaultPistol(t)); botBuy(game, b); }
     else { C.spawnTo[mem.k] = { at: now, i: (t === 't' ? 0 : m.t.length) + Math.min(i, (t === 't' ? m.t : m.ct).length - 1), x: ARENA.cx + at[0], z: ARENA.cz + at[1], ...(at[2] !== undefined ? { y: at[2] } : {}) }; if (A.loadout[mem.k] && A.loadout[mem.k].secondary === undefined) A.loadout[mem.k].secondary = defaultPistol(t); refillAll(game, mem.name); } }   // every gun full for the new round (survivors keep theirs)
   const ts = members(game, players).filter(x => d.teams[x.k] === 't'); d.bomb = { carrier: ts.length ? ts[Math.floor(Math.random() * ts.length)].k : null };
-  const rid = d.match + '.' + (d.rseq = (d.rseq || 0) + 1);
-  if (warmup(game)) { d.round = { id: rid, phase: 'warmup', at: now, freezeUntil: 4e15, buyUntil: 4e15, endsAt: 4e15, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: 'A' }; A.dirty = true; return; }
-  const FZ = A.freezeMs ?? DEFUSE.freezeMs; d.round = { id: rid, phase: FZ > 0 ? 'freeze' : 'live', at: now, freezeUntil: now + FZ, buyUntil: now + FZ + DEFUSE.buyMs, endsAt: now + FZ + RU.roundS * 1000, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: Math.random() < .5 ? 'A' : 'B' };
+  const rid = d.match + '.' + (d.rseq = (d.rseq || 0) + 1), here = Object.fromEntries(members(game, players).map(m => [m.k, 1]));   // (here: who was in the arena as this round began)
+  if (warmup(game)) { d.round = { id: rid, here, phase: 'warmup', at: now, freezeUntil: 4e15, buyUntil: 4e15, endsAt: 4e15, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: 'A' }; A.dirty = true; return; }
+  const FZ = A.freezeMs ?? DEFUSE.freezeMs; d.round = { id: rid, here, phase: FZ > 0 ? 'freeze' : 'live', at: now, freezeUntil: now + FZ, buyUntil: now + FZ + DEFUSE.buyMs, endsAt: now + FZ + RU.roundS * 1000, planted: null, plant: null, defuse: null, winner: null, reason: null, overAt: null, tSite: Math.random() < .5 ? 'A' : 'B' };
   A.dirty = true;   // loadouts changed: the room sends the whole world
 }
 // A bot's gun, full: magazine and reserve.
@@ -148,8 +155,12 @@ export function siteAt(game, pose) { if (!pose) return null; const m = map(game)
 export function defuseTick(game, players, now, { hurtAll, posOf }) {
   const C = game.combat, d = C.d; if (!d?.round) return false; const r = d.round; let changed = false;
   if (d.paused) return false;   // paused by the host: every clock stands still
-  for (const mem of members(game, players)) if (!d.teams[mem.k]) { const t = assignTeam(game, mem.name, players); changed = true;
-    if (r.phase !== 'freeze' && r.phase !== 'warmup' && !(r.phase === 'live' && now - r.at < JOIN_GRACE_MS)) C.down[mem.k] = { until: 4e15, by: '', weapon: 'joined mid-round' };   // watch until the next round (the first seconds of a round still spawn you: nobody can have met yet)
+  // Someone new to this round — a first join, or back after leaving (they keep their side: across a map change too) —
+  // gets a side if they have none and their starting money if they have none; in the freeze (or a round's first
+  // seconds) a free spot, later they watch until the next round (CS2). Someone already down this round stays down.
+  for (const mem of members(game, players)) { const seen = r.here ??= {}; if (seen[mem.k]) continue; seen[mem.k] = 1; changed = true;
+    const t = d.teams[mem.k] || assignTeam(game, mem.name, players); d.money[mem.k] ??= (d.rules || DEFAULT_RULES).start; if ((t !== 't' && t !== 'ct') || C.down?.[mem.k]) continue;
+    if (r.phase !== 'freeze' && r.phase !== 'warmup' && !(r.phase === 'live' && now - r.at < JOIN_GRACE_MS)) (C.down ??= {})[mem.k] = { until: 4e15, by: '', weapon: 'joined mid-round' };   // watch until the next round (the first seconds of a round still spawn you: nobody can have met yet)
     else { const at = freeSpot(game, players, t, mem.k); if (mem.bot) { mem.bot.x = at.x; mem.bot.z = at.z; mem.bot.y = spotY(map(game), at); } else (C.spawnTo ??= {})[mem.k] = { at: now, i: t === 'ct' ? map(game).t.length : 0, x: at.x, z: at.z, ...(at.y !== undefined ? { y: at.y } : {}) }; } }
   // Someone on the Terrorist side always has the bomb during the freeze (e.g. the first players just joined).
   if (r.phase === 'freeze' && !d.bomb.carrier) { const ts = members(game, players).filter(x => d.teams[x.k] === 't'); if (ts.length) { d.bomb.carrier = ts[Math.floor(Math.random() * ts.length)].k; changed = true; } }

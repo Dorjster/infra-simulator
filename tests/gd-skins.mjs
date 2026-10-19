@@ -25,15 +25,25 @@ ok('CS2\'s wear names', wearName(.02) === 'Factory New' && wearName(.1) === 'Min
 { const a = patternOf(661), b = patternOf(661), c = patternOf(662); ok('one seed, one pattern; another seed, another', a.u === b.u && a.v === b.v && a.rot === b.rot && (a.u !== c.u || a.v !== c.v), JSON.stringify(a)); ok('the seed offset is fmod(seed × 0.12345, 1)', Math.abs(a.u - (661 * .12345) % 1) < 1e-12); }
 ok('the title as CS2 shows it', skinTitle('AK-47', cleanSkin({ finish: 'fade', wear: .02, st: true }, 'rifle')) === 'StatTrak™ AK-47 | Fade (Factory New)' && skinTitle('AK-47', good) === '“The Code Runner”');
 ok('every finish is drawable (a pattern, its colours)', Object.values(FINISHES).every(f => f.pattern === 'none' || f.colors.length >= 2));
-// The host: a skin set, refused when bad, StatTrak counting kills made with that gun only.
-const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 0 }, 1e9); const P = [{ name: 'Ann', pose: { x: 0, y: 9.7, z: 0 } }, { name: 'Bo', pose: { x: 5, y: 9.7, z: 0 } }];
-ok('the host equips it', /StatTrak™ AK-47 \| Fade/.test(arenaApply(g, { type: 'skin', weapon: 'ak', skin: { finish: 'fade', wear: .02, seed: 661, st: true } }, 'Ann', P, 1e9)));
-n++; assert.throws(() => arenaApply(g, { type: 'skin', weapon: 'ak', skin: { finish: 'fade', wear: NaN } }, 'Ann', P, 1e9), /Wear/, 'the host refuses a bad one');
-ok('…and keeps the good one it had', g.arena.skins.ann.ak.finish === 'fade');
-g.combat.d.teams = { ann: 't', bo: 'ct' }; const cash0 = g.combat.d.money.ann ?? 800; hurt(g, 'Ann', 'Bo', weaponById('ak'), 200, 'chest', 1e9 + 10);
-ok('a kill with the StatTrak gun counts', g.arena.skins.ann.ak.kills === 1, String(g.arena.skins.ann.ak.kills));
-ok('…and the kill is still a kill: the death counted, the kill award paid', g.combat.deaths.bo === 1 && g.combat.kills.ann === 1 && (g.combat.d.money.ann ?? 800) - cash0 === 300, JSON.stringify({ d: g.combat.deaths, m: g.combat.d.money.ann, cash0 }));
-arenaApply(g, { type: 'skin', weapon: 'ak', skin: { finish: 'marble', wear: .3, seed: 2, st: true, kills: 5000 } }, 'Ann', P, 1e9 + 20); ok('a new finish on it keeps its kills (and sent kills are ignored)', g.arena.skins.ann.ak.kills === 1 && g.arena.skins.ann.ak.finish === 'marble');
-arenaApply(g, { type: 'skin', weapon: 'ak', clear: true }, 'Ann', P, 1e9 + 30); ok('back to the default look', !g.arena.skins.ann.ak);
-ok('skins stay from match to match', (() => { arenaApply(g, { type: 'skin', weapon: 'deagle', skin: { finish: 'web' } }, 'Ann', P, 1e9 + 40); startArena(g, { map: 'dust2', kind: 'defuse', bots: 0 }, 1e9 + 50); return g.arena.skins.ann.deagle?.finish === 'web'; })());
-console.log(`PASS: weapon skins · ${n} checks (finite, in range, known; slots and sticker limits; StatTrak kills the host's; wear names; pattern seeds; kept across matches)`);
+// The host: skins go on knives only (one skin, on whichever knife you carry), refused when bad, StatTrak counting the
+// knife's kills only; everyone picks their own knife and its skin, and Darja can give either to another player.
+const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 0 }, 1e9); const P = [{ name: 'Ann', pose: { x: 0, y: 9.7, z: 0 } }, { name: 'Bo', pose: { x: 5, y: 9.7, z: 0 } }, { name: 'Darja', pose: { x: 9, y: 9.7, z: 0 } }];
+ok('the host equips a knife skin', /StatTrak™ Knife \| Fade/.test(arenaApply(g, { type: 'skin', weapon: 'knife', skin: { finish: 'fade', wear: .02, seed: 661, st: true } }, 'Ann', P, 1e9)));
+n++; assert.throws(() => arenaApply(g, { type: 'skin', weapon: 'ak', skin: { finish: 'fade' } }, 'Ann', P, 1e9), /knives/, 'guns take no skins');
+n++; assert.throws(() => arenaApply(g, { type: 'skin', weapon: 'knife', skin: { finish: 'fade', wear: NaN } }, 'Ann', P, 1e9), /Wear/, 'the host refuses a bad one');
+ok('…and keeps the good one it had', g.arena.skins.ann.knife.finish === 'fade' && !g.arena.skins.ann.ak);
+g.combat.d.teams = { ann: 't', bo: 'ct' }; const cash0 = g.combat.d.money.ann ?? 800; hurt(g, 'Ann', 'Bo', weaponById('ak'), 200, 'chest', 1e9 + 5);
+ok('a kill with a gun leaves the knife\'s count alone', (g.arena.skins.ann.knife.kills | 0) === 0); g.combat.down = {}; g.combat.hp = {};
+hurt(g, 'Ann', 'Bo', weaponById('knife'), 200, 'chest', 1e9 + 10);
+ok('a kill with the StatTrak knife counts', g.arena.skins.ann.knife.kills === 1, String(g.arena.skins.ann.knife.kills));
+arenaApply(g, { type: 'skin', weapon: 'knife', skin: { finish: 'marble', wear: .3, seed: 2, st: true, kills: 5000 } }, 'Ann', P, 1e9 + 20); ok('a new finish on it keeps its kills (and sent kills are ignored)', g.arena.skins.ann.knife.kills === 1 && g.arena.skins.ann.knife.finish === 'marble');
+arenaApply(g, { type: 'skin', weapon: 'karambit', skin: { finish: 'doppler' } }, 'Ann', P, 1e9 + 25); ok('every knife wears the one knife skin (a karambit\'s skin is the knife skin)', g.arena.skins.ann.knife.finish === 'doppler' && !g.arena.skins.ann.karambit);
+arenaApply(g, { type: 'skin', weapon: 'knife', clear: true }, 'Ann', P, 1e9 + 30); ok('back to the default look', !g.arena.skins.ann.knife);
+ok('a player picks his own knife (any of them, the karambit too)', /Karambit \| Ruby equipped/.test(arenaApply(g, { type: 'knife', knife: 'karambit' }, 'Ann', P, 1e9 + 31)) && g.arena.knives.ann === 'karambit');
+n++; assert.throws(() => arenaApply(g, { type: 'knife', knife: 'm9', for: 'Bo' }, 'Ann', P, 1e9 + 31), /Only Darja/, 'only Darja equips a knife on someone else');
+ok('Darja gives a player a knife', /Butterfly Knife equipped on Bo/.test(arenaApply(g, { type: 'knife', knife: 'butterfly', for: 'Bo' }, 'Darja', P, 1e9 + 32)) && g.arena.knives.bo === 'butterfly');
+ok('…and a skin for it', /given to Bo/.test(arenaApply(g, { type: 'skin', weapon: 'knife', for: 'Bo', skin: { finish: 'tiger', wear: .05 } }, 'Darja', P, 1e9 + 33)) && g.arena.skins.bo.knife.finish === 'tiger');
+ok('the player then chooses the skin on it himself', /Knife \| Gold/.test(arenaApply(g, { type: 'skin', weapon: 'knife', skin: { finish: 'gold' } }, 'Bo', P, 1e9 + 34)) && g.arena.skins.bo.knife.finish === 'gold' && g.arena.knives.bo === 'butterfly');
+n++; assert.throws(() => arenaApply(g, { type: 'skin', weapon: 'knife', for: 'Darja', skin: { finish: 'gold' } }, 'Bo', P, 1e9 + 35), /Only Darja/, 'only Darja gives skins to others');
+ok('skins and knives stay from match to match', (() => { startArena(g, { map: 'dust2', kind: 'defuse', bots: 0 }, 1e9 + 50); return g.arena.skins.bo.knife?.finish === 'gold' && g.arena.knives.bo === 'butterfly'; })());
+console.log(`PASS: knife skins · ${n} checks (finite, in range, known; slots and sticker limits; knives only, one skin on any knife; StatTrak knife kills; everyone picks a knife and its skin, Darja can give them; wear names; pattern seeds; kept across matches)`);
