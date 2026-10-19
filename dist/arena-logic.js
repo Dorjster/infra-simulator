@@ -148,9 +148,13 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   // Darja may equip any knife on anyone in the room (a.for: their name), the karambit too.
   // A weapon's skin (skins.js: finish, wear, pattern seed, stickers, name tag, StatTrak™): checked here (never trusted),
   // then everyone's view draws it. { weapon, skin } sets one, { weapon, clear: true } goes back to the default.
+  // Darja may give a skin to anyone in the room (a.for: their name), as she equips knives; a StatTrak™ count stays
+  // theirs (earned, never given).
   if (a.type === 'skin') { const w = weaponById(String(a.weapon || '')); if (!w || w.kind === 'nade' || w.kind === 'bomb') throw Error('Choose a weapon to skin');
-    const mine = (A.skins ??= {})[key(name)] ??= {}; if (a.clear) { delete mine[w.id]; return 'Default ' + w.name; }
-    const s = cleanSkin(a.skin, w.kind, mine[w.id]); if (Object.keys(mine).length >= 40 && !mine[w.id]) throw Error('Inventory full (40 skins)'); mine[w.id] = s; return skinTitle(w.name, s) + ' equipped'; }
+    const darja = /^darja$/.test(key(name)); if (a.for != null && !darja) throw Error('Only Darja gives skins to others');
+    const who = a.for != null ? String(a.for).trim().slice(0, 40) : name; if (key(who) !== key(name) && (!who || /^bot /i.test(who) || (players.length && !players.some(p => !p.bot && key(p.name) === key(who))))) throw Error('No such player in the room');
+    const mine = (A.skins ??= {})[key(who)] ??= {}, on = key(who) !== key(name) ? ' on ' + who : ''; if (a.clear) { delete mine[w.id]; return 'Default ' + w.name + on; }
+    const s = cleanSkin(a.skin, w.kind, mine[w.id]); if (Object.keys(mine).length >= 40 && !mine[w.id]) throw Error('Inventory full (40 skins)'); mine[w.id] = s; return skinTitle(w.name, s) + (on ? ' given to ' + who : ' equipped'); }
   if (a.type === 'knife') { const k = String(a.knife || ''), darja = /^darja$/.test(key(name)), who = a.for != null && darja ? String(a.for).trim().slice(0, 40) : name; if (!['default', 'butterfly', 'stiletto', 'm9', 'karambit'].includes(k)) throw Error('Unknown knife'); if (a.for != null && !darja) throw Error('Only Darja equips knives on others'); if (k === 'karambit' && !darja) throw Error('The karambit is Darja\'s');
     const kn = (A.knives ??= {}); kn[key(who)] = k; return { butterfly: 'Butterfly Knife', stiletto: 'Stiletto Knife', m9: 'M9 Bayonet', karambit: 'Karambit | Ruby', default: 'Default knife' }[k] + ' equipped' + (key(who) !== key(name) ? ' on ' + who : ''); }
   if (a.type === 'team') return changeTeam(game, name, a.team, players, now);

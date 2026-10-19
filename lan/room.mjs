@@ -36,7 +36,7 @@ for(const f of await readdir(mapsDir).catch(()=>[])){const id=f.replace(/\.bsp$/
 // tools/import-cs2-models.mjs, never shipped): <assetsDir>/manifest.json lists them; served to every player in the room
 // (dist/user-assets.js), who then draws them in place of the built-in models.
 const assetsDir=path.resolve(options.assetsDir||process.env.GD_ASSETS_DIR||path.join(project,'user-assets'));
-const ASSET_MIME={'.bin':'application/octet-stream','.jpg':'image/jpeg','.png':'image/png','.glb':'model/gltf-binary','.json':'application/json','.ogg':'audio/ogg','.svg':'image/svg+xml'};   // (.ogg, .svg: CS2's sounds and icons, imported)
+const ASSET_MIME={'.bin':'application/octet-stream','.jpg':'image/jpeg','.png':'image/png','.glb':'model/gltf-binary','.json':'application/json','.ogg':'audio/ogg','.svg':'image/svg+xml','.webp':'image/webp'};   // (.ogg, .svg: CS2's sounds and icons, imported)
 // An asset pack (one .zip made by tools/import-cs2-models.mjs: infra-pack.json, assets/…, maps/<id>.bsp) installed in
 // one step on any computer: models into assetsDir, maps into mapsDir (each checked and loaded), every player told.
 async function installPack(buf){const entries=readZip(buf);if(!entries.some(e=>e.name==='infra-pack.json'))throw new Error('no infra-pack.json in it (asset packs are made by tools/import-cs2-models.mjs)');let files=0,maps=0;
@@ -87,7 +87,7 @@ const handler=async(req,res)=>{try{
  // Maps from files: the list, the files, and (the host) adding one.
  if(url.pathname==='/api/user-maps'&&req.method==='GET'){json(res,200,{maps:[...userMaps.values()]});return;}
  if(url.pathname==='/api/user-assets/pack'&&req.method==='POST'){const p=players.get(req.headers['x-player-token']);if(!(p?.isHost||(!p&&loopback(req)))){json(res,403,{error:'Only the host adds models and maps'});return;}
-   const chunks=[];let n=0;for await(const c of req){n+=c.length;if(n>2048*1048576){json(res,413,{error:'Asset pack too large'});return;}chunks.push(c);}
+   const chunks=[];let n=0;for await(const c of req){n+=c.length;if(n>3584*1048576){json(res,413,{error:'Asset pack too large (3.5 GB at most)'});return;}chunks.push(c);}/* (a zip addresses 4 GB; the CS2 maps' grenade collision made the pack about 2 GB) */
    try{const r=await installPack(Buffer.concat(chunks));broadcast('user-maps',{maps:[...userMaps.values()]});broadcast('user-assets',{});log('Asset pack installed: '+r.files+' model files, '+r.maps+' maps');json(res,200,r);}catch(e){json(res,400,{error:'Not a usable asset pack: '+e.message});}return;}
  if(url.pathname==='/api/user-assets'&&req.method==='GET'){json(res,200,await readFile(path.join(assetsDir,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({models:{}})));return;}
  if(url.pathname.startsWith('/user-assets/')&&req.method==='GET'){const rel=decodeURIComponent(url.pathname.slice(13)),file=path.resolve(assetsDir,rel),mime=ASSET_MIME[path.extname(file)];

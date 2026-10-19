@@ -38,18 +38,21 @@ export const nadesOf = l => Array.isArray(l?.nades) ? l.nades : [];
 // Room for one more of this kind? (four in all, two flashbangs)
 export const canCarry = (list, kind) => list.length < MAX_NADES && (kind !== 'flash' || list.filter(k => k === 'flash').length < MAX_FLASH) && !(kind !== 'flash' && list.includes(kind));
 // The launch velocity for an aim (dx, dy, dz), a strength and the thrower's run velocity (vx, vz), as CS2 does it:
-// the aim pitch is remapped so a level aim throws 10° up — looking down by 80/90 of the angle, up by 100/90 (Source's
-// ThrowGrenade: a lineup's angles land where CS2's do) — speed is 675 × (power × 0.7 + 0.3), and 1.25 × the
+// the aim pitch is remapped so a level aim throws 10° up — looking down by 100/90 of the angle, up by 80/90, so
+// straight down still throws straight down and straight up straight up (Source's ThrowGrenade, kept by CS:GO and CS2:
+// a lineup's angles land where CS2's do) — speed is 675 × (power × 0.7 + 0.3), and 1.25 × the
 // thrower's velocity is added (running throws go further).
 export function launch(a) {
   const n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n, dz = (+a.dz || 0) / n, P = POWER[a.strength] ?? 1;
-  const down = -Math.asin(Math.max(-1, Math.min(1, dy))) * 180 / Math.PI, pitch = down >= 0 ? -10 + down * 80 / 90 : -10 + down * 100 / 90, up = -pitch * Math.PI / 180;
+  const down = -Math.asin(Math.max(-1, Math.min(1, dy))) * 180 / Math.PI, pitch = down >= 0 ? -10 + down * 100 / 90 : -10 + down * 80 / 90, up = -pitch * Math.PI / 180;
   const h = Math.hypot(dx, dz) || 1, cu = Math.cos(up), speed = THROW * (P * .7 + .3); const cl = v => Math.max(-60, Math.min(60, +v || 0));   /* run / jump speed only (never a launcher) */
   return { vx: dx / h * cu * speed + cl(a.vx) * 1.25, vy: Math.sin(up) * speed + cl(a.vy) * 1.25, vz: dz / h * cu * speed + cl(a.vz) * 1.25 }; }
 // Where a throw starts (Source): the eye, lower for weaker throws (power × 12 − 12 units), then 22 units ahead along
-// the aim — short of a wall in the way (a grenade thrown against a wall starts on this side of it).
+// the throw's own direction (the remapped pitch: 10° up for a level aim — Source traces along angThrow, not the eye's
+// aim) — short of a wall in the way (a grenade thrown against a wall starts on this side of it).
 export function throwStart(a, boxes = null, bounds = null) {
-  const x = +a.x || 0, y = (+a.y || EYE) + ((POWER[a.strength] ?? 1) * 12 - 12) * HU, z = +a.z || 0, n = Math.hypot(+a.dx || 0, +a.dy || 0, +a.dz || 0) || 1, dx = (+a.dx || 0) / n, dy = (+a.dy || 0) / n, dz = (+a.dz || 0) / n;
+  const v = launch({ dx: a.dx, dy: a.dy, dz: a.dz, strength: 'long' }), n = Math.hypot(v.vx, v.vy, v.vz) || 1, dx = v.vx / n, dy = v.vy / n, dz = v.vz / n;
+  const x = +a.x || 0, y = (+a.y || EYE) + ((POWER[a.strength] ?? 1) * 12 - 12) * HU, z = +a.z || 0;
   let t = 22 * HU; if (boxes) for (let s = 2 * HU; s <= t; s += 2 * HU) if (solid(boxes, bounds, x + dx * s, y + dy * s, z + dz * s)) { t = Math.max(0, s - 2 * HU - R); break; }
   return { x: x + dx * t, y: y + dy * t, z: z + dz * t }; }
 // Throw from the eye along (dx, dy, dz): one grenade leaves the loadout (never two for one throw).
@@ -64,11 +67,26 @@ export function throwNade(game, name, kind, a, now = Date.now()) {
 // Solid at (x, y, z)? (map boxes, the floor, the map edge) hitMover: the door or breakable it was, if any.
 let hitMover = null;
 function solid(boxes, bounds, x, y, z) {
+  if (boxes.nadeMesh) return meshHit(boxes, bounds, x, y, z);
   if (y < R) return true; if (bounds && (x < bounds.minX || x > bounds.maxX || z < bounds.minZ || z > bounds.maxZ)) return true;
   // A map file: its own shapes (bsp-map.js nadeSolid: no player clips, gaps as small as the map has them), and its
   // doors and breakables while shut / whole.
   hitMover = null; if (boxes.nadeSolid) { if (boxes.nadeSolid(x, y, z)) return true; for (const b of boxes.movers) if (!b.off && x > b.minX - R && x < b.maxX + R && z > b.minZ - R && z < b.maxZ + R && y > b.y0 - R && y < b.y1 + R) { hitMover = b; return true; } return false; }
   for (const b of boxesNear(boxes, x - R, z - R, x + R, z + R, SO)) if (x > b.minX - R && x < b.maxX + R && z > b.minZ - R && z < b.maxZ + R && y > b.y0 - R && y < b.y1 + R) return true; return false;
+}
+// A CS2 map with its grenade triangles (boxes.nadeMesh, dist/nade-mesh.js): does the grenade's ball touch something
+// at (x, y, z)? Then N is the way out (the surface's own direction; round at an edge or a corner) and DEPTH how far in.
+// The map's edge, its doors and breakables (by their boxes) as before.
+const CT = new Float64Array(4), PEN = new Float64Array(6); let DEPTH = 0;
+function meshHit(boxes, bounds, x, y, z) {
+  hitMover = null;
+  if (bounds) { const e = Math.min(x - bounds.minX, bounds.maxX - x, z - bounds.minZ, bounds.maxZ - z); if (e < 0) { N[1] = 0; N[0] = e === x - bounds.minX ? 1 : e === bounds.maxX - x ? -1 : 0; N[2] = N[0] ? 0 : e === z - bounds.minZ ? 1 : -1; DEPTH = -e; return true; } }
+  if (y < R) { N[0] = 0; N[1] = 1; N[2] = 0; DEPTH = R - y; return true; }
+  for (const b of boxes.movers) { if (b.off || x <= b.minX - R || x >= b.maxX + R || z <= b.minZ - R || z >= b.maxZ + R || y <= b.y0 - R || y >= b.y1 + R) continue; hitMover = b;
+    const p = PEN; p[0] = x - (b.minX - R); p[1] = b.maxX + R - x; p[2] = y - (b.y0 - R); p[3] = b.y1 + R - y; p[4] = z - (b.minZ - R); p[5] = b.maxZ + R - z; let k = 0; for (let i = 1; i < 6; i++) if (p[i] < p[k]) k = i;
+    N[0] = k === 0 ? -1 : k === 1 ? 1 : 0; N[1] = k === 2 ? -1 : k === 3 ? 1 : 0; N[2] = k === 4 ? -1 : k === 5 ? 1 : 0; DEPTH = p[k]; return true; }
+  if (boxes.nadeMesh.contact(x, y, z, R, CT)) { N[0] = CT[0]; N[1] = CT[1]; N[2] = CT[2]; DEPTH = CT[3]; return true; }
+  return false;
 }
 // One physics step of a flying grenade (host tick and client preview alike), as Source moves a grenade: in short steps
 // (never further than about its own size, so a fast throw can't pass through a thin wall); on a hit, the velocity is
@@ -82,12 +100,32 @@ function normalAt(boxes, bounds, x, y, z) {
   let nx = 0, ny = 0, nz = 0; const e = R * 1.6;
   for (const d of DIRS) if (!solid(boxes, bounds, x + d[0] * e, y + d[1] * e, z + d[2] * e)) { nx += d[0]; ny += d[1]; nz += d[2]; }
   const l = Math.hypot(nx, ny, nz); if (l < 1e-6) { N[0] = 0; N[1] = 1; N[2] = 0; } else { N[0] = nx / l; N[1] = ny / l; N[2] = nz / l; } }
-export function stepNade(g, boxes, bounds, dt) {
+// Players (the host's step only: bodies = [{ name, x, y (feet), z }]): a grenade that meets one bounces off at 30 % of
+// its usual 45 % (Source: players are no floor and soak up most of it), never off whoever threw it.
+const BODY_R = 16 * HU, BODY_H = 72 * HU, PLAYER_BOUNCE = BOUNCE * .3;
+function bodyHit(bodies, thrower, x, y, z) {
+  for (const b of bodies) { if (b.name === thrower) continue; const cx = Math.max(b.x - BODY_R, Math.min(x, b.x + BODY_R)), cy = Math.max(b.y, Math.min(y, b.y + BODY_H)), cz = Math.max(b.z - BODY_R, Math.min(z, b.z + BODY_R)), dx = x - cx, dy = y - cy, dz = z - cz, d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= R * R) continue; const d = Math.sqrt(d2); if (d > 1e-6) { N[0] = dx / d; N[1] = dy / d; N[2] = dz / d; DEPTH = R - d; } else { const hx = x - b.x, hz = z - b.z, hl = Math.hypot(hx, hz) || 1; N[0] = hx / hl; N[1] = 0; N[2] = hz / hl; DEPTH = BODY_R - Math.hypot(hx, hz) + R; } return true; }
+  return false; }
+export function stepNade(g, boxes, bounds, dt, bodies = null) {
   let hitFloor = false;
   if (g.rest && !solid(boxes, bounds, g.x, g.y - R * 1.2, g.z)) g.rest = false;   // (the floor went: a door opened, a crate broke)
   const n = g.rest ? 0 : Math.max(1, Math.min(24, Math.ceil(Math.hypot(g.vx, g.vy, g.vz) * dt / SUB))), h = dt / Math.max(1, n);
   for (let s = 0; s < n; s++) {
-    g.vy -= (g.grav ?? GRAVITY) * h; const x = g.x + g.vx * h, y = g.y + g.vy * h, z = g.z + g.vz * h;   // (g.grav: a dropped gun falls at the full 800)
+    const gh = (g.grav ?? GRAVITY) * h, x = g.x + g.vx * h, y = g.y + (g.vy - gh * .5) * h, z = g.z + g.vz * h; g.vy -= gh;
+    if (bodies && bodies.length && bodyHit(bodies, g.by, x, y, z)) { const nx = N[0], ny = N[1], nz = N[2], d = g.vx * nx + g.vy * ny + g.vz * nz; g.x = x + nx * DEPTH; g.y = y + ny * DEPTH; g.z = z + nz * DEPTH;
+      if (d < 0) { g.vx = (g.vx - 2 * d * nx) * PLAYER_BOUNCE; g.vy = (g.vy - 2 * d * ny) * PLAYER_BOUNCE; g.vz = (g.vz - 2 * d * nz) * PLAYER_BOUNCE; } continue; }   // (half the step's gravity before the move, half after: Source's PhysicsAddGravityMove — the exact arc, whatever the step; g.grav: a dropped gun falls at the full 800)
+    // CS2's triangles: out of the surface to just touching it, then off it — reflected about the surface's own way out,
+    // 45 % kept (Source's ResolveFlyCollision); a second surface still touching (a corner) pushes it out of that too.
+    if (boxes.nadeMesh) { if (!meshHit(boxes, bounds, x, y, z)) { g.x = x; g.y = y; g.z = z; continue; }
+      if (hitMover && hitMover.mat === 'glass') { if (!g.view) { (g.glass ??= []).push(hitMover.mover); hitMover.off = true; } else if (g.pastGlass === hitMover) { g.x = x; g.y = y; g.z = z; continue; } else g.pastGlass = hitMover; g.vx *= GLASS_KEEP; g.vz *= GLASS_KEEP; g.vy = Math.min(g.vy, 0) * GLASS_KEEP; continue; }   // (g.view: a client's copy of a flight — the host breaks the pane for everyone; the copy only goes on through it)
+      const nx = N[0], ny = N[1], nz = N[2]; let px = x + nx * DEPTH, py = y + ny * DEPTH, pz = z + nz * DEPTH;
+      if (meshHit(boxes, bounds, px, py, pz) && !(hitMover && hitMover.mat === 'glass')) { px += N[0] * DEPTH; py += N[1] * DEPTH; pz += N[2] * DEPTH; }
+      g.x = px; g.y = py; g.z = pz; const d = g.vx * nx + g.vy * ny + g.vz * nz;
+      if (d < 0) { g.vx = (g.vx - 2 * d * nx) * BOUNCE; g.vy = (g.vy - 2 * d * ny) * BOUNCE; g.vz = (g.vz - 2 * d * nz) * BOUNCE; }
+      if (ny > .7) { hitFloor = true; if (Math.hypot(g.vx, g.vy, g.vz) < STOP) { g.vx = g.vy = g.vz = 0; g.rest = true; break; } }
+      else if (Math.hypot(g.vx, g.vy, g.vz) < STOP) g.vx = g.vy = g.vz = 0;   // (too slow off a wall: stopped, and falls from there — Source's)
+      continue; }
     if (!solid(boxes, bounds, x, y, z)) { g.x = x; g.y = y; g.z = z; continue; }
     // A glass pane in the way: it breaks, and the grenade, its run spent on it, drops on through (g.glass: which pane —
     // the host breaks it for everyone).
@@ -240,11 +278,11 @@ export const cellLit = (g, c, now) => { const t = now - (g.firedAt || now); retu
 export const inFire = (cells, x, z, y = null, g = null, now = 0) => cells.some(c => Math.abs(c[0] - x) < 2.2 && Math.abs(c[1] - z) < 2.2 && (y === null || Math.abs((c[2] ?? 0) - y) < 3) && (!g || cellLit(g, c, now)));
 // One host tick: move, bounce, set off, burn, clean up. Returns true when anything changed.
 export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } = {}, onBlast = null, onGlass = null) {   // onBlast(x, y, z, radius, dmg): an HE went off there (arena-logic.js: doors and breakables take it)
-  const C = game.combat; if (C) C.clock = now; if (!C?.nades?.length) return false; let changed = false;
+  const C = game.combat; if (C) C.clock = now; if (!C?.nades?.length) return false; let changed = false; const bodies = C.nades.some(g => g.phase === 'air') ? people(game, players) : null;   // (the living, for grenades in flight to bounce off)
   for (const g of C.nades) {
     const N = NADES[g.kind], age = now - g.at;
     if (g.phase === 'air') {
-      const hitFloor = stepNade(g, boxes, bounds, dt); changed = true;
+      const hitFloor = stepNade(g, boxes, bounds, dt, bodies); changed = true;
       if (g.glass?.length) { for (const id of g.glass) onGlass?.(id); g.glass = null; }   // (panes it broke on the way: broken for everyone)
       if (!goesOff(g, hitFloor, age)) continue;
       g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', molotov: 'fire' }[g.kind]; g.firedAt = now; g.vx = g.vy = g.vz = 0; if (g.phase === 'smoke') smokeVoxels(game, g);   /* its cells now, once (every sightline after reads them) */
@@ -275,11 +313,26 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
   return changed || C.nades.length !== n;
 }
 function groundUnder(boxes, x, z, y) { let g = 0; for (const b of boxesNear(boxes, x, z, x, z, GU)) if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ && b.y1 <= y + 1 && b.y1 > g) g = b.y1; return g; }
-// How blinded a viewer is by a flash at (fx, fy, fz): 0…1 (1 = fully white), from distance and how directly they look
-// at it; nothing through walls (3D, from the eye) or smoke. dirX/Y/Z: where the viewer looks.
+// How blinded a viewer is by a flash at (fx, fy, fz): 0…1 (1 = fully white), from distance, how much of the flash
+// reaches their eye and how directly they look at it. dirX/Y/Z: where the viewer looks.
+// How much reaches the eye is CS's PercentageOfFlashForPlayer: seen straight (no wall — CS2's own surfaces on a CS2
+// map, its light passing grenade clips, fences and glass — nor smoke in between): all of it; otherwise the light off a
+// point 50 units over the flash and 75 units to either side of it (as the eye sees it), a sixth each that reaches
+// the eye (a flash round a corner or over a wall still catches you a little). Then by where the eye looks, as CS's
+// RadiusFlash: within about 53° of it all, to 73° 70 %, to 101° 40 %, behind 20 %.
+const FLASH_UP = 50 * HU, FLASH_SIDE = 75 * HU;
+function flashReach(boxes, game, fx, fy, fz, x, y, z) {
+  const M = boxes.nadeMesh, clear = (ax, ay, az, bx, by, bz) => (M ? !M.blocked(ax, ay, az, bx, by, bz, true) : segmentClear(boxes, ax, ay, az, bx, by, bz)) && !(game && smokeBlocks(game, ax, ay, az, bx, by, bz));
+  if (clear(fx, fy, fz, x, y, z)) return 1;
+  let ex = x - fx, ey = y - fy, ez = z - fz; const l = Math.hypot(ex, ey, ez) || 1; ex /= l; ey /= l; ez /= l;
+  let rx = -ez, rz = ex; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl; const ux = -ey * rz, uy = ez * rx - ex * rz, uz = ey * rx;   // (right: level, across the view; up: across both)
+  let got = 0; for (const [px, py, pz] of [[fx + ux * FLASH_UP, fy + uy * FLASH_UP, fz + uz * FLASH_UP], [fx + rx * FLASH_SIDE, fy, fz + rz * FLASH_SIDE], [fx - rx * FLASH_SIDE, fy, fz - rz * FLASH_SIDE]])
+    if (clear(fx, fy, fz, px, py, pz) && clear(px, py, pz, x, y, z)) got += 1 / 6;
+  return got;
+}
 export function flashAmount(boxes, fx, fy, fz, x, y, z, dirX, dirY, dirZ, game = null) {
   const dx = fx - x, dy = fy - y, dz = fz - z, d = Math.hypot(dx, dy, dz); if (d > NADES.flash.radius) return 0;
-  if (!segmentClear(boxes, x, y, z, fx, Math.max(.6, fy), fz) || (game && smokeBlocks(game, x, y, z, fx, Math.max(.6, fy), fz))) return 0;
-  const facing = (dx * dirX + dy * dirY + dz * dirZ) / (d || 1), look = facing > .75 ? 1 : facing > .3 ? .8 : facing > -.2 ? .45 : .12;
-  return Math.max(0, Math.min(1, look * (1 - Math.pow(d / NADES.flash.radius, 1.4)) * (d < 25 ? 1.15 : 1)));
+  const reach = flashReach(boxes, game, fx, Math.max(.6, fy), fz, x, y, z); if (reach <= 0) return 0;
+  const facing = (dx * dirX + dy * dirY + dz * dirZ) / (d || 1), look = facing >= .6 ? 1 : facing >= .3 ? .7 : facing >= -.2 ? .4 : .2;
+  return Math.max(0, Math.min(1, reach * look * (1 - Math.pow(d / NADES.flash.radius, 1.4)) * (d < 25 ? 1.15 : 1)));
 }

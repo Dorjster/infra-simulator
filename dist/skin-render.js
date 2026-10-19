@@ -66,6 +66,12 @@ export function finishSwatch(finish, seed = 1, w = 96, h = 48) {
   const p = patternOf(seed), g = x.createLinearGradient(0, 0, w, h); const [a, b, cc] = f.colors; g.addColorStop(0, a); g.addColorStop(.5, b || a); g.addColorStop(1, cc || b || a); x.fillStyle = g; x.fillRect(0, 0, w, h);
   x.globalAlpha = .35; for (let i = 0; i < 18; i++) { x.fillStyle = [a, b, cc][i % 3] || a; x.beginPath(); x.arc(((p.u * w + i * 37) % w), ((p.v * h + i * 23) % h), 4 + (i * 7) % 11, 0, Math.PI * 2); x.fill(); } x.globalAlpha = 1; return c;
 }
+// The same skin? (Field by field: the room's state arrives as new objects with every update, the same skin or not.)
+export function sameSkin(a, b) {
+  if (a === b) return true; if (!a || !b) return false; if (a.finish !== b.finish || a.wear !== b.wear || a.seed !== b.seed || !!a.st !== !!b.st || (a.name || '') !== (b.name || '')) return false;
+  const x = a.stickers || [], y = b.stickers || []; if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) { const s = x[i], t = y[i]; if (s.id !== t.id || s.slot !== t.slot || s.x !== t.x || s.y !== t.y || s.scale !== t.scale || s.rot !== t.rot || (s.wear || 0) !== (t.wear || 0)) return false; } return true;
+}
 // Someone else's gun in the world (a CS2 agent's): its own copies of the gun's materials (made once, when it first wears
 // a skin — the shared ones stay as they are), painted with the skin; null: back to the gun's own look.
 export function skinObject(obj, skin) {

@@ -14,6 +14,10 @@ export function parseCs2Map(buf) {
   // is made of (header.pens: wood, metal, plaster… — wallbangs). Older files: the players' layer stands in.
   const B = H.sizes?.bullets ? grid() : null, PEN = B ? new Uint8Array(ab, o, H.sizes.bullets[2]) : null, PENS = H.pens || [];
   if (PEN) o += PEN.length + (4 - PEN.length % 4) % 4;
+  // The grenades' triangles (newer files: header.nadeMesh — tools/maps/nade-mesh.mjs, dist/nade-mesh.js): Uint16 corners
+  // across the mesh's bounds, then the search tree's boxes and links.
+  const NM = H.nadeMesh, p4 = n => n + (4 - n % 4) % 4; let nadeMesh = null;
+  if (NM && NM.tris > 0) { const tri = new Uint16Array(ab, o, NM.tris * 9); o += p4(NM.tris * 18); const box = new Uint16Array(ab, o, NM.nodes * 6); o += p4(NM.nodes * 12); const links = new Uint32Array(ab, o, NM.nodes * 2); o += NM.nodes * 8; const sight = NM.sight ? new Uint8Array(ab, o, NM.tris) : null; if (sight) o += p4(NM.tris); nadeMesh = { o: NM.o, s: NM.s, tri, box, links, sight }; }   // (sight: a byte a triangle, 1 = it stops sight too)
   const at = (g, x, y) => { const c = Math.round((x - G.x0) / G.step), r = Math.round((y - G.y0) / G.step); return c < 0 || r < 0 || c >= G.cols || r >= G.rows ? -1 : r * G.cols + c; };
   // Solid stretches [bottom, top] (Hammer units) on the line through (x, y), clipped to [z0, z1].
   const spans = (g, x, y, z0, z1) => { const i = at(g, x, y), out = []; if (i < 0) return out; for (let k = g.offs[i]; k < g.offs[i + 1]; k += 2) { const b = g.vals[k] / 2, t = g.vals[k + 1] / 2; if (t > z0 && b < z1) out.push([Math.max(b, z0), Math.min(t, z1)]); } return out; };
@@ -28,7 +32,8 @@ export function parseCs2Map(buf) {
     solidSpans: (head, x, y, z0, z1) => spans(P, x, y, z0, z1),   // (the builder's world part: head 0)
     bulletSpans: B ? (x, y, z0, z1) => { const i = at(B, x, y), out = []; if (i < 0) return out; for (let k = B.offs[i]; k < B.offs[i + 1]; k += 2) { const b = B.vals[k] / 2, t = B.vals[k + 1] / 2; if (t > z0 && b < z1) out.push([Math.max(b, z0), Math.min(t, z1), PENS[PEN[k >> 1]] || 'concrete']); } return out; } : null,
     props: H.props || [],                                          // physics props (pots, cans, stools): pushed about, never in the way
-    pointSolid: (x, y, z) => pointIn(N, x, y, z),                  // grenades
+    pointSolid: (x, y, z) => pointIn(N, x, y, z),                  // grenades (older files; newer: nadeMesh)
+    nadeMesh,                                                      // grenades: CS2's surfaces as triangles (dist/nade-mesh.js)
     surfaceAt,                                                     // footsteps (map-light.js floorSurface)
     places: H.entities.filter(e => e.classname === 'env_cs_place' && e.place_name).map(e => ({ name: e.place_name, ...H.models[+e.model.slice(1)] })) };
 }

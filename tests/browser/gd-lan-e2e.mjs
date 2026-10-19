@@ -91,6 +91,7 @@ const tm = await act(guest, { type: 'team', team: s.teams.guest === 't' ? 'ct' :
 check('M during a match: change at the next round', /next round/.test(String(tm)) || /too many/.test(tm?.error || ''), JSON.stringify(tm));
 // Host changes the map: both clients land on Mirage, round 1, same state.
 await host.evaluate(() => __infra.lab.arenaUI.teamMenu(true)); await host.waitForTimeout(300);
+await host.evaluate(() => document.querySelector('#ar-team [data-tab=host]')?.click()); await host.waitForTimeout(200);   // (the menu's Host tab)
 check('M menu: host map / bots / difficulty controls', await host.evaluate(() => !!document.querySelector('#ar-team #ar-mapsel') && !!document.querySelector('#ar-team #ar-botn')));
 await host.evaluate(() => { document.getElementById('ar-mapsel').value = 'mirage'; document.querySelector('[data-map-go]').click(); }); await host.waitForTimeout(500);
 await guest.waitForFunction(() => __infra.lab.world.operations.game.arena?.map === 'mirage' && __infra.lab.arenaScene.map === 'mirage', null, { timeout: 15000 }).catch(() => {});

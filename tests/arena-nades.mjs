@@ -58,11 +58,12 @@ assert.match(arenaApply(g3, { type: 'pickup', id: g3.combat.ground[0].id }, 'Bo'
   const L = dist('long'), M = dist('medium'), S = dist('short'); assert(L > 200 && M < L * .75 && S < M * .6 && S > 15, `full ${L | 0} · medium ${M | 0} · short ${S | 0}`);
   const gq = { kind: 'he', ...throwStart({ x: 0, y: 9.7, z: 0, dx: 0, dy: .2, dz: -1, strength: 'long' }), ...launch({ dx: 0, dy: .2, dz: -1, strength: 'long' }), still: 0 }, pred = predictThrow('he', { x: 0, y: 9.7, z: 0, dx: 0, dy: .2, dz: -1, strength: 'long' });
   for (let i = 1; i < pred.length; i++) { stepNade(gq, [], null, .05); assert(Math.hypot(gq.x - pred[i][0], gq.y - pred[i][1], gq.z - pred[i][2]) < 1e-9, 'preview = host flight'); } }
-// CS2's throw (Source ThrowGrenade): a level aim throws 10° up; looking down d° throws −10 + d·80/90; looking up u°
-// throws −10 − u·100/90 (so 45° up throws 60° up); it starts 22 units ahead of the eye, short of a wall in the way.
+// CS2's throw (Source ThrowGrenade, kept by CS:GO and CS2): a level aim throws 10° up; looking down d° throws
+// −10 + d·100/90 (so 45° down throws 40° down, straight down straight down); looking up u° throws −10 − u·80/90 (45° up
+// throws 50° up, straight up straight up); it starts 22 units ahead of the eye, short of a wall in the way.
 { const HU = 2.54 / 16.5, ang = a => { const v = launch({ dx: Math.cos(a * Math.PI / 180), dy: Math.sin(a * Math.PI / 180), dz: 0, strength: 'long' }); return Math.atan2(v.vy, v.vx) * 180 / Math.PI; };
-  assert(Math.abs(ang(0) - 10) < .01, 'level: 10° up · ' + ang(0)); assert(Math.abs(ang(-45) - (10 - 45 * 80 / 90)) < .01, 'down 45°: 30° down · ' + ang(-45)); assert(Math.abs(ang(45) - (10 + 45 * 100 / 90)) < .01, 'up 45°: 60° up · ' + ang(45));
-  const st = throwStart({ x: 0, y: 9.7, z: 0, dx: 1, dy: 0, dz: 0, strength: 'long' }); assert(Math.abs(st.x - 22 * HU) < 1e-9 && st.y === 9.7, 'starts 22 units ahead');
+  assert(Math.abs(ang(0) - 10) < .01, 'level: 10° up · ' + ang(0)); assert(Math.abs(ang(-45) - (10 - 45 * 100 / 90)) < .01, 'down 45°: 40° down · ' + ang(-45)); assert(Math.abs(ang(45) - (10 + 45 * 80 / 90)) < .01, 'up 45°: 50° up · ' + ang(45)); assert(Math.abs(ang(-89.9) + 90) < .2 && Math.abs(ang(89.9) - 90) < .2, 'straight down / up throw straight down / up (Source) · ' + ang(-89.9) + ' / ' + ang(89.9));
+  const st = throwStart({ x: 0, y: 9.7, z: 0, dx: 1, dy: 0, dz: 0, strength: 'long' }); assert(Math.abs(st.x - 22 * HU * Math.cos(Math.PI / 18)) < 1e-9 && Math.abs(st.y - (9.7 + 22 * HU * Math.sin(Math.PI / 18))) < 1e-9, 'starts 22 units ahead along the throw (10° up for a level aim, as Source traces it)');
   const wall = [{ minX: 2, maxX: 3, minZ: -5, maxZ: 5, y0: 0, y1: 20 }], sw = throwStart({ x: 0, y: 9.7, z: 0, dx: 1, dy: 0, dz: 0, strength: 'long' }, wall); assert(sw.x < 2 - .3, 'a wall 2 units ahead: it starts this side of it · ' + sw.x.toFixed(2));
   assert(NADES.he.fuse === 1500 && NADES.flash.fuse === 1500 && NADES.molotov.fuse === 2000, 'CS2 fuses: HE and flash 1.5 s, molotov 2 s in the air'); }
 // A molotov that times out high in the air bursts there — no fire; one low over the floor sets the floor alight.

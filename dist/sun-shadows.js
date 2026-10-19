@@ -17,21 +17,28 @@ export function createSunShadows(renderer) {
   BAKED.uPSh.value = rt.depthTexture; BAKED.uPShSpan.value = SIZE; const KEEP = []; let frame = 0, drawn = false;
   // Each caster is drawn here with a depth-only stand-in, one per kind of draw (skinned, instanced, side, morphs), used
   // nowhere else: its own material drawn into this target (no lights, linear, no tone map) and then to the screen had
-  // three.js work out its program again twice a frame, every material of every player (a cut-out keeps its own: alpha).
-  const STAND = new Map(); let draw = null;
-  const standIn = (m, o, g) => { if (m.alphaTest > 0 || m.userData.depthOnly) return m; const mt = g.morphAttributes.position, k = (o.isSkinnedMesh ? 1 : 0) | (o.isInstancedMesh ? 2 : 0) | (o.instanceColor ? 4 : 0) | (m.side << 3) | ((mt ? mt.length : 0) << 5);
+  // three.js work out its program again twice a frame, every material of every player. A cut-out (alpha tested: a
+  // crate's slats, a fence) gets one that keeps its cut: its own picture, the same program for all of them (built at the
+  // first shadows, warm()) — not its own material, whose shadow-pass shader was built the first time a prop came out of
+  // its batch in play.
+  const STAND = new Map(), CUT = new Map(); let draw = null;
+  const standIn = (m, o, g) => { if (m.userData.depthOnly) return m; const mt = g.morphAttributes.position, k = (o.isSkinnedMesh ? 1 : 0) | (o.isInstancedMesh ? 2 : 0) | (o.instanceColor ? 4 : 0) | (m.side << 3) | ((mt ? mt.length : 0) << 5);
+    if (m.alphaTest > 0 && m.map) { let c = CUT.get(m.map); if (!c) CUT.set(m.map, c = new Map()); let d = c.get(k); if (!d) { d = new THREE.MeshBasicMaterial({ map: m.map, alphaTest: m.alphaTest, colorWrite: false, side: m.side, fog: false, toneMapped: false }); c.set(k, d); } return d; }
+    if (m.alphaTest > 0) return m;
     let d = STAND.get(k); if (!d) { d = new THREE.MeshBasicMaterial({ colorWrite: false, side: m.side, fog: false, toneMapped: false }); STAND.set(k, d); } return d; };
   const viaStandIn = function (camera, scene, geometry, material, object, group) { return draw.call(this, camera, scene, geometry, standIn(material, object, geometry), object, group); };
   // Every stand-in compiled at the first shadows drawn (behind the map's loading card), not when the first player, gun or
   // door of a kind comes into view in play (a 100–200 ms frame when a LAN player joined): one of each kind drawn into it.
-  let warmed = false;
-  function warm() { warmed = true; const sc = new THREE.Scene(), g = new THREE.BufferGeometry(), mats = [THREE.FrontSide, THREE.BackSide, THREE.DoubleSide].map(side => new THREE.MeshBasicMaterial({ side }));
+  let warmed = -1; const fogKind = s => s.fog?.isFogExp2 ? 2 : s.fog ? 1 : 0;   // (warmed: for which kind of fog — again when a map brings another)
+  function warm(scene) { warmed = fogKind(scene); const sc = new THREE.Scene(); sc.fog = scene.fog;   // (the scene's own fog: three.js keys every program by whether the scene has fog, a depth-only one too)
+    const g = new THREE.BufferGeometry(), pic = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); pic.needsUpdate = true;
+    const mats = [THREE.FrontSide, THREE.BackSide, THREE.DoubleSide].flatMap(side => [new THREE.MeshBasicMaterial({ side }), new THREE.MeshBasicMaterial({ side, map: pic, alphaTest: .5 })]);   // (plain, and cut out)
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3)); g.setAttribute('skinIndex', new THREE.BufferAttribute(new Uint16Array(12), 4)); g.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), 4));
     const add = o => { o.frustumCulled = false; o.layers.set(CASTER); sc.add(o); return o; };
     for (const m of mats) { add(new THREE.Mesh(g, m)); const k = add(new THREE.SkinnedMesh(g, m)), bone = new THREE.Bone(); k.add(bone); k.bind(new THREE.Skeleton([bone])); add(new THREE.InstancedMesh(g, m, 1)); }
     sc.updateMatrixWorld(true); const was = renderer.getRenderTarget(); draw = renderer.renderBufferDirect; renderer.renderBufferDirect = viaStandIn;
     try { renderer.setRenderTarget(rt); renderer.render(sc, cam); } finally { renderer.renderBufferDirect = draw; renderer.setRenderTarget(was); }
-    sc.traverse(o => { if (o.isSkinnedMesh) o.skeleton.dispose(); if (o.isInstancedMesh) o.dispose(); }); g.dispose(); for (const m of mats) m.dispose(); }
+    sc.traverse(o => { if (o.isSkinnedMesh) o.skeleton.dispose(); if (o.isInstancedMesh) o.dispose(); }); g.dispose(); for (const m of mats) m.dispose(); }   // (the stand-ins it made stay — STAND, CUT under its little picture — so their programs stay built: three.js frees a program no material uses)
   return {
     // Each frame on a baked map: follow the camera on the texel grid, draw the casters' depth from the sun, hand it to the
     // map's shader. off(): back to the baked sun alone (other maps, Low).
@@ -41,7 +48,7 @@ export function createSunShadows(renderer) {
     // frame's own keeps them: what moved shows a frame later).
     update(scene, camera) {
       const d = BAKED.uSunDir.value; if (d.y <= .05) { BAKED.uPShOn.value = 0; drawn = false; return; }
-      if (drawn && (frame++ & 1)) return; if (!warmed) warm();
+      if (drawn && (frame++ & 1)) return; if (warmed !== fogKind(scene)) warm(scene);
       right.crossVectors(Y, d); if (right.lengthSq() < 1e-6) right.set(1, 0, 0); right.normalize(); up.crossVectors(d, right).normalize();
       const k = 2 * SPAN / SIZE, cx = camera.position.dot(right), cy = camera.position.dot(up), cz = camera.position.dot(d);
       at.copy(right).multiplyScalar(Math.round(cx / k) * k).addScaledVector(up, Math.round(cy / k) * k).addScaledVector(d, cz);   // (the camera's spot, on the texel grid)
@@ -52,6 +59,6 @@ export function createSunShadows(renderer) {
       try { renderer.setRenderTarget(rt); renderer.render(scene, cam); } finally { renderer.renderBufferDirect = draw; scene.children = all; scene.matrixWorldAutoUpdate = mwa; renderer.setRenderTarget(was); renderer.autoClear = ac; }
       BAKED.uPShMat.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); BAKED.uPShOn.value = 1; drawn = true; },
     off() { BAKED.uPShOn.value = 0; drawn = false; },
-    dispose() { BAKED.uPShOn.value = 0; BAKED.uPSh.value = null; rt.dispose(); rt.depthTexture.dispose(); for (const d of STAND.values()) d.dispose(); STAND.clear(); },
+    dispose() { BAKED.uPShOn.value = 0; BAKED.uPSh.value = null; rt.dispose(); rt.depthTexture.dispose(); for (const d of STAND.values()) d.dispose(); STAND.clear(); for (const c of CUT.values()) for (const d of c.values()) d.dispose(); CUT.clear(); },
   };
 }

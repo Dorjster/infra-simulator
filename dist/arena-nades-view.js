@@ -3,7 +3,7 @@
 // molotov fire, each with 3D sound. Materials are made once and shared (the graphics warm-up compiles them).
 import * as THREE from './three.module.js';
 import { weaponModel } from './weapon-models.js';
-import { NADES, flashAmount, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeOpenness, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
+import { NADES, stepNade, flashAmount, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeOpenness, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
 import { audioCtx, outAt, reverb, listenerAt } from './spatial-audio.js';
 import { fx as rec } from './sound-bank.js';
 
@@ -187,7 +187,7 @@ function ring(secs) { try { const c = audioCtx(), t = c.currentTime, o = c.creat
 const away = at => { const me = listenerAt(); return at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0; }, dull = at => Math.max(900, 18000 * Math.exp(-away(at) / 140));
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
 
-export function createNadeView({ scene, camera, world, boxes = () => [], quality = () => 'Medium', hostNow = () => Date.now() }) {
+export function createNadeView({ scene, camera, world, boxes = () => [], bounds = () => null, quality = () => 'Medium', hostNow = () => Date.now() }) {
   const group = new THREE.Group(); group.name = 'nades'; group.userData.gd = true; scene.add(group); const FXP = FXS = createFxSystem(group, quality);
   const FM = new THREE.Matrix4(), FQ = new THREE.Quaternion(), FV = new THREE.Vector3(), FS = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
   const live = new Map(), dir = new THREE.Vector3(); let flashUntil = 0, flashPeak = 0, flashAt = 0, path = null, landRing = null;
@@ -226,6 +226,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
   }
   return {
     group,
+    drawn: id => live.get(id)?.model.position || null,   // (tests: where a grenade is drawn)
     update(dt) {
       const G = world.operations.game, list = G.mode === 'arena' ? G.combat?.nades || [] : [], now = performance.now(), seen = new Set();
       FXP.update(dt);
@@ -236,8 +237,19 @@ export function createNadeView({ scene, camera, world, boxes = () => [], quality
           if (v.hx !== undefined) { const vx = g.x - v.hx, vy = g.y - v.hy, vz = g.z - v.hz, m = Math.hypot(vx, vy, vz), pm = Math.hypot(v.vx, v.vy, v.vz);
             if (m > .05 && pm > .05 && (vx * v.vx + vy * v.vy + vz * v.vz) / (m * pm) < .55 && now - (v.bounced || 0) > 120) { v.bounced = now; rec('bounce', { at: { x: g.x, y: g.y, z: g.z }, volume: Math.min(.8, .25 + pm * .15), rate: g.kind === 'molotov' ? .8 : .95 + Math.random() * .15, kind: 'step' }); }
             v.vx = vx; v.vy = vy; v.vz = vz; } else v.vx = v.vy = v.vz = 0;
-          v.hx = g.x; v.hy = g.y; v.hz = g.z; }
-        if (g.phase === 'air') { const k = 1 - Math.exp(-dt * 18); v.model.position.x += (g.x - v.model.position.x) * k; v.model.position.y += (g.y - v.model.position.y) * k; v.model.position.z += (g.z - v.model.position.z) * k; v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; continue; }
+          v.hx = g.x; v.hy = g.y; v.hz = g.z;
+          // The flight flown here too, as the host flies it (the same physics on the same map: arena-nades.js stepNade),
+          // from the host's latest state caught up to now on the host's clock — smooth every frame between the host's
+          // updates, and exact at bounces, instead of trailing the updates (an older host without velocities: smoothed).
+          if (Number.isFinite(g.vx)) { const first = !v.sim, S = v.sim ??= { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, still: 0, rest: false, grav: undefined, view: true, pastGlass: null }, was = v.model.position;
+            S.x = g.x; S.y = g.y; S.z = g.z; S.vx = g.vx; S.vy = g.vy; S.vz = g.vz; S.still = g.still || 0; S.rest = !!g.rest; S.grav = g.grav;
+            const late = Math.min(.25, Math.max(0, (hostNow() - (G.combat?.clock ?? hostNow())) / 1000)); if (late > 0) stepNade(S, boxes(), bounds(), late);
+            // Drawn where it flies here, a correction (the host's word on where it is) eased out over ~80 ms, never a jump.
+            if (first) { v.ox = v.oy = v.oz = 0; } else { v.ox = was.x - S.x; v.oy = was.y - S.y; v.oz = was.z - S.z; } } }
+        else if (g.phase === 'air' && v.sim) stepNade(v.sim, boxes(), bounds(), dt);
+        if (g.phase === 'air') { if (v.sim) { const k = Math.exp(-dt * 40); v.ox *= k; v.oy *= k; v.oz *= k; v.model.position.set(v.sim.x + v.ox, v.sim.y + v.oy, v.sim.z + v.oz); }
+          else { const k = 1 - Math.exp(-dt * 18); v.model.position.x += (g.x - v.model.position.x) * k; v.model.position.y += (g.y - v.model.position.y) * k; v.model.position.z += (g.z - v.model.position.z) * k; }
+          v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; continue; }
         if (v.fx && v.fx.phase !== g.phase) { v.fx.loop?.stop?.(); v.fx.fx.removeFromParent(); for (const p of v.fx.parts) { if (p.userData.vox) { p.material.uniforms.uVol.value?.dispose(); p.removeFromParent(); } if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); } v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); v.fx = null; }   // fire → out
         if (!v.fx) { v.fx = effect(g); if (g.phase !== 'fire' && g.phase !== 'smoke') v.model.visible = false; else v.model.position.set(g.x, g.y + .3, g.z); }
         const t = (now - v.fx.start) / 1000, F = v.fx;

@@ -9,6 +9,7 @@ import { solidSpans, solidAt, hullSolid, hullSpans, vec, modelOf } from './bsp30
 import { CELL, MAXF, NONE, SITE, STEP } from './cs-columns.js';
 import { finishMap, mergeSegs, U } from './cs-mapbuild.js';
 import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
+import { createNadeMesh } from './nade-mesh.js';
 
 const CROUCH = 36, SOLID = /^func_(wall|wall_toggle|breakable|door|door_rotating|pushable|train|tracktrain|plat|rotating|button|brush)$/, Q = 2;
 // Counter-Strike 1.6 doors (sliding, and rotating about an upright hinge) and breakables (glass, vents, crates) move or
@@ -158,8 +159,13 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   const nadeSolid = bsp.pointSolid ? (gx, gy, gz) => bsp.pointSolid(...fromGame(gx, gy, gz))   // (Counter-Strike 2: its own grenade collision, cs2-map.js)
     : NS ? (gx, gy, gz) => { const [x, y, z] = fromGame(gx, gy, gz); if (contentsAt(NS, NS.models[0].head, x, y, z) & NMASK) return true; const sp = bsp.extraSpans?.(x, y); if (sp) for (const s of sp) if (z >= s[0] && z <= s[1]) return true; return false; }
     : (gx, gy, gz) => { const [x, y, z] = fromGame(gx, gy, gz); for (const q of parts) { if (x < q.mins[0] || x > q.maxs[0] || y < q.mins[1] || y > q.maxs[1] || z < q.mins[2] || z > q.maxs[2]) continue; if (contentsAt(bsp, q.head, x - q.off[0], y - q.off[1], z - q.off[2]) === -2) return true; } return false; };
+  // Counter-Strike 2 (newer files): its grenade collision as triangles — contact(x, y, z, r, out) in map-relative game
+  // units: the way out of the nearest surface (game axes) and how far in (dist/nade-mesh.js).
+  const NMC = bsp.nadeMesh ? createNadeMesh(bsp.nadeMesh) : null, NMO = new Float64Array(4);
+  const nadeMesh = NMC ? { tris: NMC.tris, contact: (gx, gy, gz, r, out) => { if (!NMC.contact(x0 + (gx + W / 2) / U, y1 - (gz + D / 2) / U, zLow + gy / U, r / U, NMO)) return false; out[0] = NMO[0]; out[1] = NMO[2]; out[2] = -NMO[1]; out[3] = NMO[3] * U; return true; },
+    blocked: (ax, ay, az, bx, by, bz, sightOnly) => NMC.blocked(x0 + (ax + W / 2) / U, y1 - (az + D / 2) / U, zLow + ay / U, x0 + (bx + W / 2) / U, y1 - (bz + D / 2) / U, zLow + by / U, sightOnly) } : null;   // (blocked: does a→b cross a surface — sightOnly: one that stops sight)
   for (const L of bsp.ladderBoxes || []) { const a = toGame(L.mins[0], L.maxs[1], L.mins[2]), c = toGame(L.maxs[0], L.mins[1], L.maxs[2]); ladders.push([a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(2))); }   // (Source: ladder brushes)
-  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: bsp.cs2 ? null : { data: bsp, toGame }, cs2: !!bsp.cs2, hammer: bsp.cs2 ? { x0, y1, W, D, zLow, U } : null, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders, movers, nadeSolid } });
+  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: bsp.cs2 ? null : { data: bsp, toGame }, cs2: !!bsp.cs2, hammer: bsp.cs2 ? { x0, y1, W, D, zLow, U } : null, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders, movers, nadeSolid, nadeMesh } });
   // The segments only made the collision boxes: these maps are drawn from their own faces (bsp-mesh.js), never from
   // the columns, and a large map holds some 200 000 of them (60 MB).
   if (bsegs) map.bulletSolids = mergeSegs(cols, rows, bsegs, zLow);
