@@ -4,10 +4,10 @@
 // model. The collision stays the map file's (cs2-map.js); this is only what is drawn in place of its plain columns.
 // Loaded on the loading screen, textures uploaded there; one map's look is kept at a time.
 import * as THREE from './three.module.js';
-import { GLTFLoader } from './post/GLTFLoader.js';
+import { gltfLoader } from './gltf-loader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { mapFileOf } from './arena-maps.js';
-import { anisotropy } from './texture-quality.js'; import { noteProgress } from './load-progress.js';
+import { anisotropy } from './texture-quality.js'; import { loadPreferences } from './player-preferences.js'; import { noteProgress } from './load-progress.js';
 
 let kept = null; const loading = new Map(), none = new Set();   // kept: { id, root, textures, meshes }; none: maps without a look (or whose look failed)
 // CS2's textures are made for its own baked light (soft, with ambient occlusion); under this game's sun and sky their
@@ -23,8 +23,8 @@ export const EXPOSURE_AT = 1;
 // there is, and CS2's own light and shadows (props sit in their shadows instead of floating on flat light).
 export const BAKED = { uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSun: { value: new THREE.Color(1, 1, 1) }, uLScale: { value: 4 }, uExposure: { value: .6 }, uWhite: { value: 4 }, uSunMask: { value: null }, uHasMask: { value: 0 },
   uPSh: { value: null }, uPShMat: { value: new THREE.Matrix4() }, uPShOn: { value: 0 }, uPShSpan: { value: 2048 }, uPShDebug: { value: 0 },
-  uGrade: { value: 0 }, uCurveA: { value: new THREE.Vector4() }, uCurveB: { value: new THREE.Vector4() }, uLut: { value: null }, uLutOn: { value: 0 } };   // (the sun's live shadows near the camera: sun-shadows.js — the casters' depth from the sun, where to look it up, its size)   // (uSunMask: the sun's reach at the atlas's full size, when the map has it)
-const BAKED_PARS = 'uniform vec3 uSunDir; uniform vec3 uSun; uniform float uLScale; uniform float uExposure; uniform float uWhite; uniform sampler2D uSunMask; uniform float uHasMask; varying vec3 vBakedN;\n'
+  uSunK: { value: 1 }, uGrade: { value: 0 }, uCurveA: { value: new THREE.Vector4() }, uCurveB: { value: new THREE.Vector4() }, uLut: { value: null }, uLutOn: { value: 0 } };   // (the sun's live shadows near the camera: sun-shadows.js — the casters' depth from the sun, where to look it up, its size)   // (uSunMask: the sun's reach at the atlas's full size, when the map has it)
+const BAKED_PARS = 'uniform vec3 uSunDir; uniform vec3 uSun; uniform float uSunK; uniform float uLScale; uniform float uExposure; uniform float uWhite; uniform sampler2D uSunMask; uniform float uHasMask; varying vec3 vBakedN;\n'
   + 'uniform float uGrade; uniform vec4 uCurveA; uniform vec4 uCurveB; uniform highp sampler3D uLut; uniform float uLutOn;\n'
   + 'vec3 bakedLight( vec3 L ) { return uGrade > 0.5 ? L : uExposure * L / ( 1.0 + L / uWhite ); }\n'
   // CS2's grading of the map (its post_processing_volume, install_look.py): the colour × the exposure through its filmic
@@ -49,7 +49,7 @@ const BAKED_PARS = 'uniform vec3 uSunDir; uniform vec3 uSun; uniform float uLSca
 function bakedShader(shader, vertexLight) {
   Object.assign(shader.uniforms, BAKED);
   shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vBakedN; varying vec3 vBakedW;\n#ifdef CS2_TINT\nattribute vec4 tint; varying vec3 vTint;\n#endif').replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvBakedN = normalize( mat3( modelMatrix ) * normal ); vBakedW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\n#ifdef CS2_TINT\n\tvTint = tint.rgb;\n#endif');   // (CS2_TINT: meshes merged into one, each one's colour per vertex — prepare)
-  const light = (irr, sun, uvDbg = 'vec3( 0.0 )') => `{ vec3 bakedN = normalize( vBakedN ) * ( gl_FrontFacing ? 1.0 : - 1.0 ); reflectedLight.indirectDiffuse += bakedLight( ${irr} + uSun * ( sunReach( ${sun}, bakedN ) * max( dot( bakedN, uSunDir ), 0.0 ) ) ); if ( uPShDebug > 2.5 ) shDbg = vec4( ${uvDbg}, 1.0 ); else if ( uPShDebug > 1.5 ) shDbg = vec4( bakedLight( ${irr} ), 1.0 ); }`;   // (uPShDebug 2: the baked light alone, no texture — tests)
+  const light = (irr, sun, uvDbg = 'vec3( 0.0 )') => `{ vec3 bakedN = normalize( vBakedN ) * ( gl_FrontFacing ? 1.0 : - 1.0 ); reflectedLight.indirectDiffuse += bakedLight( ${irr} + uSun * uSunK * ( sunReach( ${sun}, bakedN ) * max( dot( bakedN, uSunDir ), 0.0 ) ) ); if ( uPShDebug > 2.5 ) shDbg = vec4( ${uvDbg}, 1.0 ); else if ( uPShDebug > 1.5 ) shDbg = vec4( bakedLight( ${irr} ), 1.0 ); }`;   // (uPShDebug 2: the baked light alone, no texture — tests)
   let f = shader.fragmentShader.replace('#include <common>', '#include <common>\n' + BAKED_PARS + '#ifdef CS2_TINT\nvarying vec3 vTint;\n#endif\n').replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse, opacity );\n#ifdef CS2_TINT\n\tdiffuseColor.rgb *= vTint;\n#endif');
   if (vertexLight) f = f.replace('#include <color_fragment>', '').replace('reflectedLight.indirectDiffuse += vec3( 1.0 );', light('vColor.rgb * uLScale', 'vColor.a'));   // (the vertex colour is light, not tint)
   else f = f.replace('reflectedLight.indirectDiffuse += lightMapTexel.rgb * lightMapIntensity * RECIPROCAL_PI;', light('pow( lightMapTexel.rgb, vec3( 2.2 ) ) * uLScale', '( uHasMask > 0.5 ? texture2D( uSunMask, vLightMapUv ).r : lightMapTexel.a )', '( uPShDebug > 4.5 ? vec3( floor( vLightMapUv.y * 255.0 ) / 255.0, fract( vLightMapUv.y * 255.0 ), 0.0 ) : uPShDebug > 3.5 ? vec3( floor( vLightMapUv.x * 255.0 ) / 255.0, fract( vLightMapUv.x * 255.0 ), 0.0 ) : vec3( fract( vLightMapUv * 16.0 ), 0.0 ) )'));
@@ -57,7 +57,11 @@ function bakedShader(shader, vertexLight) {
   f = f.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n\tif ( uPShDebug > 0.5 && shDbg.a > 0.0 ) gl_FragColor = vec4( uPShDebug > 1.5 && uPShDebug < 2.5 ? pow( shDbg.rgb, vec3( 0.4545 ) ) : shDbg.rgb, 1.0 );');
   shader.fragmentShader = f;
 }
-const bakedLM = s => bakedShader(s, false), bakedVL = s => bakedShader(s, true);   // (one function each: three.js keeps one program per kind)
+const bakedLM = s => bakedShader(s, false), bakedVL = s => bakedShader(s, true);
+// The player's Sun light setting (Settings → Graphics: 30–150 %): the sun's own light on a CS2 map, shade and bounce
+// light as they are — set now and whenever the settings change.
+const sunK = p => Math.max(.3, Math.min(1.5, +p?.sunLight || 1));
+BAKED.uSunK.value = sunK(loadPreferences()); globalThis.addEventListener?.('infra-preferences', e => { BAKED.uSunK.value = sunK(e.detail); });   // (one function each: three.js keeps one program per kind)
 // CS2's mod2x overlays (stains, grime, scuffs, worn road paint: static overlays in blend mode 3): the texture × its tint,
 // unlit, eased to neutral grey by its alpha, then the surface under it × 2 × that (grey 128 leaves it as it is).
 const mod2x = s => { s.fragmentShader = s.fragmentShader.replace('#include <colorspace_fragment>', '#include <colorspace_fragment>\n\tgl_FragColor = vec4( mix( vec3( 0.5 ), gl_FragColor.rgb, gl_FragColor.a ), 1.0 );'); };
@@ -92,7 +96,7 @@ export function ensureMapRender(id) {
       const mk = v.light?.mask ? loadSunMask(userAssetURL(ua, v.light.mask)).catch(e => { console.warn('map sun', id, e?.message); return null; }) : null;
       const lt = v.light?.post?.lut ? loadLut(userAssetURL(ua, v.light.post.lut)).catch(e => { console.warn('map grading', id, e?.message); return null; }) : null;
       const sk = v.light?.sky?.file ? new THREE.TextureLoader().loadAsync(userAssetURL(ua, v.light.sky.file)).then(t => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }).catch(e => { console.warn('map sky', id, e?.message); return null; }) : null;
-      return Promise.all([new GLTFLoader().loadAsync(userAssetURL(ua, v.file), e => noteProgress('Downloading the map\'s look', e.loaded, e.total || 0)), lm, mk, lt, sk]).then(([g, t, m, l, k]) => prepare(id, g, t ? { ...v.light, tex: t, mask: m, lutTex: l, skyTex: k } : null)); })
+      return Promise.all([gltfLoader().loadAsync(userAssetURL(ua, v.file), e => noteProgress('Downloading the map\'s look', e.loaded, e.total || 0)), lm, mk, lt, sk]).then(([g, t, m, l, k]) => prepare(id, g, t ? { ...v.light, tex: t, mask: m, lutTex: l, skyTex: k } : null)); })
     .catch(e => { console.warn('map look', id, e?.message); return null; });
   p.done = false; p.then(r => { p.done = true; loading.delete(id); if (!r) none.add(id); }); loading.set(id, p); return p;   // (none, or it failed: the map is drawn from its columns — not asked again this page)
 }

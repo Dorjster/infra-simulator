@@ -6,10 +6,11 @@
 // computer (user-maps is git-ignored) and is never shipped.
 //   node tools/maps/import-cs2-map.mjs <id> <export dir> [out dir]   (export dir: world_physics_physics.glb, ents.txt, ent_bounds.json;
 //   out dir: user-maps by default)
+//   NADE_MESH_ONLY=1 …: only (re)write the grenades' triangle mesh into the map file already there (its grids kept).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'; import path from 'node:path'; import os from 'node:os'; import { fileURLToPath } from 'node:url';
 import { meshSolids } from '../../dist/mesh-solids.js';
 import { surfaceOf, SURFACES } from '../../dist/map-light.js';
-import { radarMask } from './radar-mask.mjs';
+import { radarMask } from './radar-mask.mjs'; import { buildNadeMesh, cs2mBodyEnd } from './nade-mesh.mjs';
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..'), [id, dir, outDir = path.join(repo, 'user-maps')] = process.argv.slice(2);
 if (!id || !dir) { console.log('usage: node tools/maps/import-cs2-map.mjs <id> <export dir> [out dir]'); process.exit(1); }
 // GLB → { meshes: [{ name, pos: Float32Array (Hammer x y z), idx: Uint32Array }] }
@@ -47,6 +48,22 @@ const isLadder = m => /ladder/.test(m.name), isSky = m => /physics_sky/.test(m.n
 // lob comes back down) — fences and grates stop them too (they only let bullets through).
 const players = join([...meshes.filter(m => !/grenadeclip/.test(m.name) && !isLadder(m)), ...solidEnts.filter(m => !/grenadeclip/.test(m.name))]);
 const nades = join([...meshes.filter(m => !/playerclip/.test(m.name) && !isLadder(m) && !isSky(m)), ...solidEnts.filter(m => !/playerclip/.test(m.name))]);
+// The grenades' own collision as triangles (nade-mesh.mjs, dist/nade-mesh.js): the world's from nade_mesh.bin (made by
+// ~/CS2-extract/build/nade_mesh.py: the same surfaces, flat stretches merged, the finest detail within a unit) and the
+// solid entities' as they are. None without nade_mesh.bin (the grid stands in, as before).
+// Which of its triangles also stop sight (a flash's light): the world's first 'sight' (nade_mesh.bin.json), the entities'
+// unless they let bullets through (grenade clips, fences, grates, glass).
+function nadeMeshSoup() { const f = path.join(dir, 'nade_mesh.bin'); if (!existsSync(f)) return null; const b = readFileSync(f), world = new Float32Array(b.buffer, b.byteOffset, b.length >> 2), ents = solidEnts.filter(m => !/playerclip/.test(m.name));
+  const meta = existsSync(f + '.json') ? JSON.parse(readFileSync(f + '.json', 'utf8')) : {}, wt = world.length / 9, nt = wt + ents.reduce((n, m) => n + m.idx.length / 3, 0);
+  const soup = new Float32Array(nt * 9), sight = new Uint8Array(nt); soup.set(world); sight.fill(1, 0, Number.isFinite(meta.sight) ? meta.sight : wt); let o = world.length, t = wt;
+  for (const m of ents) { const see = /npcclip|passbullets|grenadeclip|navclip|window_glass|_glass\b|^physics_group_glass/.test(m.name) ? 0 : 1; for (let k = 0; k < m.idx.length; k++) { const v = m.idx[k] * 3; soup[o++] = m.pos[v]; soup[o++] = m.pos[v + 1]; soup[o++] = m.pos[v + 2]; } sight.fill(see, t, t + m.idx.length / 3); t += m.idx.length / 3; }
+  return { soup, sight }; }
+if (process.env.NADE_MESH_ONLY) { const soup = nadeMeshSoup(), target = path.join(outDir, id + '.bsp'); if (!soup || !existsSync(target)) { console.log('needs ' + path.join(dir, 'nade_mesh.bin') + ' and ' + target); process.exit(1); }
+  const file = readFileSync(target), { header, end } = cs2mBodyEnd(file), hl = file.readUInt32LE(8), p4 = n => n + (4 - n % 4) % 4, M = buildNadeMesh(soup.soup, soup.sight); header.nadeMesh = M.info;
+  const bk = path.join(os.homedir(), 'CS2-extract', 'backup', id + '-before-nademesh.bsp'); if (!existsSync(bk)) { mkdirSync(path.dirname(bk), { recursive: true }); copyFileSync(target, bk); }
+  const hb = Buffer.from(JSON.stringify(header)), u4 = v => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
+  const out = Buffer.concat([Buffer.from('CS2M'), u4(1), u4(hb.length), hb, Buffer.alloc((4 - hb.length % 4) % 4), file.subarray(12 + p4(hl), end), M.buf]); writeFileSync(target, out);
+  console.log(`→ ${target}: grenade mesh ${M.info.tris} triangles, ${M.info.nodes} nodes (${(M.buf.length / 1048576).toFixed(1)} MB), file ${(out.length / 1048576).toFixed(1)} MB`); process.exit(0); }
 // Bullets: what CS2's bullets hit — no player or grenade clips (Mirage's mid window, smoothing round corners), nothing
 // marked to pass bullets (chain-link fences, grates), no ladders, sky or glass panes (a pane breaks at the first shot).
 const passBullets = m => /playerclip|npcclip|passbullets|grenadeclip|navclip|window_glass|_glass\b|^physics_group_glass/.test(m.name) || isLadder(m) || isSky(m);
@@ -212,13 +229,13 @@ function grid(soup, ladderCut = false, pens = false) { const F = openFlags(soup)
   if (ladderCut && deepN) console.log(`  deep water: ${deepN} lines walled off`); if (ladderCut && voidN) console.log(`  floors over nothing filled: ${voidN}`); if (ladderCut && outN) console.log(`  off the radar: ${outN} lines solid`);
   return { offs, vals: Int16Array.from(vals), surf: Uint8Array.from(surf) }; }
 console.log(`grid ${cols} × ${rows} (8 units) over x ${X0}…${X0 + cols * 8}, y ${Y0}…${Y0 + rows * 8}, z ${Z0.toFixed(0)}…${Z1.toFixed(0)}`);
-const P = grid(players, true), N = grid(nades), B = grid(bullets, false, true);
+const P = grid(players, true), N = grid(nades), B = grid(bullets, false, true), NM = (s => s && buildNadeMesh(s.soup, s.sight))(nadeMeshSoup());
 // The file: "CS2M", version, header length, header JSON, then the grids (each: offsets Uint32 × (cols·rows+1), values Int16),
 // then a byte per player stretch: what its top is made of (a footstep surface: header.surfaces; 255: unknown).
 const header = Buffer.from(JSON.stringify({ id, source: 'Counter-Strike 2 (' + path.basename(dir) + ')', grid: { x0: X0, y0: Y0, step: 8, cols, rows, z0: Z0, z1: Z1 }, models, entities: out, ladderBoxes,
-  sizes: { players: [P.offs.length, P.vals.length], nades: [N.offs.length, N.vals.length], surfaces: P.surf.length, bullets: [B.offs.length, B.vals.length, B.surf.length] }, surfaces: SURFACES, pens: PENS, props }));
+  sizes: { players: [P.offs.length, P.vals.length], nades: [N.offs.length, N.vals.length], surfaces: P.surf.length, bullets: [B.offs.length, B.vals.length, B.surf.length] }, surfaces: SURFACES, pens: PENS, props, ...(NM ? { nadeMesh: NM.info } : {}) }));
 const pad = b => Buffer.concat([b, Buffer.alloc((4 - b.length % 4) % 4)]), u32 = v => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
-const file = Buffer.concat([Buffer.from('CS2M'), u32(1), u32(header.length), pad(header), ...[P, N].flatMap(g => [Buffer.from(g.offs.buffer), pad(Buffer.from(g.vals.buffer))]), pad(Buffer.from(P.surf.buffer)), Buffer.from(B.offs.buffer), pad(Buffer.from(B.vals.buffer)), pad(Buffer.from(B.surf.buffer))]);   // (then the bullets' layer and what each of its stretches is made of: header.pens)   // (then each player stretch's surface: an index into the header's `surfaces`)
+const file = Buffer.concat([Buffer.from('CS2M'), u32(1), u32(header.length), pad(header), ...[P, N].flatMap(g => [Buffer.from(g.offs.buffer), pad(Buffer.from(g.vals.buffer))]), pad(Buffer.from(P.surf.buffer)), Buffer.from(B.offs.buffer), pad(Buffer.from(B.vals.buffer)), pad(Buffer.from(B.surf.buffer)), ...(NM ? [NM.buf] : [])]);   // (then the bullets' layer and what each of its stretches is made of: header.pens)   // (then each player stretch's surface: an index into the header's `surfaces`)
 const target = path.join(outDir, id + '.bsp'); mkdirSync(path.dirname(target), { recursive: true });
 if (existsSync(target) && readFileSync(target).subarray(0, 4).toString() !== 'CS2M') { const bk = path.join(os.homedir(), 'CS2-extract', 'backup'); mkdirSync(bk, { recursive: true }); const to = path.join(bk, id + '-before-cs2.bsp'); if (!existsSync(to)) { copyFileSync(target, to); console.log('kept the earlier map file:', to); } }
 writeFileSync(target, file); writeFileSync(path.join(dir, 'movers.json'), JSON.stringify(moverLooks, null, 1));   /* (for the look: convert_world.py) */ console.log(`→ ${target} (${(file.length / 1048576).toFixed(1)} MB): ${out.filter(e => /^info_player/.test(e.classname)).length} spawns, ${out.filter(e => e.classname === 'func_buyzone').length} buy zones, ${out.filter(e => e.classname === 'func_bomb_target').length} bomb sites, ${out.filter(e => e.classname === 'env_cs_place').length} places`);

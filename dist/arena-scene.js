@@ -102,7 +102,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.userData.gd = true; group.visible = false; scene.add(group);
   let current = null, boxes = [], ladders = [], bounds = null, savedBg = null, savedFog = null;
   // Doors and breakables of a map file (bsp-map.js movers): their mesh groups and how far each has swung / slid.
-  let movers = [], lastState = null, lastV = -1, phys = null; const PHYS_NEAR = [];   // (phys: a CS2 look's physics props, arena-physprops.js)
+  let movers = [], lastState = null, lastV = -1, phys = null; const PHYS_NEAR = [], PHYS_OUT = new Float64Array(4);   // (phys: a CS2 look's physics props, arena-physprops.js)
   // Glass shards when a pane breaks: one small instanced pool, made once (no allocation in play).
   const SH = 72, shards = new THREE.InstancedMesh(new THREE.BoxGeometry(.32, .2, .02), new THREE.MeshBasicMaterial({ color: 0xcfe6ee, transparent: true, opacity: .7, depthWrite: false }), SH), shP = new Float32Array(SH * 3), shV = new Float32Array(SH * 3), shL = new Float32Array(SH), shM = new THREE.Matrix4(), shQ = new THREE.Quaternion(), shE = new THREE.Euler(), shS = new THREE.Vector3(1, 1, 1), shT = new THREE.Vector3(); let shI = 0, shAlive = 0;
   shards.frustumCulled = false; shards.visible = false; shards.userData.keep = true; shards.userData.noShadow = true; for (let i = 0; i < SH; i++) { shM.makeScale(0, 0, 0); shards.setMatrixAt(i, shM); } group.add(shards);
@@ -163,7 +163,11 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
       for (const M of movers) M.g.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });
       for (const pv of pivots.values()) pv.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });
       if (pivots.size) phys = createPhysProps(map.physProps, pivots, { cx, cz, floorAt: (x, z, y) => map.nav?.floorAt?.(x, z, y),
-        blocked: (x, z, y, h, r) => { for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, PHYS_NEAR)) if (!b.off && b.y1 > y + .3 && b.y0 < y + h && x + r > b.minX && x - r < b.maxX && z + r > b.minZ && z - r < b.maxZ) return true; return false; },
+        // A wall in the way: CS2's own surfaces where the map has its grenade triangles (a ball round the prop's body, up
+        // off the floor, touching something that is no floor), its doors and breakables by their boxes; else the boxes.
+        blocked: boxes.nadeMesh ? (x, z, y, h, r) => { for (const b of boxes.movers) if (!b.off && b.y1 > y + .3 && b.y0 < y + h && x + r > b.minX && x - r < b.maxX && z + r > b.minZ && z - r < b.maxZ) return true;
+            return boxes.nadeMesh.contact(x, y + Math.max(h * .6, r * 1.05), z, r * .95, PHYS_OUT) && Math.abs(PHYS_OUT[1]) < .7; }
+          : (x, z, y, h, r) => { for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, PHYS_NEAR)) if (!b.off && b.y1 > y + .3 && b.y0 < y + h && x + r > b.minX && x - r < b.maxX && z + r > b.minZ && z - r < b.maxZ) return true; return false; },
         wake: k => builtLook.userData.propBatch?.wake(map.physProps[k].i),
         onBreak: (k, x, y, z, r) => shatter({ minX: x - r, maxX: x + r, minZ: z - r, maxZ: z + r, y0: y - r * .6, y1: y + r * .6 }, /bottle|glass|jug/i.test(map.physProps[k].model)) });
       const r = globalThis.__infra?.renderer; if (r) r.compile(group, warmCam); return; }

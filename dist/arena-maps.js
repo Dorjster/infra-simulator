@@ -104,6 +104,7 @@ export function mapBoxes(map, cx, cz) {
   if (map.bulletSolids) { const bl = map.bulletSolids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: null, walk: false, mover: null, role: null, off: false }; });
     boxes.bullets = indexBoxes(bl.concat(boxes.movers)); }
   if (map.nadeSolid) boxes.nadeSolid = (x, y, z) => map.nadeSolid(x - cx, y, z - cz);   // (map files: grenades by the real shapes, arena-nades.js)
+  if (map.nadeMesh) { const M = map.nadeMesh; boxes.nadeMesh = { tris: M.tris, contact: (x, y, z, r, out) => M.contact(x - cx, y, z - cz, r, out), blocked: (ax, ay, az, bx, by, bz, sightOnly = false) => M.blocked(ax - cx, ay, az - cz, bx - cx, by, bz - cz, sightOnly) }; }   // (CS2 maps, newer files: grenades off CS2's own triangles)
   BOX_CACHE.delete(key); BOX_CACHE.set(key, { map, boxes }); while (BOX_CACHE.size > 4) BOX_CACHE.delete(BOX_CACHE.keys().next().value); return boxes;
 }
 // The round's doors and breakables (game.combat.mapState: doors[id] = { open, side }, broken[id]) on these boxes: a

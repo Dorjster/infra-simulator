@@ -6,7 +6,7 @@
 // player costs ~8 draw calls. Everything is procedural: walking, crouching, carrying the laptop and six
 // emotes are driven by update(dt, state) on every client from the shared pose.
 import * as THREE from './three.module.js';
-import { weaponModel } from './weapon-models.js';
+import { weaponModel } from './weapon-models.js'; import { skinObject, unskinObject, sameSkin } from './skin-render.js';
 import { EMOTE_IDS as ALLOWED, FACE_IDS as ALLOWED_FACES, SKIN_IDS, HAT_IDS, OUTFIT_IDS } from './play-rules.js';
 
 export const EMOTES = [
@@ -205,9 +205,11 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   const coilMesh = mesh(bake([P(new THREE.TorusGeometry(.55, .1, 6, 20), C.cable, M(0, 0, 0, 0, Math.PI / 2, 0)), P(new THREE.TorusGeometry(.48, .1, 6, 20), C.cable, M(.08, .02, 0, 0, Math.PI / 2 + .2, 0)), P(new THREE.BoxGeometry(.2, .3, .2), 0xd9dde0, M(0, -.6, .1))]), coil);
   // Darja's pistol in the right hand (LAN pose `gun`): muzzle along the forearm, grip down.
   // Payday guns swap in by id (LAN pose `weapon`); long guns sit further up the forearm.
-  let pistol = null, gunId = null;
-  function setWeapon(id = 'cannon') { if (id === gunId) return; const vis = pistol?.visible || false; if (pistol) elbows.R.remove(pistol); gunId = id; const long = !['cannon', 'pistol', 'deagle'].includes(id);
-    pistol = weaponModel(id, long ? 1 : 1.15); pistol.rotation.set(Math.PI / 2, Math.PI, 0); pistol.position.set(0, long ? -1.1 : -1.5, .12); pistol.visible = vis; elbows.R.add(pistol); }
+  let pistol = null, gunId = null, skinNow = null;
+  function setWeapon(id = 'cannon') { if (id === gunId) return; const vis = pistol?.visible || false; if (pistol) { unskinObject(pistol); elbows.R.remove(pistol); } gunId = id; const long = !['cannon', 'pistol', 'deagle'].includes(id);
+    pistol = weaponModel(id, long ? 1 : 1.15); pistol.rotation.set(Math.PI / 2, Math.PI, 0); pistol.position.set(0, long ? -1.1 : -1.5, .12); pistol.visible = vis; elbows.R.add(pistol); if (skinNow) skinObject(pistol, skinNow); }
+  // Their skin on the gun in their hand (skins.js, skin-render.js), set as the room's state changes.
+  function setSkin(sk) { sk = sk || null; if (sameSkin(sk, skinNow)) return; skinNow = sk; if (pistol) skinObject(pistol, skinNow); }
   setWeapon('cannon');
   // Name tag and emote bubble.
   let shownName = name; const label = name ? nameSprite(name, labelColor ?? color) : null; if (label) { label.position.y = 12.1; g.add(label); }
@@ -281,7 +283,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     if (label) label.position.y = (12.1 - s.crouch * 2.2) * (1 - cur.fall) + 5 * cur.fall;
   }
   function dispose() { g.removeFromParent(); g.traverse(o => { if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose(); for (const m of [].concat(o.material || [])) { if (!m || m === bodyMaterial || m.userData?.shared || typeof m.dispose !== 'function') continue; if (typeof m.map?.dispose === 'function' && !m.map.userData?.shared) m.map.dispose(); m.dispose(); } }); }   /* multi-materials too; never a shared texture */
-  return { g, label, update, play, dispose, setName, setWeapon, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', hat, outfit, setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso, carton, coil, pistol } };
+  return { g, label, update, play, dispose, setName, setWeapon, setSkin, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', hat, outfit, setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso, carton, coil, pistol } };
 }
 function mix(a, b, w) { return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w]; }
 function ease(e, t, k) { e.x += (t[0] - e.x) * k; e.y += (t[1] - e.y) * k; e.z += (t[2] - e.z) * k; }

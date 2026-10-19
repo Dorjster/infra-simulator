@@ -10,7 +10,7 @@ const hash = s => { let h = 7; for (const c of String(s || '')) h = (h * 31 + c.
 // Deathmatch has no sides: a stable pick per name, so everyone sees the same gear on the same player.
 export const sideOf = (name, team) => team === 't' || team === 'ct' ? team : hash(String(name || '').trim().toLowerCase()) % 2 ? 'ct' : 't';
 
-// The dress interface multiplayer.js expects: { g, update(dt, { speed, crouch, dead, aim }), setWeapon(id), dispose() }.
+// The dress interface multiplayer.js expects: { g, update(dt, { speed, crouch, dead, aim }), setWeapon(id), setSkin(skin), dispose() }.
 export function makeSoldier(p, team) {
   const L = SIDE_LOOK[team] || SIDE_LOOK.t, a = createAvatar({ color: L.color, name: '', face: p.pose?.face, skin: p.pose?.skin, hat: L.hat, outfit: L.outfit });
   let fall = 0;
@@ -18,6 +18,7 @@ export function makeSoldier(p, team) {
     g: a.g, team,
     update(dt, s) { a.update(dt, { speed: s.speed, crouch: s.crouch, gun: !!s.aim && !s.dead, act: s.act }); fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); a.g.rotation.x = -fall * Math.PI / 2; a.g.position.y = fall * 1.3; },
     setWeapon(id) { a.setWeapon(knifeFor(id || 'cannon', team)); },
+    setSkin(sk) { a.setSkin(sk); },
     dispose() { a.dispose(); },
   };
 }

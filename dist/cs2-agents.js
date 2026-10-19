@@ -7,9 +7,9 @@
 // leaning in. Hit boxes come from the pose, never from the model: the agent stands at its true size (CS2's 72 u, the
 // capsule's height; its head where the head zone is, weapons-data.js) and drops as the capsule does crouched. Allocation-free per frame.
 import { CASTER } from './sun-shadows.js';
-import { skinObject, unskinObject } from './skin-render.js';
+import { skinObject, unskinObject, sameSkin } from './skin-render.js';
 import * as THREE from './three.module.js';
-import { GLTFLoader } from './post/GLTFLoader.js';
+import { gltfLoader } from './gltf-loader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { weaponModel, knifeFor, MUZZLE } from './weapon-models.js';
 import { weaponById } from './weapons-data.js';
@@ -21,8 +21,8 @@ const templates = {}; let loading = null;
 // Load the imported agents (once): resolves to the sides that have one.
 export function loadAgents() {
   return loading ??= userAssets().then(ua => Promise.all([...Object.entries(ua.models.agents || {}).map(([side, a]) =>
-    new GLTFLoader().loadAsync(userAssetURL(ua, a.file)).then(async g => { await fitTextures(g.scene); templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))),
-    ua.models.agentAnims ? new GLTFLoader().loadAsync(userAssetURL(ua, ua.models.agentAnims.file)).then(g => { CLIPS = splitClips(g.animations); }, e => console.warn('agent animations', e?.message)) : null])).then(() => Object.keys(templates));
+    gltfLoader().loadAsync(userAssetURL(ua, a.file)).then(async g => { await fitTextures(g.scene); templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))),
+    ua.models.agentAnims ? gltfLoader().loadAsync(userAssetURL(ua, ua.models.agentAnims.file)).then(g => { CLIPS = splitClips(g.animations); }, e => console.warn('agent animations', e?.message)) : null])).then(() => Object.keys(templates));
 }
 // CS2's own third-person animations (one file for both sides, user-assets: models.agentAnims — CS2's world-model clips,
 // the agents' own bone names; ~/CS2-extract/build/agent_anims.py). Each clip in two halves: the legs and hips (walking,
@@ -186,7 +186,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   }
   function dispose() { g.removeFromParent(); if (gun) gun.removeFromParent(); A?.mixer.stopAllAction(); for (const m of own) m.dispose(); }
   // Their skin on the gun in their hands (skins.js): set as the room's state changes; drawn by skin-render.js.
-  let skinNow = null; function setSkin(sk) { if (sk === skinNow) return; skinNow = sk || null; if (gun) skinObject(gun, skinNow); }
+  let skinNow = null; function setSkin(sk) { sk = sk || null; if (sameSkin(sk, skinNow)) return; skinNow = sk; if (gun) skinObject(gun, skinNow); }
   return { g, team, update, setWeapon, setSkin, dispose };
 }
 // The animated agent (CS2's clips; see CLIPS): legs from the walking / running / crouching clips of the gun's class

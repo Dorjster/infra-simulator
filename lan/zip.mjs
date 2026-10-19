@@ -9,7 +9,7 @@ export function crc32(buf) { let c = -1; for (let i = 0; i < buf.length; i++) c 
 export function writeZip(entries) {
   const parts = [], central = []; let off = 0;
   for (const { name, data } of entries) {
-    const nm = Buffer.from(name, 'utf8'), deflate = !/\.(jpe?g|png|glb)$/i.test(name), body = deflate ? zlib.deflateRawSync(data, { level: 6 }) : data, crc = crc32(data), method = deflate ? 8 : 0;
+    const nm = Buffer.from(name, 'utf8'), deflate = !/\.(jpe?g|png|webp)$/i.test(name), body = deflate ? zlib.deflateRawSync(data, { level: 6 }) : data, crc = crc32(data), method = deflate ? 8 : 0;
     const h = Buffer.alloc(30); h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(0x0800, 6); h.writeUInt16LE(method, 8); h.writeUInt32LE(crc, 14); h.writeUInt32LE(body.length, 18); h.writeUInt32LE(data.length, 22); h.writeUInt16LE(nm.length, 26);
     const c = Buffer.alloc(46); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0x0800, 8); c.writeUInt16LE(method, 10); c.writeUInt32LE(crc, 16); c.writeUInt32LE(body.length, 20); c.writeUInt32LE(data.length, 24); c.writeUInt16LE(nm.length, 28); c.writeUInt32LE(off, 42);
     parts.push(h, nm, body); central.push(c, nm); off += 30 + nm.length + body.length;

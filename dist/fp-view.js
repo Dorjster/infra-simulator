@@ -7,7 +7,7 @@
 // first-person M4A1-S animations (cs2rifle) hold every rifle, sniper and machine gun.
 import * as THREE from './three.module.js';
 import { prepareSkins } from './skin-render.js';
-import { GLTFLoader } from './post/GLTFLoader.js';
+import { gltfLoader } from './gltf-loader.js';
 import { weaponModel, MUZZLE, VARIANTS, modelFromFile } from './weapon-models.js';
 import { weaponById, CS_UNITS_PER_UNIT } from './weapons-data.js';
 import { userAssets, userAssetURL } from './user-assets.js';
@@ -95,7 +95,7 @@ const loaded = new Map(), ready = new Map();   // pack name → promise · → b
 function load(name) {
   if (loaded.has(name)) return loaded.get(name);   // (once: a second url promise would reject unheard without imported files)
   const P = PACKS[name], url = P.user ? userAssets().then(ua => { const v = ua.models.viewmodels?.[P.user]; if (!v) throw Error('none'); return userAssetURL(ua, v.file); }) : Promise.resolve(new URL('./models/fp/' + P.url + '/scene.gltf', import.meta.url).href);
-  loaded.set(name, Promise.all([url.then(u => new GLTFLoader().loadAsync(u)), loadGlove()]).then(([g, glove]) => { const b = build(name, g, glove); ready.set(name, b); return b; }).catch(e => { if (e?.message !== 'none' && typeof window !== 'undefined') console.warn('first-person arms', name, e?.message); return null; }));
+  loaded.set(name, Promise.all([url.then(u => gltfLoader().loadAsync(u)), loadGlove()]).then(([g, glove]) => { const b = build(name, g, glove); ready.set(name, b); return b; }).catch(e => { if (e?.message !== 'none' && typeof window !== 'undefined') console.warn('first-person arms', name, e?.message); return null; }));
   return loaded.get(name);
 }
 export const loadFP = () => Promise.all([...Object.keys(PACKS).map(load), loadKarambit(), loadAuthored()]);
@@ -127,7 +127,7 @@ export const fpSetRoots = () => [...authored.values()].map(s => s.root);
 export function fpSetsReady() { return drained ??= (() => { const p = loadAuthored().then(() => new Promise(res => { const chk = () => (!queue.length && !busy) ? res() : setTimeout(chk, 50); chk(); })).then(() => { p.done = true; }); p.done = false; return p; })(); }
 function pump() {
   if (busy || !queue.length || !ctx) return; if (held()) { setTimeout(pump, 400); return; } busy = true; const [id, v] = queue.shift();
-  new GLTFLoader().loadAsync(userAssetURL(ctx.ua, v.file)).then(async g => { const set = buildAuthored(g, ctx.glove), I = globalThis.__infra;
+  gltfLoader().loadAsync(userAssetURL(ctx.ua, v.file)).then(async g => { const set = buildAuthored(g, ctx.glove), I = globalThis.__infra;
       await I?.gfx?.compileFor(set.root).catch(() => {});   // (its shaders built off the frame, for where a frame draws: graphics.js; in a match's own lights by the arena's warm-up, lab.js)
       for (const t of set.textures) { while (held()) await new Promise(r => setTimeout(r, 400)); I?.renderer?.initTexture(t); if (!behindCard()) await new Promise(r => setTimeout(r, 16)); }   // (its textures on the GPU, one per frame, between plays)
       authored.set(id, set); for (const fn of readyFns) fn(id); })   // only now ready: its first showing costs nothing
@@ -192,7 +192,7 @@ function loadGlove() {
   return gloveLoading ??= userAssets().then(ua => { const v = ua.models.viewmodels?.glove; if (!v) return null;
     // (CS2's gloves are textured one hand; the other's UVs run from 0 to −1 — mirrored: both hands read the picture the
     // same way; with plain repeat one hand read the picture's empty half — the Sport Gloves' right hand plain grey)
-    return new GLTFLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { let m = null; g.scene.traverse(o => { if (!m && o.isSkinnedMesh) m = o; }); g.scene.updateMatrixWorld(true);
+    return gltfLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { let m = null; g.scene.traverse(o => { if (!m && o.isSkinnedMesh) m = o; }); g.scene.updateMatrixWorld(true);
       for (const t of [m?.material?.map, m?.material?.normalMap]) if (t) { t.wrapS = THREE.MirroredRepeatWrapping; t.needsUpdate = true; } return m; }); }).catch(e => { console.warn('gloves', e?.message); return null; });
 }
 const FINGERS = ['index', 'middle', 'ring', 'pinky'];
@@ -272,7 +272,7 @@ export const KARAMBIT = { scale: .0076, eye: [-70, 360, -900], forearm: .9, blad
 let karambitRig = null, karambitLoading = null;
 function loadKarambit() {
   return karambitLoading ??= userAssets().then(ua => { const v = ua.models.viewmodels?.karambit; if (!v) return null;
-    return Promise.all([new GLTFLoader().loadAsync(userAssetURL(ua, v.file)), loadGlove()]).then(([g, gl]) => { karambitRig = buildKarambit(g.scene, gl); return karambitRig; }); }).catch(e => { console.warn('karambit view model', e?.message); return null; });
+    return Promise.all([gltfLoader().loadAsync(userAssetURL(ua, v.file)), loadGlove()]).then(([g, gl]) => { karambitRig = buildKarambit(g.scene, gl); return karambitRig; }); }).catch(e => { console.warn('karambit view model', e?.message); return null; });
 }
 function buildKarambit(sc, gloveSrc) {
   const root = new THREE.Group(), fix = new THREE.Group(); root.add(fix); fix.add(sc); fix.rotation.y = Math.PI; fix.scale.setScalar(KARAMBIT.scale); sc.position.set(-KARAMBIT.eye[0], -KARAMBIT.eye[1], -KARAMBIT.eye[2]);
