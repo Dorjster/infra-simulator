@@ -94,7 +94,7 @@ for (const id of ['mirage', 'inferno', 'nuke', 'cache', 'anubis', 'ancient', 'ov
   const follow = () => { for (const p of pl) { const sp = g.combat.spawnTo?.[p.name.toLowerCase()]; if (sp) p.pose = { x: sp.x, y: (sp.y ?? 0) + 9.7, z: sp.z, yaw: 0 }; } };
   const apart = () => { const S = [...pl.map(p => g.combat.spawnTo?.[p.name.toLowerCase()]).filter(Boolean).map(s => [s.x, s.z, s.y]), ...g.arena.bots.map(b => [b.x, b.z, b.y])]; let close = 0; for (let i = 0; i < S.length; i++) for (let j = 0; j < i; j++) if (!(Number.isFinite(S[i][2]) && Number.isFinite(S[j][2]) && Math.abs(S[i][2] - S[j][2]) > 6) && Math.hypot(S[i][0] - S[j][0], S[i][1] - S[j][1]) < BODY) close++; return { placed: S.length, close }; };
   const sides0 = Object.fromEntries(pl.map(p => [p.name, g.combat.d.teams[p.name.toLowerCase()]]));
-  for (const id of ['dust2', 'mirage', 'inferno', 'nuke', 'cache', 'anubis', 'ancient', ...(ARENA_MAPS.overpass ? ['overpass'] : [])]) {
+  for (const id of ['dust2', 'mirage', 'inferno', 'nuke', 'cache', 'anubis', 'ancient', ...(existsSync('user-maps/overpass.bsp') ? ['overpass'] : [])]) {   // (Overpass is file-only: without its file it is a stand-in)
     const r = arenaApply(g, { type: 'change-map', map: id }, 'Host', room(), t); tk(200); const d = g.combat.d, c = present(), sp = apart();
     check(`map change to ${id}: 5 vs 5 on round 1, people on their sides, everyone on a spot of their own`, /Map/.test(String(r)) && g.arena.map === id && d.n === 1 && c.t === 5 && c.ct === 5 && pl.every(p => d.teams[p.name.toLowerCase()] === sides0[p.name]) && sp.close === 0 && sp.placed === 10, JSON.stringify({ r, n: d.n, ...c, ...sp }));
     follow(); tk(DEFUSE.freezeMs + 9000);   // live, past the join grace
