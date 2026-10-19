@@ -6,6 +6,7 @@ import { chromium } from 'playwright-core'; import { spawn } from 'node:child_pr
 const [root = '.', out = path.join(os.tmpdir(), 'gd-v47')] = process.argv.slice(2); mkdirSync(out, { recursive: true });
 if (!existsSync(path.join(root, 'user-maps', 'mirage.bsp'))) { console.log('SKIP: no converted Mirage on this computer'); process.exit(0); }
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'GDV047', HOST_KEY: 'k', CAMPAIGN_SAVE: path.join(mkdtempSync(path.join(os.tmpdir(), 'gdv-')), 's.json') }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const b = await chromium.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--use-angle=metal', '--autoplay-policy=no-user-gesture-required'] });
 const p = await b.newPage({ viewport: { width: 1280, height: 760 } }); const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('dialog', d => d.accept());
@@ -38,16 +39,16 @@ try {
   check('the look drawn in fewer pieces (fixed surfaces merged per material), its props in a few batches', M.fixed[1] < M.fixed[0] && M.props[0] > 50 && M.props[1] < M.props[0] / 2, JSON.stringify(M) + ' · ' + mg.meshes + ' drawn');
   check('a pushed or shot prop is drawn on its own, the next round back in its batch', mg.out.length >= 2 && mg.out.every(b => !b) && mg.back.every(b => b), JSON.stringify(mg));
   check('CS2\'s overlays drawn over their walls (blended, cut out or mod2x)', mg.overlays >= 2, mg.overlays);
-  // A skin on the AK: bought in warmup, painted Fade with a sticker; the HUD names it.
-  const gun = await p.evaluate(() => { const G = __infra.lab.world.operations.game; return G.combat.d.teams.tester === 'ct' ? 'usps' : 'pistol'; }), gunName = gun === 'usps' ? 'USP-S' : 'GLOCK-18';   // (the starting pistol: warmup has $800)
-  const sk = await p.evaluate(g => __infra.lab.lan.act({ type: 'arena', action: { type: 'skin', weapon: g, skin: { finish: 'fade', wear: .03, seed: 661, st: true, stickers: [{ id: 'crown', slot: 0, x: .45, y: .5, scale: 1.6, rot: 10 }] } } }), gun);
-  check('the room equips the skin', /Fade/.test(JSON.stringify(sk)), JSON.stringify(sk));
-  await p.evaluate(g => { __infra.lab.enter(); __infra.lab.pistol.equip(g); }, gun); await p.waitForTimeout(3000);
-  check('the HUD names it as CS2 does', await p.evaluate(n => new RegExp('STATTRAK™ ' + n + ' \\| FADE \\(FACTORY NEW\\)').test(document.querySelector('#gd-wp .name').textContent), gunName), await p.evaluate(() => document.querySelector('#gd-wp .name').textContent));
+  // A skin on the knife (skins go on knives only): painted Fade, StatTrak; the HUD names it.
+  const sk = await p.evaluate(() => __infra.lab.lan.act({ type: 'arena', action: { type: 'skin', weapon: 'knife', skin: { finish: 'fade', wear: .03, seed: 661, st: true } } }));
+  check('the room equips the knife skin', /Fade/.test(JSON.stringify(sk)), JSON.stringify(sk));
+  await p.evaluate(() => { __infra.lab.enter(); __infra.lab.pistol.equip('knife'); }); await p.waitForTimeout(3000);
+  check('the HUD names it as CS2 does', await p.evaluate(() => /STATTRAK™ KNIFE \| FADE \(FACTORY NEW\)/.test(document.querySelector('#gd-wp .name').textContent)), await p.evaluate(() => document.querySelector('#gd-wp .name').textContent));
   await p.waitForFunction(() => __infra.lab.pistol.viewInfo.authored, null, { timeout: 60000 }).catch(() => {});   // (CS2's own set for it, once loaded)
   const painted = await p.evaluate(() => { const v = __infra.lab.pistol.viewInfo; return { authored: v.authored, mats: v.skinMats.length, on: v.skinMats.filter(m => m.userData?.skinU?.uSkinOn.value).length }; });
-  check('the gun in your hands is painted (its own shader, on)', painted.on > 0, JSON.stringify(painted));
-  await p.screenshot({ path: path.join(out, 'skin-ak.png') });
+  check('the knife in your hands is painted (its own shader, on)', painted.on > 0, JSON.stringify(painted));
+  await p.screenshot({ path: path.join(out, 'skin-knife.png') });
+  check('a gun takes no skin (knives only)', /knives/.test(JSON.stringify(await p.evaluate(() => __infra.lab.lan.act({ type: 'arena', action: { type: 'skin', weapon: 'ak', skin: { finish: 'fade' } } }).catch(e => ({ error: e.message }))))));
   // CS2's clip sounds: the AK's reload has them.
   check('CS2\'s reload sounds are in (magazine out, in, bolt)', await p.evaluate(async () => { const { clipSounds } = await import('/fp-sounds.js'); const c = clipSounds('ak', 'reload') ; return !!c && c.ev.some(e => /clipout/.test(e[1][0])) && c.ev.some(e => /bolt/.test(e[1][0])); }));
   // G: the AK tossed ahead — it flies (its mesh moves), then lies where the host put it.

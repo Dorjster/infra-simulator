@@ -2,10 +2,10 @@
 // line of sight), CS2 damage, kills/deaths, respawn at the safest spawn, knives, match clock.
 import assert from 'node:assert/strict';
 import { startArena, arenaApply, arenaTick, botRoster, PRIMARIES, MAX_BOTS } from '../dist/arena-logic.js';
-import { combatApply, combatTick, hpOf, isDown, arenaArsenalOf } from '../dist/combat-logic.js';
+import { combatApply, combatTick, hpOf, isDown, arenaArsenalOf, knifeCheck } from '../dist/combat-logic.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
-import { MAX_HP } from '../dist/weapons-data.js';
+import { MAX_HP, KNIFE } from '../dist/weapons-data.js';
 // Deterministic: bots, spawns and hits use Math.random — seed it so the test never flakes.
 let seed = 12345; Math.random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 const game = { levels: {} }; let now = 1e9;
@@ -40,6 +40,18 @@ const r = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'ak', zone: 'ch
 assert.throws(() => combatApply(g2, { type: 'hit', target: bot.id, weapon: 'sniper' }, 'Sam', players, 'p1', now + 2000), /own/);
 const kpos = { x: bot.x + (clearSpot.x - bot.x) * .15, y: 9.7, z: bot.z + (clearSpot.z - bot.z) * .15, yaw: Math.atan2(-(bot.x - clearSpot.x), -(bot.z - clearSpot.z)) }, bp = players.find(p => p.id === bot.id);
 const k = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'knife', zone: 'chest' }, 'Sam', [{ ...players[0], pose: kpos }, { ...bp, pose: { ...bp.pose, yaw: kpos.yaw + Math.PI } }], 'p1', now + 3000); assert.equal(k.dmg, 40, 'knife: light slash from the front');
+// CS2's knife: reach 64 / 48 units (plus its hull), a backstab within 61.6° of the victim's back (dot > 0.475), the
+// slash 2.5× as quick as the stab, damage 40 / 25 / 90 and 65 / 180.
+{ const HUu = 2.54 / 16.5, at = (x, z, yaw = 0) => ({ x, z, yaw }), deg = Math.PI / 180;
+  assert(Math.abs(KNIFE.light.range / HUu - 64) < .01 && Math.abs(KNIFE.heavy.range / HUu - 48) < .01 && KNIFE.light.rateMs === 400 && KNIFE.heavy.rateMs === 1000 && KNIFE.light.hitMs === 0, 'knife: CS2 reach (64 / 48), speed (0.4 s / 1.0 s), the hit at the click');
+  assert.deepEqual([KNIFE.light.front, KNIFE.light.chain, KNIFE.light.back, KNIFE.heavy.front, KNIFE.heavy.back], [40, 25, 90, 65, 180], 'knife: CS2 damage');
+  const from = a => at(6 * Math.sin(a * deg), 6 * Math.cos(a * deg), a * deg);   // 6 units from a victim at the origin facing −z, a° round from straight behind it, facing it
+  assert(knifeCheck(from(0), at(0, 0), 'light').back && knifeCheck(from(60), at(0, 0), 'light').back && !knifeCheck(from(65), at(0, 0), 'light').back && !knifeCheck(from(180), at(0, 0), 'light').back, 'knife: a backstab only from within 61.6° of the back');
+  const far = d => at(0, d, 0); assert(knifeCheck(far(14.5), at(0, 0), 'light').reach && !knifeCheck(far(14.5), at(0, 0), 'heavy').reach && !knifeCheck(far(17), at(0, 0), 'light').reach, 'knife: the slash reaches further than the stab'); }
+{ const g5 = { levels: {} }; startArena(g5, { map: 'yard', bots: 1 }, now); const b5 = g5.arena.bots[0], bp5 = botRoster(g5).find(p => p.id === b5.id), a5 = { x: b5.x + (clearSpot.x - bot.x) * .15, y: 9.7, z: b5.z + (clearSpot.z - bot.z) * .15, yaw: kpos.yaw }, pl5 = [{ id: 'p1', name: 'Sam', pose: a5 }, { ...bp5, pose: { ...bp5.pose, yaw: kpos.yaw + Math.PI } }];
+  const slash = t => { try { return combatApply(g5, { type: 'hit', target: b5.id, weapon: 'knife', zone: 'chest' }, 'Sam', pl5, 'p1', t); } catch (e) { return { error: e.message }; } };
+  const s1 = slash(now + 100), s2 = slash(now + 420), s3 = slash(now + 2000);
+  assert(s1.dmg === 40 && s2.dmg === 25 && s3.dmg === Math.min(40, MAX_HP - 65), 'knife: a slash right after another is the weaker follow-up (CS2: 25); after a pause, 40 again · ' + JSON.stringify([s1.dmg ?? s1.error, s2.dmg ?? s2.error, s3.dmg ?? s3.error])); }
 assert.throws(() => combatApply(g2, { type: 'hit', target: bot.id, weapon: 'knife' }, 'Sam', players, 'p1', now + 4000), /reach/);
 // Kill → respawn after 2.5 s with full HP; a dead player gets a spawn order.
 const kill = combatApply(g2, { type: 'hit', target: bot.id, weapon: 'ak', zone: 'head' }, 'Sam', players, 'p1', now + 5000); assert(kill.down); assert.equal(g2.combat.kills.sam, 1);

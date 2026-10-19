@@ -4,6 +4,7 @@
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync, mkdirSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 const [root, out] = process.argv.slice(2); mkdirSync(out, { recursive: true });
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'GAL001', HOST_KEY: 'k', CAMPAIGN_SAVE: path.join(mkdtempSync(path.join(os.tmpdir(), 'gl-')), 's.json') }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const b = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--use-angle=metal'] }); const p = await b.newPage({ viewport: { width: 1400, height: 900 } }); const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); }); p.on('response', r => { if (r.status() >= 400) errs.push('HTTP ' + r.status() + ' ' + r.url()); });
 await p.goto(base + '/gd-gallery.html'); await p.waitForFunction(() => /items ·/.test(document.getElementById('status')?.textContent || ''), null, { timeout: 90000 }).catch(() => {});

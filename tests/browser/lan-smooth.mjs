@@ -4,6 +4,7 @@
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 const [root, throttle] = process.argv.slice(2);
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'JNK001', HOST_KEY: 'hk', CAMPAIGN_SAVE: path.join(mkdtempSync(path.join(os.tmpdir(), 'jk-')), 's.json') }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const b = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--use-angle=metal'] });
 async function client(n) { const p = await (await b.newContext({ viewport: { width: 1280, height: 760 } })).newPage(); await p.addInitScript(n => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-name', n); localStorage.setItem('infra-face-name', n); }, n); await p.goto(base + '/'); await p.waitForFunction(() => globalThis.__infra?.lab, null, { timeout: 60000 }); await p.waitForTimeout(1200); return p; }

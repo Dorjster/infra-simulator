@@ -3,6 +3,7 @@
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs';
 const [root, out, mode = 'solo', throttle = '4', seconds = '20', dsf = '1'] = process.argv.slice(2);
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'PERF01', HOST_KEY: 'k', CAMPAIGN_SAVE: '/tmp/perf-' + Date.now() + '.json' }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true, args: ['--use-angle=metal', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: Math.round(1920 / +dsf), height: Math.round(1080 / +dsf) }, deviceScaleFactor: +dsf }); page.on('dialog', d => d.accept());

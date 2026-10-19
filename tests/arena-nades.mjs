@@ -3,7 +3,7 @@
 // you look, smoke blocks sight (bots too), molotov burns whoever stands in it, then everything clears; drops.
 import assert from 'node:assert/strict';
 import { startArena, arenaApply, arenaTick, slotOf } from '../dist/arena-logic.js';
-import { NADES, flashAmount, clearView, nadesTick, predictThrow, stepNade, fireCells, launch, smokeBlocks, smokeDensity, SMOKE, throwStart } from '../dist/arena-nades.js';
+import { NADES, flashAmount, clearView, nadesTick, predictThrow, stepNade, fireCells, launch, smokeBlocks, smokeDensity, SMOKE, throwStart, setSmokeSolids, holeRadius } from '../dist/arena-nades.js';
 import { ARENA_MAPS, mapBoxes } from '../dist/arena-maps.js';
 import { hpOf, isDown, arenaArsenalOf } from '../dist/combat-logic.js';
 import { ARENA } from '../dist/facility-layout.js';
@@ -99,7 +99,9 @@ assert(Math.abs(NADES.smoke.radius - 144 * 2.54 / 16.5) < .5, 'smoke: CS2\'s siz
   nadesTick(ge, [], .05, T0 + 3000, {}); const s1 = ge.combat.nades.find(n => n.id === 's1');
   assert(s1.holes?.length === 1, 'the blast punched a hole in the smoke (shared state)');
   assert(!smokeBlocks(ge, -6, eye, 0, 6, eye, 0, T0 + 3300), 'right after: you can see through the hole');
-  assert(smokeBlocks(ge, -R - 30, eye, 0, R + 30, eye, 0, T0 + 3000 + SMOKE.holeOpen + SMOKE.holeClose + 100), 'then the smoke closes again');
+  assert(!smokeBlocks(ge, -R - 30, eye, 0, R + 30, eye, 0, T0 + 3300) && smokeDensity(ge, R * .9, eye, 0, T0 + 3300) < .05, 'an HE in the middle takes the whole cloud away for a moment');
+  assert(holeRadius({ at: 0 }, SMOKE.holeGrow) === SMOKE.holeR && holeRadius({ at: 0 }, SMOKE.holeGrow + SMOKE.holeOpen + SMOKE.holeClose * .5) < SMOKE.holeR * .6 && Math.abs(SMOKE.holeGrow + SMOKE.holeOpen + SMOKE.holeClose - 2000) <= 250, 'the hole opens at once, then the smoke pours back in from its edge: about two seconds in all');
+  assert(smokeBlocks(ge, -R - 30, eye, 0, R + 30, eye, 0, T0 + 3000 + SMOKE.holeGrow + SMOKE.holeOpen + SMOKE.holeClose + 100), 'then the smoke closes again');
   // Smoke over a burning molotov puts it out; a molotov into smoke fizzles; nothing re-ignites.
   const gf = { levels: {}, combat: { nades: [{ id: 'f1', kind: 'molotov', phase: 'fire', x: 4, y: 0, z: 0, firedAt: T0, at: T0 }, { id: 's2', kind: 'smoke', phase: 'air', x: 0, y: 0.3, z: 0, vx: 0, vy: -1, vz: 0, at: T0 - 1600, still: 1 }], hp: {}, down: {} }, arena: { bots: [] } };
   for (let i = 0; i < 4; i++) nadesTick(gf, [], .05, T0 + 50 * i, {});
@@ -107,4 +109,18 @@ assert(Math.abs(NADES.smoke.radius - 144 * 2.54 / 16.5) < .5, 'smoke: CS2\'s siz
   for (let i = 0; i < 30; i++) nadesTick(gf, [], .05, T0 + 200 + 50 * i, {}); assert(!gf.combat.nades.some(n => n.id === 'f1' && n.phase === 'fire'), 'the fire never comes back');
   const gm = { levels: {}, combat: { nades: [{ id: 's3', kind: 'smoke', phase: 'smoke', x: 0, y: 0, z: 0, firedAt: T0 }, { id: 'm1', kind: 'molotov', phase: 'air', x: 5, y: 0.3, z: 0, vx: 0, vy: -3, vz: 0, at: T0, still: 0 }], hp: {}, down: {} }, arena: { bots: [] } };
   for (let i = 0; i < 6; i++) nadesTick(gm, [], .05, T0 + 2000 + 50 * i, {}); assert.notEqual(gm.combat.nades.find(n => n.id === 'm1')?.phase, 'fire', 'a molotov thrown into smoke fizzles'); }
+// On a map (the smoke's cells): an HE clears the cells it reaches through the air — never through a wall — and the cloud
+// refills from the hole's edge in. A floor and a wall along x = 0; the smoke lies west of it.
+{ const T0 = 6e9, R = NADES.smoke.radius, eye = 9.7, B = (minX, maxX, minZ, maxZ, y0, y1) => ({ minX, maxX, minZ, maxZ, y0, y1 }), room = [B(-200, 200, -200, 200, -4, 0), B(-.75, .75, -200, 200, 0, 60)];
+  setSmokeSolids(game => game.testBoxes || (game?.arena?.map && ARENA_MAPS[game.arena.map] ? mapBoxes(ARENA_MAPS[game.arena.map], ARENA.cx, ARENA.cz) : null));   // (as arena-logic.js, plus this room)
+  const world = (id, hx, hz = 0) => ({ levels: {}, testBoxes: room, combat: { nades: [{ id, kind: 'smoke', phase: 'smoke', x: -14, y: 0, z: 0, firedAt: T0 }, { id: id + 'he', kind: 'he', phase: 'air', x: hx, y: .3, z: hz, vx: 0, vy: 0, vz: 0, at: T0 + 3000 - NADES.he.fuse - 10, still: 0 }], hp: {}, down: {} }, arena: { bots: [] } });
+  const across = (gm, t) => smokeBlocks(gm, -14, eye, -R - 30, -14, eye, R + 30, t), holesOf = (gm, id) => gm.combat.nades.find(n => n.id === id).holes?.length || 0;   // (a sightline through the cloud, along the wall)
+  const gw = world('w1', 8); nadesTick(gw, [], .05, T0 + 3000, {}); assert(holesOf(gw, 'w1') === 0 && across(gw, T0 + 3300), 'an HE behind a wall does not clear the smoke');
+  const gh = world('w2', -14); nadesTick(gh, [], .05, T0 + 3000, {}); const open = T0 + 3300;
+  assert(holesOf(gh, 'w2') === 1 && smokeDensity(gh, -14, eye, 0, open) < .05 && smokeDensity(gh, -14, 18, 12, open) < .05 && !across(gh, open), 'an HE in the middle of the smoke takes it all away (up to its top)');
+  const gs = world('w3', -14, -18); nadesTick(gs, [], .05, T0 + 3000, {}); const dNear = smokeDensity(gs, -14, eye, -16, open), dFar = Math.max(smokeDensity(gs, -14, eye, 16, open), smokeDensity(gs, -14, eye, 20, open));
+  assert(holesOf(gs, 'w3') === 1 && dNear < .05 && dFar > .2, 'an HE at its side clears the part round it; the far side stays · ' + dNear.toFixed(2) + ' / ' + dFar.toFixed(2));
+  const mid = T0 + 3000 + SMOKE.holeGrow + SMOKE.holeOpen + SMOKE.holeClose * .5, dIn = smokeDensity(gh, -14, 3, 0, mid), dOut = smokeDensity(gh, -14, eye, 16, mid);
+  assert(dIn < .05 && dOut > .3, 'half way through the refill the hole\'s edge is smoke again, its middle still open · ' + dIn.toFixed(2) + ' / ' + dOut.toFixed(2));
+  assert(across(gh, T0 + 3000 + SMOKE.holeGrow + SMOKE.holeOpen + SMOKE.holeClose + 100), 'then it is whole again'); }
 console.log('PASS: grenades · throw strengths (full / medium / short), preview = host flight, fire 4× area within walls, smoke at CS2’s size, no throws in the freeze (but after a round’s end), CS2’s throw angles and 22-unit start, CS2 fuses, molotov air burst, grenades break glass,  · buy limits, throw + flight, HE damage + cover, smoke blocks sight 18 s (a volume: outside, edge, inside), HE opens a hole that closes, smoke puts out fire / molotov fizzles in smoke, molotov burns 7 s, flashbang (bots + facing), drop / pickup');

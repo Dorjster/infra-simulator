@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 const [root, out] = process.argv.slice(2); await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true, args: ['--use-angle=metal', '--ignore-gpu-blocklist'] });
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'L0', HOST_KEY: 'k', CAMPAIGN_SAVE: '/tmp/l0-'+Date.now()+'.json' }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 const errors = []; page.on('pageerror', e => errors.push(e.message));

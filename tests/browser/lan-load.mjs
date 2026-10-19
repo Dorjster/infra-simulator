@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 const root = process.argv[2], seconds = +(process.argv[3] || 30);
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'LOAD12', HOST_KEY: 'k', CAMPAIGN_SAVE: '/tmp/load-' + Date.now() + '.json', DELIVERY_SCALE: '0.05' }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const post = (route, body, token) => fetch(base + '/api/' + route, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { 'X-Player-Token': token } : {}) }, body: JSON.stringify(body) }).then(r => r.json());
 const host = await post('join', { code: 'LOAD12', name: 'Host', hostKey: 'k' }); let revision = host.revision;

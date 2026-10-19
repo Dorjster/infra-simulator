@@ -70,8 +70,13 @@ export const KNIVES = [
   { id: 'knife', name: 'Knife', kind: 'knife', price: 0, reward: 1500, dmg: 40, ap: .85, rangeMod: 1, rateMs: 400, mode: 'semi', range: 9, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 250 },
   { id: 'karambit', name: '★ Karambit | Ruby', kind: 'knife', price: 0, reward: 1500, dmg: 40, ap: .85, rangeMod: 1, rateMs: 400, mode: 'semi', range: 9, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 250 },
 ];
-// Knife attacks (CS2): light = left click, heavy = right click; `back` when hit from behind.
-export const KNIFE = { light: { front: 40, back: 90, rateMs: 400, hitMs: 90, range: 9 }, heavy: { front: 65, back: 180, rateMs: 1000, hitMs: 260, range: 7 } };
+// Knife attacks (CS2): light = left click, a quick slash every 0.4 s (40; 25 for one that follows another — within
+// chainMs of the last attack's end; 90 in the back); heavy = right click, a slow stab every 1.0 s (65; 180 in the back).
+// Each attack locks both buttons for its time. Reach 64 / 48 units (HU), swept as a hull (16 units round the aim line:
+// the body nearest the crosshair); the hit counts the moment you click (hitMs 0). A backstab: from behind, the line to
+// the victim within 61.6° of the way the victim faces (dot > backDot).
+const KHU = 2.54 / 16.5;
+export const KNIFE = { light: { front: 40, chain: 25, back: 90, rateMs: 400, hitMs: 0, range: 64 * KHU }, heavy: { front: 65, back: 180, rateMs: 1000, hitMs: 0, range: 48 * KHU }, hull: 16 * KHU, backDot: .475, chainMs: 400 };
 // Grenades (slot 4) and the bomb (slot 5); their effects are host-run (arena-nades.js, arena-defuse.js).
 export const GRENADES = [['he', 'HE Grenade', 300], ['flash', 'Flashbang', 200], ['smoke', 'Smoke Grenade', 300], ['molotov', 'Molotov', 400]].map(([id, name, price]) => ({ id, name, kind: 'nade', price, reward: 300, dmg: 0, ap: 1, rangeMod: 1, rateMs: 900, mode: 'semi', range: 0, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 245 }));
 export const C4 = { id: 'c4', name: 'C4 bomb', kind: 'bomb', price: 0, reward: 0, dmg: 0, ap: 1, rangeMod: 1, rateMs: 500, mode: 'semi', range: 0, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 250 };

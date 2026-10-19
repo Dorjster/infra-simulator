@@ -8,6 +8,7 @@
 // shot.n, and every hit carries its shot number); the host takes one round per new shot number, in order, whichever
 // arrives first. A hit for a shot fired with an empty magazine is refused. A reload (pose shot.r) only moves rounds
 // from the reserve into the magazine. Clients show their own count and take the host's whenever they are in sync.
+import { skinKeyOf } from './skins.js';
 import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H } from './weapons-data.js';
 import { defuseDamage, defuseKill } from './arena-defuse.js';
 import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath } from './arena-maps.js';
@@ -90,7 +91,7 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + shown + ' HP', dmg: shown, hp, zone, head: zone === 'head' };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name, wid: wpn.id, head: zone === 'head', at: now };
   const teamKill = c.d && c.d.teams[me] && c.d.teams[me] === c.d.teams[tk];
-  if (me !== tk && !teamKill) { c.kills[me] = (c.kills[me] || 0) + 1; const sk = game.arena?.skins?.[me]?.[wpn.id]; if (sk?.st) sk.kills = (sk.kills | 0) + 1; }   /* (StatTrak™: the weapon counts its own kills) */ c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
+  if (me !== tk && !teamKill) { c.kills[me] = (c.kills[me] || 0) + 1; const sk = skinKeyOf(wpn.id) && game.arena?.skins?.[me]?.[skinKeyOf(wpn.id)]; if (sk?.st) sk.kills = (sk.kills | 0) + 1; }   /* (StatTrak™: the weapon counts its own kills) */ c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
   let assist = null; for (const [a, n] of Object.entries(c.dmg?.[tk] || {})) if (a !== me && a !== tk && n >= 41 && !(c.d && c.d.teams[a] === c.d.teams[tk])) { (c.assists ??= {})[a] = (c.assists[a] || 0) + 1; assist = c.names?.[a] || a; }
   if (c.dmg) delete c.dmg[tk];
   c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head', assist, ...(how ? { how } : {}) }); c.feed.length = Math.min(c.feed.length, 6);
@@ -112,12 +113,14 @@ export function lineOfFire(game, from, to, zone = 'chest', pen = 0) {
     const f = pen > 0 ? bulletPath(boxes, from.x, ey, from.z, dx / L, dy / L, dz / L, L + .01, pen).factor(L) : segmentClear(boxes, from.x, ey, from.z, tx, ty, tz) ? 1 : 0; if (f > best) best = f; if (best >= 1) break; }
   return best;
 }
-// Knife: in front of the attacker (within ~70°), within reach; `back` when the attacker stands behind the target.
+// Knife: in front of the attacker (within ~70°; up close, anywhere ahead — the hull is wide), within reach (CS2's
+// 64 / 48 units, its hull, the bodies); `back` when the attacker stands behind the target — the line from attacker to
+// target within 61.6° of the way the target faces (CS: dot > 0.475).
 export function knifeCheck(from, to, attack) {
   const K = KNIFE[attack] || KNIFE.light, dx = to.x - from.x, dz = to.z - from.z, d = Math.hypot(dx, dz) || 1e-6;
   const fx = -Math.sin(from.yaw || 0), fz = -Math.cos(from.yaw || 0), facing = (dx * fx + dz * fz) / d;
-  const tx = -Math.sin(to.yaw || 0), tz = -Math.cos(to.yaw || 0), back = (dx * tx + dz * tz) / d > .35;   // the target looks the same way as the line from attacker to target: we are behind it
-  return { reach: d <= K.range + BODY_REACH, facing: facing > .34, back, dist: d };
+  const tx = -Math.sin(to.yaw || 0), tz = -Math.cos(to.yaw || 0), back = (dx * tx + dz * tz) / d > KNIFE.backDot;
+  return { reach: d <= K.range + KNIFE.hull + BODY_REACH, facing: facing > (d < 6 ? 0 : .34), back, dist: d };
 }
 const BODY_REACH = 3.5;   // capsule radius + position lag on the host
 
@@ -140,7 +143,10 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
     const chk = from && to ? knifeCheck(from, to, attack) : { reach: true, facing: true, back: false, dist: 0 };
     if (!chk.reach) throw Error('Out of reach'); if (!chk.facing) throw Error('Not facing the target');
     if (from && to && !lineOfFire(game, from, to, 'chest', 0)) throw Error('Blocked by a wall');
-    c.last[lk] = now; const base = chk.back ? K.back : K.front;
+    // A slash right after another attack is the weaker follow-up (CS2): the attacker says so (it knows its misses too),
+    // or the host sees it from its own hits — within chainMs of the last attack's end.
+    const prev = c.last[me + ':knife'] || 0, chain = attack === 'light' && (a.chain === true || (prev > 0 && now < prev + (c.last[me + ':knifeMs'] || 0) + KNIFE.chainMs));
+    c.last[lk] = now; c.last[me + ':knife'] = now; c.last[me + ':knifeMs'] = K.rateMs; const base = chk.back ? K.back : chain ? K.chain : K.front;
     return applyHit(game, name, target.name, wpn, a.zone === 'head' ? 'head' : 'chest', 0, 1, now, base);
   }
   if (!isFirearm(wpn)) throw Error('Not a gun');

@@ -108,13 +108,16 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   const fitHand = () => { const vf = fp?.vfov || VIEWMODEL.fov, k = vf > 0 && camera.fov > vf ? Math.tan(camera.fov * Math.PI / 360) / Math.tan(vf * Math.PI / 360) : 1;   /* (a CS2-data set: CS2's own view-model field of view) */ hand.scale.set(live.leftHand ? -k : k, k, 1); };
   const sideView = v => { fitHand(); hand.add(v); if (!hand.parent) camera.add(hand); };
   let knifeSeen = null;   // (the chosen knife the view shows: a new choice swaps it while you hold it)
+  // A CS2 star knife's own finish (its vertex colours) shows with no skin on only on the karambit — ★ Karambit | Ruby;
+  // the butterfly, stiletto and M9 are plain steel, as they are named.
+  const ownTint = set => !/butterfly|stiletto|m9/.test(set || '');
   function setView(id, draw = false) {
     if (view) { view.removeFromParent(); view = null; }
     if (draw && id) { drawAt = now(); drawMs = DRAW_MS[id]; }
     fp = null; clipSnd.stop(); chanKind = ''; fpSet = null; if (!id) return;
     const want = knifeFor(id, team(), knifeSkin(), true); wantFP(want); const kf = want !== id && want !== knifeFor(id, team()) && !hasFP(want) ? knifeFor(id, team()) : want, f = fpFor(id, kf);
     fpSet = kf; if (draw && !clipStart('draw', DRAW_MS[id])) sounds.draw(null, id);   // (CS2's draw: its own sounds at its own moments)
-    if (f?.weaponMats) { skinSeen = skinOf(id); applySkin(f.weaponMats, skinSeen); }   /* (your skin on it: skins.js, skin-render.js) */
+    if (f?.weaponMats) { skinSeen = skinOf(id); applySkin(f.weaponMats, skinSeen, ownTint(kf)); }   /* (your skin on it: skins.js, skin-render.js) */
     /* (a chosen knife: the side's default until its own CS2 set is in) */ if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); f.hold(id, { draw, drawMs: DRAW_MS[id], model: kf, team: team() }); onTop(view); sideView(view); if (!camera.parent) scene.add(camera); return; }
     const [x, y, z, sc] = VIEW[id] || VIEW.pistol; const m = weaponModel(knifeFor(id, team()), sc); for (const [ax, r] of VIEW_ROT[id] || VIEW_ROT[weaponById(id)?.model] || []) m.rotateOnWorldAxis(AXES[ax], r);
     view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; onTop(view); sideView(view);
@@ -137,19 +140,27 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     return true;
   }
   function finishReload() { const id = reloadId, own = chanKind === 'reload'; if (!weaponById(id)) { stopReload(); return; } seatMag(); reloadId = null; reloadUntil = 0; magIn = false; if (!own) setTimeout(() => current?.id === id && sounds.bolt(null, id), 120); }
-  // Knife: left = quick slash, right = slow heavy stab. The hit is decided at the moment the blade arrives (hitMs),
-  // along your aim, within reach, not through walls.
+  // Knife (CS2, KNIFE): left = quick slash, right = slow heavy stab; either locks both buttons for its time. The hit is
+  // decided the moment you click (hitMs 0: the swing animation follows), along your aim, within reach, not through walls.
+  // A slash that follows another attack (within chainMs of its end) is the weaker follow-up (chain).
   function attack(kind) {
     const K = KNIFE[kind]; if (knife && now() < knife.until) return false; if (now() - drawAt < drawMs) return false;
-    inspecting = null; knife = { kind, start: now(), hitAt: now() + K.hitMs, until: now() + K.rateMs, done: false }; lastShot = now(); if (!clipStart(kind)) sounds.slash(null, kind === 'heavy'); if (fp?.swing) fp.swing(kind); else fp?.fire(); return true;
+    const chain = kind === 'light' && !!knife && now() < knife.until + KNIFE.chainMs;
+    inspecting = null; knife = { kind, chain, start: now(), hitAt: now() + K.hitMs, until: now() + K.rateMs, done: false }; lastShot = now(); if (!clipStart(kind)) sounds.slash(null, kind === 'heavy'); if (fp?.swing) fp.swing(kind); else fp?.fire();
+    if (K.hitMs <= 0) { knife.done = true; if (canFire()) knifeHit(); } return true;
   }
   function knifeHit() {
     const K = KNIFE[knife.kind], a = aim(), d = dirFor(a.pitch, a.yaw, tmpD), o = camera.getWorldPosition(origin), wall = rayBoxes(boxes(), o.x, o.y, o.z, d.x, d.y, d.z, 40);
-    let best = null; for (const tgt of targets()) { const t = rayCapsule(o, d, tgt.feet, tgt.crouched ? BODY_H * CROUCH_H : BODY_H); if (t !== null && t <= K.range && t < wall && (!best || t < best.t)) best = { t, tgt }; }
-    // A little aim assist for the knife: a body just beside the crosshair still counts (CS2's swing is wide).
-    if (!best) for (const tgt of targets()) { const c = tgt.feet.clone().setY(tgt.feet.y + 6), to = c.clone().sub(o), dist = to.length(); if (dist < K.range + 1.5 && to.normalize().dot(d) > .93 && dist < wall && (!best || dist < best.t)) best = { t: dist, tgt }; }
+    let best = null; for (const tgt of targets()) { const t = rayCapsule(o, d, tgt.feet, tgt.crouched ? BODY_H * CROUCH_H : BODY_H); if (t !== null && t <= K.range && t < wall && (!best || t < best.t)) best = { t, tgt, off: 0 }; }
+    // Nothing on the line: CS2 sweeps a hull along the aim — a body within KNIFE.hull of the line, in reach, counts; the
+    // one nearest the line (the crosshair) first; never round a wall (the line from your eye to its chest is clear).
+    if (!best) for (const tgt of targets()) { const f = tgt.feet, h = tgt.crouched ? BODY_H * CROUCH_H : BODY_H; let off = Infinity, at = 0;
+      for (let t = 0; t <= K.range; t += .4) { const px = o.x + d.x * t, py = o.y + d.y * t, pz = o.z + d.z * t, hz = Math.max(0, Math.hypot(px - f.x, pz - f.z) - BODY_R), vz = py < f.y ? f.y - py : py > f.y + h ? py - f.y - h : 0, sep = Math.hypot(hz, vz); if (sep < off) { off = sep; at = t; } }
+      if (off > KNIFE.hull || at >= wall || (best && (off > best.off || (off === best.off && at >= best.t)))) continue;
+      const cy = f.y + h * .6, L = Math.hypot(f.x - o.x, cy - o.y, f.z - o.z) || 1e-6; if (rayBoxes(boxes(), o.x, o.y, o.z, (f.x - o.x) / L, (cy - o.y) / L, (f.z - o.z) / L, L) < L - BODY_R) continue;
+      best = { t: at, tgt, off }; }
     if (best) sounds.stab(null, knife.kind === 'heavy');
-    if (best) report({ type: 'hit', target: best.tgt.id, seen: best.tgt.seen, weapon: current.id, attack: knife.kind, zone: zoneAt(o.y + d.y * best.t - best.tgt.feet.y) === 'head' ? 'head' : 'chest' });
+    if (best) { const y = Math.min(best.tgt.feet.y + BODY_H, Math.max(best.tgt.feet.y, o.y + d.y * best.t)); report({ type: 'hit', target: best.tgt.id, seen: best.tgt.seen, weapon: current.id, attack: knife.kind, chain: !!knife.chain, zone: zoneAt(y - best.tgt.feet.y) === 'head' ? 'head' : 'chest' }); }
     // No one in reach: the blade meets glass or a vent grate in front (CS: the knife breaks them too).
     if (!best) { const P = bulletPath(boxes(), o.x, o.y, o.z, d.x, d.y, d.z, K.range, 0), b = P.stopBox?.mover != null ? P.stopBox : P.embedded;
       if (b) dispatchEvent(new CustomEvent('gd-break', { detail: { boxes: [b], dmg: knife.kind === 'heavy' ? 65 : 40 } })); }
@@ -215,7 +226,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     // Inspect (F): look the weapon over; any action cancels it.
     inspect() { if (!current || (knife && now() < knife.until) || reloading() || scope || now() - drawAt < drawMs || (current.kind === 'nade' && nade.state !== 'idle')) return false; const clip = GUN_FP_KINDS.has(current.kind) || fp?.authored ? fp?.inspect?.() || 0 : 0; inspecting = { start: now(), ms: clip || (current.kind === 'knife' ? 2400 : current.kind === 'bomb' ? 1400 : 2000), clip: clip > 0 }; if (clip > 0) clipStart('inspect', clip); return true; },   // (clip: the arms' own inspect animation plays)
     get inspecting() { return !!inspecting; },
-    get viewInfo() { return { authored: !!fp?.authored, skinMats: fp?.weaponMats || [] }; },   // (tests: CS2's own set in view? its skinnable materials)
+    get viewInfo() { return { authored: !!fp?.authored, skinMats: fp?.weaponMats || [], set: fpSet }; },   // (tests: CS2's own set in view? its skinnable materials)
     // What to hold when the current item is gone (a thrown grenade, a planted bomb): the last weapon, else the best one.
     fallback() { const own = arsenal().filter(Boolean); return own.includes(prevWeapon) ? prevWeapon : own.find(i => !['nade', 'bomb'].includes(weaponById(i)?.kind)) || null; },
     get knife() { return knife; }, get drawing() { return now() - drawAt < drawMs; },
@@ -244,7 +255,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     update(dt) { if (current?.id === 'knife') { const k = knifeSkin(); if (k !== knifeSeen) { knifeSeen = k; setView('knife'); } }
       { const k = Math.exp(-dt * RECOIL.kickBack); shake.pitch *= k; shake.yaw *= k; }
       clipSnd.step(now()); if (chanKind === 'inspect' && !inspecting) { clipSnd.stop(); chanKind = ''; }
-      if (current && fp?.weaponMats && now() - skinAt > 400) { skinAt = now(); const sk = skinOf(current.id); if (sk !== skinSeen) { skinSeen = sk; applySkin(fp.weaponMats, sk); } }   // (a skin changed in the menu: shown at once)   // (an inspect broken off by any action: quiet)
+      if (current && fp?.weaponMats && now() - skinAt > 400) { skinAt = now(); const sk = skinOf(current.id); if (sk !== skinSeen) { skinSeen = sk; applySkin(fp.weaponMats, sk, ownTint(fpSet)); } }   // (a skin changed in the menu: shown at once)   // (an inspect broken off by any action: quiet)
       if (!current) { punch.pitch = punch.yaw = 0; return; }
       if (reloadId && current.id !== reloadId) stopReload();   // switched away: before the magazine is seated nothing changed
       if (reloadId && !magIn && now() >= magInAt) seatMag();

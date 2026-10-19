@@ -13,8 +13,9 @@ function stickerAtlas() {
   atlas = new THREE.CanvasTexture(c); atlas.colorSpace = THREE.SRGBColorSpace; atlas.anisotropy = 4; return atlas;
 }
 const GLSL = `
-uniform float uSkinOn; uniform int uSkinPat; uniform vec3 uSkA; uniform vec3 uSkB; uniform vec3 uSkC; uniform float uSkWear; uniform vec4 uSkSeed;
+uniform float uSkinOn; uniform float uSkinVC; uniform int uSkinPat; uniform vec3 uSkA; uniform vec3 uSkB; uniform vec3 uSkC; uniform float uSkWear; uniform vec4 uSkSeed;
 uniform vec4 uStk[5]; uniform vec2 uStkRW[5]; uniform sampler2D uStkAtlas;
+vec3 skBase = vec3(1.0);   // (the texel before any paint: what a handle keeps)
 float skH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float skN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(skH(i), skH(i + vec2(1.0, 0.0)), f.x), mix(skH(i + vec2(0.0, 1.0)), skH(i + vec2(1.0, 1.0)), f.x), f.y); }
 float skF(vec2 p) { float a = 0.0, w = 0.5; for (int i = 0; i < 5; i++) { a += w * skN(p); p = p * 2.03 + 17.1; w *= 0.5; } return a; }
@@ -34,27 +35,38 @@ vec3 skinPaint(vec2 uv, float lum) {
 }`;
 const BODY = `#include <map_fragment>
 #ifdef USE_MAP
+skBase = diffuseColor.rgb;
 if (uSkinOn > 0.5) { vec2 suv = vMapUv; float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
   vec3 paint = uSkinPat > 0 ? skinPaint(suv, lum) : diffuseColor.rgb;
   float sc = skF(suv * 40.0 + uSkSeed.xy * 13.0) * 0.6 + skF(suv * 7.0) * 0.4, worn = uSkWear > 0.001 && uSkinPat > 0 ? smoothstep(1.05 - uSkWear * 1.1, 1.13 - uSkWear * 1.1, sc) : 0.0;
-  vec3 col = mix(paint, vec3(0.62, 0.62, 0.6) * (0.5 + 0.7 * lum), worn); col *= 1.0 - uSkWear * 0.22 * skF(suv * 3.0); diffuseColor.rgb = col;
+  vec3 col = mix(paint, vec3(0.62, 0.62, 0.6) * (0.5 + 0.7 * lum), worn); col *= 1.0 - uSkWear * 0.22 * skF(suv * 3.0);
+  vec3 sb = diffuseColor.rgb; float smx = max(sb.r, max(sb.g, sb.b)), sat = (smx - min(sb.r, min(sb.g, sb.b))) / max(smx, 0.001); diffuseColor.rgb = mix(sb, col, 1.0 - smoothstep(0.12, 0.25, sat));   // (the paint on the steel — grey; a handle's wood or cloth, coloured, keeps its own look)
   for (int i = 0; i < 5; i++) { if (uStk[i].z <= 0.0) continue; vec2 q = suv - uStk[i].xy; float cr = cos(uStkRW[i].x), sr = sin(uStkRW[i].x); q = mat2(cr, -sr, sr, cr) * q / (uStk[i].z * 0.12) + 0.5;
     if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) continue; vec4 st = texture2D(uStkAtlas, vec2((q.x + uStk[i].w) / 16.0, q.y)); float keep = skF(q * 9.0 + float(i)) > uStkRW[i].y * 1.1 ? 1.0 : 0.0; diffuseColor.rgb = mix(diffuseColor.rgb, st.rgb, st.a * keep); } }
+#endif`;
+// A model's own vertex colours: CS2's star knives carry their finish's mask in them (red: the blade it covers; 0: the
+// handle). uSkinVC 1: multiplied in as they are (the karambit's Ruby, no skin on); 2: a mask — the blade shows its
+// steel or the skin, the handle its own unpainted black (exactly as with no skin); 0: not used.
+const VCOL = `#if defined( USE_COLOR_ALPHA ) || defined( USE_COLOR )
+  if (uSkinVC > 1.5) diffuseColor.rgb = mix(skBase * 0.06, diffuseColor.rgb, smoothstep(0.02, 0.3, vColor.r));
+  else if (uSkinVC > 0.5) diffuseColor.rgb *= vColor.rgb;
 #endif`;
 // Make a material skinnable once (its uniforms in userData.skinU); off until a skin is set.
 function prepare(m) {
   if (m.userData.skinU) return m.userData.skinU;
-  const U = { uSkinOn: { value: 0 }, uSkinPat: { value: 0 }, uSkA: { value: new THREE.Color() }, uSkB: { value: new THREE.Color() }, uSkC: { value: new THREE.Color() }, uSkWear: { value: 0 }, uSkSeed: { value: new THREE.Vector4(0, 0, 0, 1) },
+  const U = { uSkinOn: { value: 0 }, uSkinVC: { value: 1 }, uSkinPat: { value: 0 }, uSkA: { value: new THREE.Color() }, uSkB: { value: new THREE.Color() }, uSkC: { value: new THREE.Color() }, uSkWear: { value: 0 }, uSkSeed: { value: new THREE.Vector4(0, 0, 0, 1) },
     uStk: { value: Array.from({ length: 5 }, () => new THREE.Vector4()) }, uStkRW: { value: Array.from({ length: 5 }, () => new THREE.Vector2()) }, uStkAtlas: { value: stickerAtlas() } };
-  const before = m.onBeforeCompile; m.onBeforeCompile = (sh, r) => { before?.call(m, sh, r); Object.assign(sh.uniforms, U); sh.fragmentShader = sh.fragmentShader.replace('void main() {', GLSL + '\nvoid main() {').replace('#include <map_fragment>', BODY); };
+  const before = m.onBeforeCompile; m.onBeforeCompile = (sh, r) => { before?.call(m, sh, r); Object.assign(sh.uniforms, U); sh.fragmentShader = sh.fragmentShader.replace('void main() {', GLSL + '\nvoid main() {').replace('#include <map_fragment>', BODY).replace('#include <color_fragment>', VCOL); };
   const key = m.customProgramCacheKey?.bind(m); m.customProgramCacheKey = () => (key ? key() : '') + '|skin1'; m.needsUpdate = true; m.userData.skinU = U; return U;
 }
 // Made skinnable when a set loads (its shader built then, on a loading screen — never compiled in play on a change).
 export function prepareSkins(materials) { for (const m of materials || []) if (m?.map) prepare(m); }
 // Paint these materials with a skin (null or Default: the gun's own look).
-export function applySkin(materials, skin) {
+// tint: with no skin on, the model's own vertex colours show as they are (a karambit's Ruby); false: as a mask — the
+// blade's plain steel, the handle black. Under a skin always the mask: the skin on the blade, the handle black.
+export function applySkin(materials, skin, tint = true) {
   for (const m of materials || []) { if (!m?.map) continue; const U = prepare(m), f = skin && FINISHES[skin.finish];
-    const on = !!(f && (skin.finish !== 'none' || skin.stickers?.length)); U.uSkinOn.value = on ? 1 : 0; if (!on) continue;
+    const on = !!(f && (skin.finish !== 'none' || skin.stickers?.length)); U.uSkinOn.value = on ? 1 : 0; U.uSkinVC.value = !on && tint ? 1 : 2; if (!on) continue;
     U.uSkinPat.value = Math.max(0, PATTERNS.indexOf(f.pattern)); const [a, b, c] = f.colors; U.uSkA.value.set(a || '#888'); U.uSkB.value.set(b || a || '#888'); U.uSkC.value.set(c || b || a || '#888');
     U.uSkWear.value = +skin.wear || 0; const p = patternOf(skin.seed); U.uSkSeed.value.set(p.u, p.v, p.rot, p.scale);
     for (let i = 0; i < 5; i++) { const s = skin.stickers?.[i]; if (!s) { U.uStk.value[i].z = 0; continue; } U.uStk.value[i].set(s.x, s.y, s.scale, Math.max(0, STICKER_IDS.indexOf(s.id))); U.uStkRW.value[i].set(s.rot * Math.PI / 180, s.wear || 0); } }

@@ -4,6 +4,7 @@
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import os from 'node:os'; import { mkdtempSync } from 'node:fs'; import path from 'node:path';
 const [root] = process.argv.slice(2);
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '8080', BIND: '0.0.0.0', ROOM_CODE: 'SCAN42', HOST_KEY: 'hk', CAMPAIGN_SAVE: path.join(mkdtempSync(path.join(os.tmpdir(), 'sj-')), 's.json') }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 await new Promise(r => server.stdout.on('data', d => { if (/localhost:\d+/.test(String(d))) r(); }));
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'ELECTRON_RUN_AS_NODE'));
 const app = spawn(path.join(root, 'desktop/node_modules/.bin/electron'), [path.join(root, 'desktop'), '--remote-debugging-port=9361', '--user-data-dir=' + mkdtempSync(path.join(os.tmpdir(), 'sg-'))], { env, stdio: 'ignore' });

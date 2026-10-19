@@ -11,10 +11,10 @@
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
-import { cleanSkin, skinTitle } from './skins.js';
+import { cleanSkin, skinTitle, skinKeyOf } from './skins.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
 import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks, setSmokeSolids, tossFlight } from './arena-nades.js';
-import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS } from './arena-defuse.js';
+import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, balanceBots, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS } from './arena-defuse.js';
 import { hurt } from './combat-logic.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
@@ -150,12 +150,14 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   // then everyone's view draws it. { weapon, skin } sets one, { weapon, clear: true } goes back to the default.
   // Darja may give a skin to anyone in the room (a.for: their name), as she equips knives; a StatTrak™ count stays
   // theirs (earned, never given).
-  if (a.type === 'skin') { const w = weaponById(String(a.weapon || '')); if (!w || w.kind === 'nade' || w.kind === 'bomb') throw Error('Choose a weapon to skin');
+  if (a.type === 'skin') { const w = weaponById(String(a.weapon || '')), sk = w && skinKeyOf(w.id); if (!sk) throw Error('Skins go on knives');   // (one knife skin, on whichever knife you carry)
     const darja = /^darja$/.test(key(name)); if (a.for != null && !darja) throw Error('Only Darja gives skins to others');
     const who = a.for != null ? String(a.for).trim().slice(0, 40) : name; if (key(who) !== key(name) && (!who || /^bot /i.test(who) || (players.length && !players.some(p => !p.bot && key(p.name) === key(who))))) throw Error('No such player in the room');
-    const mine = (A.skins ??= {})[key(who)] ??= {}, on = key(who) !== key(name) ? ' on ' + who : ''; if (a.clear) { delete mine[w.id]; return 'Default ' + w.name + on; }
-    const s = cleanSkin(a.skin, w.kind, mine[w.id]); if (Object.keys(mine).length >= 40 && !mine[w.id]) throw Error('Inventory full (40 skins)'); mine[w.id] = s; return skinTitle(w.name, s) + (on ? ' given to ' + who : ' equipped'); }
-  if (a.type === 'knife') { const k = String(a.knife || ''), darja = /^darja$/.test(key(name)), who = a.for != null && darja ? String(a.for).trim().slice(0, 40) : name; if (!['default', 'butterfly', 'stiletto', 'm9', 'karambit'].includes(k)) throw Error('Unknown knife'); if (a.for != null && !darja) throw Error('Only Darja equips knives on others'); if (k === 'karambit' && !darja) throw Error('The karambit is Darja\'s');
+    const mine = (A.skins ??= {})[key(who)] ??= {}, on = key(who) !== key(name) ? ' on ' + who : ''; if (a.clear) { delete mine[sk]; return 'Default knife' + on; }
+    const s = cleanSkin(a.skin, 'knife', mine[sk]); mine[sk] = s; return skinTitle('Knife', s) + (on ? ' given to ' + who : ' equipped'); }
+  if (a.type === 'knife') { const k = String(a.knife || ''), darja = /^darja$/.test(key(name)), who = a.for != null ? String(a.for).trim().slice(0, 40) : name; if (!['default', 'butterfly', 'stiletto', 'm9', 'karambit'].includes(k)) throw Error('Unknown knife');
+    if (key(who) !== key(name) && !darja) throw Error('Only Darja gives knives to others');   // (everyone picks their own knife — any of them — and the skin on it)
+    if (key(who) !== key(name) && (!who || /^bot /i.test(who) || (players.length && !players.some(p => !p.bot && key(p.name) === key(who))))) throw Error('No such player in the room');
     const kn = (A.knives ??= {}); kn[key(who)] = k; return { butterfly: 'Butterfly Knife', stiletto: 'Stiletto Knife', m9: 'M9 Bayonet', karambit: 'Karambit | Ruby', default: 'Default knife' }[k] + ' equipped' + (key(who) !== key(name) ? ' on ' + who : ''); }
   if (a.type === 'team') return changeTeam(game, name, a.team, players, now);
   // Host administration (the room checks the host): pause, restart the round, move someone to spectator, the next
@@ -182,7 +184,8 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     return 'Bots: ' + A.bots.length + ' · ' + A.difficulty + (a.freeze !== undefined ? ' · freeze ' + Math.round((A.freezeNext ?? A.freezeMs) / 1000) + ' s' + (A.freezeNext !== undefined ? ' from the next round' : '') : '') + (a.warmup !== undefined && A.lobby && !A.lobby.started ? ' · warmup ' + A.warmupS + ' s' : ''); }
   if (a.type === 'change-map') { if (!perm.isHost) throw Error('Only the host changes the map'); const m = ARENA_MAPS[a.map]; if (!m) throw Error('That map is not available');
     const teams = game.combat?.d?.teams ? { ...game.combat.d.teams } : null; startArena(game, { map: a.map, kind: m.kind, bots: A.bots.length, difficulty: A.difficulty }, now);
-    if (teams && game.combat.d) { for (const [k, t] of Object.entries(teams)) if (!/^bot /.test(k)) game.combat.d.teams[k] = t; }   // people keep their side
+    if (teams && game.combat.d) { for (const [k, t] of Object.entries(teams)) if (!/^bot /.test(k)) game.combat.d.teams[k] = t;   // people keep their side;
+      balanceBots(game, players); game.arena.restarting = true; newRound(game, players, now); }   // (game.arena: the new map's)   // the new bots even the sides, and round 1 starts over with everyone on their own side's spots
     return 'Map · ' + m.name + ' · ' + (m.kind === 'defuse' ? 'Defuse' : 'Deathmatch'); }
   if (a.type === 'drop') {
     if (isDown(game, name, now)) throw Error('You are dead');

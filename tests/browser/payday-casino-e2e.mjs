@@ -10,6 +10,7 @@ import os from 'node:os'; import path from 'node:path';
 const [root, out] = process.argv.slice(2); mkdirSync(out, { recursive: true });
 const saveDir = mkdtempSync(path.join(os.tmpdir(), 'payday-')), campaignSave = path.join(saveDir, 'campaign-save.json');
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'PAY777', HOST_KEY: 'hk', CAMPAIGN_SAVE: campaignSave, DELIVERY_SCALE: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const browser = await chromium.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--use-angle=metal', '--ignore-gpu-blocklist'] });
 const results = [], errors = [];

@@ -5,6 +5,9 @@
 // StatTrak™, a count of its kills (kept by the host only). Pure: the room host validates every skin a player sends
 // (cleanSkin) and keeps it in game.arena.skins; every client draws it (skin-render.js). The finishes are this
 // game's own procedural paints (no Valve artwork is shipped).
+// Skins go on knives only: whichever knife you carry (the default, one Darja gave you, her karambit) wears your one
+// knife skin (game.arena.skins[player].knife); guns keep their own look. The key a weapon's skin is kept under, or null.
+export const skinKeyOf = id => id === 'knife' || id === 'karambit' ? 'knife' : null;
 export const FINISHES = {
   none: { name: 'Default', pattern: 'none', colors: [] },
   fade: { name: 'Fade', pattern: 'fade', colors: ['#f6d24a', '#e2459a', '#5b4bd8'], rarity: 'Covert' },
