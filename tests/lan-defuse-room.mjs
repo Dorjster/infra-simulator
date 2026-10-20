@@ -71,7 +71,12 @@ try {
     await until(() => host.combat?.d?.round?.phase === 'live' && Date.now() - host.combat.d.round.at > 9000, 30000);   // live, past a round's first seconds
     const dee = await player('Dee'); await until(() => host.combat?.d?.teams?.dee && host.combat?.down?.dee, 8000);
     check(`${id}: Dee joins mid-round, on an even team, watching until the next round`, host.combat?.down?.dee?.weapon === 'joined mid-round' && Math.abs(counts(host).t - counts(host).ct) <= 1, JSON.stringify({ down: host.combat?.down?.dee, ...counts(host) }));
+    // Dead (watching), the camera goes where it likes; the body stays where it fell (no ghosts) — then the next life's spawn.
+    const poseOf = n => host.players.find(q => q.name === n)?.pose, before = poseOf('Dee'); if (before) dee.at = { x: before.x + 40, y: before.y, z: before.z }; await sleep(700); const after = poseOf('Dee');
+    check(`${id}: watching, Dee's camera moving never walks their body (no ghost)`, !!before && !!after && Math.hypot(after.x - before.x, after.z - before.z) < .5, JSON.stringify({ before: before && [before.x, before.z].map(v => +v.toFixed(1)), after: after && [after.x, after.z].map(v => +v.toFixed(1)) }));
     await host.act({ type: 'arena', action: { type: 'restart-round' } }); await until(() => !host.combat?.down?.dee && host.combat?.spawnTo?.dee, 8000); await sleep(400);
+    { const sp = host.combat?.spawnTo?.dee; await until(() => { const q = poseOf('Dee'); return q && sp && Math.hypot(q.x - sp.x, q.z - sp.z) < .5; }, 3000); const q = poseOf('Dee');
+      check(`${id}: the next round everyone sees Dee at their spawn (not where they were)`, !!q && !!sp && Math.hypot(q.x - sp.x, q.z - sp.z) < .5, JSON.stringify({ pose: q && [q.x, q.z].map(v => +v.toFixed(1)), spawn: sp && [sp.x, sp.z].map(v => +v.toFixed(1)) })); }
     const buy = await dee.act({ type: 'arena', action: { type: 'loadout', secondary: 'deagle' } });
     check(`${id}: next round Dee plays: money, a spot of their own, buys in the spawn`, !host.combat.down?.dee && host.combat.d.money.dee >= 800 && apart(host).close === 0 && /Desert Eagle/.test(JSON.stringify(buy)), JSON.stringify({ money: host.combat.d.money.dee, ...apart(host), buy: buy.result || buy.error }));
     await dee.leave(); await until(() => !people(host).includes('Dee'), 8000); await host.act({ type: 'arena', action: { type: 'restart-round' } }); await sleep(500);

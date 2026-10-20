@@ -148,7 +148,7 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
     else if (kind === 'door') { const ang = +e.angle || 0, d = ang === -1 ? [0, 0, 1] : ang === -2 ? [0, 0, -1] : [Math.cos(ang * Math.PI / 180), Math.sin(ang * Math.PI / 180), 0], size = [0, 1, 2].map(k => b.maxs[k] - b.mins[k]);
       const len = Math.max(0, Math.abs(d[0]) * size[0] + Math.abs(d[1]) * size[1] + Math.abs(d[2]) * size[2] - (+e.lip || 0)), g = [d[0] * len * U, d[2] * len * U, -d[1] * len * U].map(v => +v.toFixed(3)); m.slide = g;
       m.open = { open: [box[0] + g[0], box[1] + g[0], box[2] + g[2], box[3] + g[2], box[4] + g[1], box[5] + g[1]] }; }
-    else { m.glass = !+e.material; m.health = Math.max(1, +e.health || 1); }
+    else { m.glass = !+e.material; m.health = Math.max(1, +e.health || 1); if (e.look === 'bounds') m.lookBounds = true; }   // (its look: the meshes in its box — cs2-render.js)
     movers.push(m); });
   // Grenades fly through the map's real shapes, as in CS — not its player clips (the roofs and edges that stop only
   // players) nor the collision columns (a gap narrower than a column would be shut): a point test on the file. Counter-

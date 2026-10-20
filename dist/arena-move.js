@@ -44,7 +44,17 @@ function hullsFor(s, others) { const R = MOVE.radius; let n = 0;
   for (const o of others) { if (Math.abs(o.x - s.x) < 2 * R && Math.abs(o.z - s.z) < 2 * R && o.y < s.y + MOVE.height && o.y + MOVE.height > s.y) continue;   // already overlapping: ignored until you separate
     const b = HULLS[n] ??= {}; b.minX = o.x - R; b.maxX = o.x + R; b.minZ = o.z - R; b.maxZ = o.z + R; b.y0 = o.y; b.y1 = o.y + MOVE.height; n++; }
   return n; }
-const blockedBy = (boxes, nh, bounds, x, z, feet, h) => { if (blocked(boxes, bounds, x, z, feet, h)) return true; const r = MOVE.radius;
+// On a ladder this tick: where the body is (NaN: not climbing) and the ladder. The game's columns are coarser than CS2's
+// clip over a ladder's top, which then wraps the climber's head: a box the body is already in holds nobody, and sliding
+// along the ladder (strafing) passes what stands over the ladder itself — stepping off sideways, back or over the top
+// stays free (CS2); the wall behind it, and anything beside the ladder, still stop you.
+let climbX = NaN, climbZ = NaN, climbLad = null;
+const blockedClimbing = (boxes, bounds, x, z, feet, h) => { const r = MOVE.radius, L = climbLad; if (bounds && (x < bounds.minX + r || x > bounds.maxX - r || z < bounds.minZ + r || z > bounds.maxZ - r)) return true;
+  const along = !!L && (L.maxX - L.minX <= L.maxZ - L.minZ ? x === climbX && z !== climbZ : z === climbZ && x !== climbX);
+  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, NB)) if (b.y1 > feet + MOVE.step && b.y0 < feet + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r && !(climbX > b.minX - r && climbX < b.maxX + r && climbZ > b.minZ - r && climbZ < b.maxZ + r)
+    && !(along && b.minX < L.maxX + r && b.maxX > L.minX - r && b.minZ < L.maxZ + r && b.maxZ > L.minZ - r)) return true;
+  return false; };
+const blockedBy = (boxes, nh, bounds, x, z, feet, h) => { if (climbX === climbX ? blockedClimbing(boxes, bounds, x, z, feet, h) : blocked(boxes, bounds, x, z, feet, h)) return true; const r = MOVE.radius;
   for (let i = 0; i < nh; i++) { const b = HULLS[i]; if (b.y1 > feet + MOVE.step && b.y0 < feet + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) return true; } return false; };
 const groundBy = (boxes, nh, x, z, feet) => { let g = groundAt(boxes, x, z, feet); const r = MOVE.radius;
   for (let i = 0; i < nh; i++) { const b = HULLS[i]; if (b.y1 <= feet + MOVE.step + 1e-6 && b.y1 > g && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) g = b.y1; } return g; };
@@ -99,7 +109,12 @@ export function moveStep(s, input, world, dt) {
     let vx = (lx * cp * fm + -lz * sm) * v, vy = fm * up * v, vz = (lz * cp * fm + lx * sm) * v; const into = vx * nx + vz * nz;
     if (input.jump && !s.onGround) { s.vx = nx * LADDER.jumpOff; s.vz = nz * LADDER.jumpOff; s.vy = 0; s.ladderOff = .35; }
     else if (!(s.onGround && (wl < 1e-6 || vy <= 0))) { climbing = true; s.onGround = false;
-      vx -= nx * into; vz -= nz * into; if (wl < 1e-6) vx = vy = vz = 0;
+      // Over the top (CS2): with the feet within a step of the ladder's top, pushing toward it carries you over the lip
+      // onto the floor behind (the push into it is kept, with a little lift; the step-up lands you); lower down the push
+      // into the ladder is dropped — you climb, never into the wall.
+      const overTop = s.y > lad.y1 - MOVE.step && into < 0;
+      if (overTop) vy = Math.max(vy, v * .6); else { vx -= nx * into; vz -= nz * into; }
+      if (wl < 1e-6) vx = vy = vz = 0;
       s.vx = vx; s.vy = Math.max(-v, Math.min(v, vy)); s.vz = vz; } }
   s.onLadder = climbing;
   if (climbing) { /* velocities set: no friction, acceleration or gravity this tick */ }
@@ -120,7 +135,9 @@ export function moveStep(s, input, world, dt) {
   // Horizontal move per axis (slide along walls), stepping up onto low boxes. A wall that runs at an angle is a
   // staircase of boxes: its small corners nudge you aside (up to CORNER) instead of stopping you dead, so sliding
   // along it — or along rocks, zig-zag walls — keeps its speed, as on Source's smooth hull.
-  const dx = s.vx * dt;
+  // (and for a moment after leaving a ladder: stepped off at its top, the body walks out of what wrapped its head)
+  if (climbing) s.ladGrace = .75; else if (s.ladGrace) s.ladGrace = Math.max(0, s.ladGrace - dt);
+  const dx = s.vx * dt; if (climbing || s.ladGrace > 0) { climbX = s.x; climbZ = s.z; climbLad = climbing ? lad : null; }
   // Blocked by one step of a staircase (an angled wall in boxes: clear again a cell further along the other axis):
   // the speed is carried along the wall (as Source's velocity clipped to the real slope), not lost at every step. A
   // flat wall still takes the blocked part away (Source's clip against an axis-aligned plane).
@@ -131,6 +148,7 @@ export function moveStep(s, input, world, dt) {
   if (!blockedBy(boxes, nh, bounds, s.x, s.z + dz2, s.y, height)) s.z += dz2;
   else { const n = corner(boxes, nh, bounds, s, s.x, s.z + dz2, 1, 0, s.vx, height); if (n) { s.z += dz2; s.x += n; }
     else { if (Math.abs(s.vx) > .2 * Math.abs(s.vz) && !blockedBy(boxes, nh, bounds, s.x + Math.sign(s.vx) * STAIR, s.z + dz2, s.y, height)) s.vx = Math.sign(s.vx) * Math.hypot(s.vx, s.vz); s.vz = 0; } }
+  climbX = climbZ = NaN; climbLad = null;
   // Vertical: fall / rise, land on the highest surface below, bump the head on ceilings.
   const ground = groundBy(boxes, nh, s.x, s.z, s.y);
   if (s.onGround) { if (s.y - ground > MOVE.step) s.onGround = false; else s.y = ground; }

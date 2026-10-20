@@ -56,6 +56,15 @@ check('Walking is far more accurate than running', moveSpread(run(at(), { ...fwd
   const t = at(0, -.7); for (let k = 0; k < 400 && !(t.onGround && t.y > 1); k++) moveStep(t, up, world, dt); check('Ladder: at the top, the same push steps onto the ledge', t.onGround && t.y === 30 && t.z < -2, 'y ' + t.y.toFixed(1) + ' z ' + t.z.toFixed(2));
   const j = at(0, -.7); j.y = 15; j.onGround = false; moveStep(j, { wish: [0, 0], weapon: 'knife', look: [0, -1], pitch: 0, jump: true }, world, dt); check('Ladder: jumping pushes you off backwards', j.vz > 0 && !j.onLadder, j.vz.toFixed(1));
   const g = at(0, 0); run(g, { wish: [0, -1], weapon: 'knife', look: [0, -1], pitch: -.8 }, world, .5); check('Ladder: on the floor, looking down, you just walk (no digging in)', g.y === 0, g.y.toFixed(2)); }
+// A ladder up a wall that goes on over its top, with CS2's clip over the ladder's top in the game's coarse columns
+// (round the climber's head) and a ledge beside it: at the top, strafing steps off sideways onto the ledge; a wall
+// beside the ladder still stops a strafe, and the wall behind it is never climbed through.
+{ const wall = { minX: -20, maxX: 20, minZ: -12, maxZ: -2, y0: 0, y1: 60 }, clip = { minX: -3, maxX: 3, minZ: -2.1, maxZ: .3, y0: 28, y1: 60 }, ledge = { minX: 4, maxX: 12, minZ: -2, maxZ: 6, y0: 0, y1: 28 }, side = { minX: -7, maxX: -5, minZ: -2, maxZ: 6, y0: 0, y1: 60 };
+  const ladder = { minX: -2, maxX: 2, minZ: -2.1, maxZ: -1.8, y0: 0, y1: 31 }, world = { boxes: [wall, clip, ledge, side], bounds: null, ladders: [ladder] }, up = { wish: [0, -1], weapon: 'knife', look: [0, -1], pitch: .3 };
+  const s = at(0, -.6); for (let k = 0; k < 64 * 4 && s.y < 29.5; k++) moveStep(s, up, world, dt);
+  const r = { ...s }; for (let k = 0; k < 64 * 1.5 && !(r.onGround && !r.onLadder && r.x > 3 + MOVE.radius); k++) moveStep(r, { wish: [1, 0], weapon: 'knife', look: [0, -1], pitch: .3 }, world, dt); check('Ladder: under a clip over its top, strafing steps off onto the ledge beside it', r.onGround && r.y === 28 && r.x > 3 + MOVE.radius, `x ${r.x.toFixed(2)} y ${r.y.toFixed(2)}`);
+  const l = { ...s }; run(l, { wish: [-1, 0], weapon: 'knife', look: [0, -1], pitch: .3 }, world, 1.5); check('Ladder: a wall beside it still stops the strafe', l.x >= -5 + MOVE.radius - 1e-6, l.x.toFixed(2));
+  const f = { ...s }; run(f, up, world, 1.5); check('Ladder: pushing on at the top never goes through the wall behind it', f.z > -2 + MOVE.radius - .35, f.z.toFixed(2)); }
 // Tagging (CS): hit while running, you are at half speed at once, and back to full about 1.25 s later.
 { const t = createMoveState(0), inp = { wish: [1, 0], weapon: 'ak' }, top = maxSpeed('ak'); moveFor(t, inp, null, 1); check('Tagging: running at the AK\'s top speed first', Math.abs(Math.hypot(t.vx, t.vz) - top) < top * .02);
   tag(t); moveFor(t, inp, null, 1 / 64); const v0 = Math.hypot(t.vx, t.vz); check('Tagging: a hit halves your speed at once', v0 <= top * (TAG.hit + .02), (v0 / top).toFixed(2));

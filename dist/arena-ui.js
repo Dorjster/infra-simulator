@@ -3,7 +3,7 @@
 // bot controls. Reads the shared world (game.arena, game.combat); every change is an arena action to the host.
 import { ARENA_MAPS, MAP_LIST, mapOffered, inBuyZone as buyZoneAt } from './arena-maps.js';
 import { userMapList } from './user-maps.js'; import { progressText } from './load-progress.js';
-import { fx as recFx, freezeMusic } from './sound-bank.js';
+import { fx as recFx, freezeMusic, play as playSound } from './sound-bank.js';
 import { ARENA } from './facility-layout.js';
 import { WEAPONS, KNIVES, weaponById, ARMOR, hitDamage, defaultPistol } from './weapons-data.js';
 import { userAssets, userAssetURL } from './user-assets.js';
@@ -13,7 +13,7 @@ import { weaponModel } from './weapon-models.js';
 import { NADES, stepNade, TOSS_DT, TOSS_GRAVITY } from './arena-nades.js';
 import { FINISHES, STICKERS, STICKER_IDS, stickerSlots, wearName, skinTitle } from './skins.js';
 import { finishSwatch } from './skin-render.js';
-import { throwSound, explosion, beep } from './arena-nades-view.js';
+import { throwSound, explosion, beep, defuseClick } from './arena-nades-view.js';
 import { PRICE, DEFUSE, DEFAULT_RULES } from './arena-defuse.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
@@ -397,6 +397,18 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     const left = (p.explodeAt - Date.now()) / 1000, gap = Math.max(.12, Math.min(1, left / 40)) * 1000;
     if (Date.now() - beepAt > gap) { beepAt = Date.now(); beep({ x: p.x, y: p.y + 1, z: p.z }, left < 10 ? 1.25 : 1); }
   }
+  // Someone planting or defusing (CS2): everyone near hears it where it happens — the case armed and its keypad beeps
+  // round the site while it's planted, a defuse's snips and clicks close to the bomb.
+  let plantSeen = 0, plantBeepAt = 0, defuseSeen = 0, defuseClickAt = 0; const PLANT_AT = { x: 0, y: 0, z: 0 }, DEFUSE_AT = { x: 0, y: 0, z: 0 };   // (reused: nothing made per frame)
+  function bombActs(r) {
+    const now = Date.now(), p = r?.plant, df = r?.defuse;
+    if (p && r.phase === 'live') { const at = PLANT_AT; at.x = p.x; at.y = (p.y ?? 0) + 1.5; at.z = p.z;
+      if (p.start !== plantSeen) { plantSeen = p.start; plantBeepAt = now + 260; if (!playSound('fp-c4_initiate', { at, volume: .9, kind: 'plant' })) beep(at, 1.3); }
+      else if (now >= plantBeepAt && now - p.start < DEFUSE.plantMs - 150) { plantBeepAt = now + 360 + Math.random() * 60; if (!playSound('fp-c4_beep2', { at, volume: .55, rate: 1.1 + Math.random() * .15, kind: 'plant' })) beep(at, 1.45); } }
+    if (df && r.phase === 'planted' && r.planted) { const at = DEFUSE_AT; at.x = r.planted.x; at.y = (r.planted.y ?? 0) + 1; at.z = r.planted.z;
+      if (df.start !== defuseSeen) { defuseSeen = df.start; defuseClickAt = now; playSound('fp-c4_draw_grab_0' + (1 + (Math.random() * 4 | 0)), { at, volume: .7, kind: 'defuse' }); }
+      if (now >= defuseClickAt) { defuseClickAt = now + 220 + Math.random() * 140; defuseClick(at); } }
+  }
   let hudAt = 0, hudPhase = '', lastNear = '', teamAt = 0;
   return {
     get open() { return buyOpen || teamOpen; }, get teamOpen() { return teamOpen; }, teamMenu, buy, scoreboard, drop, use,
@@ -420,7 +432,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
       const at = where(); if (at && !scene.inArena(at.z)) { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); }
       const s = g().combat?.spawnTo?.[me()]; if (s && s.at !== spawnAt) { spawnAt = s.at; goSpawn(s); const own = arenaArsenalOf(g(), name()); equip(own[0]); notify('Respawned'); }   // back with your primary in hand (CS2)
       drawGround(); flyGround(); if (performance.now() - pickAt > 160) { pickAt = performance.now(); autoPick(); lookPrompt(); if (buyOpen && nearby().map(n => n.it.id).join() !== lastNear) { lastNear = nearby().map(n => n.it.id).join(); buy(true); } }
-      bombView(D()?.round?.phase === 'planted' ? D().round.planted : null);
+      bombView(D()?.round?.phase === 'planted' ? D().round.planted : null); bombActs(D()?.round);
       const ph = D() ? D().n + ':' + D().round?.phase : '';   // round events (planted, round over…) show at once
       if (performance.now() - hudAt > 200 || ph !== hudPhase) { hudAt = performance.now(); hudPhase = ph; trackBuys(); hud(); lobbyPanel(); if (teamOpen && performance.now() - (teamAt || 0) > 1000) { teamAt = performance.now(); } }
     },
