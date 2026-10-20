@@ -263,9 +263,10 @@ export function createCampaignUI(ctx) {
           status.textContent = 'Connecting to ' + url.host + '…';
           const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 5000);
           const reachable = await fetch(url.origin + '/api/room', { mode: 'no-cors', signal: ctl.signal }).then(() => true, () => false); clearTimeout(timer);
-          if (!reachable) { status.innerHTML = `<b>Can't reach ${esc(url.host)}.</b> Use the address and port in the host's invite bar (top of their screen), be on the same network, and on the host allow Infra Simulator through the firewall (private networks).`; return; }
+          if (!reachable) { status.innerHTML = `<b>Can't reach ${esc(url.host)}.</b> Use the address and port in the host's invite bar (top of their screen), be on the same network, and on the host allow Infra Simulator through the firewall (private networks).${desktop && /Mac/i.test(navigator.platform || '') ? ' <b>On this Mac:</b> System Settings → Privacy &amp; Security → Local Network → turn on Infra Simulator (macOS blocks an app from reaching your network until you allow it).' : ''}`; return; }
           try { localStorage.setItem('infra-last-lan', JSON.stringify({ addr: url.host, code, at: Date.now() })); } catch {}
-          if (desktop && url.protocol === 'http:') { url.protocol = 'https:'; url.port = String((+url.port || 8080) + 1); }   // the desktop joins the host's https twin (a secure origin: team voice works)
+          // (the desktop joins on plain http, the address checked above: the host's https twin — there for team voice's
+          // microphone — needs its self-signed certificate accepted, a step Windows could fail; nothing else needs it)
           url.pathname = '/'; url.search = '?join=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name); location.href = url.href; return;
         }
         if (el.querySelector('#ss-jtitle')) engineering.setRole(el.querySelector('#ss-jtitle').value);

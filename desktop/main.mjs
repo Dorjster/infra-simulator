@@ -28,6 +28,14 @@ const { startRoom } = await import(pathToFileURL(path.join(gameRoot, 'lan', 'roo
 
 // Laptops with two GPUs: ask for the discrete one (Chromium/ANGLE picks the low-power GPU otherwise).
 app.commandLine.appendSwitch('force_high_performance_gpu');
+// A match keeps running behind other windows (CS2 does): Windows marks a fully covered window as hidden (native window
+// occlusion) and Chromium stopped drawing it — the player froze for everyone, then jumped, while Discord or a browser was
+// over the game. Timers and the page stay at full speed in the background too.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-renderer-backgrounding'); app.commandLine.appendSwitch('disable-background-timer-throttling');
+// A GPU on Chromium's blocklist (older Windows laptop drivers, often) is used anyway: blocklisted, WebGL ran on the CPU
+// (software) — single-digit frame rates, "laggy on every Windows PC".
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
 // No usable GPU driver: keep WebGL on Chromium's software renderer instead of failing (newer Chromium drops the automatic fallback).
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch

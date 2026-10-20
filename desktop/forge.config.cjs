@@ -26,6 +26,9 @@ module.exports = {
     // Windows file metadata: the Start menu folder and Apps list show "Infra Simulator" (Darja is credited in-game and in About).
     win32metadata: { CompanyName: 'Infra Simulator', ProductName: 'Infra Simulator', FileDescription: 'Infra Simulator' },
     ignore: [/^\/out($|\/)/, /^\/tools($|\/)/, /^\/README/],
+    // macOS: an app must say why it reaches devices on the local network, or macOS never asks and quietly blocks every
+    // connection to them — joining a LAN game said "Can't reach" a host the network reached fine (Local Network privacy).
+    extendInfo: { NSLocalNetworkUsageDescription: 'Infra Simulator connects to LAN games hosted by friends on your network, and lets them join yours.' },
     // Signing / notarization only when credentials are provided (CI secrets); otherwise unsigned.
     ...(process.env.APPLE_ID ? { osxSign: {}, osxNotarize: { appleId: process.env.APPLE_ID, appleIdPassword: process.env.APPLE_APP_PASSWORD, teamId: process.env.APPLE_TEAM_ID } } : {})
   },

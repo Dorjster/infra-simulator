@@ -154,7 +154,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
       // Its doors and breakables: each moved onto a pivot at its hinge (game units), so it swings, slides or goes as the
       // file maps' movers do (mapState); on leaving they go back into the look (it is kept for the next time).
       (map.movers || []).forEach((m, id) => { const G = builtLook.userData.movers?.get(m.e); if (!G) return; const pv = new THREE.Group(); pv.userData.cs2Mover = true; pv.userData.home = builtLook;
-        if (m.kind === 'rotdoor') pv.position.set(cx + m.hinge[0], m.hinge[1], cz + m.hinge[2]); pv.userData.base0 = pv.position.clone(); group.add(pv); pv.updateMatrixWorld(true); pv.attach(G); movers.push({ id, m, g: pv, base: pv.position.clone(), at: 0, broken: false }); });
+        if (m.kind === 'rotdoor') pv.position.set(cx + m.hinge[0], m.hinge[1], cz + m.hinge[2]); pv.userData.base0 = pv.position.clone(); group.add(pv); pv.updateMatrixWorld(true); pv.attach(G); G.userData.setBroken?.(false); movers.push({ id, m, g: pv, base: pv.position.clone(), at: 0, broken: false, hook: G.userData.setBroken || null }); });   // (hook: a window pane folds its triangles in the look — cs2-render.js)
       // Its physics props (pots, cans, stools): each on a pivot at its foot, pushed, knocked and tipped over in play
       // (arena-physprops.js); on leaving they go back into the look where they stood, as the doors do.
       const pivots = new Map(); for (const p of map.physProps || []) { const G = builtLook.userData.props?.get(p.i); if (!G) continue; const pv = new THREE.Group(); pv.userData.cs2Mover = true; pv.userData.home = builtLook;
@@ -194,7 +194,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     mapState(state, dt) { if (!movers.length) return; const first = lastV < 0, v = state?.v ?? 0;
       if (state !== lastState || v !== lastV) { applyMapState(boxes, state); lastState = state; lastV = v; }
       for (const M of movers) { const d = state?.doors?.[M.id], br = !!state?.broken?.[M.id];
-        if (M.m.kind === 'break') { if (br !== M.broken) { M.broken = br; M.g.visible = !br; if (br && !first) { const b = boxes.movers.find(x => x.mover === M.id && x.role === 'shut'); if (b) shatter(b, M.m.glass); } } continue; }
+        if (M.m.kind === 'break') { if (br !== M.broken) { M.broken = br; M.g.visible = !br; M.hook?.(br); if (br && !first) { const b = boxes.movers.find(x => x.mover === M.id && x.role === 'shut'); if (b) shatter(b, M.m.glass); } } continue; }
         if (br !== M.broken) { M.broken = br; M.g.visible = !br; if (br && !first) { const b = boxes.movers.find(x => x.mover === M.id && x.role === 'shut'); if (b) shatter(b, false); } }   // a door a grenade blew off: gone (back next round)
         if (br) continue;
         const goal = d?.open ? 1 : 0, sign = d?.open ? (d.side < 0 ? -1 : 1) : M.sign || 1; if (d?.open) M.sign = sign;

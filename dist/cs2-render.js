@@ -166,10 +166,11 @@ function prepare(id, gltf, light) {
   if (light?.skyTex) { textures.add(light.skyTex); root.userData.sky = { tex: light.skyTex, yaw: light.sky?.yaw || 0, horizon: light.sky?.horizon || null }; }
   // Movers the look has no node for (import-cs2-map.mjs: look 'bounds' — Nuke's vent grille on A, a prop CS2 opens and
   // breaks): theirs are the meshes wholly in the mover's box (game units, as placeRender puts the look's metres).
-  const Mp = ARENA_MAPS[id], Hm = Mp?.hammer, claims = Hm ? (Mp.movers || []).filter(m => m.lookBounds).map(m => ({ e: m.e, b: m.box, pad: 8 * Hm.U })) : [];
-  const claimOf = (o, g) => { if (!claims.length || !g.attributes.position) return -1; if (!g.boundingBox) g.computeBoundingBox(); const bb = new THREE.Box3().copy(g.boundingBox).applyMatrix4(o.matrixWorld), k = 39.3701 * Hm.U;
-    const x0 = k * bb.min.z - Hm.x0 * Hm.U - Hm.W / 2, x1 = k * bb.max.z - Hm.x0 * Hm.U - Hm.W / 2, y0 = k * bb.min.y - Hm.zLow * Hm.U, y1 = k * bb.max.y - Hm.zLow * Hm.U, z0 = -k * bb.max.x + Hm.y1 * Hm.U - Hm.D / 2, z1 = -k * bb.min.x + Hm.y1 * Hm.U - Hm.D / 2;
-    for (const { e, b, pad } of claims) if (x0 >= b[0] - pad && x1 <= b[1] + pad && z0 >= b[2] - pad && z1 <= b[3] + pad && y0 >= b[4] - pad && y1 <= b[5] + pad) return e; return -1; };
+  const Mp = ARENA_MAPS[id], Hm = Mp?.hammer, claims = Hm ? (Mp.movers || []).filter(m => m.lookBounds && !m.pane).map(m => ({ e: m.e, b: m.box, pad: 8 * Hm.U })) : [];
+  const gameBox = (g, mat) => { if (!g.boundingBox) g.computeBoundingBox(); const bb = new THREE.Box3().copy(g.boundingBox).applyMatrix4(mat), k = 39.3701 * Hm.U;
+    return [k * bb.min.z - Hm.x0 * Hm.U - Hm.W / 2, k * bb.max.z - Hm.x0 * Hm.U - Hm.W / 2, k * bb.min.y - Hm.zLow * Hm.U, k * bb.max.y - Hm.zLow * Hm.U, -k * bb.max.x + Hm.y1 * Hm.U - Hm.D / 2, -k * bb.min.x + Hm.y1 * Hm.U - Hm.D / 2]; };
+  const within = (q, b, pad) => q[0] >= b[0] - pad && q[1] <= b[1] + pad && q[4] >= b[2] - pad && q[5] <= b[3] + pad && q[2] >= b[4] - pad && q[3] <= b[5] + pad;   // (q: x0 x1 y0 y1 z0 z1; b: a mover's box)
+  const claimOf = (o, g) => { if (!claims.length || !g.attributes.position) return -1; const q = gameBox(g, o.matrixWorld); for (const { e, b, pad } of claims) if (within(q, b, pad)) return e; return -1; };
   gltf.scene.traverse(o => { if (!o.isMesh) return; const s = o.material, map = s.map || null, g = o.geometry; let mv = moverOf(o); if (mv < 0) mv = claimOf(o, g);
     if (map) { map.anisotropy = an; textures.add(map); }
     const kind = !light ? null : /__nolm$/.test(s.name) ? (g.attributes.color?.itemSize === 4 ? 'vertex' : null) : g.attributes.uv1 ? 'map' : null;
@@ -179,14 +180,15 @@ function prepare(id, gltf, light) {
     const ov = light?.overlays?.[s.name.replace(/__nolm$/, '').replace(/\.\d+$/, '')] || null;
     let m;
     // CS2's water (Anubis's canal, coast) has its own shader and no texture: a clear teal surface the sun glints on.
-    if (!map && /water/i.test(s.name)) { m = new THREE.MeshStandardMaterial({ color: 0x1f5b63, roughness: .1, metalness: .05, transparent: true, opacity: .84, depthWrite: false, side: THREE.DoubleSide, name: s.name }); const mesh = new THREE.Mesh(g, m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.renderOrder = 1; mesh.userData.noShadow = true; mesh.userData.cs2 = true; g.userData.shared = true; meshes.push(mesh); s.dispose(); root.add(mesh); return; }
+    if (!map && /water/i.test(s.name)) { m = new THREE.MeshStandardMaterial({ color: 0x1f5b63, roughness: .1, metalness: .05, transparent: true, opacity: .84, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, name: s.name }); const mesh = new THREE.Mesh(g, m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.renderOrder = 1; mesh.userData.noShadow = true; mesh.userData.cs2 = true; g.userData.shared = true; meshes.push(mesh); s.dispose(); root.add(mesh); return; }
     if (ov?.[0] === 3 && map) { m = new THREE.MeshBasicMaterial({ map, color: s.color, opacity: ov[1], side: s.side, name: s.name, transparent: true, depthWrite: false, toneMapped: false, fog: false, blending: THREE.CustomBlending, blendSrc: THREE.DstColorFactor, blendDst: THREE.SrcColorFactor }); m.onBeforeCompile = mod2x; m.customProgramCacheKey = () => 'cs2-mod2x'; }
     else if (kind === 'map') { m = new THREE.MeshBasicMaterial({ ...common, color: s.color, lightMap: light.tex }); m.onBeforeCompile = bakedLM; m.customProgramCacheKey = () => 'cs2-baked-lm'; }
     else if (kind === 'vertex') { m = new THREE.MeshBasicMaterial({ ...common, color: s.color, vertexColors: true }); m.onBeforeCompile = bakedVL; m.customProgramCacheKey = () => 'cs2-baked-vl'; }
     // Without baked light: Lambert (lit by the sun and sky, as the other maps), cheaper than the loader's standard material.
     else m = new THREE.MeshLambertMaterial({ ...common, color: s.color.clone().multiplyScalar(LIT) });
     if (ov && ov[0] === 2) { if (!(m.alphaTest > 0)) m.alphaTest = .5; } else if (ov && ov[0] !== 3) { m.transparent = true; m.depthWrite = false; m.opacity = ov[1]; }   // (2: cut out by its alpha; 1: blended, times its opacity)
-    if (s.transparent || ov) { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = -4; }   // (decals, signs and overlays lie on walls: drawn over them, whatever the order, even seen head-on)
+    if (s.transparent || ov) { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = -4; }
+    m.forceSinglePass = true;   // (three.js draws a transparent double-sided material twice a frame, flagging it for a new program each time: one pass)   // (decals, signs and overlays lie on walls: drawn over them, whatever the order, even seen head-on)
     s.dispose(); const mesh = new THREE.Mesh(g, m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); if (m.transparent) mesh.renderOrder = 1;
     // Baked: its shadows are in its light; it neither casts nor takes the sun's shadow map (graphics.js flags it so).
     if (kind || ov) { mesh.castShadow = mesh.receiveShadow = false; mesh.userData.noShadow = true; } else { mesh.castShadow = !s.transparent; mesh.receiveShadow = true; }
@@ -194,6 +196,45 @@ function prepare(id, gltf, light) {
     const pp = mv >= 0 ? -1 : propOf(o);
     if (mv < 0 && pp < 0) still.push(mesh);   // (the map's fixed surfaces: its sun casters, below)
     if (mv >= 0) { let G = movers.get(mv); if (!G) { G = new THREE.Group(); G.name = 'mover_e' + mv; movers.set(mv, G); root.add(G); } G.add(mesh); } else if (pp >= 0) { let G = props.get(pp); if (!G) { G = new THREE.Group(); G.name = 'prop_p' + pp; props.set(pp, G); root.add(G); } G.add(mesh); } else root.add(mesh); });
+  // A mover's own model a second time as fixed scenery — Nuke's doors: CS2's own copy of each door stood swung open beside
+  // the doorway (orange) while the door you open (grey) stood in it: two doors. The export merges the fixed copies of a
+  // material across the map into one mesh, so the copy goes triangle by triangle: of a mesh of the mover's model (its
+  // material, or its handle's or glass's: the same name plus a suffix), the triangles inside the mover's closed or open
+  // space. Its colour goes to the door that moves (that one came without CS2's tint). Decorative doors elsewhere stay.
+  if (Hm && movers.size && !globalThis.__noDedupe) {   /* (__noDedupe: pictures without it, to compare) */ const base = n => String(n || '').replace(/__nolm$/, '').replace(/\.\d+$/, ''), own = new Map(), k = 39.3701 * Hm.U, pad = 6 * Hm.U;
+    for (const [e, G] of movers) { const set = new Set(); G.traverse(o => { if (o.isMesh) set.add(base(o.material.name)); }); own.set(e, set); }
+    const white = c => c.r > .97 && c.g > .97 && c.b > .97, inBox = (x, y, z, b) => x >= b[0] - pad && x <= b[1] + pad && z >= b[2] - pad && z <= b[3] + pad && y >= b[4] - pad && y <= b[5] + pad;
+    const overlap = (q, b) => q[0] <= b[1] + pad && q[1] >= b[0] - pad && q[4] <= b[3] + pad && q[5] >= b[2] - pad && q[2] <= b[5] + pad && q[3] >= b[4] - pad;
+    let cut = 0; const gone = [];
+    for (const mesh of still) { const n = base(mesh.material.name), g = mesh.geometry, I = g.index, P = g.attributes.position; if (!I || !P) continue; let q = null; const near = [];
+      for (const m of Mp.movers || []) { const set = own.get(m.e); if (!set) continue; let match = false; for (const b of set) if (n === b || n.startsWith(b + '_')) { match = true; break; } if (!match) continue;
+        q ??= gameBox(g, mesh.matrix); for (const b of m.kind === 'rotdoor' && m.open ? [m.box, m.open['+'], m.open['-']] : [m.box]) if (b && overlap(q, b)) near.push({ b, m, set }); }
+      if (!near.length) continue; const E = mesh.matrix.elements, ia = I.array, keep = [], hitBy = new Set();
+      for (let t = 0; t < ia.length; t += 3) { let sx = 0, sy = 0, sz = 0; for (let c = 0; c < 3; c++) { const v = ia[t + c]; sx += P.getX(v); sy += P.getY(v); sz += P.getZ(v); } sx /= 3; sy /= 3; sz /= 3;
+        const wx = E[0] * sx + E[4] * sy + E[8] * sz + E[12], wy = E[1] * sx + E[5] * sy + E[9] * sz + E[13], wz = E[2] * sx + E[6] * sy + E[10] * sz + E[14], gx = k * wz - Hm.x0 * Hm.U - Hm.W / 2, gy = k * wy - Hm.zLow * Hm.U, gz = -k * wx + Hm.y1 * Hm.U - Hm.D / 2;
+        const h = near.find(o => inBox(gx, gy, gz, o.b)); if (h) hitBy.add(h); else keep.push(ia[t], ia[t + 1], ia[t + 2]); }
+      if (keep.length === ia.length) continue; cut += (ia.length - keep.length) / 3; (root.userData.dupBy ??= {})[n] = ((root.userData.dupBy[n] || 0) + (ia.length - keep.length) / 3);
+      for (const h of hitBy) if (h.set.has(n) && !white(mesh.material.color)) movers.get(h.m.e).traverse(o => { if (o.isMesh && base(o.material.name) === n && white(o.material.color)) o.material.color.copy(mesh.material.color); });
+      if (!keep.length) { gone.push(mesh); continue; }
+      const ng = new THREE.BufferGeometry(); for (const a in g.attributes) ng.setAttribute(a, g.attributes[a]); ng.setIndex(new THREE.BufferAttribute(new ia.constructor(keep), 1)); ng.userData.shared = true; mesh.geometry = ng; }
+    for (const mesh of gone) { mesh.removeFromParent(); still.splice(still.indexOf(mesh), 1); meshes.splice(meshes.indexOf(mesh), 1); mesh.material.dispose(); }
+    root.userData.duplicates = cut; }
+  // Windows (import-cs2-map.mjs: every glass pane a breakable): each pane's triangles in the look's glass meshes — the
+  // export merges a material's glass across the map — found by their middles in the pane's box; broken, they fold to
+  // nothing (their indices made one point: no new draws, shared corners untouched), whole again next round. Those meshes
+  // stay out of the merge (they change).
+  const panes = Hm ? (Mp.movers || []).filter(m => m.pane) : [];
+  if (panes.length) { const k = 39.3701 * Hm.U, pad = 6 * Hm.U, grid = new Map(), cell = 6, own = new Map();
+    panes.forEach((m, i) => { const b = m.box; for (let x = Math.floor((b[0] - pad) / cell); x <= Math.floor((b[1] + pad) / cell); x++) for (let z = Math.floor((b[2] - pad) / cell); z <= Math.floor((b[3] + pad) / cell); z++) { const key = x + ',' + z; (grid.get(key) || grid.set(key, []).get(key)).push(i); } });
+    for (const mesh of meshes) { const mn = mesh.material.name || ''; if (!/glass|window/i.test(mn) || /frame|sill|shutter|curtain|blind|bars|grill|trim/i.test(mn)) continue;   /* (Dust II's are 'dust_windows_01') */ const g = mesh.geometry, I = g.index, P = g.attributes.position; if (!I || !P) continue; const E = mesh.matrix.elements, ia = I.array;
+      for (let t = 0; t < ia.length; t += 3) { let sx = 0, sy = 0, sz = 0; for (let c = 0; c < 3; c++) { const v = ia[t + c]; sx += P.getX(v); sy += P.getY(v); sz += P.getZ(v); } sx /= 3; sy /= 3; sz /= 3;
+        const wx = E[0] * sx + E[4] * sy + E[8] * sz + E[12], wy = E[1] * sx + E[5] * sy + E[9] * sz + E[13], wz = E[2] * sx + E[6] * sy + E[10] * sz + E[14], gx = k * wz - Hm.x0 * Hm.U - Hm.W / 2, gy = k * wy - Hm.zLow * Hm.U, gz = -k * wx + Hm.y1 * Hm.U - Hm.D / 2;
+        for (const i of grid.get(Math.floor(gx / cell) + ',' + Math.floor(gz / cell)) || []) { const b = panes[i].box; if (gx >= b[0] - pad && gx <= b[1] + pad && gz >= b[2] - pad && gz <= b[3] + pad && gy >= b[4] - pad && gy <= b[5] + pad) {
+          let o = own.get(i); if (!o) own.set(i, o = new Map()); let list = o.get(mesh); if (!list) o.set(mesh, list = []); list.push(t); mesh.userData.noMerge = true; break; } } } }
+    for (const [i, o] of own) { const m = panes[i], G = new THREE.Group(), parts = [...o].map(([mesh, tris]) => ({ I: mesh.geometry.index, tris, saved: Uint32Array.from(tris.flatMap(t => [mesh.geometry.index.array[t], mesh.geometry.index.array[t + 1], mesh.geometry.index.array[t + 2]])) }));
+      G.name = 'mover_e' + m.e; G.userData.setBroken = br => { for (const q of parts) { const a = q.I.array; q.tris.forEach((t, j) => { if (br) a[t] = a[t + 1] = a[t + 2] = q.saved[j * 3]; else { a[t] = q.saved[j * 3]; a[t + 1] = q.saved[j * 3 + 1]; a[t + 2] = q.saved[j * 3 + 2]; } }); q.I.needsUpdate = true; } };
+      movers.set(m.e, G); root.add(G); }
+    root.userData.panes = [panes.length, own.size]; }
   // Fewer draws (the main thread's cost a frame is mostly per draw: 950 meshes on Inferno and 450 props). The map's fixed,
   // opaque surfaces merged into one mesh per material over the whole map (a camera sees most of a map's meshes at once
   // anyway, and Apple's GPUs drop hidden pixels whatever the order), each one's tint kept per vertex. The physics props,
@@ -202,7 +243,7 @@ function prepare(id, gltf, light) {
   // round (propBatch.wake / rest: arena-scene.js, arena-physprops.js). Glass, decals and water stay apart (drawn in order).
   if (light) {
     const keyOf = m => { const M = m.material, G = m.geometry; return [M.customProgramCacheKey(), M.map?.uuid, M.side, M.alphaTest, M.polygonOffset, Object.keys(G.attributes).sort().map(k => { const a = G.attributes[k]; return k + (k === 'position' || k === 'normal' ? '' : a.itemSize + a.array.constructor.name + a.normalized); }).join('|')].join(','); };
-    const mergeable = m => !m.material.transparent && (m.material.onBeforeCompile === bakedLM || m.material.onBeforeCompile === bakedVL) && !m.geometry.groups.length && m.geometry.drawRange.start === 0 && m.geometry.drawRange.count === Infinity && !!m.geometry.attributes.position && !!m.geometry.attributes.normal;
+    const mergeable = m => !m.material.transparent && !m.userData.noMerge && (m.material.onBeforeCompile === bakedLM || m.material.onBeforeCompile === bakedVL) && !m.geometry.groups.length && m.geometry.drawRange.start === 0 && m.geometry.drawRange.count === Infinity && !!m.geometry.attributes.position && !!m.geometry.attributes.normal;
     const merged = new Set(), made = [], groups = new Map(); for (const m of still) if (mergeable(m)) { const k = keyOf(m); (groups.get(k) || groups.set(k, []).get(k)).push(m); }
     for (const list of groups.values()) { if (list.length < 2) continue; const { mesh } = mergedMesh(list); root.add(mesh); made.push(mesh); for (const m of list) merged.add(m); }
     // The physics props: each wholly mergeable one into its square's batch for each of its materials.

@@ -27,7 +27,7 @@ const FLAME = (() => { const a = new THREE.PlaneGeometry(2.6, 3.4).translate(0, 
 // teardrop licking upward, white-yellow at the core to deep orange at the edges, additive (the glow picks it up on High).
 const NOISE2 = (() => { const n = 64, a = new Uint8Array(n * n); let r = 98765; for (let i = 0; i < a.length; i++) { r = (r * 16807) % 2147483647; a[i] = r & 255; }
   const t = new THREE.DataTexture(a, n, n, THREE.RedFormat); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t; })();
-MAT.flame = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uNoise: { value: NOISE2 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+MAT.flame = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uNoise: { value: NOISE2 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
   vertexShader: `varying vec2 vUv; varying float vPhase; void main() { vUv = uv; vPhase = fract(float(gl_InstanceID) * 0.6180339); gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
   fragmentShader: `uniform float uTime; uniform sampler2D uNoise; varying vec2 vUv; varying float vPhase;
 void main() { float t = uTime + vPhase * 7.3, n = texture2D(uNoise, vec2(vUv.x * 0.9 + vPhase, vUv.y * 0.7 - t * 1.3)).r, n2 = texture2D(uNoise, vec2(vUv.x * 1.9 - vPhase * 3.1, vUv.y * 1.4 - t * 2.1)).r;
@@ -135,7 +135,7 @@ function smokeVolume(game, g, quality) {
 // soft puffs (dark blast smoke, dust, steam, fire smoke; a fixed pool of sprites) and ground shock rings.
 const SPARK = new THREE.BoxGeometry(.13, .13, .13), RING = new THREE.RingGeometry(.82, 1, 40).rotateX(-Math.PI / 2);
 MAT.spark = new THREE.MeshBasicMaterial({ color: 0xffc070, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }); MAT.spark.userData.shared = true;
-MAT.wave = new THREE.MeshBasicMaterial({ color: 0xe8dcc0, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }); MAT.wave.userData.shared = true;
+MAT.wave = new THREE.MeshBasicMaterial({ color: 0xe8dcc0, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }); MAT.wave.userData.shared = true;
 let FXS = null;   // the live system (createNadeView), so the bomb's explosion can use it too
 function createFxSystem(group, quality) {
   const N = 320, sparks = new THREE.InstancedMesh(SPARK, MAT.spark, N); sparks.frustumCulled = false; sparks.visible = false; group.add(sparks);

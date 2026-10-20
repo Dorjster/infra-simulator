@@ -338,7 +338,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
   { const movers = ARENA_MAPS[A.map]?.movers; if (movers?.length && A.bots.length) { let st = null;
       for (const b of A.bots) { if (isDown(game, b.name, now)) continue; const x = b.x - ARENA.cx, z = b.z - ARENA.cz;
         movers.forEach((m, id) => { const d = boxDist(m.box, x, z); if (d > 2.2) return; st ??= mapStateOf(game);
-          if (m.kind === 'break') { if (!st.broken[id] && d < 1.2) { st.broken[id] = 1; st.v++; changed = true; } }
+          if (m.kind === 'break') { const feet = botFloor(game, b); if (!m.pane && !st.broken[id] && d < 1.2 && feet > m.box[4] - 3 && feet < m.box[5]) { st.broken[id] = 1; st.v++; changed = true; } }   // (what's in their way at their height — a vent, boards; never a window they pass)
           else if (!st.doors[id]?.open) { st.doors[id] = { open: 1, side: awaySide(m, x, z), at: now }; st.v++; changed = true; } }); } } }
   syncMapState(game);
   // Lobby: start at the timeout when there are enough players, else wait 30 s more and say why.

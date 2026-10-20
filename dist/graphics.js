@@ -110,7 +110,9 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   const KEEP = [];   // the frame's drawn top-level objects when filtered (reused)
   const POOL = 4, pool = Array.from({ length: POOL }, () => { const l = new THREE.PointLight(0xffffff, 0, 1, 2); l.userData.pooled = true; scene.add(l); return l; });
   const sources = new Set(), wp = new THREE.Vector3(); let poolAt = 0, scanAt = 0;
-  function scanLights() { scene.traverse(o => { if (o.isPointLight && !o.userData.pooled && !o.userData.noPool && !sources.has(o)) { sources.add(o); o.visible = false; } }); }
+  // (the same scan: a transparent double-sided material is drawn in one pass — three.js otherwise draws it twice a frame,
+  // back then front, flagging it for a new program both times: every frame a full program lookup per material)
+  function scanLights() { scene.traverse(o => { if (o.isPointLight && !o.userData.pooled && !o.userData.noPool && !sources.has(o)) { sources.add(o); o.visible = false; } const m = o.material; if (m && !Array.isArray(m) && m.transparent && m.side === THREE.DoubleSide && !m.forceSinglePass) m.forceSinglePass = true; if (o.isLight) o.layers.enable(7); }); }   /* lights seen by the sun-shadow pass's camera too (its layer 7): else every other frame its lights count changed and every lit material looked up its program again */
   function updatePool(now) {
     if (jobs) jobs.add('light-scan', scanLights, 2000); else if (now - scanAt > 2000) { scanAt = now; scanLights(); }
     if (now - poolAt < 200) return; poolAt = now;
