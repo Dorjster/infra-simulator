@@ -23,7 +23,7 @@ export const NADES = {
   // molotov on the first floor it hits, or bursts after 2 s in the air)
   he: { id: 'he', name: 'HE Grenade', kind: 'nade', price: 300, fuse: 1500, dmg: 98, radius: 62 },
   flash: { id: 'flash', name: 'Flashbang', kind: 'nade', price: 200, fuse: 1500, radius: 2000 * HU },
-  smoke: { id: 'smoke', name: 'Smoke Grenade', kind: 'nade', price: 300, fuse: 1500, radius: 144 * HU, lasts: 18000, maxAir: 12000 },   // (CS2's cloud: 144 units round, about 150 high)
+  smoke: { id: 'smoke', name: 'Smoke Grenade', kind: 'nade', price: 300, fuse: 1500, radius: 164 * HU, lasts: 18000, maxAir: 12000 },   // (CS2's cloud is 144 units round, about 150 high; here 30 % more ground (164 round) and 30 % more height, as asked)
   molotov: { id: 'molotov', name: 'Molotov', kind: 'nade', price: 400, fuse: 2000, radius: 37, lasts: 7000, dps: 40, airburst: 128 * HU },
 };
 export const NADE_IDS = Object.keys(NADES), MAX_NADES = 4, MAX_FLASH = 2;
@@ -169,7 +169,7 @@ const people = (game, players) => { const out = []; for (const p of players) if 
 // host's grenade state: every client opens the same hole at the same place and time. A sightline is blocked when it
 // crosses more than SMOKE.block units of dense smoke — the same rule from outside, at the edge and from inside.
 // Without the map's boxes (a test with no map): the ellipsoid alone, lifted a little off the ground.
-export const SMOKE = { lift: .42, vert: .8, grow: 1800, fade: 3000, holeR: 190 * HU, holeGrow: 150, holeOpen: 1100, holeClose: 750, block: 14 };   // (in the middle it clears the whole cloud, at its side the part round it; about 2 s)
+export const SMOKE = { lift: .42, vert: .91, top: 1.54, grow: 1800, fade: 3000, holeR: 217 * HU, holeGrow: 150, holeOpen: 1100, holeClose: 750, block: 14 };   // (in the middle it clears the whole cloud, at its side the part round it; about 2 s)
 export const VOX = 3, VOX_UP = 1, VOX_DMAX = 1.7;   // (CS2's cloud: a dome about 300 units across and 150 high)
 let solidsOf = null;
 // (game) → the arena map's collision boxes (arena-logic.js on the host; the client's scene, which has them built).
@@ -206,7 +206,7 @@ function flood(nx, ny, nz, solid, d, start, dMax, budget = Infinity, up = VOX_UP
   return { done, far };
 }
 function fillSmoke(boxes, s) {
-  const R = NADES.smoke.radius, D = R * VOX_DMAX, nx = Math.ceil(2 * D / VOX), nz = nx, ny = Math.ceil((R * 1.35 + VOX) / VOX), x0 = s.x - nx * VOX / 2, z0 = s.z - nz * VOX / 2, y0 = (s.y || 0) - VOX;
+  const R = NADES.smoke.radius, D = R * VOX_DMAX, nx = Math.ceil(2 * D / VOX), nz = nx, ny = Math.ceil((R * SMOKE.top + VOX) / VOX), x0 = s.x - nx * VOX / 2, z0 = s.z - nz * VOX / 2, y0 = (s.y || 0) - VOX;
   const N = nx * ny * nz, solid = new Uint8Array(N), d = new Float32Array(N).fill(Infinity), at = (i, j, k) => (k * ny + j) * nx + i, near = [];
   // Solid cells: a box reaching more than half a unit into the cell (a thin wall always fills one; a doorway always
   // leaves one) — each box near drawn into the grid once.

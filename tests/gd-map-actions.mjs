@@ -21,9 +21,19 @@ for (const f of readdirSync(dir)) { const id = f.replace(/\.bsp$/i, ''); if (!f.
     // From either side (whichever you'd come from — behind a thin wall may be another room's floor): the best climb.
     const climb = ([sx, sz, dx, dz]) => { const f = M.nav?.floorAt?.(sx - cx, sz - cz, L.y0 + 6), y0 = Number.isFinite(f) && L.y0 - f < 8 && f - L.y0 < 3 ? f : L.y0;
       const s = createMoveState(y0); s.x = sx; s.z = sz; s.y = y0; let top = s.y; const inp = { wish: [dx, dz], weapon: 'knife', look: [dx, dz], pitch: .35 };
-      for (let k = 0; k < 64 * 8; k++) { moveStep(s, inp, world, dt); top = Math.max(top, s.y); if (top >= L.y1 - 1.5) break; } return top; };
-    const top = Math.max(...sides.map(climb));
-    check(`${id}: ladder ${i + 1} climbs to its top (${(L.y1 - L.y0).toFixed(0)} units)`, top >= L.y1 - 1.5, `reached ${(top - L.y0).toFixed(1)} of ${(L.y1 - L.y0).toFixed(1)}`); });
+      for (let k = 0; k < 64 * 8; k++) { moveStep(s, inp, world, dt); top = Math.max(top, s.y); if (top >= L.y1 - 1.5) break; }
+      // …and off it onto the floor at its top: forward over the lip (a ledge behind the ladder), or — a ladder up a shaft
+      // or through a hatch — to the side or back, as in CS2 (the keys as you look at the ladder); within a body's height
+      // under its top, clear of it.
+      const away = t => t.x < L.minX - MOVE.radius || t.x > L.maxX + MOVE.radius || t.z < L.minZ - MOVE.radius || t.z > L.maxZ + MOVE.radius;
+      let left = false; for (const wish of [[dx, dz], [dz, -dx], [-dz, dx], [-dx, -dz]]) { const t = { ...s };
+        for (let k = 0; k < 64 * 3 && !left; k++) { moveStep(t, { ...inp, wish }, world, dt); left = t.onGround && !t.onLadder && t.y >= L.y1 - 10 && away(t); } if (left) break; }
+      return { top, left }; };
+    const runs = sides.map(climb), top = Math.max(...runs.map(r => r.top)), steppedOff = runs.some(r => r.left);
+    // (to its top — or, where a ceiling over the shaft stops the head short of it (Nuke's vent: CS2's grate), till you can
+    // step off there)
+    check(`${id}: ladder ${i + 1} climbs to its top (${(L.y1 - L.y0).toFixed(0)} units)`, top >= L.y1 - 1.5 || steppedOff && top >= L.y1 - 3, `reached ${(top - L.y0).toFixed(1)} of ${(L.y1 - L.y0).toFixed(1)}`);
+    check(`${id}: ladder ${i + 1}: at the top you step off onto the floor`, steppedOff); });
   // Doors: a walk straight through the doorway (across the door's thin side, at its middle): blocked shut, through open.
   (M.movers || []).forEach((m, id2) => { if (m.kind === 'break') return; const b = m.box, thinX = b[1] - b[0] < b[3] - b[2], mx = cx + (b[0] + b[1]) / 2, mz = cz + (b[2] + b[3]) / 2, y = b[4] + .2, far = 4;
     const walk = (open, sg) => { applyMapState(boxes, { doors: open ? { [id2]: { open: 1, side: sg } } : {}, broken: {} }); const s = createMoveState(y); s.y = y;
@@ -34,5 +44,17 @@ for (const f of readdirSync(dir)) { const id = f.replace(/\.bsp$/i, ''); if (!f.
     check(`${id}: door ${id2} blocks the doorway shut`, !shut); check(`${id}: door ${id2} lets you through open`, openA || openB, `+${openA} −${openB}`); });
   (M.movers || []).forEach((m, id2) => { if (m.kind !== 'break') return; applyMapState(boxes, { doors: {}, broken: { [id2]: 1 } }); const off = boxes.filter(b => b.mover === id2).every(b => b.off); applyMapState(boxes, null);
     check(`${id}: breakable ${id2} stops blocking once broken`, off); });
+  // Nuke's vent (A ↔ the duct to the tunnels): its grille on A (a breakable here — CS2's openable vent) keeps you out
+  // while whole; broken, you walk in, take the ladder down to the duct, and the way back up steps out onto A.
+  const gi = (M.movers || []).findIndex(m => m.lookBounds), vl = ladders.findIndex(L => Math.abs((L.minX + L.maxX) / 2 - cx - 34.3) < 1 && Math.abs((L.minZ + L.maxZ) / 2 - cz - 64.5) < 1);
+  if (id === 'nuke' && gi >= 0 && vl >= 0) { const L = ladders[vl], g = M.movers[gi].box, run = (s, secs, inp, stop) => { for (let k = 0; k < secs * 64 && !(stop && stop(s)); k++) moveStep(s, inp, world, dt); return s; };
+    for (const broken of [false, true]) { applyMapState(boxes, { doors: {}, broken: broken ? { [gi]: 1 } : {} });
+      const a = createMoveState(g[4]); a.x = L.maxX + 1.1; a.z = cz + g[2] - 9; a.y = g[4];
+      run(a, 2, { wish: [0, 1], weapon: 'knife', look: [0, 1], pitch: 0 }, s => s.z > cz + 60.3); run(a, .4, { wish: [0, 0], weapon: 'knife', look: [-1, 0], pitch: -.8 }); run(a, 3, { wish: [-1, 0], weapon: 'knife', look: [-1, 0], pitch: -.8 });
+      if (!broken) check('nuke: the vent grille on A, whole, keeps you out of the vent', a.y > L.y1 - 4 && a.z < g[2]);
+      else { check('nuke: the vent grille broken, you walk in and take its ladder down to the duct', a.onGround && Math.abs(a.y - L.y0) < 5.5 && Math.abs(a.x - L.maxX) < 2.5, `(${(a.x - cx).toFixed(1)}, ${(a.z - cz).toFixed(1)}) y ${a.y.toFixed(1)}`);
+        const u = createMoveState(a.y); Object.assign(u, { x: L.maxX + 1.1, z: (L.minZ + L.maxZ) / 2, y: a.y }); run(u, 3, { wish: [-1, 0], weapon: 'knife', look: [-1, 0], pitch: .5 }); run(u, 1.5, { wish: [0, -1], weapon: 'knife', look: [-1, 0], pitch: .5 }); run(u, 1, { wish: [0, -1], weapon: 'knife', look: [0, -1], pitch: 0 });
+        check('nuke: …and up the vent ladder, out through the broken grille onto A', u.onGround && Math.abs(u.y - g[4]) < .5 && u.z < g[2] - 2, `(${(u.x - cx).toFixed(1)}, ${(u.z - cz).toFixed(1)}) y ${u.y.toFixed(1)}`); } }
+    applyMapState(boxes, null); }
 }
 console.log((ok === n ? 'PASS' : 'FAIL') + ': map actions (ladders, doors, breakables) · ' + ok + '/' + n); if (ok !== n) process.exitCode = 1;

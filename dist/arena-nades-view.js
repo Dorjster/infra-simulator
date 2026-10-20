@@ -302,6 +302,11 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
 }
 // The planted bomb's beep (3D) and the bomb's explosion (a big fireball, a heavy blast heard far away).
 export function beep(at, pitch = 1) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 1700 * pitch; g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.001, t + .09); o.connect(g).connect(outAt(c, at, 'beep')); o.start(t); o.stop(t + .1); } catch {} }
+// A defuse's click (CS2: the kit's snips and the case's clicks, heard close to the bomb): a short bright tick, sometimes
+// a duller second one.
+export function defuseClick(at) { try { const c = audioCtx(), t = c.currentTime, out = outAt(c, at, 'defuse');
+  for (const [dt, f, g] of Math.random() < .35 ? [[0, 3200, .32], [.045, 1500, .2]] : [[0, 2600 + Math.random() * 900, .3]]) { const n = c.createBufferSource(), len = .03, b = c.createBuffer(1, Math.ceil(c.sampleRate * len), c.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 6);
+    n.buffer = b; const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = 3; const gg = c.createGain(); gg.gain.value = g; n.connect(bp).connect(gg).connect(out); n.start(t + dt); } } catch {} }
 export function explosion(parent, p, scale = 1) {
   const b = new THREE.Mesh(BALL, MAT.boom.clone()), t0 = performance.now(); b.position.set(p.x, (p.y || 0) + 2, p.z); parent.add(b);
   { const at = { x: p.x, y: (p.y || 0) + 2, z: p.z }; if (rec('bomb', { at, kind: 'explosion', volume: 2, wet: 1.2, lowpass: dull(at) })) { rec('bomblow', { at, kind: 'explosion', volume: 2 }); rec('he', { at, kind: 'explosion', volume: 1.2, rate: .7, delay: .08 }); burst(at, { len: 1.5, decay: 2, freq: 300, vol: .8, thump: 1.5 }); } else burst(at, { len: 3, decay: 1.8, freq: 500, vol: 2.5, thump: 1.5 }); }

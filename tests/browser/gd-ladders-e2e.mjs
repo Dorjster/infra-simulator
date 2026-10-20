@@ -49,7 +49,9 @@ if (spot) {
     for (const spot of spots) { await p.evaluate(s => __infra.lab.look(s.x, s.z, s.cx, s.y + 9.7, s.cz, s.y + 9.7), spot); await p.waitForTimeout(250);
       await p.keyboard.down('KeyW'); let top = -Infinity; for (let t = 0; t < 22; t++) { await p.waitForTimeout(150); top = Math.max(top, await eye()); } await p.keyboard.up('KeyW'); await p.waitForTimeout(300);
       got = Math.max(got, top - 9.7); if (got >= l.y1 - 1.5) break; }
-    res.push(got >= l.y1 - 1.5 ? 'top' : 'stuck at ' + got.toFixed(1) + ' of ' + l.y1.toFixed(1)); }
-  check('every ladder from a step back: climbed to its top', res.length >= 4 && res.every(r => r === 'top'), res.join(', ')); }
+    // (or up to a ceiling over it, short of its top — Nuke's vent: CS2's grate over the shaft; you step off there)
+    const roof = got < l.y1 - 1.5 && got >= l.y1 - 3 && await p.evaluate(({ l, got }) => { const c = __infra.camera.position; return __infra.lab.arenaScene.boxes.some(b => !b.off && b.y0 >= got + 9.7 && b.y0 <= got + 12.5 && c.x > b.minX - 1.4 && c.x < b.maxX + 1.4 && c.z > b.minZ - 1.4 && c.z < b.maxZ + 1.4); }, { l, got });
+    res.push(got >= l.y1 - 1.5 ? 'top' : roof ? 'top (a ceiling over it)' : 'stuck at ' + got.toFixed(1) + ' of ' + l.y1.toFixed(1)); }
+  check('every ladder from a step back: climbed to its top', res.length >= 4 && res.every(r => r.startsWith('top')), res.join(', ')); }
 check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 console.log(ok + '/' + n); await b.close(); server.kill(); process.exit(ok === n ? 0 : 1);

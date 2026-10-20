@@ -6,7 +6,7 @@
 import * as THREE from './three.module.js';
 import { gltfLoader } from './gltf-loader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
-import { mapFileOf } from './arena-maps.js';
+import { mapFileOf, ARENA_MAPS } from './arena-maps.js';
 import { anisotropy } from './texture-quality.js'; import { loadPreferences } from './player-preferences.js'; import { noteProgress } from './load-progress.js';
 
 let kept = null; const loading = new Map(), none = new Set();   // kept: { id, root, textures, meshes }; none: maps without a look (or whose look failed)
@@ -164,7 +164,13 @@ function prepare(id, gltf, light) {
     else { BAKED.uGrade.value = 0; BAKED.uLutOn.value = 0; BAKED.uLut.value = null; } }
   // (CS2's sky, graded as the map: arena-scene.js lays it on its sky dome)
   if (light?.skyTex) { textures.add(light.skyTex); root.userData.sky = { tex: light.skyTex, yaw: light.sky?.yaw || 0, horizon: light.sky?.horizon || null }; }
-  gltf.scene.traverse(o => { if (!o.isMesh) return; const s = o.material, map = s.map || null, mv = moverOf(o), g = o.geometry;
+  // Movers the look has no node for (import-cs2-map.mjs: look 'bounds' — Nuke's vent grille on A, a prop CS2 opens and
+  // breaks): theirs are the meshes wholly in the mover's box (game units, as placeRender puts the look's metres).
+  const Mp = ARENA_MAPS[id], Hm = Mp?.hammer, claims = Hm ? (Mp.movers || []).filter(m => m.lookBounds).map(m => ({ e: m.e, b: m.box, pad: 8 * Hm.U })) : [];
+  const claimOf = (o, g) => { if (!claims.length || !g.attributes.position) return -1; if (!g.boundingBox) g.computeBoundingBox(); const bb = new THREE.Box3().copy(g.boundingBox).applyMatrix4(o.matrixWorld), k = 39.3701 * Hm.U;
+    const x0 = k * bb.min.z - Hm.x0 * Hm.U - Hm.W / 2, x1 = k * bb.max.z - Hm.x0 * Hm.U - Hm.W / 2, y0 = k * bb.min.y - Hm.zLow * Hm.U, y1 = k * bb.max.y - Hm.zLow * Hm.U, z0 = -k * bb.max.x + Hm.y1 * Hm.U - Hm.D / 2, z1 = -k * bb.min.x + Hm.y1 * Hm.U - Hm.D / 2;
+    for (const { e, b, pad } of claims) if (x0 >= b[0] - pad && x1 <= b[1] + pad && z0 >= b[2] - pad && z1 <= b[3] + pad && y0 >= b[4] - pad && y1 <= b[5] + pad) return e; return -1; };
+  gltf.scene.traverse(o => { if (!o.isMesh) return; const s = o.material, map = s.map || null, g = o.geometry; let mv = moverOf(o); if (mv < 0) mv = claimOf(o, g);
     if (map) { map.anisotropy = an; textures.add(map); }
     const kind = !light ? null : /__nolm$/.test(s.name) ? (g.attributes.color?.itemSize === 4 ? 'vertex' : null) : g.attributes.uv1 ? 'map' : null;
     const common = { map, side: s.side, alphaTest: s.alphaTest, transparent: s.transparent, depthWrite: !s.transparent, name: s.name };

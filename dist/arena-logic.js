@@ -331,7 +331,7 @@ function blastMovers(game, x, y, z, r, dmg) { const movers = ARENA_MAPS[game.are
 // The way a rotating door swings open from (x, z) (map-relative): away from you (CS) — the side whose swung middle is farther.
 function awaySide(m, x, z) { if (m.kind !== 'rotdoor') return 1; const cx = (m.box[0] + m.box[1]) / 2 - m.hinge[0], cz = (m.box[2] + m.box[3]) / 2 - m.hinge[2], far = sg => { const t = sg * m.angle; return Math.hypot(m.hinge[0] + cx * Math.cos(t) + cz * Math.sin(t) - x, m.hinge[2] - cx * Math.sin(t) + cz * Math.cos(t) - z); };
   return far(1) >= far(-1) ? 1 : -1; }
-export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK.game = game; TICK.now = now;
+export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK.game = game; TICK.now = now; if (game.arena) game.arena.botAt = now;   // (the bots' positions are of this moment: botRoster stamps them so)
   if (game.mode !== 'arena' || !game.arena) return false; const A = game.arena, C = game.combat, g = G(game); let changed = false;
   // Doors and breakables: bots open the doors they reach and smash what blocks their way (they walk the map's paths,
   // which run through doorways and vents); the host's collision follows the state.
@@ -469,8 +469,10 @@ function defuseBot(game, bot, team, g, dt, now) {
 }
 const wp = (g, i) => { const [x, z] = g.map.spawns[i]; return [ARENA.cx + x, ARENA.cz + z]; };
 // Bots as roster entries, so every client draws, hears and can shoot them like players.
+// (each pose stamped with the tick that moved it — not when the roster went out: rosters also go out between ticks, as
+// players' poses arrive, and a later stamp on a position that hadn't moved made bots stop and lurch on everyone's screen)
 export function botRoster(game) {
   return (game.mode === 'arena' && game.arena?.bots || []).map((b, i) => ({ id: b.id, name: b.name, role: 'bot', bot: true, color: [0xff879e, 0xe2e779, 0x7ca1ff, 0xc5a27d][i % 4], slot: -1,
-    pose: { t: Date.now(), x: b.x, y: EYE + botFloor(game, b), z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, shot: { n: b.shotN, pitch: 0, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));
+    pose: { t: game.arena.botAt || Date.now(), x: b.x, y: EYE + botFloor(game, b), z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, shot: { n: b.shotN, pitch: 0, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));
 }
 export const arenaHp = (game, name) => hpOf(game, name) ?? MAX_HP;

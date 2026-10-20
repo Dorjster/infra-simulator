@@ -12,9 +12,11 @@ export function getVolumes() { try { return { ...VOL_DEFAULT, ...JSON.parse(loca
 let vols = getVolumes(), bus = null, verb = null, masterG = null, busUI = null, busMusic = null;
 export function setVolumes(v) { vols = { ...vols, ...v }; for (const k of Object.keys(vols)) vols[k] = Math.max(0, Math.min(1, +vols[k] || 0)); try { localStorage.setItem(VOLS_KEY, JSON.stringify(vols)); } catch {} if (masterG) { masterG.gain.value = vols.master; bus.gain.value = vols.effects; busUI.gain.value = vols.ui; busMusic.gain.value = vols.music; } globalThis.dispatchEvent?.(new CustomEvent('infra-volume', { detail: vols })); return vols; }
 function buses(c) {
-  if (bus) return; const comp = c.createDynamicsCompressor(); comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = .002; comp.release.value = .18;
-  const make = c.createGain(); make.gain.value = 1.25; masterG = c.createGain(); masterG.gain.value = vols.master; comp.connect(make).connect(masterG).connect(c.destination);
-  bus = c.createGain(); bus.gain.value = vols.effects; bus.connect(comp); busUI = c.createGain(); busUI.gain.value = vols.ui; busUI.connect(comp); busMusic = c.createGain(); busMusic.gain.value = vols.music; busMusic.connect(comp);
+  // (a gentle compressor, no make-up gain: gunfire is kept from clipping without squashing near and far together — a
+  // footstep far off stays far quieter than one close by; the game world sits 3 dB under the old mix: it was too loud)
+  if (bus) return; const comp = c.createDynamicsCompressor(); comp.threshold.value = -10; comp.knee.value = 8; comp.ratio.value = 3; comp.attack.value = .003; comp.release.value = .2;
+  masterG = c.createGain(); masterG.gain.value = vols.master; comp.connect(masterG).connect(c.destination);
+  const trim = c.createGain(); trim.gain.value = .7; bus = c.createGain(); bus.gain.value = vols.effects; bus.connect(trim).connect(comp); busUI = c.createGain(); busUI.gain.value = vols.ui; busUI.connect(comp); busMusic = c.createGain(); busMusic.gain.value = vols.music; busMusic.connect(comp);
 }
 export function master(c) { buses(c); return bus; }
 export function uiBus(c) { buses(c); return busUI; }
@@ -32,10 +34,12 @@ export function reverb(c) {
   const conv = c.createConvolver(); conv.buffer = ir; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 220; const g = c.createGain(); g.gain.value = .32; verbGain = g;
   verb = hp; hp.connect(conv).connect(g).connect(master(c)); return verb;
 }
-// How far each kind of sound carries (game units; a player is 11 tall). Footsteps fade to nothing by ~175 units
-// (about CS's footstep range), handling noises (reloads, bolts, pins, knife swings) by ~70, gunfire carries across
-// the map but quieter and duller with distance (sound-bank), explosions furthest.
-export const RANGE = { effect: ['inverse', 10, 1.3, 700], step: ['linear', 6, 1, 175], handling: ['linear', 4, 1, 70], gun: ['inverse', 14, 1.1, 900], explosion: ['inverse', 20, .8, 1200], beep: ['inverse', 10, 1.2, 320] };
+// How far each kind of sound carries (game units; a player is 11 tall). Footsteps: CS2's distance law — full within
+// a body's length (6), then half as loud each time the distance doubles (−6 dB), inaudible past ~175 (about CS's
+// footstep range): one close by is clearly louder than one down the corridor. Handling noises (reloads, bolts, pins,
+// knife swings) by ~70; gunfire carries across the map but quieter and duller with distance (sound-bank); explosions
+// furthest. The bomb being planted (keypad beeps) is heard round its site; being defused, only close to it (CS2).
+export const RANGE = { effect: ['inverse', 10, 1.3, 700], step: ['inverse', 6, 1, 175], handling: ['linear', 4, 1, 70], gun: ['inverse', 14, 1.1, 900], explosion: ['inverse', 20, .8, 1200], beep: ['inverse', 10, 1.2, 320], plant: ['inverse', 8, 1.1, 330], defuse: ['inverse', 5, 1.3, 140] };
 export const SOUND_SPEED = 13504, HU_UNITS = 2.54 / 16.5;   // (Hammer units a second; game units per Hammer unit)
 // Walls between you and a sound muffle it (quieter, fewer highs): the game sets how blocked a point is (0 … 1).
 let occlusion = null; export const setOcclusion = fn => { occlusion = fn; };

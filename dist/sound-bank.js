@@ -38,6 +38,10 @@ export const fx = (name, opts) => play(`fx-${name}-${Math.random() * (FX[name] |
 // Gunshot per weapon: every gun has its own real firearm recording (tools/pack-gunshots.mjs), close up and from mid
 // distance: [recording, playback rate, suppressed]. Suppressed guns are muffled (low-pass) and quieter.
 const SHOT = Object.fromEntries(GUNS.map(id => [id, [id, 1, ['m4s', 'usps', 'smg'].includes(id)]]));
+// Each recording's loudness evened out (they're all peak-normalised, but their average level spreads over 10 dB: some
+// guns sounded three times louder than others); the Negev's 800 rounds a minute a little further down. The Desert
+// Eagle and the AWP keep their punch.
+const SHOT_TRIM = { negev: .55, lmg: .85, ak: 1.1, m4: .92, m4s: .8, galil: 1.1, famas: .85, aug: .98, sg553: .8, pistol: .82, usps: .85, p250: .9, deagle: .85, sniper: 1, ssg08: .72, smg: 1, mac10: 1.1, mp9: 1.1, p90: 1.05, bizon: 1.05, ump45: .94, shotgun: .6, xm1014: .88 };
 // A gunshot, mixed like a game: the recording, plus a low thump (body), a supersonic crack (rifles, snipers), the
 // action's click for your own gun, and the shared reverb. Far shots lose their highs, gain more echo and a late slap
 // off the walls, so you hear where and how far. Suppressed guns: muffled, no crack, almost no echo.
@@ -50,7 +54,7 @@ function burst(c, t, out, { type, freq, q = .8, dur, gain }) { const n = c.creat
 export function shotSound(id, { at = null, volume = 1 } = {}) {
   const [file, rate, quiet] = SHOT[id] || ['pistol', 1], take = 'abc'[Math.random() * 3 | 0], buf = buffers.get('shot-' + file + (take === 'a' ? '' : '-' + take)) || buffers.get('shot-' + file); if (!buf) { loadSounds(); return false; }   // one of three real takes
   try {
-    const c = audioCtx(), t = c.currentTime, L = LAYER_ID[id] || LAYER[weaponById(id)?.kind] || LAYER.pistol, out = outAt(c, at, 'gun'), vol = volume * (quiet ? .4 : 1);
+    const c = audioCtx(), t = c.currentTime, L = LAYER_ID[id] || LAYER[weaponById(id)?.kind] || LAYER.pistol, out = outAt(c, at, 'gun'), vol = volume * (quiet ? .4 : 1) * (SHOT_TRIM[id] ?? 1);
     const me = listenerAt(), dist = at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0, far = Math.min(1, dist / 260);
     const g = c.createGain(), pr = rate * (.98 + Math.random() * .04);
     const tone = c.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = quiet ? 1300 : Math.max(1100, 17000 * Math.exp(-dist / 160)); tone.connect(g).connect(out); g.gain.value = vol * 1.1;
