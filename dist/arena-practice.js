@@ -2,11 +2,14 @@
 //  · impacts: a small red box where each of your bullets stopped, and where it went through a wall, for 4 s (CS2's
 //    sv_showimpacts);
 //  · recoil: your spray, shot by shot, as dots in a small panel beside the crosshair (cleared after a pause);
-//  · paths: the flight of each grenade you throw, drawn for 8 s (sv_grenade_trajectory).
+//  · paths: the flight of each grenade you throw, drawn for 8 s (sv_grenade_trajectory);
+//  · collision shapes (Practice menu, this screen only): what bodies, bullets and grenades meet round you, drawn over the
+//    map (gd-collision-view.js; switched off with the session).
 // Everything is made once and reused (no garbage in play); the marks and lines are drawn from the first frame, parked
 // out of sight, so their shaders are built behind the loading card, never on the first shot.
 import * as THREE from './three.module.js';
 import { predictThrow } from './arena-nades.js';
+import { COLLISION_VIEW } from './gd-collision-view.js';
 
 const MARKS = 192, MARK_MS = 4000, PATHS = 6, PATH_MS = 8000, PTS = 82;
 export function createPractice({ scene, pistol, boxes, settings }) {
@@ -37,6 +40,7 @@ export function createPractice({ scene, pistol, boxes, settings }) {
       for (let i = 0; i < MARKS; i++) if (born[i] && now - born[i] > MARK_MS) { born[i] = 0; marks.setMatrixAt(i, FAR); marks.instanceMatrix.needsUpdate = true; }
       for (const P of paths) if (P.until && now > P.until) { P.until = 0; P.l.geometry.setDrawRange(0, 2); P.l.geometry.attributes.position.array.fill(-5000, 0, 6); P.l.geometry.attributes.position.needsUpdate = true; }
     },
-    dispose() { removeEventListener('gd-throw', onThrow); scene.remove(marks); marks.geometry.dispose(); marks.material.dispose(); for (const P of paths) { scene.remove(P.l); P.l.geometry.dispose(); } lineMat.dispose(); cv.remove(); },
+    dispose() { if (!COLLISION_VIEW.dev) COLLISION_VIEW.on = false;   // (the practice menu's collision view ends with the session: never in a match)
+      removeEventListener('gd-throw', onThrow); scene.remove(marks); marks.geometry.dispose(); marks.material.dispose(); for (const P of paths) { scene.remove(P.l); P.l.geometry.dispose(); } lineMat.dispose(); cv.remove(); },
   };
 }

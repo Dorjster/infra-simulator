@@ -1,40 +1,72 @@
 // Recorded sounds (dist/sounds/: tools/pack-epidemic.mjs from the owner's Epidemic Sound library; the rest CC0 — see
-// MODEL-SOURCES.md): gunshots per weapon, reloads and handling, grenades, knife, hits, footsteps per surface, music. Decoded once in the background when the sound engine starts; until then (or if a file is missing)
+// MODEL-SOURCES.md): gunshots per weapon, reloads and handling, grenades, knife, hits, footsteps per surface. Decoded in the background when the sound engine starts; until then (or if a file is missing)
 // play() returns false and callers fall back to their synthesized sounds.
-import { audioCtx, outAt, reverb, listenerAt, musicBus } from './spatial-audio.js';
+// Global Defensive plays through its own event bank (gd-sounds.js: every event's placeholder, the room's CS2 file,
+// CS2's distance curve, voices); while it is on it routes the calls here to itself (setSoundRoute), so the shared
+// callers (guns, footsteps) need no mode checks and the other modes keep exactly these sounds.
+import { audioCtx, outAt, reverb, listenerAt, uiBus } from './spatial-audio.js';
 import { weaponById, WEAPONS, isFirearm } from './weapons-data.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 const DIR = new URL('./sounds/', import.meta.url).href;
 const GUNS = [...WEAPONS.filter(isFirearm).map(w => w.id), 'cannon'];   // (every gun's own shots: shot-<id>[-b|-c|-far])
-const NAMES = [...GUNS.flatMap(id => ['shot-' + id, 'shot-' + id + '-b', 'shot-' + id + '-c', 'shot-' + id + '-far']), ...['rifle', 'smg', 'lmg', 'pistol', 'bolt', 'pump'].flatMap(k => ['grab', 0, 1, 2].map(p => `reload-${k}-${p}`)), 'music-freeze'];
+const NAMES = [...GUNS.flatMap(id => ['shot-' + id, 'shot-' + id + '-b', 'shot-' + id + '-c', 'shot-' + id + '-far']), ...['rifle', 'smg', 'lmg', 'pistol', 'bolt', 'pump'].flatMap(k => ['grab', 0, 1, 2].map(p => `reload-${k}-${p}`))];
 const STEPS = ['concrete', 'wood', 'grass', 'carpet', 'metal'];
 // Effects: name → number of takes (fx-<name>-<take>.wav, or .ogg for the older CC0 ones).
-const FX = { he: 3, low: 1, bomb: 1, bomblow: 1, flash: 1, fire: 1, glass: 3, bounce: 3, wall: 3, flesh: 3, casing: 4, smoke: 2, poof: 2, stab: 3, slash: 3, knifedraw: 1, kill: 2, death: 1, land: 2, draw: 2, pickup: 1, dry: 1, scope: 1, pin: 1 };
-const buffers = new Map(); let loading = null;
-export function loadSounds() {
-  if (typeof fetch !== 'function' || typeof AudioContext === 'undefined') return Promise.resolve(0);
-  return loading ??= (async () => { const c = audioCtx(), names = [...NAMES, ...Object.entries(FX).flatMap(([n, k]) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}`)), ...STEPS.flatMap(s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}`))];
-    // The room's own sounds first (CS2's, imported on the host's computer: user-assets/sounds, models.sounds — never
-    // shipped), then the shipped ones; the room's may add some (each gun's own reload: reload-<id>-0/1/2).
-    const ua = await userAssets().catch(() => null), mine = ua?.models?.sounds || {}, from = async url => { try { const r = await fetch(url); return r.ok ? await c.decodeAudioData(await r.arrayBuffer()) : null; } catch { return null; } };
-    await Promise.all([...new Set([...names, ...Object.keys(mine)])].map(async n => { let b = mine[n] ? await from(userAssetURL(ua, mine[n].file)) : null;
-      if (!b && names.includes(n)) for (const ext of ['.wav', '.ogg']) if ((b = await from(DIR + n + ext))) break;
-      if (b) buffers.set(n, b); }));
-    return buffers.size; })();
+export const FX = { he: 3, low: 1, bomb: 1, bomblow: 1, flash: 1, fire: 1, glass: 3, bounce: 3, wall: 3, flesh: 3, casing: 4, smoke: 2, poof: 2, stab: 3, slash: 3, knifedraw: 1, kill: 2, death: 1, land: 2, draw: 2, pickup: 1, dry: 1, scope: 1, pin: 1 };
+// Every shipped name (dist/sounds): what the other modes decode at start (the room's CS2 versions of these replace them).
+export const SHIPPED = new Set([...NAMES, ...Object.entries(FX).flatMap(([n, k]) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}`)), ...STEPS.flatMap(s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}`))]);
+const buffers = new Map(), pending = new Map(), bySource = new Map(); let loading = null, room = null;
+// The room's own sounds (CS2's, imported on the host's computer: user-assets/sounds, models.sounds — never shipped).
+const roomSounds = () => room ??= (typeof fetch === 'function' ? userAssets().catch(() => null) : Promise.resolve(null)).then(ua => ({ ua, mine: ua?.models?.sounds || {} }));
+// Fetches and decodes run a few at a time (not ~950 requests at once), in the order asked. (decodeAudioData decodes
+// off the main thread; what the page pays is the fetch and the copy, spread out this way.)
+const queue = []; let inFlight = 0; const MAX_FETCH = 6;
+const pump = () => { while (inFlight < MAX_FETCH && queue.length) { const job = queue.shift(); inFlight++; job().finally(() => { inFlight--; pump(); }); } };
+const fetchDecode = url => new Promise(res => { queue.push(async () => { try { const r = await fetch(url); res(r.ok ? await audioCtx().decodeAudioData(await r.arrayBuffer()) : null); } catch { res(null); } }); pump(); });
+// One sound by name: the room's file (one decode per CS2 source: names sharing a `from` share the buffer — the four
+// smoke_emit copies, a gun's repeated takes), else the shipped .wav / .ogg.
+function decode(n) {
+  let p = pending.get(n); if (p) return p;
+  p = roomSounds().then(async ({ ua, mine }) => { let b = null; const m = mine[n];
+    if (m?.file) { const key = m.from || m.file; let s = bySource.get(key); if (!s) { s = fetchDecode(userAssetURL(ua, m.file)); bySource.set(key, s); } b = await s; }
+    if (!b && SHIPPED.has(n)) for (const ext of ['.wav', '.ogg']) if ((b = await fetchDecode(DIR + n + ext))) break;
+    if (b) buffers.set(n, b); return b; });
+  pending.set(n, p); return p;
 }
+const canDecode = () => typeof fetch === 'function' && typeof AudioContext !== 'undefined';
+// Decode these names now (lazily: Global Defensive asks per need — its events on entering a match, a gun's set when
+// it is first seen, a first-person set on equip); resolves once all have been tried.
+export function want(names) { if (!canDecode() || !names) return Promise.resolve(0); const list = []; for (const n of names) if (n && !buffers.has(n)) list.push(decode(n)); return list.length ? Promise.all(list).then(() => buffers.size) : Promise.resolve(buffers.size); }
+export const ready = name => buffers.has(name);
+export const bufferOf = name => buffers.get(name) || null;
+export const decodedCount = () => buffers.size;   // (tests)
+// The CS2 source a name was imported from ('CS2: sounds/…'), or null (shipped / unknown); two names from one source.
+let mineNow = {}; export const sourceOf = name => mineNow[name]?.from || null;
+export const sameSource = (a, b) => a === b || (!!sourceOf(a) && sourceOf(a) === sourceOf(b));
+export const roomSoundNames = () => roomSounds().then(({ mine }) => (mineNow = mine, mine));
+// The shipped set (and the room's versions of it, and each gun's own CS2 reloads), decoded at start in every mode.
+// The room's first-person clip sounds (fp-*) and Global Defensive's events are decoded on demand, not here.
+export function loadSounds() {
+  if (!canDecode()) return Promise.resolve(0);
+  return loading ??= roomSounds().then(({ mine }) => { mineNow = mine; return want([...SHIPPED, ...Object.keys(mine).filter(n => /^reload-/.test(n))]); });
+}
+// Global Defensive's route (gd-sounds.js) while a match is on: { shot, fx, reload, step } each returning undefined to
+// leave the call to this bank.
+let route = null; export const setSoundRoute = r => { route = r || null; };
 // Play a sound; `at` = where it happens ({x, y, z}, 3D) or null for your own. Returns false if not loaded.
-// `delay`: seconds from now; `wet`: how much goes to the shared reverb; `loop`: seconds to loop for (returns a stop()).
-export function play(name, { at = null, volume = 1, rate = 1, kind = 'effect', delay = 0, wet = 0, lowpass = 0, loop = 0 } = {}) {
-  const buf = buffers.get(name); if (!buf) { loadSounds(); return false; }
+// `delay`: seconds from now; `wet`: how much goes to the shared reverb; `loop`: seconds to loop for (returns a stop());
+// `bus: 'ui'`: the Interface volume (hit markers, menus), never placed in the world.
+export function play(name, { at = null, volume = 1, rate = 1, kind = 'effect', delay = 0, wet = 0, lowpass = 0, loop = 0, bus = null } = {}) {
+  const buf = buffers.get(name); if (!buf) { if (SHIPPED.has(name)) loadSounds(); else decode(name); return false; }
   try { const c = audioCtx(), t = c.currentTime + delay, src = c.createBufferSource(), g = c.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = volume;
-    let head = src; if (lowpass) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lowpass; src.connect(f); head = f; } head.connect(g).connect(outAt(c, at, kind));
+    let head = src; if (lowpass) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lowpass; src.connect(f); head = f; } head.connect(g).connect(bus === 'ui' ? uiBus(c) : outAt(c, at, kind));
     if (wet) { const w = c.createGain(); w.gain.value = wet; g.connect(w).connect(reverb(c)); }
     if (loop) { src.loop = true; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(volume, t + .4); g.gain.setValueAtTime(volume, t + Math.max(.5, loop - 1)); g.gain.linearRampToValueAtTime(0, t + loop); src.start(t, Math.random() * buf.duration * .5); src.stop(t + loop + .05);
       return { stop() { try { const n = c.currentTime; g.gain.cancelScheduledValues(n); g.gain.setValueAtTime(g.gain.value, n); g.gain.linearRampToValueAtTime(0, n + .35); src.stop(n + .4); } catch {} } }; }
     src.start(t); return true; } catch { return false; }
 }
 // A random take of an effect (FX): fx('he', { at }) …
-export const fx = (name, opts) => play(`fx-${name}-${Math.random() * (FX[name] || 1) | 0}`, opts);
+export const fx = (name, opts) => { if (route) { const r = route.fx(name, opts); if (r !== undefined) return r; } return play(`fx-${name}-${Math.random() * (FX[name] || 1) | 0}`, opts); };
 // Gunshot per weapon: every gun has its own real firearm recording (tools/pack-gunshots.mjs), close up and from mid
 // distance: [recording, playback rate, suppressed]. Suppressed guns are muffled (low-pass) and quieter.
 const SHOT = Object.fromEntries(GUNS.map(id => [id, [id, 1, ['m4s', 'usps', 'smg'].includes(id)]]));
@@ -51,7 +83,9 @@ const LAYER_ID = { m4s: [0, 0, .4, .05], usps: [0, 0, .4, .05], smg: [0, 0, .4, 
 const LAYER = { pistol: [.08, 0, .35, .18], smg: [.06, 0, .3, .2], rifle: [.12, .05, .35, .24], lmg: [.14, .05, .3, .26], shotgun: [.18, 0, .4, .28], sniper: [.25, .1, .45, .4] };
 let noise = null; const noiseBuf = c => { if (noise) return noise; noise = c.createBuffer(1, c.sampleRate, c.sampleRate); const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return noise; };
 function burst(c, t, out, { type, freq, q = .8, dur, gain }) { const n = c.createBufferSource(); n.buffer = noiseBuf(c); const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q; const g = c.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur); n.connect(f).connect(g).connect(out); n.start(t, Math.random() * .5); n.stop(t + dur + .02); }
-export function shotSound(id, { at = null, volume = 1 } = {}) {
+export function shotSound(id, opts = {}) {
+  if (route) { const r = route.shot(id, opts); if (r !== undefined) return r; }
+  const { at = null, volume = 1 } = opts;
   const [file, rate, quiet] = SHOT[id] || ['pistol', 1], take = 'abc'[Math.random() * 3 | 0], buf = buffers.get('shot-' + file + (take === 'a' ? '' : '-' + take)) || buffers.get('shot-' + file); if (!buf) { loadSounds(); return false; }   // one of three real takes
   try {
     const c = audioCtx(), t = c.currentTime, L = LAYER_ID[id] || LAYER[weaponById(id)?.kind] || LAYER.pistol, out = outAt(c, at, 'gun'), vol = volume * (quiet ? .4 : 1) * (SHOT_TRIM[id] ?? 1);
@@ -81,13 +115,7 @@ export const isQuiet = id => !!SHOT[id]?.[2];
 // reload-<id>-<part>); the class's handling grab plays with the mag
 // out, so a reload is heard as one sequence (grab, out, in, charge) over its whole CS2 length.
 const kindOf = id => { const k = weaponById(id)?.kind; return ['pistol', 'deagle', 'cannon', 'usps', 'p250', 'fiveseven'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : k === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
-export function reloadSound(part, id, at = null) { const k = kindOf(id), r = .97 + Math.random() * .06, own = `reload-${id}-${part}`; if (part === 0) play(`reload-${k}-grab`, { at, volume: .55, rate: r, kind: 'handling' }); return play(buffers.has(own) ? own : `reload-${k}-${part}`, { at, volume: .9, rate: r, delay: part === 0 ? .12 : 0, kind: 'handling' }); }
+export function reloadSound(part, id, at = null) { if (route) { const r = route.reload(part, id, at); if (r !== undefined) return r; } const k = kindOf(id), r = .97 + Math.random() * .06, own = `reload-${id}-${part}`; if (part === 0) play(`reload-${k}-grab`, { at, volume: .55, rate: r, kind: 'handling' }); return play(buffers.has(own) ? own : `reload-${k}-${part}`, { at, volume: .9, rate: r, delay: part === 0 ? .12 : 0, kind: 'handling' }); }
 // Footstep on a surface (concrete, wood, grass, carpet, metal); a random take each step.
-export const stepSound = (surface, at = null, volume = .6) => play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12, kind: 'step' });
-
-// Freeze-time music (CS2: a calm cue while everyone waits at spawn): the jazz loop on the music bus, soft, fading in
-// and out. on: true starts (no-op if playing), false fades out.
-let music = null;
-export function freezeMusic(on) { try { const c = audioCtx(), buf = buffers.get('music-freeze'); if (!buf) { if (on) loadSounds(); return; }
-  if (on && !music) { const src = c.createBufferSource(), g = c.createGain(), t = c.currentTime; src.buffer = buf; src.loop = true; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.16, t + 1.5); src.connect(g).connect(musicBus(c)); src.start(t, Math.random() * buf.duration * .6); music = { src, g }; }
-  else if (!on && music) { const { src, g } = music, t = c.currentTime; music = null; g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + 1.2); src.stop(t + 1.3); } } catch {} }
+export const stepSound = (surface, at = null, volume = .6, src = null) => { if (route) { const r = route.step(surface, at, volume, src); if (r !== undefined) return r; } return play(`step-${STEPS.includes(surface) ? surface : 'concrete'}-${Math.random() * 5 | 0}`, { at, volume, rate: .94 + Math.random() * .12, kind: 'step' }); };
+// (No freeze-time music: Global Defensive's freeze time is silent — the countdown is on screen only.)

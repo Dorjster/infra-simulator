@@ -9,19 +9,19 @@
 //  · Bots: added and removed by any player; they walk between spawn points, need real line of sight (map walls),
 //    react after a short delay, miss more at range and reload. They hit through the same damage rules as players.
 import { ARENA } from './facility-layout.js';
-import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState } from './arena-maps.js';
-import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR } from './weapons-data.js';
+import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState, mapMeta } from './arena-maps.js';
+import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR, NADE_SLOT, nadeRefusal, nadeSideRefusal } from './weapons-data.js';
 import { cleanSkin, skinTitle, skinKeyOf } from './skins.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
-import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, clearView, fireCells, inFire, smokeBlocks, setSmokeSolids, tossFlight } from './arena-nades.js';
-import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, balanceBots, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS } from './arena-defuse.js';
-import { hurt } from './combat-logic.js';
+import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, holdNades, clearView, fireCells, warmFire, inFire, smokeBlocks, smokeHides, setSmokeSolids, tossFlight } from './arena-nades.js';
+import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, balanceBots, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS, stillLoading } from './arena-defuse.js';
+import { hurt, poseFeet } from './combat-logic.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 export const PRIMARIES = WEAPONS.filter(w => w.kind !== 'pistol').map(w => w.id), SECONDARIES = WEAPONS.filter(w => w.kind === 'pistol').map(w => w.id);
 export const DM_MS = 10 * 60000, MAX_BOTS = 11, GROUND_MAX = 24, GROUND_MS = 60000, PICK_R = 5;
 // Loadout slot an item goes in (grenades and the bomb join this when they arrive).
-export const slotOf = id => SECONDARIES.includes(id) ? 'secondary' : PRIMARIES.includes(id) ? 'primary' : NADE_IDS.includes(id) ? 'nades' : id === 'c4' ? 'bomb' : null;
+export const slotOf = id => SECONDARIES.includes(id) ? 'secondary' : PRIMARIES.includes(id) ? 'primary' : NADE_SLOT[id] || NADE_IDS.includes(id) ? 'nades' : id === 'c4' ? 'bomb' : null;   // (grenades: weapons-data's list — HE, flash, smoke, decoy, molotov, incendiary — slots 6–10)
 const itemName = id => id === 'c4' ? 'C4 bomb' : NADES[id]?.name || weaponById(id).name;
 const BOT_UPGRADE = ['ak', 'm4', 'sniper'];
 const BOT_NAMES = ['Bat', 'Tuya', 'Saraa', 'Temuulen', 'Oyun', 'Ganaa', 'Bold', 'Anu', 'Khulan', 'Erdene', 'Naraa'];
@@ -43,16 +43,39 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs 
   else if (ARENA_MAPS[map].kind !== kind) throw Error(ARENA_MAPS[map].name + ' is not a ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' map');
   game.mode = 'arena'; game.payday = false;
   const knives = game.arena?.knives || {}, skins = game.arena?.skins || {};   // (the knives and skins people chose stay theirs from match to match)
-  game.arena = { kind, map, startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null, difficulty: DIFFICULTY[difficulty] ? difficulty : 'normal', lobby: lobbyMs > 0 ? { until: now + lobbyMs, started: false, ready: {}, note: '' } : null, freezeMs: clampS(freezeS, TIMER_LIMITS.freeze, 15) * 1000, warmupS: Math.round(lobbyMs / 1000), nextMap: null };
+  const seq = { g: game.combat?.groundSeq || 0, n: game.combat?.nadeSeq || 0, shots: game.mode === 'arena' ? game.combat?.shots : null };   // (ground items and grenades keep counting: an id never names two things on a client; shots: each client's shot numbering, freshMatch)
+  game.arena = { kind, map, match: matchId(now), startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null, difficulty: DIFFICULTY[difficulty] ? difficulty : 'normal', lobby: lobbyMs > 0 ? { until: now + lobbyMs, started: false, ready: {}, note: '' } : null, freezeMs: clampS(freezeS, TIMER_LIMITS.freeze, 15) * 1000, warmupS: Math.round(lobbyMs / 1000), nextMap: null };
   game.arena.knives = knives; game.arena.skins = skins;
   game.arena.rules = cleanRules(rules || {});   // Defuse match rules (host settings), fixed for this match
   if (practice) { game.arena.practice = cleanPractice(practice); game.arena.endsAt = 4e15; }   // no time limit
-  game.combat = { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: 0, nades: [], nadeSeq: 0 };
+  game.combat = { match: game.arena.match, hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: seq.g, nades: [], nadeSeq: seq.n, ...(seq.shots ? { shots: seq.shots } : {}) };
   for (let i = 0; i < bots; i++) addBot(game, now);
   if (kind === 'defuse') startDefuse(game, now);
+  warmMap(game);
 }
+// The LAN protocol this code speaks (lan/room.mjs /api/room and the join reply; multiplayer.js checks it): a page kept open
+// from an older version that reconnects to an updated host is told to reload instead of half-working.
+export const NET_PROTOCOL = 'gd-51';
+// A new match's id (combat.d.match too): requests and frames carry it, so nothing from an earlier match counts in this one.
+const matchId = now => now.toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0');
+// Built before play, not inside the host's 50 ms tick: the map's boxes for the host's checks, and on Defuse maps the bots'
+// site routes (lazily planned on first use — about 0.4 s on a CS2 map file, which froze every player and bot at the first
+// live tick of round 1). Called where the host already waits (starting a match, changing or scheduling the map).
+function warmMap(game, id = game.arena?.map) { const m = ARENA_MAPS[id]; if (!m || m.stub) return; const bx = game.arena?.map === id ? G(game).boxes : mapBoxes(m, ARENA.cx, ARENA.cz); if (m.kind === 'defuse' && m.nav) void m.routes; const sp = m.spawns?.[0]; if (sp && Array.isArray(bx)) warmFire(bx, ARENA.cx + sp[0], ARENA.cz + sp[1], sp[2] || 0); }   /* + the first fire's flood (cold ~40–100 ms, then 2–12 ms: arena-nades.js warmFire) out of the host's first molotov tick */   // (the next map's boxes too: cached, so the tick that switches to it only looks them up)
+// Can a match be played on this map — without building it (a CS2 map, built-in or from a file, is built on first use:
+// seconds; arena-maps.js): a stand-in for a missing file is not.
+const mapReady = id => { const d = Object.getOwnPropertyDescriptor(ARENA_MAPS, id); return !!d && (d.get ? true : !!d.value && !d.value.stub); };
+// The next match's map is built during the scoreboard (nobody plays; the end went out WARM_AFTER_MS before): its geometry,
+// boxes and the bots' routes — so neither the host's 'next-map' request mid-match nor the tick that switches waits on it.
+// (One build per match and map: warmedMatch / warmedMap.)
+const WARM_AFTER_MS = 1000; let warmedMatch = null, warmedMap = null;
+function warmNext(game, over, now) { const A = game.arena, id = A.nextMap || A.map; if (now - over.at < WARM_AFTER_MS || (warmedMatch === A.match && warmedMap === id)) return; warmedMatch = A.match; warmedMap = id; warmMap(game, id); }   // (warmMap skips a stand-in without its file)
+// A bot's fresh route (m.nav.route) costs 1–70 ms on a CS2 map file (median ≈ 24 ms, measured on Dust II): a few bots
+// re-planning in one tick (a retake: every CT heads for the bomb) stalled the host's 50 ms tick for 90–150 ms — every
+// player and bot froze. One re-plan per tick; a bot whose turn hasn't come waits a tick (20 a second in all).
+const ROUTES_PER_TICK = 1; let routesLeft = ROUTES_PER_TICK; const routeTurn = () => routesLeft > 0 ? (routesLeft--, true) : false;
 const geo = game => { const map = ARENA_MAPS[game.arena.map], [sw, sd] = map.size; return { map, boxes: mapBoxes(map, ARENA.cx, ARENA.cz), bounds: { minX: ARENA.cx - sw / 2, maxX: ARENA.cx + sw / 2, minZ: ARENA.cz - sd / 2, maxZ: ARENA.cz + sd / 2 } }; };
-let cache = { map: null, g: null }; const G = game => cache.map === game.arena.map ? cache.g : (cache = { map: game.arena.map, g: geo(game) }).g;
+let cache = { map: null, g: null }; const G = game => cache.map === ARENA_MAPS[game.arena.map] ? cache.g : (cache = { map: ARENA_MAPS[game.arena.map], g: geo(game) }).g;   // (per map object: a map file loaded for the map in play replaces the built-in one of its name)
 setSmokeSolids(game => game?.arena?.map && ARENA_MAPS[game.arena.map] ? G(game).boxes : null);   // (smoke fills the map's space: arena-nades.js smokeVoxels)
 
 // Bot movement and sight. Classic maps (map.nav): the bot walks the map's columns — up steps and stairs, down ledges,
@@ -71,7 +94,9 @@ function tryMove(g, bot, nx, nz) { const nav = g.map.nav; if (!nav) { if (!walka
   const y = nav.step(bot.x - ARENA.cx, bot.z - ARENA.cz, feetOf(g, bot), nx - ARENA.cx, nz - ARENA.cz); if (!Number.isFinite(y)) return false; bot.x = nx; bot.z = nz; bot.y = y; return true; }
 const standable = (g, x, z, nearY = Infinity) => g.map.nav ? Number.isFinite(g.map.nav.floorAt(x - ARENA.cx, z - ARENA.cz, nearY)) : walkable(g.boxes, g.bounds, x, z);
 // Can a (eye at ay) see b (eye at by)? Walls, levels and smoke block.
-const sees = (game, g, ax, ay, az, bx, by, bz) => g.map.nav ? g.map.nav.sight(ax - ARENA.cx, ay, az - ARENA.cz, bx - ARENA.cx, by, bz - ARENA.cz) && !smokeBlocks(game, ax, ay, az, bx, by, bz) : clearView(game, g.boxes, ax, az, bx, bz);
+// Smoke: with the target's feet (fy) and hull (cr) known, the players' rule (smokeHides: head, chest and legs, each line
+// from SMOKE.near out of the eye) — a head over a cloud's edge is seen by bots as by players; else the one eye line.
+const sees = (game, g, ax, ay, az, bx, by, bz, fy = null, cr = false) => g.map.nav ? g.map.nav.sight(ax - ARENA.cx, ay, az - ARENA.cz, bx - ARENA.cx, by, bz - ARENA.cz) && (Number.isFinite(fy) ? !smokeHides(game, ax, ay, az, bx, fy, bz, cr) : !smokeBlocks(game, ax, ay, az, bx, by, bz)) : clearView(game, g.boxes, ax, az, bx, bz);
 // One bot step towards heading h (steering round obstacles); true when it moved.
 function botStep(g, bot, h, step) { for (const turn of [0, .5, -.5, 1, -1, 1.5, -1.5]) { const hh = h + turn, nx = bot.x + Math.sin(hh) * step, nz = bot.z + Math.cos(hh) * step; if (tryMove(g, bot, nx, nz)) return true; } return false; }
 // The nearest walkable spot (within 20 units, reachable in a straight line) that a wall or crate hides from `from`.
@@ -103,17 +128,19 @@ const occupied = (game, players, but, now = Date.now()) => [...alive(game, playe
 function place(game, bot, players = []) { const s = bestSpot(game, occupied(game, players, bot.name)); bot.x = s.x; bot.z = s.z; bot.wp = -1; }
 // Everyone alive (players in the arena + bots), except `but`.
 function alive(game, players, but) {
-  const out = []; for (const p of players) if (p.pose && p.pose.z < ARENA.maxZ && key(p.name) !== key(but) && !isDown(game, p.name)) out.push({ name: p.name, x: p.pose.x, z: p.pose.z, y: p.pose.y });
-  for (const b of game.arena?.bots || []) if (key(b.name) !== key(but) && !isDown(game, b.name)) out.push({ name: b.name, x: b.x, z: b.z, y: EYE + botFloor(game, b) }); return out;
+  const out = []; for (const p of players) if (p.pose && !stillLoading(game, p) && p.pose.z < ARENA.maxZ && key(p.name) !== key(but) && !isDown(game, p.name)) out.push({ name: p.name, x: p.pose.x, z: p.pose.z, y: p.pose.y, fy: poseFeet(p.pose), cr: !!p.pose.crouched });   // (fy / cr: feet and hull for the bots' smoke check, sees)
+  for (const b of game.arena?.bots || []) if (key(b.name) !== key(but) && !isDown(game, b.name)) { const fy = botFloor(game, b); out.push({ name: b.name, x: b.x, z: b.z, y: EYE + fy, fy, cr: false }); } return out;
 }
 
+// A pane a grenade or a tossed gun went through (its id: map movers): broken in the map state for everyone, once.
+const breakPane = (game, id) => { const m = ARENA_MAPS[game.arena.map]?.movers?.[id], st = mapStateOf(game); if (m?.kind !== 'break' || st.broken[id]) return false; st.broken[id] = 1; st.v++; syncMapState(game); return true; };
 // Put an item on the ground at (x, z), resting at height y.
 // A gun keeps its rounds on the ground ([magazine, reserve]); `by` and their team are shown to whoever finds it.
 // fly (optional): tossed from { x, y, z } with { vx, vy, vz } — where it comes to rest is where it lies (tossFlight);
 // the item keeps the toss so every player sees it fly there.
 function dropItem(game, item, x, z, y, by, now, ammo = null, fly = null) {
   const C = game.combat; C.ground ??= []; C.groundSeq = (C.groundSeq || 0) + 1;
-  if (fly) { const g = G(game), end = tossFlight(g.boxes, g.bounds, fly); x = end.x; z = end.z; y = end.y; fly = { ...Object.fromEntries(Object.entries(fly).map(([k, v]) => [k, +(+v).toFixed(3)])), ms: end.ms }; }
+  if (fly) { const g = G(game), end = tossFlight(g.boxes, g.bounds, fly); x = end.x; z = end.z; y = end.y; fly = { ...Object.fromEntries(Object.entries(fly).map(([k, v]) => [k, +(+v).toFixed(3)])), ms: end.ms, ...(end.glass?.length ? { glass: end.glass.slice(0, 8) } : {}) }; for (const id of end.glass || []) breakPane(game, id); }   // (fly.glass: the panes it broke — every client's replay slows at them as this toss did, though they are broken there by then) (a pane the gun went through breaks for everyone, as under a grenade — never a hole in the collision alone)
   C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(250, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null, ...(fly ? { fly } : {}) });
   while (C.ground.length > GROUND_MAX) { const i = C.ground.findIndex(it => it.item !== 'c4'); C.ground.splice(i < 0 ? 0 : i, 1); }
   return 'g' + C.groundSeq;
@@ -137,8 +164,8 @@ export const ROUND_BOUND = new Set(['buy', 'loadout', 'buy-armor', 'buy-nade', '
 export function arenaApply(game, a, name, players = [], now = Date.now(), perm = { isHost: true }) {
   if (game.mode !== 'arena' || !game.arena) throw Error('Start the arena first');
   const A = game.arena;
-  // A request made in a round that has ended (it crossed the round change on the network) does nothing.
-  if (a.round !== undefined && ROUND_BOUND.has(a.type) && game.combat?.d?.round?.id && a.round !== game.combat.d.round.id) throw Error('That round has ended');
+  // A request made in a round or match that has ended (it crossed the change on the network) does nothing.
+  { const late = epochError(game, a); if (late) throw Error(late); }
   // ── Match: lobby, teams, host settings, map ──
   if (a.type === 'practice') { if (!A.practice) throw Error('Only in practice'); A.practice = cleanPractice({ ...A.practice, ...(a.settings || {}) }); return 'Practice: ' + ({ stand: 'bots stand still', move: 'bots move', fight: 'bots fight back' })[A.practice.bots]; }   // its settings, changed during the session
   if (a.type === 'ready') { if (!A.lobby || A.lobby.started) throw Error('The match is running'); A.lobby.ready[key(name)] = a.ready !== false; return a.ready === false ? 'Not ready' : 'Ready'; }
@@ -163,7 +190,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   // Host administration (the room checks the host): pause, restart the round, move someone to spectator, the next
   // match's map. Disruptive ones are confirmed in the host's menu first.
   if (['pause', 'restart-round', 'move-spec', 'next-map'].includes(a.type)) { if (!perm.isHost) throw Error('Only the host can do that'); const d = game.combat?.d;
-    if (a.type === 'next-map') { if (a.map && (!ARENA_MAPS[a.map] || ARENA_MAPS[a.map].stub)) throw Error('That map is not available'); A.nextMap = a.map || null; return A.nextMap ? 'Next match: ' + ARENA_MAPS[A.nextMap].name : 'Next match: same map'; }
+    if (a.type === 'next-map') { if (a.map && !mapReady(a.map)) throw Error('That map is not available'); A.nextMap = a.map || null;   /* (not built here: mid-match, this request held the room's one thread — every tick, pose and hit — for 3–7 s on a CS2 file; built during the scoreboard instead, arenaTick) */ return A.nextMap ? 'Next match: ' + (mapMeta(A.nextMap)?.name || A.nextMap) : 'Next match: same map'; }
     if (!d) throw Error('Defuse matches only');
     if (a.type === 'pause') { const on = !!a.on; if (on === !!d.paused) return on ? 'Already paused' : 'Not paused'; if (on) { d.paused = { at: now }; return 'Match paused'; }
       const dt = now - d.paused.at, r = d.round; d.paused = null; if (r) { for (const f of ['freezeUntil', 'buyUntil', 'endsAt', 'overAt']) if (Number.isFinite(r[f]) && r[f] < 4e15) r[f] += dt; if (r.planted) r.planted.explodeAt += dt; if (r.plant) r.plant.start += dt; if (r.defuse) r.defuse.start += dt; }
@@ -183,9 +210,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     if (a.bots !== undefined) { const want = Math.max(0, Math.min(MAX_BOTS, Math.floor(+a.bots) || 0)); while (A.bots.length < want) addBot(game, now, players); while (A.bots.length > want) removeBot(game); }
     return 'Bots: ' + A.bots.length + ' · ' + A.difficulty + (a.freeze !== undefined ? ' · freeze ' + Math.round((A.freezeNext ?? A.freezeMs) / 1000) + ' s' + (A.freezeNext !== undefined ? ' from the next round' : '') : '') + (a.warmup !== undefined && A.lobby && !A.lobby.started ? ' · warmup ' + A.warmupS + ' s' : ''); }
   if (a.type === 'change-map') { if (!perm.isHost) throw Error('Only the host changes the map'); const m = ARENA_MAPS[a.map]; if (!m) throw Error('That map is not available');
-    const teams = game.combat?.d?.teams ? { ...game.combat.d.teams } : null; startArena(game, { map: a.map, kind: m.kind, bots: A.bots.length, difficulty: A.difficulty }, now);
-    if (teams && game.combat.d) { for (const [k, t] of Object.entries(teams)) if (!/^bot /.test(k)) game.combat.d.teams[k] = t;   // people keep their side;
-      balanceBots(game, players); game.arena.restarting = true; newRound(game, players, now); }   // (game.arena: the new map's)   // the new bots even the sides, and round 1 starts over with everyone on their own side's spots
+    rematch(game, players, now, a.map);   // a new match there with the host's settings; people keep their side, the new bots even the sides, round 1 on everyone's own side's spots
     return 'Map · ' + m.name + ' · ' + (m.kind === 'defuse' ? 'Defuse' : 'Deathmatch'); }
   if (a.type === 'drop') {
     if (isDown(game, name, now)) throw Error('You are dead');
@@ -205,7 +230,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     const slot = slotOf(it.item); if (!slot) throw Error('Cannot pick that up');
     if (slot === 'bomb') { if (teamOf(game, name) !== 't') throw Error('Only Terrorists carry the bomb'); C.ground.splice(i, 1); game.combat.d.bomb.carrier = key(name); return 'You have the bomb'; }
     const l = loadoutOf(game, name);
-    if (slot === 'nades') { if (!canCarry(l.nades ??= [], it.item)) throw Error('No room for more grenades'); C.ground.splice(i, 1); l.nades.push(it.item); return 'Picked up ' + itemName(it.item); }
+    if (slot === 'nades') { const why = nadeRefusal(l.nades ??= [], it.item) || (canCarry(l.nades, it.item) ? '' : 'No room for more grenades'); if (why) throw Error(why); C.ground.splice(i, 1);   /* (the real reason, as a buy says it: four already, two flashbangs, one of a kind, one fire grenade) */ l.nades.push(it.item); return 'Picked up ' + itemName(it.item); }
     const old = l[slot]; if (old && !a.swap) throw Error('Slot taken · E to swap');
     // Claimed: off the ground first (a second claim finds it gone), then the old gun drops where you stand.
     C.ground.splice(i, 1); if (old) dropFrom(game, name, old, p ? p.x : it.x, p ? p.z : it.z, p ? Math.max(0, (p.y ?? EYE) - EYE) : it.y, now);
@@ -252,14 +277,14 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     if (isDefuse(game)) { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); charge(game, name, cost); bought(game, name, { kind: 'armor', item: kind, price: cost, prev: { kevlar: arm.kevlar, helmet: arm.helmet } }); }
     arm.kevlar = 100; if (kind === 'helmet') arm.helmet = true; return 'Bought ' + ARMOR[kind].name;
   }
-  if (isDefuse(game) && a.type === 'buy-nade') { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); if (!NADES[a.kind]) throw Error('Unknown grenade'); const list = loadoutOf(game, name).nades ??= []; if (!canCarry(list, a.kind)) throw Error(list.length >= 4 ? 'You carry four grenades already' : a.kind === 'flash' ? 'Two flashbangs at most' : 'You already have a ' + NADES[a.kind].name); pay(game, name, a.kind); bought(game, name, { kind: 'nade', item: a.kind, price: PRICE[a.kind] ?? 0 }); }
-  if (a.type === 'buy-nade') { const kind = a.kind; if (!NADES[kind]) throw Error('Unknown grenade'); const l = loadoutOf(game, name), list = l.nades ??= [];
-    if (!canCarry(list, kind)) throw Error(list.length >= 4 ? 'You carry four grenades already' : kind === 'flash' ? 'Two flashbangs at most' : 'You already have a ' + NADES[kind].name);
-    list.push(kind); return 'Bought ' + NADES[kind].name; }
+  if (isDefuse(game) && a.type === 'buy-nade') { const e = buyError(game, name, poseOf(players, name), now); if (e) throw Error(e); if (!NADE_SLOT[a.kind]) throw Error('Unknown grenade'); const list = loadoutOf(game, name).nades ??= [], no = nadeSideRefusal(a.kind, teamOf(game, name)) || nadeRefusal(list, a.kind); if (no) throw Error(no); pay(game, name, a.kind);   /* (your side's fire grenade only: Molotov T, Incendiary CT) */ bought(game, name, { kind: 'nade', item: a.kind, price: PRICE[a.kind] ?? 0 }); }
+  if (a.type === 'buy-nade') { const kind = a.kind; if (!NADE_SLOT[kind]) throw Error('Unknown grenade'); const l = loadoutOf(game, name), list = l.nades ??= [];
+    const no = nadeRefusal(list, kind); if (no) throw Error(no);   // (CS2: four in all, two flashbangs, one of each other kind, one fire grenade — weapons-data.js)
+    list.push(kind); return 'Bought ' + weaponById(kind).name; }
   if (a.type === 'throw') { if (isDown(game, name, now)) throw Error('You are dead'); return throwNade(game, name, a.kind, a, now); }
   if (a.type === 'add-bot') { const n = Math.max(1, Math.min(MAX_BOTS, Math.floor(+a.count || 1))); let added = 0; for (let i = 0; i < n && A.bots.length < MAX_BOTS; i++, added++) addBot(game, now, players); return added ? 'Added ' + added + ' bot' + (added > 1 ? 's' : '') : 'The arena is full of bots'; }
   if (a.type === 'remove-bot') { const b = removeBot(game); if (!b) throw Error('No bots to remove'); return 'Removed ' + b.name; }
-  if (a.type === 'restart') { if (a.map && (!ARENA_MAPS[a.map] || ARENA_MAPS[a.map].stub)) throw Error('That map is not available'); const map = a.map && ARENA_MAPS[a.map]?.kind === A.kind ? a.map : A.map; startArena(game, { map, kind: A.kind, bots: A.bots.length, difficulty: A.difficulty, rules: A.rulesNext || A.rules }, now); return 'New match · ' + ARENA_MAPS[game.arena.map].name; }
+  if (a.type === 'restart') { if (!perm.isHost) throw Error('Only the host starts a new match'); if (a.map && (!ARENA_MAPS[a.map] || ARENA_MAPS[a.map].stub)) throw Error('That map is not available'); const map = a.map && ARENA_MAPS[a.map]?.kind === A.kind ? a.map : A.map; rematch(game, players, now, map); return 'New match · ' + ARENA_MAPS[game.arena.map].name; }
   // E at a door: opens it away from you, or shuts it. A shot into a breakable: its damage, broken at its health (glass:
   // a hit) — the client sends what its bullet crossed (weapons.js).
   if (a.type === 'use' || a.type === 'break') { const m = ARENA_MAPS[A.map]?.movers?.[+a.id], id = +a.id, p = poseOf(players, name); if (!m) throw Error('Nothing to use there');
@@ -267,7 +292,11 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     if (a.type === 'use') { if (m.kind === 'break') throw Error('Nothing to use there'); if (isDown(game, name, now)) throw Error('You are dead'); if (st.broken[id]) throw Error('The door is broken');
       if (p && boxDist(m.box, p.x - ARENA.cx, p.z - ARENA.cz) > 7) throw Error('Too far from the door'); const d = st.doors[id];
       if (d && now - (d.at || 0) < 300) return d.open ? 'Door open' : 'Door shut';   // (a double press)
-      st.doors[id] = d?.open ? { open: 0, side: d.side, at: now } : { open: 1, side: p ? awaySide(m, p.x - ARENA.cx, p.z - ARENA.cz) : 1, at: now }; st.v++; syncMapState(game); return st.doors[id].open ? 'Door open' : 'Door shut'; }
+      // Shut onto someone in the doorway, or swung open into someone: it won't (the other way round if that side is free).
+      let side = 1; if (d?.open) { if (bodyIn(game, m.box, players, now)) throw Error('Something is in the way'); }
+      else { side = p ? awaySide(m, p.x - ARENA.cx, p.z - ARENA.cz) : 1; const bx = sg => m.open?.[m.kind === 'rotdoor' ? (sg < 0 ? '-' : '+') : 'open'];
+        if (bx(side) && bodyIn(game, bx(side), players, now)) { if (m.kind === 'rotdoor' && !bodyIn(game, bx(-side), players, now)) side = -side; else throw Error('Something is in the way'); } }
+      st.doors[id] = d?.open ? { open: 0, side: d.side, at: now } : { open: 1, side, at: now }; st.v++; syncMapState(game, now, players); return st.doors[id].open ? 'Door open' : 'Door shut'; }
     if (m.kind !== 'break') throw Error('Not breakable'); if (st.broken[id]) return 'Already broken';
     st.hp[id] = (st.hp[id] ?? m.health) - Math.max(1, Math.min(500, +a.dmg || 1)); if (st.hp[id] > 0 && !m.glass) return 'Hit';
     st.broken[id] = 1; st.v++; syncMapState(game); return 'Broken'; }
@@ -276,21 +305,76 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
 
 function removeBot(game) { const A = game.arena, b = A.bots.pop(); if (!b) return null; const k = key(b.name), C = game.combat; for (const f of ['hp', 'down', 'kills', 'deaths', 'assists']) if (C[f]) delete C[f][k]; if (C.d) { delete C.d.teams[k]; delete C.d.money[k]; if (C.d.bomb?.carrier === k) C.d.bomb.carrier = null; } return b; }
 // Players present in the arena (from the room roster): not bots.
-const humans = players => players.filter(p => !p.bot && p.pose);
+const humans = (players, game) => players.filter(p => !p.bot && p.pose && !stillLoading(game, p));   // (still loading this map: not here yet — arena-defuse.js members)
+// The players in this map (the host's tick, per tick: one reused list): someone still loading it stands at their last map's
+// pose — an HE, fire, a flash, a decoy or a bouncing grenade there must not reach them (arena-nades.js people()).
+const PRESENT = []; const present = (game, players) => { PRESENT.length = 0; for (const p of players) if (!stillLoading(game, p)) PRESENT.push(p); return PRESENT; };
 // Why the lobby can't start yet (null = it can): two participants; in Defuse someone on each side (bots count).
 function lobbyShort(game, players) {
-  const n = humans(players).length + game.arena.bots.length; if (n < 2) return 'Need at least 2 players · add bots or wait for friends';
-  const d = game.combat.d; if (d) { const c = { t: 0, ct: 0 }; for (const p of humans(players)) { const t = d.teams[key(p.name)]; if (c[t] !== undefined) c[t]++; } for (const b of game.arena.bots) { const t = d.teams[key(b.name)]; if (c[t] !== undefined) c[t]++; } if (!c.t || !c.ct) return 'Need someone on both teams'; }
+  const n = humans(players, game).length + game.arena.bots.length; if (n < 2) return 'Need at least 2 players · add bots or wait for friends';
+  const d = game.combat.d; if (d) { const c = { t: 0, ct: 0 }; for (const p of humans(players, game)) { const t = d.teams[key(p.name)]; if (c[t] !== undefined) c[t]++; } for (const b of game.arena.bots) { const t = d.teams[key(b.name)]; if (c[t] !== undefined) c[t]++; } if (!c.t || !c.ct) return 'Need someone on both teams'; }
   return null;
 }
 // The lobby ends: a clean match for everyone in it (fresh money, loadouts, scores; sides kept).
 function beginMatch(game, players, now) {
-  const A = game.arena, teams = game.combat.d ? { ...game.combat.d.teams } : null, lobby = A.lobby; lobby.started = true; lobby.startedAt = now; A.loadout = {}; A.startedAt = now; A.endsAt = now + DM_MS;
-  const C = game.combat; Object.assign(C, { hp: {}, down: {}, kills: {}, deaths: {}, assists: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], nades: [], ammo: {}, armor: {}, dmg: {} });
+  const A = game.arena, teams = game.combat.d ? { ...game.combat.d.teams } : null, lobby = A.lobby; lobby.started = true; lobby.startedAt = now; A.startedAt = now; A.endsAt = now + DM_MS; A.match = matchId(now);   // (a new startedAt: every client re-enters — fresh hands, recoil, reload, HUD)
+  freshMatch(game);
   if (A.kind === 'defuse') startDefuse(game, now, players, teams);
   for (const b of A.bots) { botArm(b, game.combat.d ? defaultPistol(game.combat.d.teams[key(b.name)]) : BOT_GUNS[(+b.id.slice(4) || 0) % BOT_GUNS.length]); if (!game.combat.d) place(game, b, players); }
   A.dirty = true;
 }
+// ── Match lifecycle (host): one authority for every transition ──
+//  · NEW MATCH — the start screen ('mode' → startArena), the lobby running out or the host starting it (beginMatch), the
+//    end of a match (rematch: the same map again or the host's next map, Defuse and Deathmatch alike), the host's map
+//    change or restart. Everything a match plays with starts again: guns, ammo, grenades, armor, kits, the bomb, HP,
+//    kills / deaths / assists / damage, the report, dropped items, grenades in flight, smoke and fire, doors and glass,
+//    spawn orders, buy logs, the economy (the rules' start money), bots (side pistol, no target, no route). It keeps what
+//    is the players' own — their knife and its skin — and the host's settings (map rotation, bots, difficulty, freeze,
+//    rules queued for the next match). A new id (arena.match = combat.d.match) and a new startedAt: clients re-enter on it.
+//  · NEW ROUND (arena-defuse.js newRound) — survivors keep what they carry (CS2), the dead get their side's pistol;
+//    HP, grenades in flight, drops, doors, damage tallies and spawn spots start again. A new round id.
+//  · SIDE SWAP (halftime, overtime halves: newRound) — money back to the start, gear gone.
+// Requests carry the match and round they were made in (multiplayer.js) and frames carry their revisions (lan/room.mjs):
+// a late hit, throw, buy, drop or use from an earlier round or match is refused here (epochError) and on clients a stale
+// frame never replaces a newer one.
+function freshMatch(game) { const A = game.arena, C = game.combat, keep = { groundSeq: C.groundSeq || 0, nadeSeq: C.nadeSeq || 0, rev: C.rev, clock: C.clock, mapState: C.mapState, shots: C.shots };
+  for (const k of Object.keys(C)) delete C[k];   // in place (arenaTick holds this object): whatever a match added goes — shots, picks, spawn protection, stats
+  Object.assign(C, { match: A.match, hp: {}, down: {}, kills: {}, deaths: {}, assists: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: keep.groundSeq, nades: [], nadeSeq: keep.nadeSeq, ammo: {}, armor: {}, dmg: {} });
+  if (keep.rev !== undefined) C.rev = keep.rev; if (keep.clock !== undefined) C.clock = keep.clock; if (keep.shots) C.shots = keep.shots;   // (shots: where each client's shot / reload numbering is — a sequence, not match state: the next match's first shot costs its round)
+  if (keep.mapState) C.mapState = { map: A.map, v: (keep.mapState.v || 0) + 1, doors: {}, broken: {}, hp: {} };   // doors shut, glass whole
+  A.loadout = {}; A.deathDrops = {}; A.over = null; A.restarting = false;
+  for (const b of A.bots) { b.weapon = null; b.target = null; b.cover = null; b.path = null; b.avoid = null; b.retake = false; b.dead = false; b.blindUntil = 0; b.reloadUntil = 0; } }
+// The match is over: the next one, on the host's next map or the same map, with the host's settings (bots, difficulty,
+// freeze time, the rules queued during this match) — a full new match (startArena). People keep their sides (Defuse);
+// new bots even them out, and round 1 places everyone on their own side's spots.
+// (map: the host's change-map / restart choice; else the scheduled next map, else this one.)
+export function rematch(game, players = [], now = Date.now(), map = null) {
+  const A = game.arena, C = game.combat, id = map || (A.nextMap && ARENA_MAPS[A.nextMap] && !ARENA_MAPS[A.nextMap].stub ? A.nextMap : A.map), m = ARENA_MAPS[id], teams = C.d?.teams ? { ...C.d.teams } : null;
+  startArena(game, { map: id, kind: m.kind, bots: A.bots.length, difficulty: A.difficulty, freezeS: (A.freezeNext ?? A.freezeMs ?? 15000) / 1000, rules: A.rulesNext || A.rules, practice: A.practice || null }, now);
+  if (teams && game.combat.d) { for (const [k, t] of Object.entries(teams)) if (!/^bot /.test(k)) game.combat.d.teams[k] = t; balanceBots(game, players); game.arena.restarting = true; newRound(game, players, now); }
+  return game.arena; }
+// A request made in a match or round that has since ended (it crossed the change on the network) — a hit, a throw, a buy,
+// a drop, a pickup, a door: refused (the message), else null. Requests without ids (older clients, tests) are not judged.
+export const EPOCH_BOUND = new Set(['buy', 'loadout', 'buy-armor', 'buy-nade', 'buy-kit', 'refund', 'plant', 'defuse', 'throw', 'drop', 'pickup', 'use', 'break', 'hit']);
+export function epochError(game, a) { if (!a || !EPOCH_BOUND.has(a.type) || game?.mode !== 'arena') return null; const A = game.arena, rid = game.combat?.d?.round?.id;
+  if (a.match !== undefined && A?.match && a.match !== A.match) return 'That match has ended';
+  if (a.round !== undefined && rid && a.round !== rid) return 'That round has ended'; return null; }
+// What changes the clients' arena (map, a new match, the lobby, the end, the host's settings): the room sends the arena
+// (arenaView) whenever this key changes — also for changes made by the host's tick, not only by requests.
+export const arenaEpochKey = game => { const A = game?.mode === 'arena' && game.arena; if (!A) return ''; return A.map + '|' + A.match + '|' + A.startedAt + '|' + (A.over ? A.over.at : 0) + '|' + (A.lobby ? (A.lobby.started ? 1 : 0) + ':' + A.lobby.until + ':' + A.lobby.note : '') + '|' + A.freezeMs + '|' + A.bots.length + '|' + A.nextMap + '|' + A.difficulty + '|' + (game.combat?.d?.match || ''); };
+// The arena as clients need it: no host-only bot brains (routes, targets, cover) and no host bookkeeping.
+const BOT_VIEW = ['id', 'name', 'weapon', 'x', 'y', 'z', 'yaw', 'dead', 'skill'];
+export function arenaView(game) { const A = game.arena; if (!A) return null; const out = {}; for (const k of Object.keys(A)) if (k !== 'bots' && k !== 'deathDrops' && k !== 'dirty' && k !== 'botAt' && k !== 'restarting') out[k] = A[k];
+  out.bots = A.bots.map(b => { const v = {}; for (const k of BOT_VIEW) if (b[k] !== undefined) v[k] = b[k]; return v; }); return out; }
+// The host's clock jumped ahead with nothing run in between (a laptop asleep, the process stopped): every match timer moves
+// on by that gap, as if the match had been paused (no rounds ended, bombs gone off or respawns all at once on waking).
+// Shifts every timestamp-sized number (epoch ms within a day of now) in the arena and combat state — but not the stamps
+// clients act on when they change (startedAt: re-enter; spawn orders: teleport; the kill feed: death sounds; drops: their
+// toss), which stay as they were.
+const NO_SHIFT = new Set(['startedAt', 'spawnTo', 'respawnedAt', 'feed', 'ground', 'picked', 'clock']);
+export function shiftClock(game, ms, now = Date.now()) { if (!(ms > 0) || game?.mode !== 'arena') return 0; let n = 0; const lo = now - ms - 864e5, hi = now + 864e5;
+  const walk = (o, depth) => { if (!o || typeof o !== 'object' || depth > 6) return; for (const k of Object.keys(o)) { if (depth === 0 && NO_SHIFT.has(k)) continue; const v = o[k]; if (typeof v === 'number') { if (v > lo && v < hi && v > 1e12) { o[k] = v + ms; n++; } } else if (v && typeof v === 'object') walk(v, depth + 1); } };
+  walk(game.arena, 0); walk(game.combat, 0); return n; }
 // M: change team. In the lobby / warmup at once; during a match at the next round (the round in play stays fair).
 // Balance: a side may not get two more players than the other, unless a bot gives way.
 function changeTeam(game, name, team, players, now) {
@@ -317,8 +401,21 @@ export function applyTeam(game, k, team, players, now) {
 // at }, broken[id], hp[id] (damage taken so far); v counts changes. A new map starts them fresh; so does every round
 // (arena-defuse.js newRound: CS closes the doors and puts the glass back).
 export function mapStateOf(game) { const A = game.arena, C = game.combat; if (!C.mapState || C.mapState.map !== A.map) C.mapState = { map: A.map, v: (C.mapState?.v || 0) + 1, doors: {}, broken: {}, hp: {} }; return C.mapState; }
-let appliedState = null, appliedV = -1;
-const syncMapState = game => { const st = game.combat?.mapState; if (!st || st === appliedState && st.v === appliedV) return; appliedState = st; appliedV = st.v; applyMapState(geo(game).boxes, st); };
+let appliedState = null, appliedV = -1, appliedNext = Infinity, appliedTo = null;   // (appliedNext: a door still swinging switches its collision then — arena-maps.js applyMapState; appliedTo: the boxes — a map file loaded for the map in play has new ones)
+// No state (a new match: startArena's fresh combat): every door shut and every pane whole, as clients draw it (arena-scene.js
+// mapState(undefined)) — the boxes are cached per map, so without this the last match's open doors and broken glass stayed
+// in the host's collision (bots' sight, grenades, smoke) for the whole next match.
+// A door box never turns solid round a live body (one who stepped into the doorway mid-swing): it waits till they have
+// left (applyMapState inWay; doorPlayers: the last tick's players — bots are in game.arena).
+let doorPlayers = [], doorPlayersOf = null, doorGame = null, doorNow = 0; const WB = [0, 0, 0, 0, 0, 0], NO_PLAYERS = [];
+const doorInWay = b => { WB[0] = b.minX - ARENA.cx; WB[1] = b.maxX - ARENA.cx; WB[2] = b.minZ - ARENA.cz; WB[3] = b.maxZ - ARENA.cz; WB[4] = b.y0; WB[5] = b.y1; return bodyIn(doorGame, WB, doorPlayersOf === doorGame ? doorPlayers : NO_PLAYERS, doorNow); };
+const syncMapState = (game, now = Date.now(), players = null) => { const st = game.combat?.mapState || null; if (players) { doorPlayers = players; doorPlayersOf = game; } if (!ARENA_MAPS[game.arena?.map]) return; const B = G(game).boxes; if (st === appliedState && B === appliedTo && (st ? st.v === appliedV : true) && now < appliedNext) return; appliedState = st; appliedV = st ? st.v : -1; appliedTo = B; doorGame = game; doorNow = now; appliedNext = applyMapState(B, st, now, null, doorInWay); };
+// A door may not swing into a body (CS2's doors stop at what is in their way): is any live player or bot inside box b
+// (map-relative [minX, maxX, minZ, maxZ, y0, y1]) — a body's radius round it, from its feet to its height?
+function bodyIn(game, b, players, now) { const r = 1.3, H = 72 * 2.54 / 16.5, inside = (x, z, feet) => x > b[0] - r && x < b[1] + r && z > b[2] - r && z < b[3] + r && feet < b[5] && feet + H > b[4];   // (arena-move.js MOVE.radius, CS2's 72-unit hull)
+  for (const p of players) { const q = p.pose; if (!q || isDown(game, p.name, now) || stillLoading(game, p)) continue; if (inside(q.x - ARENA.cx, q.z - ARENA.cz, poseFeet(q))) return true; }   /* (feet: the pose's own eye height, ey / 46 HU crouched — combat-logic poseFeet) */   // (still loading: their pose is of the last map)
+  for (const bot of game.arena?.bots || []) if (!isDown(game, bot.name, now) && inside(bot.x - ARENA.cx, bot.z - ARENA.cz, botFloor(game, bot))) return true;
+  return false; }
 const boxDist = (b, x, z) => Math.hypot(Math.max(b[0] - x, 0, x - b[1]), Math.max(b[2] - z, 0, z - b[3]));
 // An HE blast at (x, y, z) (map-relative): each door and breakable within its radius takes its damage (falling off as a
 // player's does); a door breaks off its hinges at DOOR_HP, glass and grates at their own health.
@@ -331,22 +428,24 @@ function blastMovers(game, x, y, z, r, dmg) { const movers = ARENA_MAPS[game.are
 // The way a rotating door swings open from (x, z) (map-relative): away from you (CS) — the side whose swung middle is farther.
 function awaySide(m, x, z) { if (m.kind !== 'rotdoor') return 1; const cx = (m.box[0] + m.box[1]) / 2 - m.hinge[0], cz = (m.box[2] + m.box[3]) / 2 - m.hinge[2], far = sg => { const t = sg * m.angle; return Math.hypot(m.hinge[0] + cx * Math.cos(t) + cz * Math.sin(t) - x, m.hinge[2] - cx * Math.sin(t) + cz * Math.cos(t) - z); };
   return far(1) >= far(-1) ? 1 : -1; }
-export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK.game = game; TICK.now = now; if (game.arena) game.arena.botAt = now;   // (the bots' positions are of this moment: botRoster stamps them so)
+export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK.game = game; TICK.now = now; routesLeft = ROUTES_PER_TICK; if (game.arena) game.arena.botAt = now;   // (the bots' positions are of this moment: botRoster stamps them so)
   if (game.mode !== 'arena' || !game.arena) return false; const A = game.arena, C = game.combat, g = G(game); let changed = false;
   // Doors and breakables: bots open the doors they reach and smash what blocks their way (they walk the map's paths,
   // which run through doorways and vents); the host's collision follows the state.
   { const movers = ARENA_MAPS[A.map]?.movers; if (movers?.length && A.bots.length) { let st = null;
       for (const b of A.bots) { if (isDown(game, b.name, now)) continue; const x = b.x - ARENA.cx, z = b.z - ARENA.cz;
         movers.forEach((m, id) => { const d = boxDist(m.box, x, z); if (d > 2.2) return; st ??= mapStateOf(game);
-          if (m.kind === 'break') { if (!st.broken[id] && d < 1.2) { st.broken[id] = 1; st.v++; changed = true; } }
-          else if (!st.doors[id]?.open) { st.doors[id] = { open: 1, side: awaySide(m, x, z), at: now }; st.v++; changed = true; } }); } } }
-  syncMapState(game);
+          if (m.kind === 'break') { const feet = botFloor(game, b); if (!m.pane && !st.broken[id] && d < 1.2 && feet > m.box[4] - 3 && feet < m.box[5]) { st.broken[id] = 1; st.v++; changed = true; } }   // (what's in their way at their height — a vent, boards; never a window they pass)
+          else if (!st.doors[id]?.open) { let side = awaySide(m, x, z); const bx = sg => m.open?.[m.kind === 'rotdoor' ? (sg < 0 ? '-' : '+') : 'open'];   // (never swung into a body: the other way, or not yet)
+            if (bx(side) && bodyIn(game, bx(side), players, now)) { if (m.kind === 'rotdoor' && !bodyIn(game, bx(-side), players, now)) side = -side; else return; }
+            st.doors[id] = { open: 1, side, at: now }; st.v++; changed = true; } }); } } }
+  syncMapState(game, now, players);
   // Lobby: start at the timeout when there are enough players, else wait 30 s more and say why.
   if (A.lobby && !A.lobby.started) { A.endsAt = now + DM_MS; if (now >= A.lobby.until) { const e = lobbyShort(game, players); if (e) { A.lobby.until = now + LOBBY_MORE_MS; A.lobby.note = e; } else beginMatch(game, players, now); changed = true; } }
   // Spawn orders for players who just respawned (their client moves them there).
   for (const [k, at] of Object.entries(C.respawnedAt || {})) { if (C.spawnTo[k]?.at === at) continue; const p = players.find(x => key(x.name) === k); if (!p) continue; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at, x: s.x, z: s.z }; changed = true; }
   // Deathmatch: a player seen for the first time gets a spot of their own too (not the client's guess).
-  if (!C.d) for (const p of players) { const k = key(p.name); if (p.bot || C.spawnTo[k]) continue; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at: now, x: s.x, z: s.z }; (C.safe ??= {})[k] = now + SPAWN_SAFE_MS; changed = true; }
+  if (!C.d) for (const p of players) { const k = key(p.name); if (p.bot || stillLoading(game, p) || C.spawnTo[k]) continue; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at: now, x: s.x, z: s.z }; (C.safe ??= {})[k] = now + SPAWN_SAFE_MS; changed = true; }
   // Defuse: the dead drop their best gun (with its rounds) and the bomb where they fell; it leaves their hands, so
   // nothing is duplicated. Deathmatch: you respawn with your loadout, nothing drops.
   A.deathDrops ??= {};
@@ -365,14 +464,14 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
   // Walking over a dropped gun with that slot empty picks it up (CS2): a rifle into an empty primary, a pistol into an
   // empty secondary; grenades while there's room; the bomb (Terrorists). An occupied slot is never replaced (E or the
   // B menu swap); your own drop isn't picked straight back up. One claim: it leaves the ground as it's taken.
-  if (C.ground?.length) for (const p of players) { if (!p.pose || !(p.pose.z < ARENA.maxZ) || isDown(game, p.name, now)) continue; const k = key(p.name), l = loadoutOf(game, p.name), fy = Math.max(0, (p.pose.y ?? EYE) - EYE);
+  if (C.ground?.length) for (const p of players) { if (!p.pose || stillLoading(game, p) || !(p.pose.z < ARENA.maxZ) || isDown(game, p.name, now)) continue; const k = key(p.name), l = loadoutOf(game, p.name), fy = Math.max(0, (p.pose.y ?? EYE) - EYE);
     for (let i = C.ground.length - 1; i >= 0; i--) { const it = C.ground[i]; if (Math.hypot(it.x - p.pose.x, it.z - p.pose.z) > 3.2 || Math.abs((it.y || 0) - fy) > 4 || now - it.at < 300 || (key(it.by) === k && now - it.at < 1500)) continue;
       const slot = slotOf(it.item); let took = false;
       if (slot === 'bomb') { if (C.d && teamOf(game, p.name) === 't' && !C.d.bomb.carrier) { C.d.bomb.carrier = k; took = true; } }
-      else if (slot === 'nades') { if (canCarry(l.nades ??= [], it.item)) { l.nades.push(it.item); took = true; } }
+      else if (slot === 'nades') { if (canCarry(l.nades ??= [], it.item) && !nadeRefusal(l.nades, it.item)) { l.nades.push(it.item); took = true; } }   // (one fire grenade: a CT walking over a T's molotov with an incendiary leaves it)
       else if (slot === 'primary' ? !l.primary : slot === 'secondary' && l.secondary === null) { l[slot] = it.item; setAmmo(game, p.name, it.item, it.ammo || fullAmmo(it.item)); took = true; }
       if (took) { C.ground.splice(i, 1); (C.picked ??= {})[k] = { item: it.item, at: now, ammo: it.ammo || null }; A.dirty = true; changed = true; } } }
-  if (nadesTick(game, players, dt, now, g, (x, y, z, r, dmg) => { if (blastMovers(game, x - ARENA.cx, y, z - ARENA.cz, r, dmg)) changed = true; }, id => { const m = ARENA_MAPS[game.arena.map]?.movers?.[id], st = mapStateOf(game); if (m?.kind === 'break' && !st.broken[id]) { st.broken[id] = 1; st.v++; syncMapState(game); changed = true; } })) changed = true;   // (a grenade through a pane breaks it)
+  if (C.d?.paused ? holdNades(game, now) : nadesTick(game, present(game, players), dt, now, g, (x, y, z, r, dmg) => { if (blastMovers(game, x - ARENA.cx, y, z - ARENA.cz, r, dmg)) changed = true; }, id => { if (breakPane(game, id)) changed = true; })) changed = true;   // (a grenade through a pane breaks it; a paused match holds every grenade where it is, its times moving on with the pause)
   if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => it.item === 'c4' || now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
   for (const bot of A.bots) {
     if (isDown(game, bot.name, now)) { bot.dead = true; continue; }
@@ -386,10 +485,10 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
     if (C.d && team === 't' && C.d.bomb.carrier === key(bot.name) && C.d.round.phase === 'live') { if (C.d.round.plant?.by === key(bot.name)) continue; if (!C.d.round.plant) { const site = siteAt(game, { x: bot.x, z: bot.z, y: feetOf(g, bot) + EYE }); if (site) { C.d.round.plant = { by: key(bot.name), start: now, x: bot.x, z: bot.z, y: feetOf(g, bot), site }; changed = true; continue; } } }
     const wpn = weaponById(bot.weapon), foes = alive(game, players, bot.name).filter(f => !team || C.d.teams[key(f.name)] !== team), DF = DIFFICULTY[A.difficulty] || DIFFICULTY.normal;
     // Grenades: run from a live HE close by; never stand in fire.
-    { const danger = (C.nades || []).find(n => (n.phase === 'air' && n.kind === 'he' && Math.hypot(n.x - bot.x, n.z - bot.z) < 40) || (n.phase === 'fire' && Math.hypot(n.x - bot.x, n.z - bot.z) < NADES.molotov.radius + 2 && inFire(fireCells(g.boxes, n.x, n.z, n.y), bot.x, bot.z)));
+    { const danger = (C.nades || []).find(n => (n.phase === 'air' && n.kind === 'he' && Math.hypot(n.x - bot.x, n.z - bot.z) < 40) || (n.phase === 'fire' && Math.hypot(n.x - bot.x, n.z - bot.z) < NADES.molotov.radius + 2 && inFire(fireCells(g.boxes, n.x, n.z, n.y), bot.x, bot.z, feetOf(g, bot))));   // (fire on the bot's own floor: not one above or below it)
       if (danger && botStep(g, bot, Math.atan2(bot.x - danger.x, bot.z - danger.z), 34 * dt)) { changed = true; continue; } }
     // Nearest visible enemy within range.
-    let tgt = null, td = Infinity; if (!A.practice || A.practice.bots === 'fight') for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && sees(game, g, bot.x, feetOf(g, bot) + EYE, bot.z, f.x, f.y ?? EYE, f.z)) { tgt = f; td = d; } }   // walls and smoke block
+    let tgt = null, td = Infinity; if (!A.practice || A.practice.bots === 'fight') for (const f of foes) { const d = Math.hypot(f.x - bot.x, f.z - bot.z); if (d < Math.min(wpn.range, 300) && d < td && sees(game, g, bot.x, feetOf(g, bot) + EYE, bot.z, f.x, f.y ?? EYE, f.z, f.fy, f.cr)) { tgt = f; td = d; } }   // walls and smoke block
     if (tgt) {
       if (bot.target !== tgt.name) { bot.target = tgt.name; bot.seenAt = now; }
       const want = Math.atan2(-(tgt.x - bot.x), -(tgt.z - bot.z)), diff = Math.atan2(Math.sin(want - bot.yaw), Math.cos(want - bot.yaw)); bot.yaw += Math.sign(diff) * Math.min(Math.abs(diff), dt * 6);
@@ -419,11 +518,12 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
     let moved = false; for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (tryMove(g, bot, nx, nz)) { bot.yaw = h + Math.PI; moved = true; break; } }
     if (!moved) bot.wp = -1;
   }
-  // The host scheduled another map for the next match: switch when this one ends (people keep their side).
-  if (C.d?.matchOver && A.nextMap && now - C.d.matchOver.at > DEFUSE.matchOverMs) { const id = A.nextMap, m = ARENA_MAPS[id], teams = { ...C.d.teams }; startArena(game, { map: id, kind: m.kind, bots: A.bots.length, difficulty: A.difficulty, freezeS: (A.freezeMs ?? 15000) / 1000, rules: A.rulesNext || A.rules }, now); if (game.combat.d) for (const [k, t] of Object.entries(teams)) if (!/^bot /.test(k)) game.combat.d.teams[k] = t; return true; }
+  // The match is over: after the scoreboard, a full new match — the host's next map or this one again (people keep their side).
+  { const over = C.d?.matchOver || A.over; if (over) warmNext(game, over, now); }   // (the next map, built while the scoreboard shows)
+  if (C.d?.matchOver && now - C.d.matchOver.at > DEFUSE.matchOverMs) { rematch(game, players, now); return true; }
   if (C.d) { if (defuseTick(game, players, now, { hurtAll: (x, z, y, dmg, R) => { for (const t of alive(game, players, '')) { const dd = Math.hypot(t.x - x, t.z - z); if (dd < R) hurt(game, 'C4', t.name, { id: 'c4', name: 'C4' }, Math.round(dmg * Math.pow(1 - dd / R, 1.4)), 'chest', now); } }, posOf: k => { const b = A.bots.find(b => key(b.name) === k); if (b) return b; const p = players.find(x => key(x.name) === k)?.pose; return p || null; } })) changed = true; return changed; }
   if (!A.over && now > A.endsAt) { const kills = C.kills || {}, top = Object.entries(kills).sort((a, b) => b[1] - a[1])[0]; A.over = { at: now, winner: top ? top[0] : null }; changed = true; }
-  if (A.over && now - A.over.at > 12000) { startArena(game, { map: A.map, bots: A.bots.length }, now); changed = true; }
+  if (A.over && now - A.over.at > 12000) { rematch(game, players, now); changed = true; }   // (the host's settings stay: bots, difficulty, the next map)
   return changed;
 }
 
@@ -440,7 +540,7 @@ function defuseBot(game, bot, team, g, dt, now) {
   // A Terrorist without the bomb picks it up if it lies near.
   if (team === 't' && !d.bomb.carrier) { const i = (game.combat.ground || []).findIndex(it => it.item === 'c4' && Math.hypot(it.x - bot.x, it.z - bot.z) < 4); if (i >= 0) { game.combat.ground.splice(i, 1); d.bomb.carrier = k; return true; } }
   // Past the last waypoint but not there (it was skipped while stuck): walk a fresh route to it (at most every 2 s).
-  if (bot.pi >= bot.path.length) { const end = bot.path[bot.path.length - 1]; if (!m.nav || !end || Math.hypot(end[0] - bot.x, end[1] - bot.z) < 4 || now - (bot.replanAt || 0) <= 2000) return false;
+  if (bot.pi >= bot.path.length) { const end = bot.path[bot.path.length - 1]; if (!m.nav || !end || Math.hypot(end[0] - bot.x, end[1] - bot.z) < 4 || now - (bot.replanAt || 0) <= 2000 || !routeTurn()) return false;
     bot.replanAt = now; const fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz); if (!fresh.length) return false; bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; }
   // Reached when close: on the classic maps within 1.5 units (a tick's step), so a bot never cuts a corner off the walk the
   // route checked (4 units let bots shortcut round ledges and wedge there).
@@ -453,7 +553,7 @@ function defuseBot(game, bot, team, g, dt, now) {
   { const prog = dw + (Number.isFinite(wy) ? Math.max(0, feetOf(g, bot) - wy) : 0);
     if (bot.wpI !== bot.pi || bot.wpPath !== bot.path) { bot.wpI = bot.pi; bot.wpPath = bot.path; bot.wpBest = prog; bot.wpAt = now; }
     else if (prog < bot.wpBest - 1) { bot.wpBest = prog; bot.wpAt = now; }
-    else if (m.nav && now - bot.wpAt > 3000) { bot.wpAt = now; (bot.avoid ??= []).push([wx - cx, wz - cz]); if (bot.avoid.length > 8) bot.avoid.shift();
+    else if (m.nav && now - bot.wpAt > 3000 && routeTurn()) { bot.wpAt = now; (bot.avoid ??= []).push([wx - cx, wz - cz]); if (bot.avoid.length > 8) bot.avoid.shift();
       const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz, bot.avoid);
       if (fresh.length) { bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; } } }
   let tx = wx, tz = wz; if (above && dw < 4) { const [px, pz] = bot.pi > 0 ? bot.path[bot.pi - 1] : [bot.x - (wx - bot.x), bot.z - (wz - bot.z)], L = Math.hypot(wx - px, wz - pz) || 1; tx = wx + (wx - px) / L * 3; tz = wz + (wz - pz) / L * 3; }
@@ -463,7 +563,7 @@ function defuseBot(game, bot, team, g, dt, now) {
   const stuckFor = now - (bot.stillSince ?? now), head = stuckFor > 1000 && stuckFor % 1500 < 500 ? head0 + (Math.floor(stuckFor / 1500) % 2 ? 2.2 : -2.2) : head0;
   for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (tryMove(g, bot, nx, nz)) { bot.yaw = h + Math.PI; return true; } }
   // Stuck: on classic maps walk a fresh route from here to where this one ends (at most every 2 s); else skip the waypoint.
-  if (m.nav && now - (bot.replanAt || 0) > 2000) { bot.replanAt = now; const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz);
+  if (m.nav && now - (bot.replanAt || 0) > 2000) { if (!routeTurn()) return false;   /* (another bot re-planned this tick: wait for the next one) */ bot.replanAt = now; const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz);
     if (fresh.length) { bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; } }
   bot.pi++; return true;   // stuck: skip this waypoint
 }

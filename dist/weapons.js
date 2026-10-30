@@ -22,12 +22,14 @@ import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, CROUCH_H, zoneAt, HIT_GROUPS, 
 import { loadSounds, reloadSound, fx as rec } from './sound-bank.js';
 import { loadFP, fpFor, onFPReady, wantFP, hasFP } from './fp-view.js';
 import { createClipChannel } from './fp-sounds.js';
+import { synthWhoosh } from './gd-sounds.js';
 import { applySkin } from './skin-render.js';
 import { live } from './live-settings.js';
 // The view model's own field of view (vertical degrees; 0: the world's), as CS2's viewmodel_fov 68 (4:3 horizontal ≈ 54 vertical).
 export const VIEWMODEL = { fov: 58 };
 import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT, knifeFor } from './weapon-models.js';
-import { rayBoxes, bulletPath } from './arena-maps.js';
+import { rayBoxes, bulletPath, BulletPath } from './arena-maps.js';
+const PATH = new BulletPath();   // (each pellet's way, refilled: no garbage per shot)
 
 // Draw (deploy) time, CS2-like: it swings up from below; no shooting until it's up.
 const DRAW_BY_KIND = { pistol: 600, smg: 750, rifle: 900, sniper: 1050, shotgun: 850, lmg: 1100, knife: 450, nade: 500, bomb: 600 };
@@ -60,11 +62,13 @@ function tick(freq = 1800, len = .05, vol = .25, type = 'square', at = null) { t
 export function warmTicks() { try { actx = audioCtx(); } catch {} }
 // `at`: where the sound happens (another player / bot); left out = your own sound. `id`: the weapon.
 // Recorded handling (sound-bank fx: draw, knife, dry fire, scope, pin), the synthesized ticks if not loaded yet.
-export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kind === 'knife') rec('knifedraw', { at, volume: .5, kind: 'handling' }) || tick(1800, .07, .1, 'sawtooth', at); else if (w?.kind === 'nade') tick(2600, .03, .1, 'square', at); else rec('draw', { at, volume: .7, rate: w?.kind === 'pistol' ? 1.08 : .95, kind: 'handling' }) || reloadSound(2, id, at) || tick(900, .05, .2, 'square', at); },
+// (gid: the weapon — Global Defensive's bank picks that weapon's event: gd-sounds.js; the other modes ignore it)
+export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kind === 'knife') rec('knifedraw', { at, volume: .5, kind: 'handling' }) || tick(1800, .07, .1, 'sawtooth', at); else if (w?.kind === 'nade') rec('nadedraw', { at, gid: id }) || tick(2600, .03, .1, 'square', at); else rec('draw', { at, volume: .7, rate: w?.kind === 'pistol' ? 1.08 : .95, kind: 'handling', gid: id }) || reloadSound(2, id, at) || tick(900, .05, .2, 'square', at); },
+  toss: (at, kind) => rec('toss', { at, gid: kind }) || (!at && synthWhoosh()),   // a grenade let go (no CS2 clip of it): CS2's throw, else a whoosh
   slash: (at, heavy = false) => rec('slash', { at, volume: heavy ? .9 : .7, rate: heavy ? .85 : 1.05, kind: 'handling' }) || (tick(heavy ? 220 : 300, heavy ? .18 : .12, .25, 'sawtooth', at), setTimeout(() => tick(heavy ? 140 : 180, .08, .15, 'sawtooth', at), 40)),
   stab: (at, heavy = false) => rec('stab', { at, volume: heavy ? 1 : .8, rate: heavy ? .9 : 1, kind: 'handling' }),
-  dry: at => rec('dry', { at, volume: .7, kind: 'handling' }) || tick(2400, .04, .18, 'square', at), scope: () => rec('scope', { volume: .5, rate: 1.2, kind: 'handling' }) || tick(3200, .025, .12, 'square'),
-  pin: at => rec('pin', { at, volume: .8, kind: 'handling' }) || (tick(2900, .03, .14, 'square', at), setTimeout(() => tick(1900, .04, .1, 'triangle', at), 90)),
+  dry: (at, id) => rec('dry', { at, volume: .7, kind: 'handling', gid: id }) || tick(2400, .04, .18, 'square', at), scope: () => rec('scope', { volume: .5, rate: 1.2, kind: 'handling' }) || tick(3200, .025, .12, 'square'),
+  pin: (at, kind) => rec('pin', { at, volume: .8, kind: 'handling', gid: kind }) || (tick(2900, .03, .14, 'square', at), setTimeout(() => tick(1900, .04, .1, 'triangle', at), 90)),
   magOut: (at, id) => reloadSound(0, id, at) || tick(420, .09, .3, 'triangle', at), magIn: (at, id) => reloadSound(1, id, at) || tick(620, .07, .35, 'triangle', at), bolt: (at, id) => reloadSound(2, id, at) || (tick(900, .05, .3, 'square', at), setTimeout(() => tick(1300, .04, .25, 'square', at), 70)) };
 
 // Options: scene, camera, effects (fun-pistol), arsenal() ids, targets() [{ id, feet, crouched, seen }] (seen: the
@@ -162,7 +166,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     if (best) sounds.stab(null, knife.kind === 'heavy');
     if (best) { const y = Math.min(best.tgt.feet.y + BODY_H, Math.max(best.tgt.feet.y, o.y + d.y * best.t)); report({ type: 'hit', target: best.tgt.id, seen: best.tgt.seen, weapon: current.id, attack: knife.kind, chain: !!knife.chain, zone: zoneAt(y - best.tgt.feet.y) === 'head' ? 'head' : 'chest' }); }
     // No one in reach: the blade meets glass or a vent grate in front (CS: the knife breaks them too).
-    if (!best) { const P = bulletPath(boxes(), o.x, o.y, o.z, d.x, d.y, d.z, K.range, 0), b = P.stopBox?.mover != null ? P.stopBox : P.embedded;
+    if (!best) { const P = bulletPath(boxes(), o.x, o.y, o.z, d.x, d.y, d.z, K.range, 0, PATH), b = P.stopBox?.mover != null ? P.stopBox : P.embedded;
       if (b) dispatchEvent(new CustomEvent('gd-break', { detail: { boxes: [b], dmg: knife.kind === 'heavy' ? 65 : 40 } })); }
   }
   // Grenades: press = pull the pin (and hold); release = throw. Left alone: long throw; right alone: short underhand;
@@ -172,7 +176,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // release. The buttons held at the moment you let go pick the throw: both = medium, left = long, right = short.
   // Switching weapons, a menu or leaving the window cancels (cancelUtility).
   function nadeButton(btn, on) {
-    if (on) { if (nade.state === 'thrown' || nade.state === 'release') return; nade.buttons.add(btn); if (nade.state === 'idle') { nade.state = 'priming'; nade.primedAt = Math.max(now(), drawAt + drawMs) + THROW.primeMs; nade.queued = null; if (!clipStart('prime')) sounds.pin(); if (fp?.prime) fp.prime(); else fp?.fire(); } return; }
+    if (on) { if (nade.state === 'thrown' || nade.state === 'release') return; nade.buttons.add(btn); if (nade.state === 'idle') { nade.state = 'priming'; nade.primedAt = Math.max(now(), drawAt + drawMs) + THROW.primeMs; nade.queued = null; if (!clipStart('prime')) sounds.pin(null, current.id); if (fp?.prime) fp.prime(); else fp?.fire(); } return; }
     if (!nade.buttons.has(btn)) return; const held = new Set(nade.buttons); nade.buttons.delete(btn);
     const pick = held.size > 1 ? 'medium' : held.has(0) ? 'long' : 'short';
     if (nade.state === 'priming') { if (!nade.buttons.size || held.size > 1) nade.queued = pick; return; }   // let go early: thrown the moment the pin is out (CS2)
@@ -186,7 +190,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     if (current.kind === 'bomb' || current.kind === 'nade') return false;   // planting: lab → arena-ui.plant · grenades: nadeButton
     if (now() - lastShot < current.rateMs) return false;
     const id = current.id, [mag, res] = left(id);
-    if (mag <= 0) { if (now() - lastDry > 250) { lastDry = now(); sounds.dry(); } if (res > 0) reload(); return false; }
+    if (mag <= 0) { if (now() - lastDry > 250) { lastDry = now(); sounds.dry(null, current.id); } if (res > 0) reload(); return false; }
     inspecting = null; lastShot = now(); shots++; kick = 1; shake.pitch += (RECOIL.kick[current.kind] ?? .6) * D2R; shake.yaw += (Math.random() - .5) * (RECOIL.kick[current.kind] ?? .6) * .5 * D2R; ammo.set(id, [mag - 1, res]); fp?.fire();
     // The ray: from the eye along aim + spray(ri) (+ movement cone).
     const a = aim(), o = camera.getWorldPosition(origin), m = move();
@@ -196,12 +200,12 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     const bx = boxes(), hits = new Map(), ends = []; let broke = null;   // (doors and breakables a bullet hit: map files' movers)
     for (const d of dirs) {
       // Through crates and thin walls (wallbang) as far as the gun's penetration allows; then the floor or the first solid wall.
-      const path = bulletPath(bx, o.x, o.y, o.z, d.x, d.y, d.z, 2000, current.pen || 0), wallT = Math.min(path.stop, d.y < -1e-6 ? -o.y / d.y : Infinity, !bx.length && effects.hitPoint ? effects.hitPoint(o, d).point.distanceTo(o) : Infinity);
+      const path = bulletPath(bx, o.x, o.y, o.z, d.x, d.y, d.z, 2000, current.pen || 0, PATH), wallT = Math.min(path.stop, d.y < -1e-6 ? -o.y / d.y : Infinity, !bx.length && effects.hitPoint ? effects.hitPoint(o, d).point.distanceTo(o) : Infinity);
       let best = null; for (const tgt of targets()) { const t = rayCapsule(o, d, tgt.feet, tgt.crouched ? BODY_H * CROUCH_H : BODY_H); if (t !== null && t < wallT && t <= current.range && (!best || t < best.t)) best = { t, tgt }; }
       const end = Math.min(best ? best.t : wallT, 400); onShot(o.x, o.y, o.z, d.x, d.y, d.z, end, (current.dmg || 30) / 30);   // (a CS2 map's pots and cans on the way: knocked or shattered)
-      for (const c of path.crossed) if (c.t0 < end) ends.push({ point: o.clone().addScaledVector(d, c.t0), normal: d.clone().negate(), mark: true });   // entry holes in what it went through
+      for (const c of path.crossed) if (c.t0 < end) ends.push({ point: o.clone().addScaledVector(d, c.t0), normal: new THREE.Vector3(c.nx, c.ny, c.nz), mark: true, mat: c.mat || null });   // entry holes in what it went through (on its face: CS2 maps, the triangle's own)
       for (const c of path.crossed) if (c.t0 < end && c.b?.mover != null) (broke ??= new Set()).add(c.b); if (path.stopBox?.mover != null && !best && wallT === path.stop) (broke ??= new Set()).add(path.stopBox); if (path.embedded && !best && wallT === path.stop) (broke ??= new Set()).add(path.embedded);
-      ends.push({ point: o.clone().addScaledVector(d, end), normal: best ? null : d.clone().negate(), flesh: !!best });
+      const sn = path.stopNormal; ends.push({ point: o.clone().addScaledVector(d, end), normal: best ? null : wallT === path.stop && sn ? new THREE.Vector3(sn[0], sn[1], sn[2]) : wallT < path.stop && d.y < -1e-6 && wallT === -o.y / d.y ? new THREE.Vector3(0, 1, 0) : d.clone().negate(), flesh: !!best, mat: !best && wallT === path.stop ? path.stopBox?.mat || path.embedded?.mat || null : null });   // (the mark lies on the wall or floor it hit; mat: what it is — the impact's sound)
       if (!best) continue; const y = (o.y + d.y * best.t - best.tgt.feet.y) / (best.tgt.crouched ? CROUCH_H : 1), h = hits.get(best.tgt.id) || { pellets: 0, seen: best.tgt.seen }, z = zoneAt(y);
       h.pellets++; if (!h.zone || HIT_GROUPS[z] > HIT_GROUPS[h.zone]) h.zone = z; hits.set(best.tgt.id, h);
     }
@@ -268,7 +272,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       { const [p, y] = sprayAt(current, ri); punch.pitch = p * D2R; punch.yaw = y * D2R; }
       if (knife && !knife.done && now() >= knife.hitAt) { knife.done = true; if (canFire()) knifeHit(); }
       if (nade.state === 'priming' && now() >= nade.primedAt) { if (nade.queued) { nade.strength = nade.queued; nade.state = 'release'; } else nade.state = 'held'; }
-      if (nade.state === 'release') { nade.state = 'thrown'; nade.thrownAt = now(); fp?.throw?.(nade.strength); clipStart(nade.strength === 'short' ? 'throwlow' : 'throw'); if (canFire()) throwNade(current.id, nade.strength); else cancelNade(); }
+      if (nade.state === 'release') { nade.state = 'thrown'; nade.thrownAt = now(); fp?.throw?.(nade.strength); if (!clipStart(nade.strength === 'short' ? 'throwlow' : 'throw')) sounds.toss(null, current.id);   /* (one throw sound: CS2's clip, else its event / a whoosh — arena-ui no longer adds its own: GD-AUD-07) */ if (canFire()) throwNade(current.id, nade.strength); else cancelNade(); }
       // After the throw (the arm follows through): another of the same grenade comes up, else back to your last weapon.
       if (nade.state === 'thrown' && now() - nade.thrownAt > 450) { const own = arsenal(); if (own.includes(current.id)) { nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }; drawAt = now(); drawMs = DRAW_MS[current.id] || 500; setView(current.id, true); } else return this.equip(this.fallback()); }
       if (rescope && now() >= rescope.at) { if (current?.id === rescope.id && !reloading() && (rescope.manual || autoRescope())) { scope = rescope.level; sounds.scope(); } rescope = null; }
@@ -316,4 +320,4 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     }
   };
 }
-export const feetOf = pose => new THREE.Vector3(pose.x, Math.max(0, pose.y - (pose.crouched ? 5.9 : EYE)), pose.z);
+export const feetOf = pose => new THREE.Vector3(pose.x, Math.max(0, pose.y - (Number.isFinite(pose.ey) ? pose.ey : pose.crouched ? 5.9 : EYE)), pose.z);   // (GD poses carry ey, the eye over the feet — combat-logic poseFeet; the hall's crouch is 5.9)

@@ -12,6 +12,20 @@ import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
 import { createNadeMesh } from './nade-mesh.js';
 
 const CROUCH = 36, SOLID = /^func_(wall|wall_toggle|breakable|door|door_rotating|pushable|train|tracktrain|plat|rotating|button|brush)$/, Q = 2;
+// A solid stretch [lo, hi] cut where its rays change (a wall stands on a floor all four rays are in): the pieces whose
+// solid rays are one side's pair, the others open (bit j: rayP, j = (−4, −4), (4, −4), (−4, 4), (4, 4) Hammer),
+// with the side of the column they can lose (cs-mapbuild.js mergeSegs: 1 −x, 2 +x, 3 −z, 4 +z in game axes; Hammer +y
+// is the game's −z); [[bottom, top, side 0–4], …] or null when no piece loses anything. Pieces under 2Q stay whole.
+const TRIM = new Int8Array(16), ZS = [], PCS = []; TRIM[10] = 1; TRIM[5] = 2; TRIM[3] = 3; TRIM[12] = 4;
+function trimOf(R, lo, hi) { let full = 0; for (let j = 0; j < 4; j++) { let cov = 0; const L = R[j]; for (let i = 0; i < L.length; i++) { const o = Math.min(hi, L[i][1]) - Math.max(lo, L[i][0]); if (o > 0) cov += o; } if (cov >= hi - lo - 2 * Q) full++; }
+  if (full > 2) return null;   // (three rays or more all along, but for less than a piece: no piece is one side's pair — most columns, sloped floors)
+  ZS.length = 0; ZS.push(lo, hi); for (let j = 0; j < 4; j++) for (const s of R[j]) for (let e = 0; e < 2; e++) { const v = s[e]; if (v > lo + Q / 2 && v < hi - Q / 2) ZS.push(Math.round(v / Q) * Q); }
+  ZS.sort((a, b) => a - b); PCS.length = 0; let any = false;
+  for (let k = 0; k + 1 < ZS.length; k++) { const a = ZS[k], b = ZS[k + 1]; if (b - a < 1e-6) continue; const mid = (a + b) / 2; let m = 0; for (let j = 0; j < 4; j++) for (const s of R[j]) if (s[0] <= mid && s[1] >= mid) { m |= 1 << j; break; }
+    const code = b - a >= 2 * Q ? TRIM[m] : 0, n = PCS.length; if (code) any = true; if (n && PCS[n - 1] === code) PCS[n - 2] = b; else PCS.push(a, b, code); }
+  if (!any) return null; const out = []; for (let k = 0; k < PCS.length; k += 3) out.push([PCS[k], PCS[k + 1], PCS[k + 2]]); return out; }
+// The four rays alike (a column inside a solid, or open, or under a plain floor): nothing to trim (most columns).
+function sameRays(R) { const A = R[0]; for (let j = 1; j < 4; j++) { const B = R[j]; if (B.length !== A.length) return false; for (let k = 0; k < A.length; k++) if (B[k][0] !== A[k][0] || B[k][1] !== A[k][1]) return false; } return true; }
 // Counter-Strike 1.6 doors (sliding, and rotating about an upright hinge) and breakables (glass, vents, crates) move or
 // break in play: they are not part of the fixed collision but boxes of their own, switched by the round's state
 // (arena-maps.js applyMapState), and drawn as meshes of their own (bsp-mesh.js). Unbreakable glass (material 7),
@@ -36,22 +50,28 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // Counter-Strike 2 maps: what bullets hit, sampled the same way (cs2-map.js bulletSpans) with what each stretch is made
   // of — no player clips (Mirage's mid window, smoothing round corners) or fences that let bullets through.
   const bspans = bsp.bulletSpans ? new Array(N) : null, evB = [], mB = [];
+  // Counter-Strike 2 maps: a stretch only one side's pair of rays is solid in (the other pair open all along it) has its
+  // face in that half of the column — CS2's walls were sampled onto lines 8 apart, each line solid within 4 of a face, so
+  // the open pair's line lies over 4 short of the face: the stretch's box loses the open half (8 units; trimOf). A wall's
+  // box then stands 0–8 units proud of the face instead of 0–16 (the walls felt thick; shots near them stopped short).
+  const trimOn = !!bsp.cs2, rayP = [[], [], [], []];
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const cx = x0 + (c + .5) * CELL, cy = y1 - (r + .5) * CELL; ev.length = 0;
-    for (const [dx, dy] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) { const x = cx + dx, y = cy + dy, ray = [];
+    for (let j = 0; j < 4; j++) { const dx = j & 1 ? 4 : -4, dy = j & 2 ? 4 : -4, x = cx + dx, y = cy + dy, ray = rayP[j] = [];   // (rays j: (−4, −4), (4, −4), (−4, 4), (4, 4))
       for (const p of parts) { if (x < p.mins[0] || x > p.maxs[0] || y < p.mins[1] || y > p.maxs[1]) continue; for (const [b, t] of (bsp.solidSpans ? bsp.solidSpans(p.head, x - p.off[0], y - p.off[1], zA - p.off[2], zB - p.off[2]) : solidSpans(bsp, p.head, x - p.off[0], y - p.off[1], zA - p.off[2], zB - p.off[2]))) ray.push([b + p.off[2], t + p.off[2]]); }   // Source: by its brushes (vbsp.js)
       if (bsp.extraSpans) { const ex = bsp.extraSpans(x, y); if (ex) for (const [b, t] of ex) if (t > zA && b < zB) ray.push([b, t]); }   // Source: displacements, solid props (vbsp-solids.js)
       for (const [b, t] of ray) { ev.push(b, 1, t, -1); } }
     const ord = []; for (let i = 0; i < ev.length; i += 2) ord.push(i); ord.sort((a, b) => ev[a] - ev[b] || ev[b + 1] - ev[a + 1]);
     const out = []; let k = 0, start = null; for (const i of ord) { const was = k; k += ev[i + 1]; if (was < 2 && k >= 2) start = ev[i]; else if (was >= 2 && k < 2 && start !== null) { const lo = Math.floor(start / Q) * Q, hi = Math.round(ev[i] / Q) * Q, last = out[out.length - 1]; if (last && lo - last[1] < 4) last[1] = hi; else if (hi > lo) out.push([lo, hi]); start = null; } }
-    spans[r * cols + c] = out;
+    spans[r * cols + c] = out; if (trimOn && !sameRays(rayP)) for (const s of out) { const pc = trimOf(rayP, s[0], s[1]); if (pc) s.pieces = pc; }
     if (bspans) { evB.length = 0; mB.length = 0;
       for (const [dx, dy] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) for (const [b, t, m] of bsp.bulletSpans(cx + dx, cy + dy, zA, zB)) { evB.push(b, 1, t, -1); mB.push(b, t, m); }
       const ordB = []; for (let i = 0; i < evB.length; i += 2) ordB.push(i); ordB.sort((a, b) => evB[a] - evB[b] || evB[b + 1] - evB[a + 1]);
       const outB = []; let kb = 0, sb = null; for (const i of ordB) { const was = kb; kb += evB[i + 1]; if (was < 2 && kb >= 2) sb = evB[i]; else if (was >= 2 && kb < 2 && sb !== null) { const lo = Math.floor(sb / Q) * Q, hi = Math.round(evB[i] / Q) * Q;
-        if (hi > lo) { let mat = 'concrete', best = 0; for (let j = 0; j < mB.length; j += 3) { const ov = Math.min(hi, mB[j + 1]) - Math.max(lo, mB[j]); if (ov > best) { best = ov; mat = mB[j + 2]; } } outB.push([lo, hi, mat]); } sb = null; } }
+        if (hi > lo) { let mat = 'concrete', best = 0; for (let j = 0; j < mB.length; j += 3) { const ov = Math.min(hi, mB[j + 1]) - Math.max(lo, mB[j]); if (ov > best) { best = ov; mat = mB[j + 2]; } } outB.push([lo, hi, mat]); } sb = null; } }   // (not trimmed: bullets find the wall in the box by its triangles — arena-maps.js bulletPath's fine phase)
       bspans[r * cols + c] = outB; } }
   if (!src) thinWalls(bsp, parts, spans, { x0, y1, cols, rows, zA, zB, src });   // (Source maps: their brushes clipped exactly per ray; none was walked through)
-  if (!src) playerClips(bsp, spans, { x0, y1, cols, rows, zA, zB });
+  const preClip = !src && !bspans ? spans.slice() : null; if (!src) playerClips(bsp, spans, { x0, y1, cols, rows, zA, zB });
+  const clipFree = preClip && preClip.some((L, i) => L !== spans[i]) ? preClip : null;   // (a column a clip went into has a new list: playerClips)
   // Floors: a solid's top with crouching room above (its ceiling the next solid's bottom); three per column at most —
   // standing room first, lowest first.
   const n = new Uint8Array(N), z = new Float32Array(N * MAXF).fill(NONE), ceil = new Float32Array(N * MAXF).fill(Infinity), place = new Uint8Array(N * MAXF), flags = new Uint8Array(N), slope = new Uint8Array(N * MAXF), floorOf = new Array(N);
@@ -125,9 +145,14 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   const T10 = pickTen(tSp), CT10 = pickTen(ctSp);
   for (const [pts, name] of [[tSp, 'TSpawn'], [ctSp, 'CTSpawn']]) { const pid = placeId(name); for (const p of pts) { const i = cellOf(p[0], p[1]); if (i < 0) continue; const k = floorNear(i, p[2]); if (k >= 0 && !G.places[place[i * MAXF + k]]) place[i * MAXF + k] = pid; } }
   // Collision segments: the solid stretches, walk-on where a floor is on top.
-  const segs = new Array(N); for (let i = 0; i < N; i++) { const out = []; for (const [b, t] of spans[i]) { if (t <= zLow - 64) continue; const top = floorOf[i].some(f => f.h === t); out.push([Math.max(b, zLow - 64), t, top ? (T.floor || 'concrete') : (T.wall || 'concrete'), top]); } segs[i] = out; }
-  // (CS2 maps: the bullets' own boxes, each with what it is made of — arena-maps.js mapBoxes / bulletPath)
-  const bsegs = bspans ? bspans.map(L => L.filter(([, hi]) => hi > zLow - 64).map(([lo, hi, m]) => [Math.max(lo, zLow - 64), hi, m, false])) : null;
+  const segOf = (L, i) => { const out = []; for (const s of L) { const [b, t] = s; if (t <= zLow - 64) continue; const top = floorOf[i].some(f => f.h === t), wall = T.wall || 'concrete';
+    if (!s.pieces) { out.push([Math.max(b, zLow - 64), t, top ? (T.floor || 'concrete') : wall, top]); continue; }
+    s.pieces.forEach(([pb, pt, tr], k) => { if (pt <= zLow - 64) return; const up = (top && pt === t) || (!tr && !!s.pieces[k + 1]?.[2]), g = [Math.max(pb, zLow - 64), pt, up ? (T.floor || 'concrete') : wall, up]; if (tr) g.push(tr); out.push(g); }); } return out; };   // (pieces: CS2 maps, trimOf — a whole piece under one that lost a side is floor there: walked on, merged with the floor beside it)
+  const segs = new Array(N); for (let i = 0; i < N; i++) segs[i] = segOf(spans[i], i);
+  // (CS2 maps: the bullets' own boxes, each with what it is made of — arena-maps.js mapBoxes / bulletPath; Counter-Strike
+  // 1.6 maps with player clips: the stretches before the clips went in — a clip stops players, never a bullet)
+  const bsegs = bspans ? bspans.map(L => L.filter(([, hi]) => hi > zLow - 64).map(([lo, hi, m]) => [Math.max(lo, zLow - 64), hi, m, false]))
+    : clipFree ? clipFree.map((L, i) => L === spans[i] ? segs[i] : segOf(L, i)) : null;
   // Spawns carry their floor's height ([x, z, y]): these maps have floors above the spawns (balconies, bridges).
   const spawnY = p => { const i = cellOf(p[0], p[1]), k = i >= 0 ? floorNear(i, p[2]) : -1; return +(((k >= 0 ? z[i * MAXF + k] : p[2]) - zLow) * U).toFixed(2); };
   const spawns = { t: T10.map(p => [...toGameXZ(p[0], p[1]), spawnY(p)]), ct: CT10.map(p => [...toGameXZ(p[0], p[1]), spawnY(p)]) };
@@ -148,7 +173,7 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
     else if (kind === 'door') { const ang = +e.angle || 0, d = ang === -1 ? [0, 0, 1] : ang === -2 ? [0, 0, -1] : [Math.cos(ang * Math.PI / 180), Math.sin(ang * Math.PI / 180), 0], size = [0, 1, 2].map(k => b.maxs[k] - b.mins[k]);
       const len = Math.max(0, Math.abs(d[0]) * size[0] + Math.abs(d[1]) * size[1] + Math.abs(d[2]) * size[2] - (+e.lip || 0)), g = [d[0] * len * U, d[2] * len * U, -d[1] * len * U].map(v => +v.toFixed(3)); m.slide = g;
       m.open = { open: [box[0] + g[0], box[1] + g[0], box[2] + g[2], box[3] + g[2], box[4] + g[1], box[5] + g[1]] }; }
-    else { m.glass = !+e.material; m.health = Math.max(1, +e.health || 1); if (e.look === 'bounds') m.lookBounds = true; }   // (its look: the meshes in its box — cs2-render.js)
+    else { m.glass = !+e.material; m.health = Math.max(1, +e.health || 1); if (e.look === 'bounds') m.lookBounds = true; if (e.pane) m.pane = true; }   // (its look: the meshes in its box — cs2-render.js)
     movers.push(m); });
   // Grenades fly through the map's real shapes, as in CS — not its player clips (the roofs and edges that stop only
   // players) nor the collision columns (a gap narrower than a column would be shut): a point test on the file. Counter-
@@ -163,12 +188,27 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // units: the way out of the nearest surface (game axes) and how far in (dist/nade-mesh.js).
   const NMC = bsp.nadeMesh ? createNadeMesh(bsp.nadeMesh) : null, NMO = new Float64Array(4);
   const nadeMesh = NMC ? { tris: NMC.tris, contact: (gx, gy, gz, r, out) => { if (!NMC.contact(x0 + (gx + W / 2) / U, y1 - (gz + D / 2) / U, zLow + gy / U, r / U, NMO)) return false; out[0] = NMO[0]; out[1] = NMO[2]; out[2] = -NMO[1]; out[3] = NMO[3] * U; return true; },
-    blocked: (ax, ay, az, bx, by, bz, sightOnly) => NMC.blocked(x0 + (ax + W / 2) / U, y1 - (az + D / 2) / U, zLow + ay / U, x0 + (bx + W / 2) / U, y1 - (bz + D / 2) / U, zLow + by / U, sightOnly) } : null;   // (blocked: does a→b cross a surface — sightOnly: one that stops sight)
+    blocked: (ax, ay, az, bx, by, bz, sightOnly) => NMC.blocked(x0 + (ax + W / 2) / U, y1 - (az + D / 2) / U, zLow + ay / U, x0 + (bx + W / 2) / U, y1 - (bz + D / 2) / U, zLow + by / U, sightOnly),   // (blocked: does a→b cross a surface — sightOnly: one that stops sight)
+    // first: the fraction of a→b where it first crosses a surface (the same in either units: the map is only scaled and
+    // turned) or Infinity, and that triangle's outward normal in game axes into out (bullets: arena-maps.js bulletPath).
+    first: (ax, ay, az, bx, by, bz, sightOnly, out) => { const w = NMC.first(x0 + (ax + W / 2) / U, y1 - (az + D / 2) / U, zLow + ay / U, x0 + (bx + W / 2) / U, y1 - (bz + D / 2) / U, zLow + by / U, sightOnly, out ? NMO : null); if (out && w !== Infinity) { out[0] = NMO[0]; out[1] = NMO[2]; out[2] = -NMO[1]; } if (out && out.length > 3) out[3] = w !== Infinity ? NMO[3] : 0; return w; },   // (out[3]: two faces at one point, nade-mesh.js)
+    sight: !!bsp.nadeMesh.sight,   // (which triangles stop sight is known: bullets refine their boxes on those)
+    minY: (bsp.nadeMesh.o[2] + bsp.nadeMesh.box[2] * bsp.nadeMesh.s[2] - zLow) * U,   // (the lowest surface's height, game units: under it nothing — a grenade falling past it has left the world, arena-nades.js)
+    // The triangles round the box [x0, x1] × [y0, y1] × [z0, z1] (game units): corners into out, sight flags into flags (a
+    // collision view, gd-collision-view.js).
+    anyIn: (gx0, gy0, gz0, gx1, gy1, gz1, sightOnly) => NMC.anyIn(x0 + (gx0 + W / 2) / U, y1 - (gz1 + D / 2) / U, zLow + gy0 / U, x0 + (gx1 + W / 2) / U, y1 - (gz0 + D / 2) / U, zLow + gy1 / U, sightOnly),   // (any triangle round that box: nade-mesh.js)
+    trianglesIn: (gx0, gy0, gz0, gx1, gy1, gz1, out, flags, max) => { const n = NMC.trianglesIn(x0 + (gx0 + W / 2) / U, y1 - (gz1 + D / 2) / U, zLow + gy0 / U, x0 + (gx1 + W / 2) / U, y1 - (gz0 + D / 2) / U, zLow + gy1 / U, out, flags, max);
+      for (let k = 0; k < n * 9; k += 3) { const hx = out[k], hy = out[k + 1], hz = out[k + 2]; out[k] = (hx - x0) * U - W / 2; out[k + 1] = (hz - zLow) * U; out[k + 2] = (y1 - hy) * U - D / 2; } return n; } } : null;
   for (const L of bsp.ladderBoxes || []) { const a = toGame(L.mins[0], L.maxs[1], L.mins[2]), c = toGame(L.maxs[0], L.mins[1], L.maxs[2]); ladders.push([a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(2))); }   // (Source: ladder brushes)
   const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: bsp.cs2 ? null : { data: bsp, toGame }, cs2: !!bsp.cs2, hammer: bsp.cs2 ? { x0, y1, W, D, zLow, U } : null, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders, movers, nadeSolid, nadeMesh } });
   // The segments only made the collision boxes: these maps are drawn from their own faces (bsp-mesh.js), never from
   // the columns, and a large map holds some 200 000 of them (60 MB).
   if (bsegs) map.bulletSolids = mergeSegs(cols, rows, bsegs, zLow);
+  // A body's radius on these (trimmed) boxes, game units (arena-maps.js mapBoxes → boxes.bodyRadius; arena-move.js): with
+  // the boxes 0–8 units proud of a straight wall and more at clips, slanted shells and corners, a body pressed to a wall
+  // by the movement has its eye a median 14.4–19.0 Hammer units from the nearest real surface over the eight maps at
+  // 1.3 (CS2: 16 — its hull's half-width); at 1.2 (7.8 HU) 13.7–16.4, at 1.5 (9.75 HU) 17.4–18.8. So 1.3 stays.
+  if (trimOn) map.bodyRadius = 1.3;
   map.physProps = (bsp.props || []).map(p => { const a = toGame(p.mins[0], p.maxs[1], p.mins[2]), c = toGame(p.maxs[0], p.mins[1], p.maxs[2]); return { i: p.i, model: p.model, mass: p.mass, breaks: !!p.breaks, x: (a[0] + c[0]) / 2, z: (a[2] + c[2]) / 2, y: a[1], h: c[1] - a[1], rx: Math.abs(c[0] - a[0]) / 2, rz: Math.abs(c[2] - a[2]) / 2 }; });   // (physics props, game units: pushed about — arena-physprops.js)
   if (!bsp.cs2) map.columns.segs = null;   // (Counter-Strike 2 maps: drawn from their columns until their own meshes are converted)
   // The baked light on each floor and what it is made of (map-light.js), by spot in game units (x, z, feet):

@@ -1,11 +1,13 @@
 // Grenades on screen (every client): the grenade in flight (smoothed between host updates), the HE fireball,
-// the flashbang white-out (how much depends on your own view: arena-nades.js flashAmount), the smoke cloud and the
+// the flashbang white-out (how much depends on your own view: arena-nades.js flashBlind), the smoke cloud and the
 // molotov fire, each with 3D sound. Materials are made once and shared (the graphics warm-up compiles them).
 import * as THREE from './three.module.js';
 import { weaponModel } from './weapon-models.js';
-import { NADES, stepNade, flashAmount, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeRadius, smokeHoleCells, HOLE_IN, HOLE_OUT, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
+import { NADES, stepNade, throwStart, launch, flashBlind, stackFlash, flashWhite, decoyShots, decoyShotAt, DECOY, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeRadius, smokeHoleCells, HOLE_IN, HOLE_OUT, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
+import { smokeHoleBytes, smokeLocalCut, smokeCutsNow, SMOKE_CUTS, TUNNEL as CUT_RULES, BILLOW } from './arena-nades.js';
+import { createSmokePass } from './arena-smoke-pass.js';
 import { audioCtx, outAt, reverb, listenerAt } from './spatial-audio.js';
-import { fx as rec } from './sound-bank.js';
+import { fx as rec, shotSound } from './sound-bank.js';
 
 const soft = (inner, outer) => { try { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); if (typeof g?.createRadialGradient !== 'function') return null;
   const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, inner); r.addColorStop(1, outer); g.fillStyle = r; g.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; } catch { return null; } };
@@ -27,7 +29,7 @@ const FLAME = (() => { const a = new THREE.PlaneGeometry(2.6, 3.4).translate(0, 
 // teardrop licking upward, white-yellow at the core to deep orange at the edges, additive (the glow picks it up on High).
 const NOISE2 = (() => { const n = 64, a = new Uint8Array(n * n); let r = 98765; for (let i = 0; i < a.length; i++) { r = (r * 16807) % 2147483647; a[i] = r & 255; }
   const t = new THREE.DataTexture(a, n, n, THREE.RedFormat); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t; })();
-MAT.flame = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uNoise: { value: NOISE2 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+MAT.flame = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uNoise: { value: NOISE2 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
   vertexShader: `varying vec2 vUv; varying float vPhase; void main() { vUv = uv; vPhase = fract(float(gl_InstanceID) * 0.6180339); gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
   fragmentShader: `uniform float uTime; uniform sampler2D uNoise; varying vec2 vUv; varying float vPhase;
 void main() { float t = uTime + vPhase * 7.3, n = texture2D(uNoise, vec2(vUv.x * 0.9 + vPhase, vUv.y * 0.7 - t * 1.3)).r, n2 = texture2D(uNoise, vec2(vUv.x * 1.9 - vPhase * 3.1, vUv.y * 1.4 - t * 2.1)).r;
@@ -39,103 +41,29 @@ const CELL = new THREE.PlaneGeometry(5.2, 5.2).rotateX(-Math.PI / 2);
 // Trajectory preview: dashed line + landing ring.
 MAT.path = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 1.2, gapSize: .8, transparent: true, opacity: .75, depthTest: false }); MAT.path.userData.shared = true;
 MAT.ring = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .7, depthTest: false }); MAT.ring.userData.shared = true;
-// CS2's smoke on screen: the cells it fills (arena-nades.js smokeVoxels — the same the rules use) in a small 3D
-// texture (R: how far along its spread each cell is, 1: never filled; G: its light; B, A: how far the last two HE
-// blasts reach it through the air, 1: not at all), drawn as camera-facing slices through it, far to near: the spread
-// front grows through the cells (it pours round corners and down corridors the way it went), billowing noise at its
-// edges drifts up, lighter on top and darker under, HE holes cleared out to their radius now (refilling from the edge). Slices are ordinary
-// transparent quads, so walls and players in front hide what is behind them and smoke in front covers them (no depth
-// texture needed). One program for every smoke.
-// Its billows: tileable cellular noise (Worley, turned over: 1 at each puff's middle) of two sizes — round lumps like
-// CS2's, where plain random noise made blotches. Made once (32³).
-const NOISE3 = (() => { const n = 32, a = new Uint8Array(n * n * n); let s = 1234567; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
-  const octave = cells => { const pts = new Float32Array(cells ** 3 * 3), cs = n / cells; for (let i = 0; i < pts.length; i++) pts[i] = rnd();
-    return (x, y, z) => { const cx = Math.floor(x / cs), cy = Math.floor(y / cs), cz = Math.floor(z / cs); let best = 9;
-      for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const ix = cx + dx, iy = cy + dy, iz = cz + dz, w = (v => ((v % cells) + cells) % cells), c = (w(iz) * cells + w(iy)) * cells + w(ix);
-        const px = (ix + pts[c * 3]) * cs, py = (iy + pts[c * 3 + 1]) * cs, pz = (iz + pts[c * 3 + 2]) * cs, d = Math.hypot(px - x, py - y, pz - z) / cs; if (d < best) best = d; }
-      return Math.max(0, 1 - best); }; };
-  const big = octave(4), small = octave(8);
-  for (let z = 0, i = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++, i++) a[i] = Math.round(255 * Math.min(1, .68 * big(x + .5, y + .5, z + .5) + .32 * small(x + .5, y + .5, z + .5)));
-  const t = new THREE.Data3DTexture(a, n, n, n); t.format = THREE.RedFormat; t.type = THREE.UnsignedByteType; t.minFilter = t.magFilter = THREE.LinearFilter; t.wrapS = t.wrapT = t.wrapR = THREE.RepeatWrapping; t.unpackAlignment = 1; t.needsUpdate = true; return t; })();
-const SLICES = { Low: 16, Medium: 28, High: 40, Ultra: 56 };
+// CS2's smoke on screen: arena-smoke-pass.js — every live cloud in one ray-marched pass after the scene (its cells, the
+// same the rules use, in one 3D atlas). This module gives each cloud a slot when it pops (its cells, light and HE
+// holes) and each frame its front, fade, holes' radii and the open bullet tunnels.
 // Bullet tunnels (CS2): a shot through a smoke clears a narrow tube along its path that fills in again within about a
-// second — spraying through holds it open. The last TUNNELS shots (anyone's: yours, and the other players' as their
-// shots are replayed); every smoke's material reads the same arrays (openness in A.w, radius in B.w).
-const TUNNELS = 6, TUN_A = Array.from({ length: TUNNELS }, () => new THREE.Vector4()), TUN_B = Array.from({ length: TUNNELS }, () => new THREE.Vector4()), TUN_T = new Float64Array(TUNNELS).fill(-1e9);
-export const TUNNEL = { radius: 1.3, open: 250, close: 900, reach: 400 };   // (game units ≈ 8 HU; ms fully open; ms closing; how far a shot cuts)
-let tunAt = 0;
-export function smokeTunnel(ox, oy, oz, dx, dy, dz, len = TUNNEL.reach) { const i = tunAt++ % TUNNELS, L = Math.min(len, TUNNEL.reach); TUN_A[i].set(ox, oy, oz, 1); TUN_B[i].set(ox + dx * L, oy + dy * L, oz + dz * L, TUNNEL.radius); TUN_T[i] = performance.now(); }
-function tunnelsNow(now) { for (let i = 0; i < TUNNELS; i++) { const a = now - TUN_T[i]; TUN_A[i].w = a < TUNNEL.open ? 1 : a < TUNNEL.open + TUNNEL.close ? 1 - (a - TUNNEL.open) / TUNNEL.close : 0; } }
-const sliceGeo = n => { const P = [], I = []; for (let i = 0; i < n; i++) { const z = 1 - 2 * (i + .5) / n, b = i * 4; P.push(-1, -1, z, 1, -1, z, 1, 1, z, -1, 1, z); I.push(b, b + 1, b + 2, b, b + 2, b + 3); }   // far (z = 1) first
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setIndex(I); return g; };
-const SLICE_GEO = {}; const slicesFor = q => SLICE_GEO[q] ??= sliceGeo(SLICES[q] || SLICES.Medium);
-const SMOKE_VS = `uniform vec3 uCenter; uniform float uRadius; uniform float uSlices; uniform float uEvery; varying vec3 vWorld;
-void main() { if (uEvery > 1.0 && mod(floor((1.0 - position.z) * uSlices * 0.5), uEvery) > 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // (a skipped slice: off screen)
-  vec3 f = uCenter - cameraPosition; float fl = length(f); f = fl > 1e-3 ? f / fl : vec3(0.0, 0.0, -1.0);
-  vec3 r = cross(f, vec3(0.0, 1.0, 0.0)); r = length(r) > 1e-3 ? normalize(r) : vec3(1.0, 0.0, 0.0); vec3 u = cross(r, f);
-  vWorld = uCenter + (r * position.x + u * position.y + f * position.z) * uRadius; gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0); }`;
-const SMOKE_FS = `precision highp sampler3D; uniform sampler3D uVol; uniform sampler3D uNoise; uniform vec3 uMin; uniform vec3 uSize; uniform float uFront; uniform float uScaleD; uniform float uFill;
-uniform float uFade; uniform float uTime; uniform float uStep; uniform float uVoxel; uniform vec2 uHoleNow; uniform float uHoleMax; uniform float uHoleIn; uniform float uHoleOut; uniform vec4 uTunA[6]; uniform vec4 uTunB[6]; uniform vec3 uLight; uniform vec3 uDark; varying vec3 vWorld;
-void main() { float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;   // (each pixel a little along its ray: no slice bands)
-  vec3 w = vWorld + normalize(vWorld - cameraPosition) * jit * uStep * 0.6, uvw = (w - uMin) / uSize; if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) discard;
-  vec4 v = texture(uVol, uvw); float d = v.r * uScaleD, grow = clamp((uFront - d) / (2.0 * uVoxel), 0.0, 1.0); if (grow <= 0.003 || v.r > 0.99) discard;
-  float f = clamp((uFill - d) / uFill, 0.0, 1.0);   // (how deep inside its full shape: 1 where it lies, 0 at its edge)
-  // Billows: three octaves of noise at the size of CS2's puffs, drifting up and turning; they eat the cloud's edge into
-  // round lumps (cauliflower) and leave its core whole.
-  vec3 q = w * 0.0165 + vec3(0.0, -uTime * 0.006, uTime * 0.002); float n0 = texture(uNoise, q).r, n = n0 * 0.72 + texture(uNoise, q * 2.3 + 0.31).r * 0.28;   // (puffs ~100 units, ~50 in them)
-  // (its surface: that depth plus the billows, cut softly — round lumps all over a cloud you can't see into)
-  float dens = grow * smoothstep(0.14, 0.22, f + (n - 0.5) * 0.75);
-  // (each lump shaded on its own: denser toward the light than here — its far side — is darker; lit tops, dark undersides)
-  float lump = clamp(0.55 + (n0 - texture(uNoise, q + vec3(0.016, 0.04, 0.013)).r) * 4.0, 0.0, 1.0);
-  // HE blasts: where the blast reaches through the air (B, A), cleared near it and thinned further out, as far as the
-  // hole's radius now reaches (arena-nades holeOpen); the billows break up its edge
-  if (uHoleNow.x > 0.0) { float hd = v.b * uHoleMax + (n - 0.5) * 2.0 * uVoxel, lo = uHoleNow.x * uHoleIn, hi = uHoleNow.x * uHoleOut; dens *= clamp((hd - lo) / (hi - lo), 0.0, 1.0); }
-  if (uHoleNow.y > 0.0) { float hd = v.a * uHoleMax + (n - 0.5) * 2.0 * uVoxel, lo = uHoleNow.y * uHoleIn, hi = uHoleNow.y * uHoleOut; dens *= clamp((hd - lo) / (hi - lo), 0.0, 1.0); }
-  for (int b = 0; b < 6; b++) if (uTunA[b].w > 0.0) { vec3 ab = uTunB[b].xyz - uTunA[b].xyz; float t = clamp(dot(w - uTunA[b].xyz, ab) / max(dot(ab, ab), 1e-4), 0.0, 1.0); float k = length(w - uTunA[b].xyz - ab * t) / uTunB[b].w; dens *= 1.0 - uTunA[b].w * clamp(1.0 - k * k, 0.0, 1.0); }   // bullet tunnels
-  dens *= uFade; if (dens <= 0.003) discard;
-  // Light: how much sun and sky reach each cell through the cloud (worked out once per smoke: G), the lumps' own
-  // shading on it — grey, lit on top, dark inside and underneath, as CS2's.
-  float l = clamp(v.g * (0.35 + 0.85 * lump) * (0.7 + 0.6 * n), 0.0, 1.0);
-  float a = 1.0 - exp(-dens * 1.1 * uStep); vec3 c = mix(uDark, uLight, l);
-  gl_FragColor = vec4(c * a, a);
-  #include <colorspace_fragment>
-}`;
-const HOLE_MAX = SMOKE.holeR * HOLE_OUT * 1.1;   // (B, A: path length / HOLE_MAX; 1 = out of reach)
-const smokeMaterial = () => new THREE.ShaderMaterial({ vertexShader: SMOKE_VS, fragmentShader: SMOKE_FS, transparent: true, depthWrite: false, depthTest: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
-  uniforms: { uVol: { value: null }, uNoise: { value: NOISE3 }, uMin: { value: new THREE.Vector3() }, uSize: { value: new THREE.Vector3(1, 1, 1) }, uCenter: { value: new THREE.Vector3() }, uRadius: { value: 1 }, uSlices: { value: 1 }, uEvery: { value: 1 }, uFront: { value: 0 }, uScaleD: { value: 1 }, uFill: { value: 1 },
-    uFade: { value: 1 }, uTime: { value: 0 }, uStep: { value: 1 }, uVoxel: { value: VOX }, uHoleNow: { value: new THREE.Vector2() }, uHoleMax: { value: HOLE_MAX }, uHoleIn: { value: HOLE_IN }, uHoleOut: { value: HOLE_OUT }, uTunA: { value: TUN_A }, uTunB: { value: TUN_B }, uLight: { value: new THREE.Color(.56, .57, .59) }, uDark: { value: new THREE.Color(.05, .052, .058) } } });
-// The light in each cell of a smoke (G of its texture, beside R: how far along its spread the cell is): the sun and the
-// sky through the cloud's own density (its full shape, as when it has spread), a march of cells toward each —
-// transmittance e^(−k·depth). Once per smoke (a few thousand cells): the slices then light it with one look-up.
-const SMOKE_SUN = [.42, .82, .38];   // (from above and a side, as CS2's maps' suns)
-function smokeLight(v, a) { const { nx, ny, nz, d, dFill } = v, N = nx * ny * nz, den = new Float32Array(N);
-  for (let c = 0; c < N; c++) den[c] = d[c] === Infinity ? 0 : Math.min(1, (dFill - d[c]) / (3 * VOX) + .4);
-  const L = Math.hypot(...SMOKE_SUN), sx = SMOKE_SUN[0] / L, sy = SMOKE_SUN[1] / L, sz = SMOKE_SUN[2] / L, at = (i, j, k) => i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz ? 0 : den[(k * ny + j) * nx + i];
-  for (let k = 0, c = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++, c++) { if (!den[c]) continue; let ts = 0, tu = 0;
-    for (let s = 1; s <= 10; s++) { ts += at(Math.round(i + sx * s), Math.round(j + sy * s), Math.round(k + sz * s)); tu += at(i, j + s, k); }
-    const sun = Math.exp(-ts * .55), sky = Math.exp(-tu * .35); a[c * 4 + 1] = Math.round(255 * Math.min(1, .62 * sun + .38 * sky)); } }
-// A blast's reach (arena-nades smokeHoleCells: path length per cell) into channel B (k = 0) or A (1) of a smoke's texture.
-function holeInto(ud, k, f) { const a = ud.data, N = a.length / 4; for (let c = 0, o = 2 + k; c < N; c++, o += 4) { const d = f ? f[c] : Infinity; a[o] = d === Infinity ? 255 : Math.min(254, Math.round(d / HOLE_MAX * 255)); } ud.tex.needsUpdate = true; }
+// second — arena-nades.js TUNNEL / smokeCut: the host's tunnels and your own shots (here, at once, on the host's clock)
+// are what the rules subtract and the pass clears.
+export const TUNNEL = CUT_RULES;
+// view: another player's shot replayed here — drawn, never in the rules (arena-nades.js smokeLocalCut). A shot that
+// crosses no smoke cuts nothing.
+let cutClock = () => Date.now(), cutGame = () => null;
+export function smokeTunnel(ox, oy, oz, dx, dy, dz, len = TUNNEL.reach, view = false) { const g = cutGame(); if (g?.mode !== 'arena') return false; return smokeLocalCut(ox, oy, oz, dx, dy, dz, len, cutClock(), view, g); }
 const NO_HOLES = [], SEEN = new Set();
-// A smoke's volume (its cells as a texture; the slices round the cells it fills), or null without the map.
-function smokeVolume(game, g, quality) {
-  const v = smokeVoxels(game, g); if (!v) return null; const N = v.nx * v.ny * v.nz, a = new Uint8Array(N * 4).fill(255), scaleD = v.dFill * 1.25; let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (let k = 0, c = 0; k < v.nz; k++) for (let j = 0; j < v.ny; j++) for (let i = 0; i < v.nx; i++, c++) { const d = v.d[c]; a[c * 4 + 1] = 0; if (d === Infinity) continue; a[c * 4] = Math.min(254, Math.round(d / scaleD * 255));
-    if (i < lo[0]) lo[0] = i; if (j < lo[1]) lo[1] = j; if (k < lo[2]) lo[2] = k; if (i > hi[0]) hi[0] = i; if (j > hi[1]) hi[1] = j; if (k > hi[2]) hi[2] = k; }
-  if (lo[0] === Infinity) return null;
-  smokeLight(v, a);
-  const t = new THREE.Data3DTexture(a, v.nx, v.ny, v.nz); t.format = THREE.RGBAFormat; t.type = THREE.UnsignedByteType; t.minFilter = t.magFilter = THREE.LinearFilter; t.unpackAlignment = 1; t.needsUpdate = true;
-  const m = smokeMaterial(), U = m.uniforms, q = quality(), n = SLICES[q] || SLICES.Medium; U.uVol.value = t; U.uMin.value.set(v.x0, v.y0, v.z0); U.uSize.value.set(v.nx * VOX, v.ny * VOX, v.nz * VOX); U.uScaleD.value = scaleD; U.uFill.value = v.dFill;
-  const cmin = new THREE.Vector3(v.x0 + lo[0] * VOX, v.y0 + lo[1] * VOX, v.z0 + lo[2] * VOX), cmax = new THREE.Vector3(v.x0 + (hi[0] + 1) * VOX, v.y0 + (hi[1] + 1) * VOX, v.z0 + (hi[2] + 1) * VOX);
-  U.uCenter.value.addVectors(cmin, cmax).multiplyScalar(.5); U.uRadius.value = cmin.distanceTo(cmax) / 2 + VOX; U.uSlices.value = n; U.uStep.value = 2 * U.uRadius.value / n;
-  const mesh = new THREE.Mesh(slicesFor(q), m); mesh.frustumCulled = false; mesh.renderOrder = 2; mesh.userData.noShadow = true; mesh.userData.vox = v; mesh.userData.tex = t; mesh.userData.data = a; mesh.userData.holeAt = [null, null]; mesh.userData.holeX = [null, null]; return mesh;
-}
+const fadeNow = (s, now) => Math.max(0, Math.min(1, (NADES.smoke.lasts - (now - (s.firedAt || now))) / SMOKE.fade));   // (arena-nades.js fadeOf: its last SMOKE.fade ms)
+// An effect's parts let go of (its own materials, instanced meshes; its smoke slot): when it ends, and on clear().
+function disposeFx(F, pass) { F.loop?.stop?.(); F.fx.removeFromParent(); if (F.slot >= 0) { pass?.remove(F.slot); F.slot = -1; }
+  for (const p of F.parts) if (p.material && !p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose();
+  F.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); }
 
 // Shared effect particles, made once (no allocation while playing): hot sparks / debris / embers (one instanced mesh),
 // soft puffs (dark blast smoke, dust, steam, fire smoke; a fixed pool of sprites) and ground shock rings.
 const SPARK = new THREE.BoxGeometry(.13, .13, .13), RING = new THREE.RingGeometry(.82, 1, 40).rotateX(-Math.PI / 2);
 MAT.spark = new THREE.MeshBasicMaterial({ color: 0xffc070, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }); MAT.spark.userData.shared = true;
-MAT.wave = new THREE.MeshBasicMaterial({ color: 0xe8dcc0, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }); MAT.wave.userData.shared = true;
+MAT.wave = new THREE.MeshBasicMaterial({ color: 0xe8dcc0, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }); MAT.wave.userData.shared = true;
 let FXS = null;   // the live system (createNadeView), so the bomb's explosion can use it too
 function createFxSystem(group, quality) {
   const N = 320, sparks = new THREE.InstancedMesh(SPARK, MAT.spark, N); sparks.frustumCulled = false; sparks.visible = false; group.add(sparks);
@@ -176,7 +104,8 @@ function createFxSystem(group, quality) {
   };
 }
 // One of each effect, for the warm-up.
-export const nadeWarmObjects = () => [(() => { const m = new THREE.Mesh(slicesFor('Low'), smokeMaterial()); m.material.uniforms.uVol.value = NOISE3; m.frustumCulled = false; return m; })(), new THREE.Sprite(MAT.smoke), new THREE.Sprite(MAT.fire), new THREE.Mesh(BALL, MAT.boom), new THREE.Mesh(DISC, MAT.scorch), new THREE.Mesh(CORE, MAT.core), new THREE.InstancedMesh(SPARK, MAT.spark, 1), new THREE.Mesh(RING, MAT.wave), (() => { const m = new THREE.InstancedMesh(FLAME, MAT.flame, 1); m.setColorAt(0, new THREE.Color(1, .6, .2)); return m; })(), new THREE.InstancedMesh(CELL, MAT.glow, 1), new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), MAT.path)];
+// (the smoke's own pass warms itself: createNadeView().warm)
+export const nadeWarmObjects = () => [new THREE.Sprite(MAT.smoke), new THREE.Sprite(MAT.fire), new THREE.Mesh(BALL, MAT.boom), new THREE.Mesh(DISC, MAT.scorch), new THREE.Mesh(CORE, MAT.core), new THREE.InstancedMesh(SPARK, MAT.spark, 1), new THREE.Mesh(RING, MAT.wave), (() => { const m = new THREE.InstancedMesh(FLAME, MAT.flame, 1); m.setColorAt(0, new THREE.Color(1, .6, .2)); return m; })(), (() => { const m = new THREE.InstancedMesh(CELL, MAT.glow, 1); m.userData.gd = true; return m; })(), new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), MAT.path)];
 
 // Sounds: recorded explosions, flash bang, glass, burn and bounces (sound-bank fx), layered with synthesized body,
 // flashbang ringing, smoke hiss, fire crackle and the throw whoosh.
@@ -196,33 +125,51 @@ const away = at => { const me = listenerAt(); return at && me ? Math.hypot(at.x 
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
 
 export function createNadeView({ scene, camera, world, boxes = () => [], bounds = () => null, quality = () => 'Medium', hostNow = () => Date.now() }) {
-  const group = new THREE.Group(); group.name = 'nades'; group.userData.gd = true; scene.add(group); const FXP = FXS = createFxSystem(group, quality);
+  const group = new THREE.Group(); group.name = 'nades'; group.userData.gd = true; scene.add(group);
+  // The effects (fire, flames, sparks, puffs, blast balls) on their own top-level group, flagged fx: while a smoke is up
+  // they are drawn after it (arena-smoke-pass.js), so a fire in front of a cloud isn't painted over by it.
+  const fxg = new THREE.Group(); fxg.name = 'nadeFx'; fxg.userData.gd = true; fxg.userData.fx = true; scene.add(fxg); const FXP = FXS = createFxSystem(fxg, quality);
+  let pass = null; const smokes = () => pass ??= (() => { const renderer = globalThis.__infra?.renderer; if (!renderer) return null; const p = createSmokePass({ renderer, scene, camera, quality }); scene.userData.gdSmoke = p; return p; })();   // (made once a renderer is there)
+  cutClock = hostNow; cutGame = () => world?.operations?.game;
   const FM = new THREE.Matrix4(), FQ = new THREE.Quaternion(), FV = new THREE.Vector3(), FS = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
-  const live = new Map(), dir = new THREE.Vector3(); let flashUntil = 0, flashPeak = 0, flashAt = 0, path = null, landRing = null;
+  const live = new Map(), dir = new THREE.Vector3(), FL = { peak: 0, holdUntil: 0, fadeEnd: 0 }, FB = { s: 0, peak: 0, hold: 0, fade: 0 }; let path = null, landRing = null;   // (FL: your stacked flashes — arena-nades.js stackFlash; FB: one flash's white-out, reused)
+  // Your own throw, drawn the moment you let go: from the hand, with the start and launch the host uses (arena-nades.js
+  // throwStart / launch), flown here as a copy (view: it never touches collision) until the host's grenade by you of
+  // that kind arrives a round trip later — that one then takes over this model, the gap eased out like any correction.
+  // Refused, or not heard back within MINE_MS: let go of. (arena-ui.js throwNade: gd-throw-start / gd-throw-refused.)
+  const mine = [], MINE_MS = 1200, nameKey = n => String(n || '').trim().toLowerCase();
+  const onThrow = e => { const d = e?.detail; if (!d?.a || !NADES[d.kind]) return; try { const b = boxes(), s = throwStart(d.a, b?.length ? b : null, bounds()), v = launch(d.a), m = weaponModel(d.kind, 1.4);
+    m.position.set(s.x, s.y, s.z); group.add(m); mine.push({ kind: d.kind, by: nameKey(d.by), seq: d.seq, model: m, age: 0, sim: { x: s.x, y: s.y, z: s.z, vx: v.vx, vy: v.vy, vz: v.vz, still: 0, rest: false, grav: undefined, bt: undefined, void: false, bad: false, view: true, pastGlass: null } }); } catch {} };
+  const dropMine = i => { mine[i].model.removeFromParent(); mine.splice(i, 1); };
+  if (typeof addEventListener === 'function') { addEventListener('gd-throw-start', onThrow); addEventListener('gd-throw-refused', e => { const i = mine.findIndex(c => c.seq === e?.detail?.seq); if (i >= 0) dropMine(i); }); }
+  // (the host's new grenade: yours of this kind thrown here and still waiting — the oldest — or none)
+  const adopt = g => { const by = nameKey(g.by), i = mine.findIndex(c => c.kind === g.kind && c.by === by); if (i < 0) return null; const c = mine[i]; mine.splice(i, 1); return c; };
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-flash" style="position:fixed;inset:0;z-index:39;background:#fff;opacity:0;pointer-events:none"></div>');
   const white = document.getElementById('gd-flash') || { style: {} };
-  // Inside a smoke you see smoke: a veil as thick as the smoke at your eye (the same density the rules use).
-  document.body.insertAdjacentHTML('beforeend', '<div id="gd-smokeveil" style="position:fixed;inset:0;z-index:20;background:#7f8287;opacity:0;pointer-events:none"></div>');
-  const veil = document.getElementById('gd-smokeveil') || { style: {} }; let veilNow = 0;
+  // (inside a smoke: the pass's own march from your eye — thick smoke in front of you is opaque, no screen veil)
   function effect(g) {
-    const fx = new THREE.Group(); fx.position.set(g.x, g.y, g.z); group.add(fx); const at = { x: g.x, y: g.y, z: g.z }, parts = []; let fireLoop = null;
+    const fx = new THREE.Group(); fx.position.set(g.x, g.y, g.z); fxg.add(fx); const at = { x: g.x, y: g.y, z: g.z }, parts = []; let fireLoop = null;
     if (g.phase === 'boom') { globalThis.dispatchEvent?.(new CustomEvent('gd-blast', { detail: { x: g.x, y: g.y, z: g.z, r: NADES.he.radius } }));   // (a CS2 map's pots and cans thrown about: arena-physprops.js)
       const b = new THREE.Sprite(MAT.fire.clone()); b.position.y = 1; fx.add(b); parts.push(b); FXP.fire(g.x, g.y + 1, g.z, 16, { size: 7, grow: 1.7, life: .8, rise: 3.5, spread: 3.5 }); const s = new THREE.Mesh(DISC, MAT.scorch); s.rotation.x = -Math.PI / 2; s.position.y = .05 - g.y + Math.max(0, g.y - .4); s.scale.setScalar(5); fx.add(s); FXP.spark(g.x, g.y + .4, g.z, 46, { speed: 26, up: 10, life: .9 }); FXP.puff(g.x, g.y + 1, g.z, 9, { color: 0x2c2824, size: 4.5, grow: 1.6, life: 3.6, rise: 2.6, spread: 3 }); FXP.puff(g.x, .3, g.z, 6, { color: 0x9a8a70, size: 3, grow: 2.2, life: 1.8, rise: .5, spread: 6, alpha: .55 }); FXP.wave(g.x, Math.max(0, g.y - .4), g.z, 16);
       const core = new THREE.Sprite(MAT.fire.clone()); core.material.color.setHex(0xffffff); core.position.y = 1; fx.add(core); parts.push(core);
       if (rec('he', { at, kind: 'explosion', volume: 1.5, wet: .9, lowpass: dull(at) })) { rec('low', { at, kind: 'explosion', volume: 1.2 }); burst(at, { len: .6, decay: 3, freq: 400, vol: .4, thump: 1 }); } else burst(at, { len: 1.6, decay: 2.2, freq: 700, vol: 1.3, thump: 1 }); }
     if (g.phase === 'pop') { const b = new THREE.Mesh(BALL, MAT.boom.clone()); b.material.color.setHex(0xffffff); fx.add(b); parts.push(b); FXP.spark(g.x, g.y, g.z, 22, { speed: 16, up: 4, life: .45, size: .7 }); FXP.puff(g.x, g.y, g.z, 3, { color: 0xc8c8c8, size: 2, grow: 1.2, life: 1.4, rise: 1, spread: .8, alpha: .5 }); if (!rec('flash', { at, kind: 'explosion', volume: 1.1, rate: 1.35, wet: .6, lowpass: dull(at) })) burst(at, { len: .6, decay: 4, freq: 2600, vol: 1, thump: .4 }); else burst(at, { len: .15, decay: 3, freq: 5000, vol: .5, type: 'highpass' });
-      camera.getWorldDirection(dir); const a = flashAmount(boxes(), g.x, g.y, g.z, camera.position.x, camera.position.y, camera.position.z, dir.x, dir.y, dir.z, world.operations.game);
-      if (a > .05) { flashPeak = Math.max(flashPeak * Math.max(0, (flashUntil - performance.now()) / 4000), a); flashAt = performance.now(); flashUntil = flashAt + 600 + 3400 * a; if (a > .4) ring(1 + 2.5 * a); } }
-    if (g.phase === 'smoke') { // CS2's volume (smokeVolume); without the map's boxes: an opaque core wrapped in soft puffs (fewer on Low)
-      const vol = smokeVolume(world.operations.game, g, quality); if (vol) { group.add(vol); parts.push(vol); }
-      if (!vol) { const R = NADES.smoke.radius, core = new THREE.Mesh(CORE, MAT.core.clone()); core.userData.core = true; core.scale.set(R * .58, R * .44, R * .58); core.position.y = R * .12; fx.add(core); parts.push(core);
+      // Your white-out (arena-nades.js flashBlind: how long by how much reaches you and where you look, how white by the
+      // tier), stacked on any you still have — a weaker second flash never shortens or dims a stronger one (stackFlash).
+      camera.getWorldDirection(dir); const B = flashBlind(boxes(), g.x, g.y, g.z, camera.position.x, camera.position.y, camera.position.z, dir.x, dir.y, dir.z, world.operations.game, FB);
+      if (B.hold + B.fade > 30) { stackFlash(FL, B, performance.now()); if (B.hold + B.fade > 1900) ring(1 + 2.5 * Math.min(1, (B.hold + B.fade) / 4000)); } }
+    if (g.phase === 'fizz') { FXP.spark(g.x, g.y, g.z, 10, { speed: 6, up: 3, life: .35, size: .5 }); FXP.puff(g.x, g.y, g.z, 3, { color: 0xb8b8b8, size: 1.2, grow: 1.5, life: .9, rise: .8, spread: .5, alpha: .5 }); burst(at, { len: .25, decay: 3, freq: 1500, vol: .35, type: 'bandpass' }); }   // the decoy's end: a small pop
+    let slot = -1;
+    if (g.phase === 'smoke') { // CS2's volume (a slot of the smoke pass: its cells); without the map's boxes: an opaque core wrapped in soft puffs (fewer on Low)
+      const v = smokeVoxels(world.operations.game, g), P = v && smokes(); slot = P ? P.add(v) : -1;
+      if (slot < 0) { const R = NADES.smoke.radius, core = new THREE.Mesh(CORE, MAT.core.clone()); core.userData.core = true; core.scale.set(R * .58, R * .44, R * .58); core.position.y = R * .12; fx.add(core); parts.push(core);
       const n = quality() === 'Low' ? 20 : quality() === 'Medium' ? 34 : 48; for (let i = 0; i < n; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), y = 1 - (i + .5) / n * 1.15, rr = Math.sqrt(Math.max(0, 1 - y * y)), a = i * 2.39996, f = .62 + (i % 3) * .1; sp.position.set(Math.cos(a) * rr * R * f, Math.max(1.2, R * .12 + y * R * .5 * f), Math.sin(a) * rr * R * f); sp.userData.size = R * (.5 + (i % 4) * .07); fx.add(sp); parts.push(sp); } }   // a shell of soft puffs around the core: a fluffy outline
       FXP.puff(g.x, g.y + .3, g.z, 8, { color: 0x9a9da1, size: 3, grow: 3, life: 1.6, rise: 1.5, spread: 1.5, alpha: .8 }); if (rec('poof', { at, volume: .9, wet: .3 })) rec('smoke', { at, volume: .7, delay: .05 }); else burst(at, { len: 2.5, decay: .8, freq: 3000, vol: .35, type: 'highpass' }); }
     if (g.phase === 'fire') { // exactly where the host burns (fireCells, on each cell's own floor): a glowing floor and flames, lit as the spread reaches them
       const cells = fireCells(boxes(), g.x, g.z, g.y), flames = new THREE.InstancedMesh(FLAME, MAT.flame, Math.max(1, cells.length)), glow = new THREE.InstancedMesh(CELL, MAT.glow, Math.max(1, cells.length)), m4 = new THREE.Matrix4().makeScale(0, 0, 0);
       for (let i = 0; i < cells.length; i++) { flames.setMatrixAt(i, m4); glow.setMatrixAt(i, m4); }   // (none lit yet)
       flames.count = glow.count = cells.length; fx.userData.cells = cells; fx.userData.flames = flames; fx.userData.glow = glow; fx.userData.rot = cells.map((_, i) => (i * 2.4) % 6.28); fx.userData.h = cells.map((_, i) => ((i * 7919) % 17) % 3 === 0 ? 0 : (.8 + ((i * 7919) % 13) / 13 * 1) * (((i * 4253) % 11) === 0 ? 1.6 : 1)); fx.userData.jx = cells.map((_, i) => (((i * 3571) % 23) / 23 - .5) * 2.4); fx.userData.jz = cells.map((_, i) => (((i * 1663) % 19) / 19 - .5) * 2.4); fx.userData.end = cells.map(cellEnd);   /* (h 0: this cell only glows)*/
-      flames.frustumCulled = glow.frustumCulled = false; fx.add(glow, flames); parts.push(flames); F_CELLS.set(fx, cells.length);
+      flames.frustumCulled = glow.frustumCulled = false; glow.userData.gd = true; fx.add(glow, flames); parts.push(flames); F_CELLS.set(fx, cells.length);   // (gd: not one of the hall's far-away signs — render-optimizer's detail culler leaves it drawn at any distance)
       if (rec('glass', { at, volume: 1, wet: .3 })) { rec('glass', { at, volume: .6, rate: .8, delay: .05 }); burst(at, { len: .9, decay: 1.2, freq: 600, vol: .5, thump: .25 }); } else burst(at, { len: 1.2, decay: 1.5, freq: 1200, vol: .7, thump: .3 });
       FXP.spark(g.x, g.y + .3, g.z, 30, { speed: 9, up: 6, life: 1.2, size: .8, gravity: 8 });
       fireLoop = rec('fire', { at, volume: .55, rate: .8, lowpass: 2600, loop: NADES.molotov.lasts / 1000 }) || null; }
@@ -230,7 +177,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
     else if (g.phase === 'out') { // put out by smoke: a puff of steam and a hiss where the fire was
       for (let i = 0; i < 10; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), a = i * 2.4; sp.position.set(Math.cos(a) * 5 * (i % 3) / 2, 1 + (i % 4), Math.sin(a) * 5 * (i % 3) / 2); sp.userData.size = 5 + (i % 3) * 2; fx.add(sp); parts.push(sp); }
       FXP.puff(g.x, g.y + .5, g.z, 8, { color: 0xe4e6e8, size: 4, grow: 2, life: 2, rise: 4, spread: 4, alpha: .6 }); burst(at, { len: 1, decay: 2.5, freq: 4200, vol: .45, type: 'highpass' }); }
-    return { fx, parts, start: performance.now(), phase: g.phase, crackle: 0, loop: fireLoop, vol: parts.find(p => p.userData.vox) || null };
+    return { fx, parts, start: performance.now(), phase: g.phase, crackle: 0, loop: fireLoop, slot, holeAt: [null, null], holeX: [null, null], v: slot >= 0 ? smokeVoxels(world.operations.game, g) : null };
   }
   return {
     group,
@@ -238,9 +185,13 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
     update(dt) {
       const G = world.operations.game, list = G.mode === 'arena' ? G.combat?.nades || NO_HOLES : NO_HOLES, now = performance.now(), seen = SEEN; seen.clear();   // (NO_HOLES: an empty list; nothing made per frame)
       FXP.update(dt);
+      if (pass) { const hn = hostNow(); pass.frame((hn / 1000) % BILLOW.period, SMOKE_CUTS, list.length ? smokeCutsNow(G, hn) : 0); }   // (the clouds pushed below; the billows on the host's clock, the tunnels the rules subtract)
+      for (let i = mine.length - 1; i >= 0; i--) { const c = mine[i]; c.age += dt; if (c.age * 1000 > MINE_MS) { dropMine(i); continue; }   // your throws waiting for the host's word
+        if (!c.sim.rest && !c.sim.void && !G.combat?.d?.paused) stepNade(c.sim, boxes(), bounds(), dt); c.model.position.set(c.sim.x, c.sim.y, c.sim.z); c.model.rotation.x += dt * 9; c.model.rotation.z += dt * 5; }
       for (const g of list) {
         seen.add(g.id); let v = live.get(g.id);
-        if (!v) { v = { model: weaponModel(g.kind, 1.4), fx: null }; v.model.position.set(g.x, g.y, g.z); group.add(v.model); live.set(g.id, v); }
+        if (!v) { const c = g.phase === 'air' && mine.length ? adopt(g) : null;   // (yours, already flying here: it carries on from where it is drawn)
+          v = c ? { model: c.model, fx: null, sim: c.sim } : { model: weaponModel(g.kind, 1.4), fx: null }; if (!c) { v.model.position.set(g.x, g.y, g.z); group.add(v.model); } live.set(g.id, v); }
         if (g.phase === 'air' && (g.x !== v.hx || g.y !== v.hy || g.z !== v.hz)) { // a new host position: a sharp turn in its path is a bounce
           if (v.hx !== undefined) { const vx = g.x - v.hx, vy = g.y - v.hy, vz = g.z - v.hz, m = Math.hypot(vx, vy, vz), pm = Math.hypot(v.vx, v.vy, v.vz);
             if (m > .05 && pm > .05 && (vx * v.vx + vy * v.vy + vz * v.vz) / (m * pm) < .55 && now - (v.bounced || 0) > 120) { v.bounced = now; rec('bounce', { at: { x: g.x, y: g.y, z: g.z }, volume: Math.min(.8, .25 + pm * .15), rate: g.kind === 'molotov' ? .8 : .95 + Math.random() * .15, kind: 'step' }); }
@@ -249,32 +200,33 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
           // The flight flown here too, as the host flies it (the same physics on the same map: arena-nades.js stepNade),
           // from the host's latest state caught up to now on the host's clock — smooth every frame between the host's
           // updates, and exact at bounces, instead of trailing the updates (an older host without velocities: smoothed).
-          if (Number.isFinite(g.vx)) { const first = !v.sim, S = v.sim ??= { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, still: 0, rest: false, grav: undefined, view: true, pastGlass: null }, was = v.model.position;
-            S.x = g.x; S.y = g.y; S.z = g.z; S.vx = g.vx; S.vy = g.vy; S.vz = g.vz; S.still = g.still || 0; S.rest = !!g.rest; S.grav = g.grav;
-            const late = Math.min(.25, Math.max(0, (hostNow() - (G.combat?.clock ?? hostNow())) / 1000)); if (late > 0) stepNade(S, boxes(), bounds(), late);
+          if (Number.isFinite(g.vx)) { const first = !v.sim, S = v.sim ??= { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, still: 0, rest: false, grav: undefined, bt: undefined, void: false, bad: false, view: true, pastGlass: null }, was = v.model.position;
+            S.x = g.x; S.y = g.y; S.z = g.z; S.vx = g.vx; S.vy = g.vy; S.vz = g.vz; S.still = g.still || 0; S.rest = !!g.rest; S.grav = g.grav; S.bt = g.bt; S.void = S.bad = false;   // (bt: the host's time since its last bounce — the same bounce rule here)
+            const late = Math.min(.25, Math.max(0, (hostNow() - (G.combat?.clock ?? hostNow())) / 1000)); if (late > 0 && !G.combat?.d?.paused) stepNade(S, boxes(), bounds(), late);   // (paused: the host holds it where it is)
             // Drawn where it flies here, a correction (the host's word on where it is) eased out over ~80 ms, never a jump.
             if (first) { v.ox = v.oy = v.oz = 0; } else { v.ox = was.x - S.x; v.oy = was.y - S.y; v.oz = was.z - S.z; } } }
-        else if (g.phase === 'air' && v.sim) stepNade(v.sim, boxes(), bounds(), dt);
+        else if (g.phase === 'air' && v.sim && !v.sim.void && !G.combat?.d?.paused) stepNade(v.sim, boxes(), bounds(), dt);
         if (g.phase === 'air') { if (v.sim) { const k = Math.exp(-dt * 40); v.ox *= k; v.oy *= k; v.oz *= k; v.model.position.set(v.sim.x + v.ox, v.sim.y + v.oy, v.sim.z + v.oz); }
           else { const k = 1 - Math.exp(-dt * 18); v.model.position.x += (g.x - v.model.position.x) * k; v.model.position.y += (g.y - v.model.position.y) * k; v.model.position.z += (g.z - v.model.position.z) * k; }
           v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; continue; }
-        if (v.fx && v.fx.phase !== g.phase) { v.fx.loop?.stop?.(); v.fx.fx.removeFromParent(); for (const p of v.fx.parts) { if (p.userData.vox) { p.material.uniforms.uVol.value?.dispose(); p.removeFromParent(); } if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); } v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); v.fx = null; }   // fire → out
-        if (!v.fx) { v.fx = effect(g); if (g.phase !== 'fire' && g.phase !== 'smoke') v.model.visible = false; else v.model.position.set(g.x, g.y + .3, g.z); }
+        if (v.fx && v.fx.phase !== g.phase) { disposeFx(v.fx, pass); v.fx = null; }   // fire → out
+        if (!v.fx) { v.fx = effect(g); if (g.phase === 'decoy') v.model.position.set(g.x, g.y, g.z); else if (g.phase !== 'fire' && g.phase !== 'smoke') v.model.visible = false; else v.model.position.set(g.x, g.y + .3, g.z); }
+        // A decoy at work: its thrower's gun, shot by shot (arena-nades.js decoyShots: the host's schedule, the same here),
+        // heard where it lies; after a hitch only the latest shot plays (never a burst all at once).
+        if (g.phase === 'decoy') { const i = decoyShotAt(g, hostNow()); if (v.shot === undefined) v.shot = i; else if (i > v.shot) { v.shot = i; shotSound(g.gun, { at: v.model.position, volume: .8 }); } }
         const t = (now - v.fx.start) / 1000, F = v.fx;
         if (g.phase === 'boom' || g.phase === 'pop') { const b = F.parts[0], k = Math.min(1, t / .35), e = 1 - (1 - k) ** 3; b.scale.setScalar(.5 + e * (g.phase === 'boom' ? 24 : 4)); b.material.opacity = Math.max(0, 1 - t / .45) ** 1.5; b.visible = t < .45;
           const c = g.phase === 'boom' && F.parts[1]; if (c) { c.scale.setScalar(.4 + Math.min(1, t / .08) * 11); c.material.opacity = Math.max(0, 1 - t / .25); c.visible = t < .25; } }
-        if (g.phase === 'smoke' && F.vol) { // the volume: its front, fade and holes now (the host's clock); hidden while the veil already shows solid smoke
-          const hn = hostNow(), U = F.vol.material.uniforms, H = g.holes || NO_HOLES, c = camera.position, ud = F.vol.userData; tunnelsNow(now); U.uFront.value = smokeFront(F.vol.userData.vox, g, hn); U.uFade.value = smokeShape(g, hn).dens; U.uTime.value = (now / 1000) % 1000;
+        if (g.phase === 'smoke' && F.slot >= 0) { // its slot this frame: front, fade and holes now (the host's clock — what the rules use)
+          const hn = hostNow(), H = g.holes || NO_HOLES, at = F.holeAt, hx = F.holeX; let r0 = 0, r1 = 0;
           // A new blast's reach into the channel of the older of the last two (once per hole); each channel's radius now.
-          for (let i = Math.max(0, H.length - 2); i < H.length; i++) { const h = H[i], at = ud.holeAt, hx = ud.holeX; if ((at[0] === h.at && hx[0] === h.x) || (at[1] === h.at && hx[1] === h.x)) continue; const k = at[0] === null ? 0 : at[1] === null ? 1 : at[0] <= at[1] ? 0 : 1; holeInto(ud, k, smokeHoleCells(G, g, h)); at[k] = h.at; hx[k] = h.x; }
-          for (let k = 0; k < 2; k++) { let r = 0; for (let i = 0; i < H.length; i++) if (H[i].at === ud.holeAt[k] && H[i].x === ud.holeX[k]) { r = holeRadius(H[i], hn); break; } if (k) U.uHoleNow.value.y = r; else U.uHoleNow.value.x = r; }
-          F.vol.visible = veilNow < .93 || Math.hypot(c.x - g.x, c.z - g.z) > NADES.smoke.radius * 2;
-          { const every = c.distanceTo(U.uCenter.value) < U.uRadius.value * 1.6 ? 2 : 1; if (U.uEvery.value !== every) { U.uEvery.value = every; U.uStep.value = 2 * U.uRadius.value / U.uSlices.value * every; } }   // up close the cloud covers the screen: every other slice, each twice as thick (half the cost)
-          continue; }
+          for (let i = Math.max(0, H.length - 2); i < H.length; i++) { const h = H[i]; if ((at[0] === h.at && hx[0] === h.x) || (at[1] === h.at && hx[1] === h.x)) continue; const k = at[0] === null ? 0 : at[1] === null ? 1 : at[0] <= at[1] ? 0 : 1; pass.hole(F.slot, k, smokeHoleBytes(G, g, h)); at[k] = h.at; hx[k] = h.x; }
+          for (let i = Math.max(0, H.length - 2); i < H.length; i++) { const h = H[i]; if (at[0] === h.at && hx[0] === h.x) r0 = holeRadius(h, hn); else if (at[1] === h.at && hx[1] === h.x) r1 = holeRadius(h, hn); }
+          pass.push(F.slot, smokeFront(F.v, g, hn), fadeNow(g, hn), r0, r1); continue; }
         if (g.phase === 'smoke') { // the shared smoke shape (arena-nades smokeShape): grows, thins at the end; HE holes clear puffs near the blast
           const hn = hostNow(), S = smokeShape(g, hn), k = S.r / NADES.smoke.radius, fade = S.dens * Math.min(1, t / .5); let coreCut = 0;
-          // Your eye deep inside this cloud: the veil already shows solid smoke, so the puffs around you are skipped (they only cost fill-rate).
-          { const c = camera.position, inside = Math.hypot(c.x - g.x, c.z - g.z, (c.y - S.cy) / .62) < S.r * .7; if (F.fx.visible === inside) F.fx.visible = !inside; if (inside) continue; } for (const h of g.holes || []) if (Math.hypot(h.x - g.x, h.z - g.z) < NADES.smoke.radius * .8) coreCut = Math.max(coreCut, holeOpen(G, g, h.x, h.y, h.z, hn));
+          // (only without a slot — no map's cells, or more clouds than the pass holds; the puffs stay drawn round your eye too)
+          for (const h of g.holes || []) if (Math.hypot(h.x - g.x, h.z - g.z) < NADES.smoke.radius * .8) coreCut = Math.max(coreCut, holeOpen(G, g, h.x, h.y, h.z, hn));
           for (const sp of F.parts) { if (sp.userData.core) { sp.scale.set(NADES.smoke.radius * .58 * k, NADES.smoke.radius * .44 * k, NADES.smoke.radius * .58 * k); sp.material.opacity = Math.max(0, Math.min(1, (t - .7) / .8)) * S.dens * (1 - coreCut * .9); sp.visible = sp.material.opacity > .02; continue; }
             const cut = g.holes?.length ? holeOpen(G, g, g.x + sp.position.x * k, g.y + sp.position.y, g.z + sp.position.z * k, hn) : 0; sp.position.multiplyScalar(1); sp.scale.setScalar(sp.userData.size * k * (1 + .08 * Math.sin(now / 900 + sp.id))); sp.material.opacity = .95 * fade * (1 - cut); } }
         if (g.phase === 'out') { for (const sp of F.parts) { sp.position.y += dt * 4; sp.scale.setScalar(sp.userData.size * (1 + t * 1.5)); sp.material.opacity = Math.max(0, .8 - t); } }
@@ -288,12 +240,15 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
             if (now - (F.smk || 0) > 450) { F.smk = now; const c = cl[(Math.random() * cl.length) | 0]; FXP.puff(c[0], (c[2] ?? g.y) + 2.5, c[1], 1, { color: 0x221d1a, size: 3.5, grow: 2, life: 2.6, rise: 4.5, spread: 1, alpha: .5 }); } }
           if (now - F.crackle > 380) { F.crackle = now; burst({ x: g.x, y: g.y, z: g.z }, { len: .2, decay: 3, freq: 2200, vol: .25, type: 'bandpass' }); } }
       }
-      for (const [id, v] of live) if (!seen.has(id)) { v.model.removeFromParent(); if (v.fx) { v.fx.loop?.stop?.(); v.fx.fx.removeFromParent(); for (const p of v.fx.parts) { if (p.userData.vox) { p.material.uniforms.uVol.value?.dispose(); p.removeFromParent(); } if (!p.material.userData?.shared && p.material !== MAT.fire && p.material !== MAT.smoke && p.material !== MAT.boom) p.material.dispose(); } v.fx.fx.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); } live.delete(id); }
-      // Flashbang white-out: full for a moment, then fades.
-      const left = flashUntil - now; white.style.opacity = left > 0 ? String(Math.min(1, flashPeak * Math.min(1, left / 1800))) : '0';
-      { const c = camera.position, want = list.some(n => n.phase === 'smoke') ? Math.min(.97, smokeDensity(G, c.x, c.y, c.z, hostNow()) * 1.25) : 0; veilNow += (want - veilNow) * Math.min(1, dt * 10); const o = veilNow < .01 ? '0' : veilNow.toFixed(2); if (veil.style.opacity !== o) veil.style.opacity = o; }
+      for (const [id, v] of live) if (!seen.has(id)) { v.model.removeFromParent(); if (v.fx) disposeFx(v.fx, pass); live.delete(id); }
+      // Flashbang white-out: as white as the flash's tier for its hold, then fading (stacked flashes: arena-nades.js).
+      { const w = flashWhite(FL, now), o = w <= .002 ? '0' : w.toFixed(3); if (white.style.opacity !== o) white.style.opacity = o; }
     },
-    clear() { for (const v of live.values()) { v.model.removeFromParent(); v.fx?.loop?.stop?.(); v.fx?.fx.removeFromParent(); } live.clear(); FXP.clear(); white.style.opacity = '0'; veil.style.opacity = '0'; veilNow = 0; flashUntil = 0; this.preview(null); },
+    // Leaving the match: every grenade, effect and smoke slot let go of (nothing left in the scene, no textures kept).
+    clear() { for (const v of live.values()) { v.model.removeFromParent(); if (v.fx) disposeFx(v.fx, pass); } live.clear(); while (mine.length) dropMine(mine.length - 1); FXP.clear(); pass?.clear(); white.style.opacity = '0'; FL.peak = FL.holdUntil = FL.fadeEnd = 0; this.preview(null); },
+    // The smoke pass's shaders and textures built now (the match's loading): post = the HDR buffer is on (graphics.post).
+    warm(post) { return smokes()?.warm(post) || Promise.resolve(); },
+    get smokePass() { return pass; },
     // Where the grenade in your hand will go (points from arena-nades predictThrow), or null to hide.
     preview(pts) { if (!pts || pts.length < 2) { if (path) path.visible = landRing.visible = false; return; }
       if (!path) { path = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(82 * 3), 3)), MAT.path); path.frustumCulled = false; path.renderOrder = 5; landRing = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.5, 24).rotateX(-Math.PI / 2), MAT.ring); landRing.renderOrder = 5; group.add(path, landRing); }

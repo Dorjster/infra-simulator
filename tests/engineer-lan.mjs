@@ -13,7 +13,10 @@ async function start(){
  let err='';child.stderr.on('data',d=>err+=d);
  await new Promise((resolve,reject)=>{child.stdout.on('data',d=>{const m=/localhost:(\d+)/.exec(String(d));if(m){base='http://127.0.0.1:'+m[1];resolve();}});child.on('exit',()=>reject(Error(err)));});
 }
-async function stop(){if(!child||child.exitCode!==null)return;await new Promise(resolve=>{child.once('exit',resolve);child.kill('SIGINT');setTimeout(()=>child.kill('SIGKILL'),1500).unref();});}
+// (The SIGKILL fallback is bound to THIS child and cancelled once it exits: it used to read `child` when it fired — after a
+// restart that was the NEW server, killed 1.5 s in on a loaded machine; the next request failed and the final stop() then
+// waited for an 'exit' already emitted (a signal exit leaves exitCode null): node quit with code 13 and no output.)
+async function stop(){const c=child;if(!c||c.exitCode!==null||c.signalCode!==null)return;await new Promise(resolve=>{const k=setTimeout(()=>c.kill('SIGKILL'),1500);k.unref();c.once('exit',()=>{clearTimeout(k);resolve();});c.kill('SIGINT');});}
 async function post(route,data,token){const r=await fetch(base+'/api/'+route,{method:'POST',headers:{'Content-Type':'application/json',...(token?{'X-Player-Token':token}:{})},body:JSON.stringify(data)});return {status:r.status,...await r.json()};}
 async function action(a,p,status=200){
  await delay(40);
@@ -36,6 +39,9 @@ try{
  const ops=await post('join',{code:'ROLES18',name:'Operations'});
  assert.equal((await post('role',{role:'operations'},ops.token)).status,200);
  const host=await post('join',{code:'ROLES18',name:'Host',hostKey:HOST_KEY});
+ // (A page keeps its event stream and sends poses; this script's host sits idle while the guests work — on a loaded machine
+ // past the room's 30 s "quiet: gone" rule, and the host's next action got 401 "Join the room first". It checks in like a page.)
+ const keep=setInterval(()=>{if(host.token)fetch(base+'/api/seen',{method:'POST',headers:{'Content-Type':'application/json','X-Player-Token':host.token},body:'{}'}).catch(()=>{});},5000);keep.unref();   // (/api/seen: any request with the token counts as heard from; this one changes nothing)
  assert.equal(host.isHost,true);
  const occupiedRoom=await fetch(base+'/api/room').then(r=>r.json());assert.equal(occupiedRoom.localHost,false);assert(!occupiedRoom.hostKey,'host key is no longer returned after host joins');
  assert.equal((await post('join',{code:'ROLES18',hostKey:HOST_KEY})).status,409);

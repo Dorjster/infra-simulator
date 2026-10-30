@@ -26,7 +26,7 @@ export function createThirdPerson({ scene, camera, look, state }) {
     update(dt) {
       if (!on) { if (model) model.g.visible = false; return; }
       const m = ensureModel(), st = state(); m.g.visible = true;
-      m.g.position.set(camera.position.x, Math.max(0, camera.position.y - (st.crouch ? 5.9 : 9.7)), camera.position.z);
+      m.g.position.set(camera.position.x, Number.isFinite(st.feet) ? st.feet : Math.max(0, camera.position.y - (st.crouch ? 5.9 : 9.7)), camera.position.z);   // (Global Defensive gives the feet: lab.js)
       m.g.rotation.y = st.yaw; if (st.gun) m.setWeapon?.(st.weapon || 'cannon');
       m.update(dt, st); dist += ((on ? 13 : 0) - dist) * Math.min(1, dt * 6);
     },

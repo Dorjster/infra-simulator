@@ -2,20 +2,23 @@
 // reload · grenades · bomb / kit (bottom right), the dynamic crosshair (moves to where the next bullet goes and opens
 // up with movement inaccuracy) and the scope overlay. DOM is touched only when a value changes.
 import { skinTitle, skinKeyOf } from './skins.js';
-import { weaponById, moveInaccuracy, MAX_HP, isFirearm } from './weapons-data.js';
+import { weaponById, moveInaccuracy, MAX_HP, isFirearm, NADE_ORDER } from './weapons-data.js';
 import { hpOf, armorOf } from './combat-logic.js';
 import { loadCrosshair, crosshairHTML } from './gd-crosshair.js';
+import { bindingOf, keyLabel } from './input.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const MODE = { auto: 'AUTO', semi: 'SEMI', pump: 'PUMP', bolt: 'BOLT' };
-const NADE_ICON = { he: '●', flash: '◆', smoke: '■', molotov: '▲' };
+// Each grenade's own mark, and the key that draws it (slots 6–10: input.js; the two fire grenades share slot 10).
+export const NADE_ICON = { he: '●', flash: '◆', smoke: '■', decoy: '◎', molotov: '▲', incendiary: '✹' };
+const NADE_KEY = { he: 'a-he', flash: 'a-flash', smoke: 'a-smoke', decoy: 'a-decoy', molotov: 'a-molotov', incendiary: 'a-molotov' }, NONE = [];
 export function createGdHud({ world, name, weapons, recoil, fov, move, active }) {
   let tW = null, tS = null, tK = -1, tTitle = '';   // (the weapon title, made again only when the weapon or its skin changes)
   const css = document.createElement('style'); css.textContent = `
 #gd-hud{position:fixed;inset:0;z-index:36;pointer-events:none;font:700 14px system-ui;color:#fff;text-shadow:0 1px 3px #000c}#gd-hud[hidden]{display:none}
 #gd-hp{position:absolute;left:22px;bottom:22px;display:flex;align-items:flex-end;gap:18px}#gd-hp .v{display:flex;align-items:baseline;gap:6px}#gd-hp b{font:800 40px ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.02em}#gd-hp small{font:700 11px system-ui;letter-spacing:.12em;opacity:.75}#gd-hp .ico{font:900 22px system-ui;opacity:.9}#gd-hp .low b,#gd-hp .low .ico{color:#ff4d4d}#gd-hp .arm.none{opacity:.35}
 #gd-hpbar{position:absolute;left:22px;bottom:12px;width:150px;height:4px;background:#ffffff26;border-radius:2px;overflow:hidden}#gd-hpbar i{display:block;height:100%;background:#e8eef2;transition:width .15s}
-#gd-wp{position:absolute;right:22px;bottom:18px;text-align:right}#gd-wp .name{font:800 13px system-ui;letter-spacing:.08em;color:#ffd36b}#gd-wp .ammo{font:800 40px ui-monospace,Menlo,Consolas,monospace}#gd-wp .ammo small{font:700 20px ui-monospace,Menlo,monospace;opacity:.7}#gd-wp .ammo.low{color:#ff6b6b}#gd-wp .meta{font:700 11px system-ui;letter-spacing:.12em;opacity:.8}#gd-wp .rl{height:4px;background:#ffffff26;border-radius:2px;margin-top:4px;overflow:hidden}#gd-wp .rl i{display:block;height:100%;background:#9fd8ff}#gd-wp .util{margin-top:6px;font:900 16px system-ui;letter-spacing:.3em;opacity:.9}#gd-wp .util span.on{color:#ffd36b}
+#gd-wp{position:absolute;right:22px;bottom:18px;text-align:right}#gd-wp .name{font:800 13px system-ui;letter-spacing:.08em;color:#ffd36b}#gd-wp .ammo{font:800 40px ui-monospace,Menlo,Consolas,monospace}#gd-wp .ammo small{font:700 20px ui-monospace,Menlo,monospace;opacity:.7}#gd-wp .ammo.low{color:#ff6b6b}#gd-wp .meta{font:700 11px system-ui;letter-spacing:.12em;opacity:.8}#gd-wp .rl{height:4px;background:#ffffff26;border-radius:2px;margin-top:4px;overflow:hidden}#gd-wp .rl i{display:block;height:100%;background:#9fd8ff}#gd-wp .util{margin-top:6px;font:900 16px system-ui;letter-spacing:.3em;opacity:.9}#gd-wp .util span.on{color:#ffd36b}#gd-wp .util span[data-n]{margin-left:.15em}#gd-wp .util i{font:700 9px system-ui;font-style:normal;letter-spacing:0;opacity:.65;vertical-align:super;margin-right:1px}#gd-wp .util b{font:800 11px system-ui;letter-spacing:0;margin-left:1px}
 #gd-x{position:absolute;inset:0}#gd-x i{position:absolute;background:#7dff8e;box-shadow:0 0 1px #000,0 0 2px #000}#gd-x .t,#gd-x .b{width:2px;height:7px;left:-1px}#gd-x .l,#gd-x .r{height:2px;width:7px;top:-1px}#gd-x .c{width:2px;height:2px;left:-1px;top:-1px}#gd-x[hidden]{display:none}
 #gd-scope{position:absolute;inset:0;display:none}#gd-scope.on{display:block}#gd-scope .ring{position:absolute;left:50%;top:50%;width:min(92vh,92vw);height:min(92vh,92vw);transform:translate(-50%,-50%);border-radius:50%;box-shadow:0 0 0 200vmax #000;border:2px solid #000}#gd-scope .h,#gd-scope .v{position:absolute;background:#000}#gd-scope .h{left:0;right:0;top:50%;height:1px}#gd-scope .v{top:0;bottom:0;left:50%;width:1px}#gd-scope.dot .ring{width:min(60vh,60vw);height:min(60vh,60vw);box-shadow:0 0 0 200vmax #000c}#gd-scope.dot .h,#gd-scope.dot .v{display:none}#gd-scope.dot:after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:#ff3030;box-shadow:0 0 4px #f00}`;
   (document.head || document.body).append?.(css);
@@ -26,6 +29,9 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
   const set = (k, el, prop, v) => { if (last[k] === v) return; last[k] = v; if (prop === 'html') el.innerHTML = v; else if (prop === 'text') el.textContent = v; else if (prop === 'class') el.className = v; else el.style[prop] = v; };
   const els = { hp: $('#gd-hp .hp b'), hpBox: $('#gd-hp .hp'), arm: $('#gd-hp .arm b'), armBox: $('#gd-hp .arm'), armIco: $('#gd-hp .arm .ico'), bar: $('#gd-hpbar i'), name: $('#gd-wp .name'), ammo: $('#gd-wp .ammo'), meta: $('#gd-wp .meta'), rl: $('#gd-wp .rl i'), util: $('#gd-wp .util'), x: $('#gd-x'), scope: $('#gd-scope'), xt: $('#gd-x .t'), xb: $('#gd-x .b'), xl: $('#gd-x .l'), xr: $('#gd-x .r'), xc: $('#gd-x .c') };
   let xh = loadCrosshair(), xhVer = 0; addEventListener('gd-crosshair', e => { xh = e.detail || loadCrosshair(); xhVer++; });
+  let utSig = -1, keyVer = 0; addEventListener('infra-bindings', () => { keyVer++; });   // (grenade keys rebound: their labels change)
+  const keyOf = id => { const c = bindingOf('arena', NADE_KEY[id])[0]; return c ? keyLabel(c).replace(/[<&>"]/g, '') : ''; };
+  const countOf = (list, id) => { let c = 0; for (let i = 0; i < list.length; i++) if (list[i] === id) c++; return c; };
   const px = (rad, f) => Math.tan(rad) / Math.tan(f * Math.PI / 360) * innerHeight / 2;
   return {
     update() {
@@ -39,8 +45,15 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
         else { set('wa', els.ammo, 'html', ''); set('wm', els.meta, 'text', w.kind === 'knife' ? 'LEFT SLASH · RIGHT STAB' : w.kind === 'nade' ? (weapons.nade?.state === 'priming' ? 'PULLING THE PIN…' : weapons.nade?.state === 'held' ? '▲ ' + ({ long: 'LONG THROW', medium: 'MEDIUM THROW', short: 'SHORT UNDERHAND' })[weapons.nade.strength] + ' · RELEASE TO THROW' : 'HOLD LEFT: LONG · RIGHT: SHORT · BOTH: MEDIUM') : w.kind === 'bomb' ? 'HOLD LEFT ON A SITE TO PLANT' : ''); }
         set('rl', els.rl, 'width', weapons.reloading ? (1 - weapons.reloadLeft) * 100 + '%' : '0');
       } else { set('wn', els.name, 'text', ''); set('wa', els.ammo, 'html', ''); set('wm', els.meta, 'text', ''); }
-      const nades = Array.isArray(l.nades) ? l.nades : [], extra = (d?.bomb?.carrier === key(me) ? ' <span class="on">C4</span>' : '') + (d?.kits?.[key(me)] ? ' <span>KIT</span>' : '');
-      set('ut', els.util, 'html', nades.map(n => `<span class="${w?.id === n ? 'on' : ''}">${NADE_ICON[n] || '•'}</span>`).join('') + extra);
+      // Grenades in slot order (6 HE · 7 flash · 8 smoke · 9 decoy · 0 molotov / incendiary), each kind once with its key
+      // and a count when there are two (flashbangs); the one in hand lit; then the bomb and the kit. Rebuilt only when
+      // what it shows changes (one number from the counts, the grenade in hand, bomb, kit, key bindings): no per-frame
+      // allocation otherwise.
+      { const nades = Array.isArray(l.nades) ? l.nades : NONE, k = key(me), bomb = d?.bomb?.carrier === k, kit = !!d?.kits?.[k]; let sig = 0;
+        for (let i = 0; i < NADE_ORDER.length; i++) sig = sig * 3 + Math.min(2, countOf(nades, NADE_ORDER[i]));
+        sig = ((sig * 8 + 1 + NADE_ORDER.indexOf(w?.id)) * 4 + (bomb ? 1 : 0) + (kit ? 2 : 0)) * 1000 + keyVer % 1000;
+        if (sig !== utSig) { utSig = sig; let h = ''; for (const id of NADE_ORDER) { const c = countOf(nades, id); if (c) h += `<span class="${w?.id === id ? 'on' : ''}" data-n="${id}" data-c="${c}"><i>${keyOf(id)}</i>${NADE_ICON[id]}${c > 1 ? '<b>×' + c + '</b>' : ''}</span>`; }
+          els.util.innerHTML = h + (bomb ? ' <span class="on">C4</span>' : '') + (kit ? ' <span>KIT</span>' : ''); } }
       // Crosshair: offset to where the next bullet goes (recoil), gap from movement inaccuracy; scope overlay instead when scoped.
       const sc = weapons.scope, f = fov(), sniper = w?.kind === 'sniper';
       set('sc', els.scope, 'class', sc ? (sniper ? 'on' : 'on dot') : '');

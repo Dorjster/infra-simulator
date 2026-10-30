@@ -48,8 +48,14 @@ export const ACTIONS = [
   { id: 'a-primary', label: 'Primary weapon (rifle, sniper, SMG, shotgun)', legacy: 'slot1', def: ['Digit1'], ctx: ['arena'] },
   { id: 'a-secondary', label: 'Pistol', legacy: 'slot2', def: ['Digit2'], ctx: ['arena'] },
   { id: 'a-knife', label: 'Knife', legacy: 'slot3', def: ['Digit3'], ctx: ['arena'] },
-  { id: 'a-utility', label: 'Grenades (cycle)', legacy: 'slot4', def: ['Digit4'], ctx: ['arena'] },
+  { id: 'a-utility', label: 'Grenades (cycle: HE, flash, smoke, decoy, fire)', legacy: 'slot4', def: ['Digit4'], ctx: ['arena'] },
   { id: 'a-objective', label: 'Bomb (defuse matches)', legacy: 'slot5', def: ['Digit5'], ctx: ['arena'] },
+  // CS2's grenade slots (slot6–slot10, keys 6 7 8 9 0): each picks exactly that grenade, never throws it.
+  { id: 'a-he', label: 'HE grenade', legacy: 'slot6', def: ['Digit6'], ctx: ['arena'] },
+  { id: 'a-flash', label: 'Flashbang', legacy: 'slot7', def: ['Digit7'], ctx: ['arena'] },
+  { id: 'a-smoke', label: 'Smoke grenade', legacy: 'slot8', def: ['Digit8'], ctx: ['arena'] },
+  { id: 'a-decoy', label: 'Decoy grenade', legacy: 'slot9', def: ['Digit9'], ctx: ['arena'] },
+  { id: 'a-molotov', label: 'Molotov (T) / Incendiary (CT)', legacy: 'slot10', def: ['Digit0'], ctx: ['arena'] },
   { id: 'a-drop', label: 'Drop weapon', legacy: 'adrop', def: ['KeyG'], ctx: ['arena'] },
   { id: 'a-use', label: 'Pick up / swap weapon', legacy: 'ause', def: ['KeyE'], ctx: ['arena'] },
   { id: 'a-reload', label: 'Reload', legacy: 'reload', def: ['KeyR'], ctx: ['arena'] },
@@ -66,23 +72,40 @@ export const ACTIONS = [
 ];
 export const CONTEXTS = { infra: 'Infrastructure (Campaign, Free Build, Challenges)', payday: 'Payday', arena: 'Global Defensive (arena)' };
 const STORE = 'infra-bindings-v1';
-const valid = c => typeof c === 'string' && /^(Key[A-Z]|Digit\d|Numpad\w+|F\d{1,2}|Arrow\w+|Shift(Left|Right)|Control(Left|Right)|Alt(Left|Right)|Space|Tab|Enter|Backquote|Minus|Equal|Bracket(Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|CapsLock|Mouse[0-4])$/.test(c);
+const valid = c => typeof c === 'string' && /^(Key[A-Z]|Digit\d|Numpad\w+|F\d{1,2}|Arrow\w+|Shift(Left|Right)|Control(Left|Right)|Alt(Left|Right)|Space|Tab|Enter|Backquote|Minus|Equal|Bracket(Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|CapsLock|Mouse[0-4]|Wheel(Up|Down))$/.test(c);
+// The mouse wheel binds only Global Defensive's jump (CS2 players jump on the wheel; lab.js reads the wheel for that
+// alone): elsewhere it zooms and scrolls, and no other action could be fired by it.
+const wheelOk = (ctx, id) => ctx === 'arena' && id === 'a-jump';
 const RESERVED = ['Escape', 'MetaLeft', 'MetaRight'];
 // Pairs that may share a key on purpose: the game picks by situation (gun drawn → reload, else remove).
 const SHARED = [['reload', 'remove']];
 
+// Saved controls carry the version of the action list (v; a save without one is v1). A save from before an action
+// existed is brought up to date once, when read or imported — the player's own keys are never changed or reset:
+//  · v2 added the grenade slots (keys 6 7 8 9 0, Global Defensive). A key the player had already given to another
+//    Global Defensive action keeps that meaning and the new grenade action starts unbound there (Settings → Controls
+//    shows it so); every other new action gets its default key.
+const VERSION = 2, ADDED = { 2: ['a-he', 'a-flash', 'a-smoke', 'a-decoy', 'a-molotov'] };
+const versionOf = v => Number.isInteger(v) && v > 0 ? v : 1;
+function migrate(map, from) {
+  for (let v = from + 1; v <= VERSION; v++) for (const id of ADDED[v] || []) { const a = ACTIONS.find(x => x.id === id);
+    for (const ctx of a.ctx) { const m = map[ctx]; if (!m || m[id]) continue; if (a.def.some(c => Object.entries(m).some(([o, codes]) => o !== id && codes.includes(c)))) m[id] = []; } }
+  return map;
+}
 // Load with validation: anything malformed falls back to defaults (and the last good profile is kept).
 function load() {
-  try { const raw = JSON.parse(localStorage.getItem(STORE) || '{}'); return clean(raw); } catch { return {}; }
+  try { const raw = JSON.parse(localStorage.getItem(STORE) || '{}'), from = versionOf(raw?.v), out = migrate(clean(raw), from);
+    if (from < VERSION && Object.keys(out).length) try { localStorage.setItem(STORE, JSON.stringify({ v: VERSION, ...out })); } catch {}   // (migrated once)
+    return out; } catch { return {}; }
 }
 function clean(raw) {
   const out = {}; if (!raw || typeof raw !== 'object') return out;
   for (const [ctx, map] of Object.entries(raw)) { if (!CONTEXTS[ctx] || !map || typeof map !== 'object') continue;
-    for (const [id, codes] of Object.entries(map)) { if (!ACTIONS.some(a => a.id === id && a.ctx.includes(ctx)) || !Array.isArray(codes)) continue; (out[ctx] ??= {})[id] = codes.filter(valid).slice(0, 3); } }
+    for (const [id, codes] of Object.entries(map)) { if (!ACTIONS.some(a => a.id === id && a.ctx.includes(ctx)) || !Array.isArray(codes)) continue; (out[ctx] ??= {})[id] = codes.filter(c => valid(c) && (!/^Wheel/.test(c) || wheelOk(ctx, id))).slice(0, 3); } }
   return out;
 }
 let custom = load();
-const save = () => { try { localStorage.setItem(STORE, JSON.stringify(custom)); } catch {} dispatchEvent?.(new Event('infra-bindings')); };
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify({ v: VERSION, ...custom })); } catch {} dispatchEvent?.(new Event('infra-bindings')); };
 
 export const actionsIn = ctx => ACTIONS.filter(a => a.ctx.includes(ctx));
 export const bindingOf = (ctx, id) => custom[ctx]?.[id] ?? ACTIONS.find(a => a.id === id)?.def ?? [];
@@ -97,16 +120,17 @@ export function isBoundKey(ctx, code) { return actionsFor(ctx, code).length > 0;
 // Rebind: returns { ok } or { conflict: action } so the screen can offer Swap / Cancel.
 export function rebind(ctx, id, code, { swap = false } = {}) {
   if (RESERVED.includes(code)) return { error: 'That key is reserved' }; if (ctx !== 'arena' && /^Mouse[0-2]$/.test(code)) return { error: 'Left, right and middle mouse already click, zoom and ping here · use a side button (Mouse 4 / 5)' }; if (!valid(code)) return { error: 'That key can’t be used' };
+  if (/^Wheel/.test(code) && !wheelOk(ctx, id)) return { error: ctx === 'arena' ? 'The mouse wheel can only be bound to Jump' : 'The mouse wheel zooms and scrolls here · use a key or a side button (Mouse 4 / 5)' };
   const clash = actionsIn(ctx).find(a => a.id !== id && bindingOf(ctx, a.id).includes(code) && !SHARED.some(pair => pair.includes(a.id) && pair.includes(id)));
   if (clash && !swap) return { conflict: clash };
-  if (clash) { const mine = bindingOf(ctx, id); (custom[ctx] ??= {})[clash.id] = bindingOf(ctx, clash.id).filter(c => c !== code).concat(mine.filter(c => !bindingOf(ctx, clash.id).includes(c))).slice(0, 2); }
+  if (clash) { const mine = bindingOf(ctx, id); (custom[ctx] ??= {})[clash.id] = bindingOf(ctx, clash.id).filter(c => c !== code).concat(mine.filter(c => !bindingOf(ctx, clash.id).includes(c) && (!/^Wheel/.test(c) || wheelOk(ctx, clash.id)))).slice(0, 2); }   // (a swap never hands the wheel to an action it can't fire)
   (custom[ctx] ??= {})[id] = [code]; save(); return { ok: true };
 }
 export function unbind(ctx, id) { (custom[ctx] ??= {})[id] = []; save(); }
 export function resetContext(ctx) { delete custom[ctx]; save(); }
 export function resetAll() { custom = {}; save(); }
-export const exportBindings = () => JSON.stringify({ app: 'infra-simulator', kind: 'bindings', version: 1, bindings: custom }, null, 1);
-export function importBindings(text) { const d = JSON.parse(text); if (d?.kind !== 'bindings') throw Error('Not a controls file'); custom = clean(d.bindings); save(); return true; }
+export const exportBindings = () => JSON.stringify({ app: 'infra-simulator', kind: 'bindings', version: VERSION, bindings: custom }, null, 1);
+export function importBindings(text) { const d = JSON.parse(text); if (d?.kind !== 'bindings') throw Error('Not a controls file'); custom = migrate(clean(d.bindings), versionOf(d.version)); save(); return true; }   // (an older file: brought up to date as a saved profile is)
 
 // Human-readable label for a code, using the keyboard layout where the browser exposes it.
 let layout = null; try { navigator.keyboard?.getLayoutMap?.().then(m => { layout = m; }).catch(() => {}); } catch {}

@@ -46,6 +46,43 @@ const entList = existsSync(path.join(dir, 'entities.json')) ? JSON.parse(readFil
 // (look 'bounds': cs2-render.js).
 for (const e of entList) if (e.kind === 'solid' && /nuke_vent_slats/.test(e.model || '')) { e.kind = 'break'; e.health = 25; e.lookBounds = true; }
 const solidEnts = entList.filter(e => e.kind === 'solid' && e.physics).flatMap(e => placed(readGlb(e.physics), e));
+// Every window breaks (shots, a knife, an HE's blast, any grenade thrown into it): each piece of CS2's glass collision
+// (its triangles joined where they share corners) shaped like a pane — thin (≤ 12 units), 12 to 400 units across, a few
+// hundred triangles at most — becomes a breakable pane (glass, one hit), its triangles out of the players' and grenades'
+// collision (the pane's own box stands for them until it breaks). Bottles and glass that isn't pane-shaped stay as they are.
+const glassPanes = []; let backedN = 0, doorN = 0; { const isGlass = m => /^physics_(group|window|passbullets)_glass$/.test(m.name);
+  // (a window with a wall right behind it — glass over plaster, a painted building front — is no window: broken, the wall
+  // would show, and its gap could open the wall. Five points over the pane, 10 units out either way along its thin side:
+  // a surface of the rest of the collision there and it stays as it is)
+  const other = [...meshes.filter(m => !isGlass(m) && !/ladder|sky|clip/.test(m.name)), ...solidEnts], cells = new Map(), C = 32;
+  for (const [mi, m] of other.entries()) for (let t = 0; t < m.idx.length / 3; t++) { let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (let c = 0; c < 3; c++) { const v = m.idx[t * 3 + c]; x0 = Math.min(x0, m.pos[v * 3]); x1 = Math.max(x1, m.pos[v * 3]); y0 = Math.min(y0, m.pos[v * 3 + 1]); y1 = Math.max(y1, m.pos[v * 3 + 1]); }
+    if (x1 - x0 > 4096 || y1 - y0 > 4096) continue; for (let x = Math.floor(x0 / C); x <= Math.floor(x1 / C); x++) for (let y = Math.floor(y0 / C); y <= Math.floor(y1 / C); y++) { const k = x + ',' + y; let l = cells.get(k); if (!l) cells.set(k, l = []); l.push(mi, t); } }
+  const hitRay = (o, d, far) => { const l = cells.get(Math.floor((o[0] + d[0] * far / 2) / C) + ',' + Math.floor((o[1] + d[1] * far / 2) / C)); if (!l) return false;
+    for (let i = 0; i < l.length; i += 2) { const m = other[l[i]], t = l[i + 1], P = k => [m.pos[m.idx[t * 3 + k] * 3], m.pos[m.idx[t * 3 + k] * 3 + 1], m.pos[m.idx[t * 3 + k] * 3 + 2]], a = P(0), b = P(1), c = P(2);
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], h = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]], det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2]; if (Math.abs(det) < 1e-9) continue;
+      const f = 1 / det, sv = [o[0] - a[0], o[1] - a[1], o[2] - a[2]], u = f * (sv[0] * h[0] + sv[1] * h[1] + sv[2] * h[2]); if (u < 0 || u > 1) continue; const q = [sv[1] * e1[2] - sv[2] * e1[1], sv[2] * e1[0] - sv[0] * e1[2], sv[0] * e1[1] - sv[1] * e1[0]], vv = f * (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]); if (vv < 0 || u + vv > 1) continue;
+      const tt = f * (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]); if (tt > 0 && tt < far) return true; } return false; };
+  var backed = (lo, hi) => { const ext = [0, 1, 2].map(k => hi[k] - lo[k]), ax = ext.indexOf(Math.min(...ext)), mid = [0, 1, 2].map(k => (lo[k] + hi[k]) / 2); let hits = 0;
+    for (const [fa, fb] of [[.5, .5], [.3, .3], [.7, .3], [.3, .7], [.7, .7]]) { const pt = [...mid]; const others = [0, 1, 2].filter(k => k !== ax); pt[others[0]] = lo[others[0]] + ext[others[0]] * fa; pt[others[1]] = lo[others[1]] + ext[others[1]] * fb;
+      for (const sg of [1, -1]) { const d = [0, 0, 0]; d[ax] = sg; const o = [...pt]; o[ax] = sg > 0 ? hi[ax] + .25 : lo[ax] - .25; if (hitRay(o, d, 10)) { hits++; break; } } }
+    return hits >= 2; };
+  for (const m of meshes) { if (!isGlass(m)) continue; const nt = m.idx.length / 3, nv = m.pos.length / 3, key = new Map(), weld = new Int32Array(nv);
+    for (let v = 0; v < nv; v++) { const k = Math.round(m.pos[v * 3] * 2) + ',' + Math.round(m.pos[v * 3 + 1] * 2) + ',' + Math.round(m.pos[v * 3 + 2] * 2); let w = key.get(k); if (w === undefined) key.set(k, w = v); weld[v] = w; }
+    const up = new Int32Array(nv).map((_, i) => i), find = x => { while (up[x] !== x) x = up[x] = up[up[x]]; return x; };
+    for (let t = 0; t < nt; t++) { const a = find(weld[m.idx[t * 3]]); for (let c = 1; c < 3; c++) { const b = find(weld[m.idx[t * 3 + c]]); if (a !== b) up[b] = a; } }
+    const pieces = new Map(); for (let t = 0; t < nt; t++) { const r = find(weld[m.idx[t * 3]]); let p = pieces.get(r); if (!p) pieces.set(r, p = { tris: [], lo: [Infinity, Infinity, Infinity], hi: [-Infinity, -Infinity, -Infinity] });
+      p.tris.push(t); for (let c = 0; c < 3; c++) { const v = m.idx[t * 3 + c]; for (let k = 0; k < 3; k++) { p.lo[k] = Math.min(p.lo[k], m.pos[v * 3 + k]); p.hi[k] = Math.max(p.hi[k], m.pos[v * 3 + k]); } } }
+    const drop = new Uint8Array(nt);
+    for (const p of pieces.values()) { const e = [0, 1, 2].map(k => p.hi[k] - p.lo[k]).sort((a, b) => a - b); if (e[0] > 12 || e[1] < 12 || e[2] > 400 || p.tris.length > 300) continue;
+      if (backed(p.lo, p.hi)) { backedN++; continue; }
+      // (glass standing on a floor, door-high, is a doorway — Cache's CT spawn, an open doorway in the look with invisible
+      // glass in the collision — no window: it stays as it was, the doorway as walkable as before)
+      { const mid = [(p.lo[0] + p.hi[0]) / 2, (p.lo[1] + p.hi[1]) / 2, p.lo[2] + .5]; if (p.hi[2] - p.lo[2] >= 80 && hitRay(mid, [0, 0, -1], 8)) { doorN++; continue; } }
+      glassPanes.push({ mins: p.lo.map(v => +v.toFixed(2)), maxs: p.hi.map(v => +v.toFixed(2)) }); for (const t of p.tris) drop[t] = 1; }
+    if (drop.some(Boolean)) { const keep = []; for (let t = 0; t < nt; t++) if (!drop[t]) keep.push(m.idx[t * 3], m.idx[t * 3 + 1], m.idx[t * 3 + 2]); m.idx = Uint32Array.from(keep); } } }
+// (a grid over the panes, 64 units a cell: the grenades' triangles inside one are its own — left out, below)
+const paneGrid = new Map(); glassPanes.forEach((g, i) => { for (let x = Math.floor((g.mins[0] - 2) / 64); x <= Math.floor((g.maxs[0] + 2) / 64); x++) for (let y = Math.floor((g.mins[1] - 2) / 64); y <= Math.floor((g.maxs[1] + 2) / 64); y++) { const k = x + ',' + y; (paneGrid.get(k) || paneGrid.set(k, []).get(k)).push(i); } });
+const inPane = (x, y, z) => { for (const i of paneGrid.get(Math.floor(x / 64) + ',' + Math.floor(y / 64)) || []) { const g = glassPanes[i]; if (x >= g.mins[0] - 2 && x <= g.maxs[0] + 2 && y >= g.mins[1] - 2 && y <= g.maxs[1] + 2 && z >= g.mins[2] - 2 && z <= g.maxs[2] + 2) return true; } return false; };
 // Ladders: CS2 marks them in the collision ('ladder'): not solid — a climbing volume round each (below).
 const isLadder = m => /ladder/.test(m.name), isSky = m => /physics_sky/.test(m.name);
 // Players: everything but grenade clips and ladders; grenades: everything but player clips, ladders and the sky (a high
@@ -60,8 +97,12 @@ const nades = join([...meshes.filter(m => !/playerclip/.test(m.name) && !isLadde
 function nadeMeshSoup() { const f = path.join(dir, 'nade_mesh.bin'); if (!existsSync(f)) return null; const b = readFileSync(f), world = new Float32Array(b.buffer, b.byteOffset, b.length >> 2), ents = solidEnts.filter(m => !/playerclip/.test(m.name));
   const meta = existsSync(f + '.json') ? JSON.parse(readFileSync(f + '.json', 'utf8')) : {}, wt = world.length / 9, nt = wt + ents.reduce((n, m) => n + m.idx.length / 3, 0);
   const soup = new Float32Array(nt * 9), sight = new Uint8Array(nt); soup.set(world); sight.fill(1, 0, Number.isFinite(meta.sight) ? meta.sight : wt); let o = world.length, t = wt;
+  // (the panes' own triangles out: a grenade flies through a broken window — till then the pane's box stops it, and breaks)
+  // (a triangle wholly in a pane's box: the merged mesh's big wall triangles run past it and stay)
+  if (glassPanes.length) { let w = 0; const ws = Number.isFinite(meta.sight) ? meta.sight : wt; for (let k = 0; k < wt; k++) { const b = k * 9;
+      if (inPane(world[b], world[b + 1], world[b + 2]) && inPane(world[b + 3], world[b + 4], world[b + 5]) && inPane(world[b + 6], world[b + 7], world[b + 8])) continue; soup.copyWithin(w * 9, b, b + 9); sight[w] = k < ws ? 1 : 0; w++; } console.log(`  grenade mesh: ${wt - w} pane triangles out`); o = w * 9; t = w; }
   for (const m of ents) { const see = /npcclip|passbullets|grenadeclip|navclip|window_glass|_glass\b|^physics_group_glass/.test(m.name) ? 0 : 1; for (let k = 0; k < m.idx.length; k++) { const v = m.idx[k] * 3; soup[o++] = m.pos[v]; soup[o++] = m.pos[v + 1]; soup[o++] = m.pos[v + 2]; } sight.fill(see, t, t + m.idx.length / 3); t += m.idx.length / 3; }
-  return { soup, sight }; }
+  return { soup: soup.subarray(0, o), sight: sight.subarray(0, t) }; }
 if (process.env.NADE_MESH_ONLY) { const soup = nadeMeshSoup(), target = path.join(outDir, id + '.bsp'); if (!soup || !existsSync(target)) { console.log('needs ' + path.join(dir, 'nade_mesh.bin') + ' and ' + target); process.exit(1); }
   const file = readFileSync(target), { header, end } = cs2mBodyEnd(file), hl = file.readUInt32LE(8), p4 = n => n + (4 - n % 4) % 4, M = buildNadeMesh(soup.soup, soup.sight); header.nadeMesh = M.info;
   const bk = path.join(os.homedir(), 'CS2-extract', 'backup', id + '-before-nademesh.bsp'); if (!existsSync(bk)) { mkdirSync(path.dirname(bk), { recursive: true }); copyFileSync(target, bk); }
@@ -99,6 +140,9 @@ for (const e of entList.filter(e => (e.kind === 'door' || e.kind === 'break') &&
   out.push(e.kind === 'door' ? { classname: 'func_door_rotating', model: '*' + (models.length - 1), origin: hinge.join(' '), distance: String(e.distance || 90), spawnflags: '0', cs2: e.model }
     : { classname: 'func_breakable', model: '*' + (models.length - 1), origin: '0 0 0', material: e.glass ? '0' : '2', health: String(Math.max(1, e.health || 1)), spawnflags: '0', cs2: e.model, ...(e.lookBounds ? { look: 'bounds' } : {}) });
   moverLooks.push({ ent: out.length - 1, kind: e.kind, look: e.look, physics: e.physics, origin: e.origin, angles: e.angles, scale: e.scale, through: !!e.lookBounds }); }
+// The panes (above): breakables after the map's own movers (their numbers unchanged — the look's mover nodes are named by them).
+for (const g of glassPanes) { models.push({ mins: g.mins, maxs: g.maxs }); out.push({ classname: 'func_breakable', model: '*' + (models.length - 1), origin: '0 0 0', material: '0', health: '1', spawnflags: '0', look: 'bounds', pane: 1 }); moverLooks.push({ ent: out.length - 1, kind: 'break', through: false }); }
+if (glassPanes.length || backedN || doorN) console.log(`  windows: ${glassPanes.length} glass panes made breakable, ${backedN} with a wall right behind and ${doorN} in doorways left as they are`);
 // Physics props (pots, cans, bottles, stools, cinder blocks — prop_physics): no collision for players (CS2 pushes them
 // about); the game moves their look (cs2-render.js / arena-physprops.js). Each: where it stands and its box (Hammer).
 const props = [];
@@ -273,4 +317,4 @@ const pad = b => Buffer.concat([b, Buffer.alloc((4 - b.length % 4) % 4)]), u32 =
 const file = Buffer.concat([Buffer.from('CS2M'), u32(1), u32(header.length), pad(header), ...[P, N].flatMap(g => [Buffer.from(g.offs.buffer), pad(Buffer.from(g.vals.buffer))]), pad(Buffer.from(P.surf.buffer)), Buffer.from(B.offs.buffer), pad(Buffer.from(B.vals.buffer)), pad(Buffer.from(B.surf.buffer)), ...(NM ? [NM.buf] : [])]);   // (then the bullets' layer and what each of its stretches is made of: header.pens)   // (then each player stretch's surface: an index into the header's `surfaces`)
 const target = path.join(outDir, id + '.bsp'); mkdirSync(path.dirname(target), { recursive: true });
 if (existsSync(target) && readFileSync(target).subarray(0, 4).toString() !== 'CS2M') { const bk = path.join(os.homedir(), 'CS2-extract', 'backup'); mkdirSync(bk, { recursive: true }); const to = path.join(bk, id + '-before-cs2.bsp'); if (!existsSync(to)) { copyFileSync(target, to); console.log('kept the earlier map file:', to); } }
-writeFileSync(target, file); writeFileSync(path.join(dir, 'movers.json'), JSON.stringify(moverLooks, null, 1));   /* (for the look: convert_world.py) */ console.log(`→ ${target} (${(file.length / 1048576).toFixed(1)} MB): ${out.filter(e => /^info_player/.test(e.classname)).length} spawns, ${out.filter(e => e.classname === 'func_buyzone').length} buy zones, ${out.filter(e => e.classname === 'func_bomb_target').length} bomb sites, ${out.filter(e => e.classname === 'env_cs_place').length} places`);
+writeFileSync(target, file); writeFileSync(path.join(dir, 'movers.json'), JSON.stringify(moverLooks.filter(m => m.look || m.physics), null, 1));   /* (for the look: convert_world.py) */ console.log(`→ ${target} (${(file.length / 1048576).toFixed(1)} MB): ${out.filter(e => /^info_player/.test(e.classname)).length} spawns, ${out.filter(e => e.classname === 'func_buyzone').length} buy zones, ${out.filter(e => e.classname === 'func_bomb_target').length} bomb sites, ${out.filter(e => e.classname === 'env_cs_place').length} places`);

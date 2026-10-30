@@ -52,7 +52,7 @@ Alletra, StoreOnce and PowerScale use distinct training block/NAS managers and p
 - Reloads: ["Gun Reload Sounds" by SpringySpringo](https://opengameart.org/content/gun-reload-sounds) — CC0.
 - Footsteps, breaking glass, grenade bounces, brass casings, bullet and body impacts: [Kenney "Impact Sounds"](https://kenney.nl/assets/impact-sounds) — CC0.
 - Explosions (HE, flashbang, bomb) and the molotov burn: [Kenney "Sci-Fi Sounds"](https://kenney.nl/assets/sci-fi-sounds) — CC0.
-- Epidemic Sound recordings (October 2026, `tools/pack-epidemic.mjs`): the project owner's Epidemic Sound downloads, cut into each gun's close, second, third and distant takes, the per-class reload sequences, knife, grenades, hits, death, footsteps, landing and the freeze-time jazz. **Licence for redistribution in a public repository or a downloadable app has not been confirmed**; the GitHub repository is public.
+- Epidemic Sound recordings (October 2026, `tools/pack-epidemic.mjs`): the project owner's Epidemic Sound downloads, cut into each gun's close, second, third and distant takes, the per-class reload sequences, knife, grenades, hits, death, footsteps and landing (the freeze-time jazz was removed in v51: freeze time is silent). **Licence for redistribution in a public repository or a downloadable app has not been confirmed**; the GitHub repository is public.
 
 ## Imported on the player's computer (never shipped, never committed)
 

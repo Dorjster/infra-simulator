@@ -22,18 +22,20 @@ const until = async (f, ms = 8000) => { const t0 = Date.now(); while (Date.now()
 async function player(name, host = false) {
   const j = await (await fetch(base + '/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, code: CODE, ...(host ? { hostKey: 'k' } : {}) }) })).json();
   if (!j.token) return { error: j.error || 'no token' };
-  const P = { name: j.name, token: j.token, world: j.world, revision: j.revision, combat: gameOf(j.world)?.combat || null, players: j.players || [], ac: new AbortController(), alive: true, at: null };
+  const P = { name: j.name, token: j.token, world: j.world, revision: j.revision, combat: gameOf(j.world)?.combat || null, players: j.players || [], ac: new AbortController(), alive: true, at: null, events: {}, arev: j.arev || 0, lrev: j.lrev || 0 };
+  // A Global Defensive frame (stream or reply), applied as multiplayer.js does: the arena by arev, loadouts by lrev.
+  P.gd = x => { const o = P.world?.operations; if (x.arena && o && (x.arev || 0) > P.arev) { P.arev = x.arev; o.arena = x.arena; P.lrev = Math.max(P.lrev, x.lrev || 0); } if (x.loadout && o?.arena && (x.lrev || 0) > P.lrev) { P.lrev = x.lrev; o.arena.loadout = x.loadout; } delete x.arena; delete x.loadout; if (!P.combat || (x.rev || 0) >= (P.combat.rev || 0)) P.combat = x; };
   const H = { 'content-type': 'application/json', 'x-player-token': P.token };
   fetch(base + '/api/events?token=' + P.token, { signal: P.ac.signal }).then(async res => { const rd = res.body.getReader(), dec = new TextDecoder(); let buf = '';
     for (;;) { const { value, done } = await rd.read(); if (done) break; buf += dec.decode(value, { stream: true }); let i;
       while ((i = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); const ev = /event: (\w+)/.exec(chunk)?.[1], data = /data: (.*)/s.exec(chunk)?.[1]; if (!ev || !data) continue;
-        try { const x = JSON.parse(data); if (ev === 'world') { P.world = x.world; P.revision = x.revision; if (gameOf(x.world)?.combat) P.combat = gameOf(x.world).combat; } else if (ev === 'combat') P.combat = x; else if (ev === 'players') P.players = x; } catch {} } } }).catch(() => {});
+        try { const x = JSON.parse(data); P.events[ev] = (P.events[ev] || 0) + 1; if (ev === 'world') { P.world = x.world; P.revision = x.revision; if (gameOf(x.world)?.combat) P.combat = gameOf(x.world).combat; } else if (ev === 'combat') P.gd(x); else if (ev === 'players') P.players = x; } catch {} } } }).catch(() => {});
   const game = () => gameOf(P.world);
   (async () => { while (P.alive) { const g = game(), s = P.combat?.spawnTo?.[P.name.toLowerCase()], M = ARENA_MAPS[g?.arena?.map];
       if (g?.mode === 'arena' && M) { if (s && s.at !== P.spawnAt) { P.spawnAt = s.at; P.at = { x: s.x, y: (s.y ?? 0) + 9.7, z: s.z }; } if (!P.at && M.t?.[0]) P.at = { x: ARENA.cx + M.t[0][0], y: 9.7 + (M.nav?.floorAt(M.t[0][0], M.t[0][1]) || 0), z: ARENA.cz + M.t[0][1] };   // (a map only in a file this process hasn't read: wait for the spawn order)
         if (P.at) await fetch(base + '/api/pose', { method: 'POST', headers: H, body: JSON.stringify({ pose: { ...P.at, yaw: 0 } }) }).catch(() => {}); }
       await sleep(100); } })();
-  P.act = async a => { for (let k = 0; k < 4; k++) { const r = await (await fetch(base + '/api/action', { method: 'POST', headers: H, body: JSON.stringify({ revision: P.revision, action: a }) })).json().catch(e => ({ error: e.message })); if (r.world) { P.world = r.world; P.revision = r.revision ?? P.revision; if (gameOf(r.world)?.combat) P.combat = gameOf(r.world).combat; } if (!/World changed/.test(r.error || '')) return r; } };   // (a world action carries the revision it was meant for: retried on the latest)
+  P.act = async a => { for (let k = 0; k < 4; k++) { const r = await (await fetch(base + '/api/action', { method: 'POST', headers: H, body: JSON.stringify({ revision: P.revision, action: a }) })).json().catch(e => ({ error: e.message })); if (r.world) { P.world = r.world; P.revision = r.revision ?? P.revision; if (gameOf(r.world)?.combat) P.combat = gameOf(r.world).combat; } if (r.gd) P.gd(r.gd); if (!/World changed/.test(r.error || '')) return r; } };   // (a world action carries the revision it was meant for: retried on the latest)
   P.leave = async () => { P.alive = false; await fetch(base + '/api/leave?token=' + P.token, { method: 'POST' }).catch(() => {}); P.ac.abort(); };   // (as the page does on closing)
   P.drop = () => { P.alive = false; P.ac.abort(); };   // (the connection just lost: a crash, the network)
   return P;
@@ -62,6 +64,7 @@ try {
   // The match.
   const sm = await host.act({ type: 'arena', action: { type: 'start-match' } }); await until(() => host.combat?.d?.round?.phase === 'freeze' && gameOf(host.world)?.arena?.lobby?.started, 8000);
   check('the host starts the match', gameOf(host.world).arena.lobby.started, JSON.stringify(sm).slice(0, 100));
+  const worlds0 = bo.events.world || 0, frames0 = bo.events.combat || 0;   // (from here on: every map, joins mid-round, buys — the match only, never the facility)
   await host.act({ type: 'arena', action: { type: 'restart-round' } }); await sleep(800);
   check('the round starts 5 vs 5 (after the leaves, bots even it), everyone on a spot of their own', (() => { const c = counts(host), a = apart(host); return c.t === 5 && c.ct === 5 && a.close === 0; })(), JSON.stringify({ ...counts(host), ...apart(host) }));
   // Every map: the host changes it mid-match; someone joins mid-round there.
@@ -77,10 +80,11 @@ try {
     await host.act({ type: 'arena', action: { type: 'restart-round' } }); await until(() => !host.combat?.down?.dee && host.combat?.spawnTo?.dee, 8000); await sleep(400);
     { const sp = host.combat?.spawnTo?.dee; await until(() => { const q = poseOf('Dee'); return q && sp && Math.hypot(q.x - sp.x, q.z - sp.z) < .5; }, 3000); const q = poseOf('Dee');
       check(`${id}: the next round everyone sees Dee at their spawn (not where they were)`, !!q && !!sp && Math.hypot(q.x - sp.x, q.z - sp.z) < .5, JSON.stringify({ pose: q && [q.x, q.z].map(v => +v.toFixed(1)), spawn: sp && [sp.x, sp.z].map(v => +v.toFixed(1)) })); }
-    const buy = await dee.act({ type: 'arena', action: { type: 'loadout', secondary: 'deagle' } });
-    check(`${id}: next round Dee plays: money, a spot of their own, buys in the spawn`, !host.combat.down?.dee && host.combat.d.money.dee >= 800 && apart(host).close === 0 && /Desert Eagle/.test(JSON.stringify(buy)), JSON.stringify({ money: host.combat.d.money.dee, ...apart(host), buy: buy.result || buy.error }));
+    const money = host.combat.d.money.dee, buy = await dee.act({ type: 'arena', action: { type: 'loadout', secondary: 'deagle' } });   // (the money before the buy: its GD frame reaches the host's stream as fast as Dee's reply now)
+    check(`${id}: next round Dee plays: money, a spot of their own, buys in the spawn`, !host.combat.down?.dee && money >= 800 && apart(host).close === 0 && /Desert Eagle/.test(JSON.stringify(buy)), JSON.stringify({ money, ...apart(host), buy: buy.result || buy.error }));
     await dee.leave(); await until(() => !people(host).includes('Dee'), 8000); await host.act({ type: 'arena', action: { type: 'restart-round' } }); await sleep(500);
     check(`${id}: Dee leaves → the next round 5 vs 5`, (() => { const c = counts(host); return c.t === 5 && c.ct === 5; })(), JSON.stringify(counts(host))); }
+  check('the whole match on every map (map changes, joins, buys) reached Bo as GD frames — not one ~120 KB world snapshot', (bo.events.world || 0) === worlds0 && (bo.events.combat || 0) - frames0 > 50, JSON.stringify({ worlds: (bo.events.world || 0) - worlds0, frames: (bo.events.combat || 0) - frames0 }));
   for (const p of [host, bo, cy]) await p.leave();
 } catch (e) { check('no crash', false, e.stack?.split('\n').slice(0, 3).join(' | ')); }
 console.log((fail ? 'FAIL' : 'PASS') + ': LAN Defuse through the room · joins (20 rejoins, 5 at once), the match, every map, joins mid-round, 5 vs 5 · ' + pass + '/' + (pass + fail)); server.kill(); process.exit(fail ? 1 : 0);

@@ -360,9 +360,20 @@ export const VARIANTS = {
   xm1014: { base: 'shotgun', tint: 0x4a4a4e }, galil: { base: 'ak', tint: 0xc9b48a }, famas: { base: 'm4', tint: 0xcbb48a }, m4s: { base: 'm4', suppressor: [1.15, .085] },
   sg553: { base: 'ak', tint: 0x55595e, scope: true }, aug: { base: 'm4', tint: 0x7d8a5c, scope: true }, ssg08: { base: 'sniper', scale: .92, tint: 0x8aa0b4 }, lmg: { base: 'm4', scale: 1.22, tint: 0x5c5f55, box: true },
   negev: { base: 'lmg', scale: .97, tint: 0x3f413a },
+  // Grenades without a model of their own (original looks on the CC0 cans; band: [height 0–1 up the can, band height
+  // as a share of it, colour] rings round it): the decoy a shorter khaki can with a dark speaker band; the incendiary a
+  // slimmer grey can with a red band and an orange one (fire).
+  decoy: { base: 'smoke', scale: .82, tint: 0xc2ad74, band: [[.45, .22, 0x26282a]] }, incendiary: { base: 'smoke', scale: .94, tint: 0x9ea5aa, band: [[.66, .1, 0xb8321e], [.54, .05, 0xff8a1a]] },
 };
-const MUZZLE_SET = new Set(), variantMats = new Map(), decoMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: .45, metalness: .8 }); decoMat.userData.shared = true;
+const MUZZLE_SET = new Set(), variantMats = new Map(), bandParts = new Map(), decoMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: .45, metalness: .8 }); decoMat.userData.shared = true;
 function tintMaterial(m, hex, chrome) { const k = m.uuid + ':' + hex + (chrome ? 'c' : ''); if (!variantMats.has(k)) { const c = m.clone(); c.color = new THREE.Color(hex); if (chrome) { c.metalness = 1; c.roughness = .25; c.metalnessMap = null; c.roughnessMap = null; } c.userData.shared = true; variantMats.set(k, c); } return variantMats.get(k); }
+// A can's cross-section from its vertices between two heights (the model's own frame; the lower half: a can's side has
+// vertices only at its rims, and the lever and pin on top would widen it): its axis (x, z) and radius, so a grenade
+// band hugs the body. Once per look.
+function canSection(src, y0, y1, box) { const v = new THREE.Vector3(); let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity; src.updateMatrixWorld(true);
+  src.traverse(o => { const p = o.isMesh && o.geometry.attributes.position; if (!p) return; for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld); if (v.y < y0 || v.y > y1) continue; if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x; if (v.z < z0) z0 = v.z; if (v.z > z1) z1 = v.z; } });
+  if (x0 > x1) { const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()); return { x: c.x, z: c.z, r: Math.min(s.x, s.z) / 2 }; }   // (no vertices there: the bounding box)
+  return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, r: Math.max(x1 - x0, z1 - z0) / 2 }; }
 function variantModel(id, scale) {
   const V = VARIANTS[id], src = real.get(V.base); if (!src) return null; const g = src.clone(), s = V.scale || 1;
   if (V.tint) g.traverse(o => { if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map(m => tintMaterial(m, V.tint, V.chrome)) : tintMaterial(o.material, V.tint, V.chrome); });   // (a variant of a variant: parts with several materials)
@@ -375,13 +386,15 @@ function variantModel(id, scale) {
   if (V.bipod) for (const sx of [-1, 1]) { const leg = cyl(.012, .32); leg.rotation.x = 0; leg.rotation.z = sx * .35; leg.geometry = leg.geometry.clone().rotateX(-Math.PI / 2); leg.position.set(sx * .06, bottom - .1, mz.z + len * .12); g.add(leg); }   // M249 bipod
   if (V.slimScope) { const t = cyl(.045, len * .3); t.position.set(0, top + .07, mz.z + len * .55); g.add(t); const shade = cyl(.055, len * .06); shade.position.set(0, top + .07, mz.z + len * .38); g.add(shade); }   // SSG 08: a slim scope with a sunshade (the AWP's is bulky)
   if (V.box) { const b = new THREE.Mesh(new THREE.BoxGeometry(.32, .38, .42), decoMat); b.position.set(mz.x, box.min.y + .12, mz.z + len * .62); g.add(b); }
+  if (V.band) V.band.forEach(([f, h, hex], i) => { const k = id + ':' + i; if (!bandParts.has(k)) { const sz = box.getSize(new THREE.Vector3()), y = box.min.y + sz.y * f, hh = sz.y * h / 2, s = canSection(src, box.min.y, box.min.y + sz.y * .55, box), geo = new THREE.CylinderGeometry(s.r * 1.03, s.r * 1.03, hh * 2, 24, 1, true), mat = new THREE.MeshStandardMaterial({ color: hex, roughness: .55, metalness: .2 }); geo.userData.shared = mat.userData.shared = true; bandParts.set(k, { geo, mat, x: s.x, y, z: s.z }); }
+    const b = bandParts.get(k), m = new THREE.Mesh(b.geo, b.mat); m.position.set(b.x, b.y, b.z); m.castShadow = true; g.add(m); });   // grenade bands (decoy, incendiary): made once per look, shared; decoMat's own kind of material (colour only, front faces), so no shader of its own to build mid-match
   g.traverse(o => { if (o.geometry && o.material === decoMat) o.geometry.userData.shared = true; });
   const wrap = new THREE.Group(); g.scale.multiplyScalar(s); wrap.add(g); wrap.userData.muzzle = mz.clone().multiplyScalar(s).add(new THREE.Vector3(0, 0, V.suppressor ? -V.suppressor[0] * s : 0)).toArray(); wrap.scale.setScalar(scale); return wrap;
 }
 export function weaponModel(id, scale = 1) {
   if (real.has(id)) { const g = real.get(id).clone(); g.scale.setScalar(scale); return g; }
   if (VARIANTS[id] && real.has(VARIANTS[id].base)) { const v = variantModel(id, scale); if (v) { if (!MUZZLE_SET.has(id)) { MUZZLE[id] = v.userData.muzzle; MUZZLE_SET.add(id); } return v; } }
-  if (['he', 'flash', 'smoke', 'molotov'].includes(id)) { if (!cache.has(id)) { const t = new THREE.Group(); t.add(new THREE.Mesh(new THREE.SphereGeometry(.28, 12, 10), M.black)); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, t); } const g = cache.get(id).clone(); g.scale.setScalar(scale); return g; }   // until the real grenade models are in
+  if (['he', 'flash', 'smoke', 'decoy', 'molotov', 'incendiary'].includes(id)) { if (!cache.has(id)) { const t = new THREE.Group(); t.add(new THREE.Mesh(new THREE.SphereGeometry(.28, 12, 10), M.black)); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, t); } const g = cache.get(id).clone(); g.scale.setScalar(scale); return g; }   // until the real grenade models are in
   if (id === 'cannon' || !['pistol', 'deagle', 'smg', 'shotgun', 'ak', 'm4', 'sniper', 'lmg', 'knife', 'karambit'].includes(id)) return pistolModel(scale);
   if (!cache.has(id)) { const t = id === 'karambit' ? karambit() : id === 'knife' ? knife() : build(id); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, t); }
   const g = cache.get(id).clone(); g.scale.setScalar(scale); return g;
@@ -392,4 +405,4 @@ export const MUZZLE = { greasegun: [0, 0, -.5], luger: [0, 0, -.2], suomi: [0, 0
 // Extra view-model turns, applied in order about the camera's axes ([axis, radians]). The karambit is held like
 // CS2: handle across the fist, ring on the index finger, blade out to the right curling up and forward.
 export const VIEW_ROT = { karambit: [['y', -Math.PI / 2], ['x', Math.PI], ['y', .18], ['z', .12]] };
-export const VIEW = { c4: [.38, -.5, -.85, 1], he: [.42, -.42, -.85, 1.3], flash: [.42, -.42, -.85, 1.3], smoke: [.42, -.42, -.85, 1.2], molotov: [.42, -.44, -.85, 1.1], knife: [.55, -.5, -.9, .9], karambit: [.42, -.54, -.95, .72], pistol: [.5, -.55, -1.1, .62], deagle: [.5, -.55, -1.1, .55], cannon: [.62, -.62, -1.25, .55], smg: [.48, -.58, -1.1, .45], shotgun: [.46, -.56, -1.05, .34], ak: [.46, -.56, -1.05, .36], m4: [.46, -.55, -1.05, .38], sniper: [.44, -.54, -1.0, .32], lmg: [.48, -.6, -1.1, .34] };
+export const VIEW = { c4: [.38, -.5, -.85, 1], he: [.42, -.42, -.85, 1.3], flash: [.42, -.42, -.85, 1.3], smoke: [.42, -.42, -.85, 1.2], molotov: [.42, -.44, -.85, 1.1], decoy: [.42, -.42, -.85, 1.2], incendiary: [.42, -.42, -.85, 1.2], knife: [.55, -.5, -.9, .9], karambit: [.42, -.54, -.95, .72], pistol: [.5, -.55, -1.1, .62], deagle: [.5, -.55, -1.1, .55], cannon: [.62, -.62, -1.25, .55], smg: [.48, -.58, -1.1, .45], shotgun: [.46, -.56, -1.05, .34], ak: [.46, -.56, -1.05, .36], m4: [.46, -.55, -1.05, .38], sniper: [.44, -.54, -1.0, .32], lmg: [.48, -.6, -1.1, .34] };

@@ -33,8 +33,10 @@ const M = ARENA_MAPS.dust2, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7 + M.nav.
   const msg2 = arenaApply(g, { type: 'settings', rules: { win: 5, ff: false } }, 'Host', P, t);
   ok('during a match: queued for the next match, this one unchanged', /next match/.test(msg2) && g.combat.d.rules.win === 9 && g.combat.d.rules.ff === true && g.arena.rulesNext.win === 5 && g.arena.rulesNext.start === 2400, msg2);
   // The match ends; the same map starts again by itself → the queued rules take over.
+  g.arena.loadout.host = { primary: 'ak', secondary: 'deagle', nades: ['he', 'flash'] }; (g.combat.armor ??= {}).host = { kevlar: 100, helmet: true }; g.combat.kills.host = 9; d.kits.guest = true; d.money.host = 16000;
   d.matchOver = { at: t, winner: 't' }; arenaTick(g, P, .05, t += DEFUSE.matchOverMs + 100);
   ok('the next match (same map, restarted by itself) uses the queued rules', g.combat.d !== d && g.combat.d.rules.win === 5 && g.combat.d.rules.ff === false && !g.arena.rulesNext, JSON.stringify(g.combat.d.rules));
+  ok('…and is a whole new match: no gun, grenade, armor, kit or kill kept, money from its rules ($2400)', !g.arena.loadout.host?.primary && !(g.arena.loadout.host?.nades || []).length && g.arena.loadout.host?.secondary !== 'deagle' && !g.combat.armor?.host && !g.combat.kills.host && !g.combat.d.kits.guest && g.combat.d.money.host === 2400 && g.combat.d.money.guest === 2400, JSON.stringify([g.arena.loadout.host, g.combat.armor, g.combat.kills, g.combat.d.money]));
   arenaApply(g, { type: 'settings', rules: { win: 7 } }, 'Host', P, t); arenaApply(g, { type: 'restart' }, 'Host', P, t += 50);
   ok('a host restart uses the queued rules too', g.arena.rules.win === 7 && g.combat.d.rules.win === 7 && !g.arena.rulesNext); }
 

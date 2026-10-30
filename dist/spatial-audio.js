@@ -9,16 +9,33 @@ export function audioCtx() { ctx ??= new AudioContext(); if (ctx.state === 'susp
 // has its own volume (Settings → Audio, saved on this computer); team voice follows master × voice (voice.js).
 const VOLS_KEY = 'infra-audio', VOL_DEFAULT = { master: 1, effects: 1, voice: 1, music: .7, ui: .9 };
 export function getVolumes() { try { return { ...VOL_DEFAULT, ...JSON.parse(localStorage.getItem(VOLS_KEY) || '{}') }; } catch { return { ...VOL_DEFAULT }; } }
-let vols = getVolumes(), bus = null, verb = null, masterG = null, busUI = null, busMusic = null;
+let vols = getVolumes(), bus = null, verb = null, masterG = null, busUI = null, busMusic = null, worldIn = null, duckF = null, duckG = null, limiter = null;
 export function setVolumes(v) { vols = { ...vols, ...v }; for (const k of Object.keys(vols)) vols[k] = Math.max(0, Math.min(1, +vols[k] || 0)); try { localStorage.setItem(VOLS_KEY, JSON.stringify(vols)); } catch {} if (masterG) { masterG.gain.value = vols.master; bus.gain.value = vols.effects; busUI.gain.value = vols.ui; busMusic.gain.value = vols.music; } globalThis.dispatchEvent?.(new CustomEvent('infra-volume', { detail: vols })); return vols; }
 function buses(c) {
   // (a gentle compressor, no make-up gain: gunfire is kept from clipping without squashing near and far together — a
   // footstep far off stays far quieter than one close by; the game world sits 3 dB under the old mix: it was too loud)
+  // The world: worldIn → duck (a lowpass and a gain, see duck(): open — a lowpass at Nyquist passes everything) → the
+  // Effects volume → trim → compressor → master volume → a brick-wall limiter (−1 dBFS, 20:1, 1 ms: a 3:1 compressor lets
+  // a stack such as the bomb next to you through near 0 dBFS; this one holds peaks under full scale) → speakers. The UI
+  // bus skips the world's compressor (hit markers no longer pump with gunfire) and meets the master after it.
   if (bus) return; const comp = c.createDynamicsCompressor(); comp.threshold.value = -10; comp.knee.value = 8; comp.ratio.value = 3; comp.attack.value = .003; comp.release.value = .2;
-  masterG = c.createGain(); masterG.gain.value = vols.master; comp.connect(masterG).connect(c.destination);
-  const trim = c.createGain(); trim.gain.value = .7; bus = c.createGain(); bus.gain.value = vols.effects; bus.connect(trim).connect(comp); busUI = c.createGain(); busUI.gain.value = vols.ui; busUI.connect(comp); busMusic = c.createGain(); busMusic.gain.value = vols.music; busMusic.connect(comp);
+  limiter = c.createDynamicsCompressor(); limiter.threshold.value = -1; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = .001; limiter.release.value = .05;
+  masterG = c.createGain(); masterG.gain.value = vols.master; comp.connect(masterG).connect(limiter).connect(c.destination);
+  worldIn = c.createGain(); duckF = c.createBiquadFilter(); duckF.type = 'lowpass'; duckF.frequency.value = c.sampleRate / 2; duckG = c.createGain();
+  const trim = c.createGain(); trim.gain.value = .7; bus = c.createGain(); bus.gain.value = vols.effects; worldIn.connect(duckF).connect(duckG).connect(bus).connect(trim).connect(comp); busUI = c.createGain(); busUI.gain.value = vols.ui; busUI.connect(masterG); busMusic = c.createGain(); busMusic.gain.value = vols.music; busMusic.connect(comp);
 }
-export function master(c) { buses(c); return bus; }
+export function master(c) { buses(c); return worldIn; }
+// The Effects volume's own input after the duck: a sound that must not be muffled by it (a flashbang's ear ring) but
+// still follows the Effects and Master volumes, the compressor and the limiter.
+export function ringBus(c) { buses(c); return bus; }
+// Flashed (Global Defensive; CS2 muffles the world while you are blinded): the world dulled by `depth` (0 … 1: down to
+// ~600 Hz and −9 dB at 1) and eased back over `secs`. (The depth and the curve are this game's approximation — CS2's
+// own dsp preset isn't in its sound events.) Nothing to do while it is open.
+export function duck(depth, secs) { if (!duckF || !ctx) return; const d = Math.max(0, Math.min(1, depth)), t = ctx.currentTime, ny = ctx.sampleRate / 2; if (!(d > 0) || !(secs > 0)) return;
+  const f = Math.max(600, ny * Math.pow(600 / ny, d)), g = Math.pow(10, -9 * d / 20); duckF.frequency.cancelScheduledValues(t); duckG.gain.cancelScheduledValues(t);
+  duckF.frequency.setValueAtTime(Math.min(duckF.frequency.value, f), t); duckF.frequency.setTargetAtTime(f, t, .02); duckG.gain.setTargetAtTime(g, t, .02);
+  duckF.frequency.setTargetAtTime(ny, t + secs * .35, secs * .25); duckG.gain.setTargetAtTime(1, t + secs * .35, secs * .25); }
+export const ducking = () => !!duckF && !!ctx && duckF.frequency.value < ctx.sampleRate / 2 - 1;   // (tests)
 export function uiBus(c) { buses(c); return busUI; }
 export function musicBus(c) { buses(c); return busMusic; }
 // The room you are in (CS2's sound zones, Sabine's RT60 ∝ volume / absorbing surface): 0 = open air (a site under the
@@ -58,12 +75,19 @@ export function outAt(c, at, kind = 'effect') {
 const fwd = { x: 0, y: 0, z: -1 };
 // The listener's position (for distance-dependent sound: muffling, echo).
 export const listenerAt = () => { const L = ctx?.listener; return L?.positionX ? { x: L.positionX.value, y: L.positionY.value, z: L.positionZ.value } : null; };
+// (a camera with no parent, or one in the scene root: straight from its position and rotation — this frame's, set by
+// the movement just now; matrixWorld is only refreshed at render, a frame behind. Otherwise its world matrix.)
+const up = { x: 0, y: 1, z: 0 };
 export function setListener(camera) {
-  if (!ctx) return; const L = ctx.listener, e = camera.matrixWorld.elements, x = e[12], y = e[13], z = e[14];
-  fwd.x = -e[8]; fwd.y = -e[9]; fwd.z = -e[10];
-  if (L.positionX) { L.positionX.value = x; L.positionY.value = y; L.positionZ.value = z; L.forwardX.value = fwd.x; L.forwardY.value = fwd.y; L.forwardZ.value = fwd.z; L.upX.value = e[4]; L.upY.value = e[5]; L.upZ.value = e[6]; }
-  else { L.setPosition?.(x, y, z); L.setOrientation?.(fwd.x, fwd.y, fwd.z, e[4], e[5], e[6]); }
+  if (!ctx) return; const L = ctx.listener, q = camera.quaternion, p = camera.position, root = q && p && (!camera.parent || camera.parent.isScene); let x, y, z;
+  if (root) { x = p.x; y = p.y; z = p.z; const qx = q.x, qy = q.y, qz = q.z, qw = q.w;   // (the camera's −Z and +Y turned by q)
+    fwd.x = -2 * (qx * qz + qw * qy); fwd.y = -2 * (qy * qz - qw * qx); fwd.z = -(1 - 2 * (qx * qx + qy * qy)); up.x = 2 * (qx * qy - qw * qz); up.y = 1 - 2 * (qx * qx + qz * qz); up.z = 2 * (qy * qz + qw * qx); }
+  else { const e = camera.matrixWorld.elements; x = e[12]; y = e[13]; z = e[14]; fwd.x = -e[8]; fwd.y = -e[9]; fwd.z = -e[10]; up.x = e[4]; up.y = e[5]; up.z = e[6]; }
+  if (L.positionX) { L.positionX.value = x; L.positionY.value = y; L.positionZ.value = z; L.forwardX.value = fwd.x; L.forwardY.value = fwd.y; L.forwardZ.value = fwd.z; L.upX.value = up.x; L.upY.value = up.y; L.upZ.value = up.z; }
+  else { L.setPosition?.(x, y, z); L.setOrientation?.(fwd.x, fwd.y, fwd.z, up.x, up.y, up.z); }
 }
+// The listener's right (forward × up), for a sound beside your own head (sound-bank: your own shell casings).
+export const listenerRight = out => { out.x = fwd.y * up.z - fwd.z * up.y; out.y = fwd.z * up.x - fwd.x * up.z; out.z = fwd.x * up.y - fwd.y * up.x; return out; };
 // Recorded footsteps: the game sets a hook that picks the surface and plays a sample (sound-bank.js); without it
 // (or before the samples load) a footstep is a short filtered noise thud (concrete-ish), different every step.
 let stepHook = null; export const setStepHook = f => { stepHook = f; };

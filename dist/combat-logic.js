@@ -9,9 +9,9 @@
 // arrives first. A hit for a shot fired with an empty magazine is refused. A reload (pose shot.r) only moves rounds
 // from the reserve into the magazine. Clients show their own count and take the host's whenever they are in sync.
 import { skinKeyOf } from './skins.js';
-import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H } from './weapons-data.js';
+import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H, NADE_ORDER, BODY_R } from './weapons-data.js';
 import { defuseDamage, defuseKill } from './arena-defuse.js';
-import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath } from './arena-maps.js';
+import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath, BulletPath } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
 import { smokeBlocks } from './arena-nades.js';   /* kill-feed mark: shot through smoke (only used at call time: no load-order issue) */
 
@@ -22,10 +22,11 @@ export const armorOf = (game, name) => game.combat?.armor?.[key(name)] || { kevl
 export const isDown = (game, name, now = Date.now()) => (game.combat?.down?.[key(name)]?.until || 0) > now;
 
 // What a player carries in Global Defensive: primary, pistol (the team's starting pistol unless they dropped it),
-// knife, grenades, the bomb.
+// knife, grenades (each kind once, in CS2's slot order 6–10 — HE, flash, smoke, decoy, molotov / incendiary — not the
+// order they were bought: key 4 cycles them so), the bomb.
 const DARJA = n => /^darja$/.test(key(n));
 export const teamPistol = (game, name) => defaultPistol(game?.combat?.d?.teams?.[key(name)] || null);
-export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary === undefined ? teamPistol(game, name) : l.secondary, (DARJA(name) && !['default', 'butterfly', 'stiletto', 'm9'].includes(game.arena?.knives?.[key(name)])) || game.arena?.knives?.[key(name)] === 'karambit' ? 'karambit' : 'knife',   /* (Darja's karambit; or one she equipped on you) */ ...new Set(Array.isArray(l.nades) ? l.nades : []), game.combat?.d?.bomb?.carrier === key(name) ? 'c4' : null].filter(Boolean); }
+export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary === undefined ? teamPistol(game, name) : l.secondary, (DARJA(name) && !['default', 'butterfly', 'stiletto', 'm9'].includes(game.arena?.knives?.[key(name)])) || game.arena?.knives?.[key(name)] === 'karambit' ? 'karambit' : 'knife',   /* (Darja's karambit; or one she equipped on you) */ ...(Array.isArray(l.nades) && l.nades.length ? NADE_ORDER.filter(id => l.nades.includes(id)) : []), game.combat?.d?.bomb?.carrier === key(name) ? 'c4' : null].filter(Boolean); }
 export const ownedWeapons = (game, name) => game.mode === 'arena' ? arenaArsenalOf(game, name) : [];
 // Guns exist only in Global Defensive (the arena): never in Campaign, Free Build, Challenges or Payday.
 export const combatOn = game => game.mode === 'arena';
@@ -87,7 +88,7 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   const before = hpOf(game, targetName), hp = Math.max(0, before - dmg); c.hp[tk] = hp; const nm = c.names ??= {}; nm[me] = String(shooter).slice(0, 40); nm[tk] = String(targetName).slice(0, 40);
   if (me !== tk) { const d = ((c.dmg ??= {})[tk] ??= {}); d[me] = (d[me] || 0) + Math.min(before, dmg); }
   const shown = Math.min(before, dmg);
-  if (me !== tk && recording(game) && !friendly(game, shooter, targetName)) { const st = statOf(game, shooter), util = wpn.id === 'he' || wpn.id === 'molotov'; st.dmg += shown; if (util) st.util += shown; else if (isFirearm(wpn)) { st.hits++; if (zone === 'head') st.hsHits++; } if (hp <= 0 && zone === 'head' && isFirearm(wpn)) st.hsKills++; }
+  if (me !== tk && recording(game) && !friendly(game, shooter, targetName)) { const st = statOf(game, shooter), util = wpn.id === 'he' || wpn.id === 'molotov' || wpn.id === 'incendiary'; st.dmg += shown; if (util) st.util += shown; else if (isFirearm(wpn)) { st.hits++; if (zone === 'head') st.hsHits++; } if (hp <= 0 && zone === 'head' && isFirearm(wpn)) st.hsKills++; }
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + shown + ' HP', dmg: shown, hp, zone, head: zone === 'head' };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name, wid: wpn.id, head: zone === 'head', at: now };
   const teamKill = c.d && c.d.teams[me] && c.d.teams[me] === c.d.teams[tk];
@@ -99,18 +100,28 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
 }
 const friendly = (game, a, b) => { const t = game.combat?.d?.teams; return !!t && key(a) !== key(b) && !!t[key(a)] && t[key(a)] === t[key(b)]; };
 const damageCap = wpn => Math.round((wpn.dmg || 30) * 4);
+// A Global Defensive body's feet (game units): the eye (pose.y) less its height over the feet as the pose told it (ey,
+// from the client's true feet fy: lan/room.mjs; a pose rewound for a hit, lag-comp.js, keeps its own y), else less
+// CS2's eye — 64 HU standing, 46 crouched (bots, which send no feet, never crouch).
+const DUCK_EYE = 46 * 2.54 / 16.5;   // (arena-move.js EYE_GD.duck)
+export const poseFeet = q => Math.max(0, (q.y ?? EYE) - (Number.isFinite(q.ey) ? q.ey : q.crouched ? DUCK_EYE : EYE));
 
 // Line of fire: shooter's eye to the target point is clear of the map's walls and crates (3D). Lenient: refused only
 // when the head, chest and the zone hit are all hidden (positions are a few frames old on the host).
 const ZONE_Y = { head: 10.2, chest: 7.9, stomach: 5.8, legs: 2.7 };   // (the middle of each zone: weapons-data.js zoneAt)
+// (Kept per map object, not its name: a map file loaded for a map in play replaces the built-in one of the same name.)
 let boxCache = { map: null, boxes: [] };
-const boxesOf = game => { const m = game.arena?.map; if (!m || !ARENA_MAPS[m]) return []; if (boxCache.map !== m) boxCache = { map: m, boxes: mapBoxes(ARENA_MAPS[m], ARENA.cx, ARENA.cz) }; return boxCache.boxes; };
+const boxesOf = game => { const m = game.arena?.map, M = m ? ARENA_MAPS[m] : null; if (!M) return []; if (boxCache.map !== M) boxCache = { map: M, boxes: mapBoxes(M, ARENA.cx, ARENA.cz) }; return boxCache.boxes; };
 // Returns the damage multiplier: 1 in the open, less through crates / thin walls (wallbang, `pen` = the gun's
-// penetration budget), 0 when blocked. The best of the zone hit, the head and the chest.
+// penetration budget), 0 when blocked. The best of the zone hit, the head and the chest — each on the body's axis and at
+// its two edges as the shooter sees it (EDGE of the capsule's radius either side: the client hits the whole capsule,
+// weapons.js rayCapsule, so a shoulder past a corner is a hit the host must see too).
+const LOF = new BulletPath(), EDGE = .8;
 export function lineOfFire(game, from, to, zone = 'chest', pen = 0) {
-  const boxes = boxesOf(game); if (!boxes.length || !from || !to) return 1; const feet = Math.max(0, (to.y ?? EYE) - (to.crouched ? 5.9 : EYE)), ey = from.y ?? EYE;
-  let best = 0; for (const z of [zone, 'head', 'chest']) { const tx = to.x, ty = feet + (ZONE_Y[z] ?? 7) * (to.crouched ? CROUCH_H : 1), tz = to.z, dx = tx - from.x, dy = ty - ey, dz = tz - from.z, L = Math.hypot(dx, dy, dz) || 1e-6;
-    const f = pen > 0 ? bulletPath(boxes, from.x, ey, from.z, dx / L, dy / L, dz / L, L + .01, pen).factor(L) : segmentClear(boxes, from.x, ey, from.z, tx, ty, tz) ? 1 : 0; if (f > best) best = f; if (best >= 1) break; }
+  const boxes = boxesOf(game); if (!boxes.length || !from || !to) return 1; const feet = poseFeet(to), ey = from.y ?? EYE;
+  const hx = to.x - from.x, hz = to.z - from.z, hl = Math.hypot(hx, hz) || 1e-6, px = -hz / hl * BODY_R * EDGE, pz = hx / hl * BODY_R * EDGE;
+  let best = 0; for (const z of [zone, 'head', 'chest']) for (let s = 0; s < 3; s++) { const tx = to.x + (s === 1 ? px : s === 2 ? -px : 0), tz = to.z + (s === 1 ? pz : s === 2 ? -pz : 0), ty = feet + (ZONE_Y[z] ?? 7) * (to.crouched ? CROUCH_H : 1), dx = tx - from.x, dy = ty - ey, dz = tz - from.z, L = Math.hypot(dx, dy, dz) || 1e-6;
+    const f = pen > 0 ? bulletPath(boxes, from.x, ey, from.z, dx / L, dy / L, dz / L, L + .01, pen, LOF).factor(L) : segmentClear(boxes, from.x, ey, from.z, tx, ty, tz) ? 1 : 0; if (f > best) best = f; if (best >= 1) return best; }
   return best;
 }
 // Knife: in front of the attacker (within ~70°; up close, anywhere ahead — the hull is wide), within reach (CS2's
