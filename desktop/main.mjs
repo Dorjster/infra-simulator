@@ -1,7 +1,7 @@
 // Infra Simulator desktop shell (Electron). The game is the same browser client and the same room
 // server as the web package: the room runs in this main process, bound to 127.0.0.1 for Solo and
 // rebound to the LAN only while the player hosts. Saves live in the per-user app-data folder.
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell, powerSaveBlocker } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile, writeFile, rename, copyFile, stat, readdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -38,6 +38,10 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding'); app.commandLine.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 // No usable GPU driver: keep WebGL on Chromium's software renderer instead of failing (newer Chromium drops the automatic fallback).
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+// (Reviewed for v51: each switch above answers a measured Windows/macOS problem. Deliberately not used: vsync / frame-rate
+// limit switches — the game paces its own frames on the display's refresh (frame-gate.js); --use-angle — Windows keeps
+// ANGLE's default Direct3D 11, macOS Metal; nothing that weakens the sandbox, web security or certificate checks. Whether
+// WebGL ended up on the GPU is reported by desktop:info → gpu and shown in the Global Defensive performance overlay, F9.)
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch
 let win = null, room = null, hosting = false, inMatch = false, quitting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');
@@ -66,6 +70,10 @@ function createWindow() {
     webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, backgroundThrottling: false }
   });
   win.once('ready-to-show', () => win.show());
+  // The page reloaded or went to another address (a reload, joining a host, the renderer restarted): whatever match it was in is
+  // over — it says so again if it enters one (desktop:in-match) — so the sleep blocker follows (keepAwake).
+  win.webContents.on('did-start-navigation', (d, _url, inPlace, isMain) => { if ((d?.isMainFrame ?? isMain) && !(d?.isSameDocument ?? inPlace) && inMatch) { inMatch = false; keepAwake(); } });   // (Electron 33: the details on the event; the positional ones deprecated)
+  win.webContents.on('render-process-gone', () => { if (inMatch) { inMatch = false; keepAwake(); } });
   // In a Global Defensive match, closing the window (Alt+F4, the title bar ×) asks first.
   win.on('close', e => { if (!inMatch || quitting) return; const r = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Keep playing', 'Quit'], defaultId: 0, cancelId: 0, message: 'Leave the match and quit Infra Simulator?' }); if (r === 0) e.preventDefault(); else quitting = true; });
   // A host that can't be reached (wrong address or port, firewall, different network) must not leave a
@@ -103,7 +111,7 @@ async function importSave() {
     if (data.operations?.mode !== 'campaign' || !Array.isArray(data.nets) || !Array.isArray(data.cables)) throw Error('This file is not a campaign save.');
     const target = savePath(); await copyFile(target, target.replace(/\.json$/, '') + '.before-import.json').catch(() => {});
     await writeFile(target + '.tmp', text); await rename(target + '.tmp', target);
-    const port = room.port; await room.close(); room = await startRoom({ port, bind: '127.0.0.1', savePath: target, mapsDir: mapsDir(), assetsDir: assetsDir() }); hosting = false;
+    const port = room.port; await room.close(); room = await startRoom({ port, bind: '127.0.0.1', savePath: target, mapsDir: mapsDir(), assetsDir: assetsDir() }); hosting = false; inMatch = false; stopBeacon(); keepAwake();   // (no longer hosting, and the page reloads out of any match: the computer may sleep again)
     win.loadURL(origin() + '/'); dialog.showMessageBox(win, { message: 'Campaign imported', detail: 'Choose Solo Campaign → Continue (or LAN Host Campaign) to play it. The previous save was kept as campaign-save.before-import.json.' });
   } catch (e) { dialog.showErrorBox('Import failed', e.message); }
 }
@@ -150,11 +158,16 @@ ipcMain.handle('desktop:host', async (_e, opts = {}) => {
   if (opts?.code) await room.setCode(opts.code);
   // Opening to the LAN restarts the listener: connected pages reconnect (`rebound` tells the page to wait for that).
   let rebound = false; if (!hosting) { const port = room.port; try { await room.rebind('0.0.0.0', port); } catch { await room.rebind('0.0.0.0', 0); } hosting = true; rebound = true; }
-  startBeacon();
+  startBeacon(); keepAwake();
   return { port: room.port, securePort: room.securePort, roomCode: room.roomCode, addresses: room.addresses(), hosting, rebound };
 });
-ipcMain.handle('desktop:stop-hosting', async () => { stopBeacon(); if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } return { hosting }; });
-ipcMain.handle('desktop:in-match', (_e, on) => { inMatch = !!on; return inMatch; });
+ipcMain.handle('desktop:stop-hosting', async () => { stopBeacon(); if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } keepAwake(); return { hosting }; });
+ipcMain.handle('desktop:in-match', (_e, on) => { inMatch = !!on; keepAwake(); return inMatch; });
+// While this computer hosts friends or plays a match, the system may not suspend the app (macOS App Nap slows a background
+// app's timers — the room's 50 ms tick ran late for every player — and idle sleep would stop the room). A shut laptop lid
+// still sleeps: the room then resumes the match where it stood (lan/room.mjs: the host stood still).
+let awake = null;
+function keepAwake() { const want = hosting || inMatch; if (want && awake === null) awake = powerSaveBlocker.start('prevent-app-suspension'); else if (!want && awake !== null) { powerSaveBlocker.stop(awake); awake = null; } }
 // Counter-Strike 1.6 player models from the player's own Steam install (never shipped with the game): the standard
 // Steam library and any extra library folders, on Windows, macOS and Linux. Returns the player .mdl files by side.
 const CS_T = ['terror', 'leet', 'arctic', 'guerilla', 'militia'], CS_CT = ['urban', 'gsg9', 'sas', 'gign', 'spetsnaz'];
@@ -175,7 +188,10 @@ ipcMain.handle('desktop:find-cs-models', async () => {
   }
   return { dir: null, models: [] };
 });
-ipcMain.handle('desktop:info', () => ({ version: app.getVersion(), platform: process.platform, hosting, port: room.port, savePath: savePath() }));
+// gpu: Chromium's "Graphics Feature Status" (what chrome://gpu shows: webgl / webgl2 / gpu_compositing / rasterization …
+// 'enabled', 'enabled_on', 'unavailable_software', 'disabled_software' …) — the Global Defensive performance overlay (F9)
+// shows whether WebGL really runs on the graphics card (gd-perf-overlay.js).
+ipcMain.handle('desktop:info', () => { let gpu = null; try { gpu = app.getGPUFeatureStatus(); } catch {} return { version: app.getVersion(), platform: process.platform, hosting, port: room.port, savePath: savePath(), gpu }; });
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(async () => {

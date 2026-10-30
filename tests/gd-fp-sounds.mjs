@@ -3,9 +3,16 @@
 // And the room's table (when CS2's assets are imported on this computer): every gun has its reload sounds in order.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { createClipChannel, setClipSounds } from '../dist/fp-sounds.js';
+import { createClipChannel, setClipSounds, setClipReady, playClipAt } from '../dist/fp-sounds.js';
 let n = 0; const ok = (name, c, d = '') => { n++; assert(c, name + (d ? ' · ' + d : '')); };
 setClipSounds({ ak: { reload: { dur: 2.4, ev: [[.4, ['out'], 1, 1, 0], [1.1, ['in'], 1, 1, 0], [1.6, ['bolt'], 1, 1, 0]] }, draw: { dur: .5, ev: [[0, ['draw'], 1, 1, 0]] } } });
+// GD-AUD-06: a clip in the table whose sounds are not decoded yet (or never decode) is NOT "playing": start() and
+// playClipAt() say false, so the caller plays its own sound instead of going silent; nothing fires.
+{ const decoded = new Set(['out', 'in']); setClipReady(n => decoded.has(n)); const h = [], c0 = createClipChannel(e => h.push(e[1][0]));
+  ok('a clip with an undecoded sound (the bolt) does not start: the caller falls back', !c0.start('ak', 'reload', 2400, 0)); c0.step(5000); ok('…and nothing of it plays', h.length === 0 && !c0.playing);
+  ok('someone else\'s clip, undecoded: false (their fallback plays)', !playClipAt('ak', 'reload', 2400, { x: 0, y: 0, z: 0 }));
+  decoded.add('bolt'); ok('once every sound has a decoded take it starts', c0.start('ak', 'reload', 2400, 0)); }
+setClipReady(() => true);
 const heard = [], ch = createClipChannel(e => heard.push(e[1][0]));
 ok('a clip with sounds starts', ch.start('ak', 'reload', 2400, 0)); ok('no table entry: nothing', !createClipChannel().start('ak', 'inspect', 0, 0));
 ch.step(399); ok('nothing before its first moment', heard.length === 0); ch.step(400); ok('the magazine comes out at 0.4 s', heard.join() === 'out');
@@ -15,7 +22,10 @@ heard.length = 0; ch.start('ak', 'reload', 4800, 0); ch.step(790); ok('played tw
 ch.stop(); ch.step(5000); ok('cut off (a reload broken off): the rest stays quiet', heard.join() === 'out');
 heard.length = 0; ch.start('ak', 'reload', 2400, 0); ch.step(500); ch.start('ak', 'draw', 500, 600); ch.step(700); ch.step(3000); ok('a new clip replaces the old one', heard.join() === 'out,draw');
 const man = new URL('../user-assets/manifest.json', import.meta.url);
-if (existsSync(man)) { const F = JSON.parse(readFileSync(man)).models?.fpSounds;
+if (existsSync(man)) { const M = JSON.parse(readFileSync(man)).models || {}, F = M.fpSounds;
+  // GD-AUD-19: every clip sound the table names is listed in models.sounds (an importer that replaced models.sounds
+  // would leave the table pointing at nothing).
+  if (F) { const S = M.sounds || {}, lost = [...new Set(Object.values(F).flatMap(s => Object.values(s).flatMap(c => c.ev.flatMap(e => e[1]))))].filter(x => !S[x]); ok('every fpSounds sound is in models.sounds', !lost.length, lost.slice(0, 5).join()); }
   if (F) { const guns = ['pistol', 'usps', 'deagle', 'mp9', 'ak', 'm4', 'm4s', 'sniper', 'ssg08', 'famas', 'galil', 'negev'];
     for (const g of guns) { const ev = F[g]?.reload?.ev || []; ok(`${g}: CS2's reload has its sounds, in time order, within the clip`, ev.length >= 2 && ev.every((e, i) => e[0] >= 0 && e[0] <= F[g].reload.dur + .01 && (!i || e[0] >= ev[i - 1][0])) && ev.every(e => e[1].length), JSON.stringify(ev).slice(0, 120)); }
     ok('the AK: magazine out before magazine in before the bolt', (() => { const e = F.ak.reload.ev, at = re => e.find(x => re.test(x[1][0]))?.[0]; return at(/clipout/) < at(/addammo|clipin/) && at(/addammo|clipin/) < at(/bolt/); })()); } }

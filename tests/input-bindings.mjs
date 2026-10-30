@@ -29,4 +29,34 @@ assert.deepEqual(I.bindingOf('infra', 'objective'), ['KeyJ'], 'junk codes droppe
 I.resetContext('infra'); assert.equal(I.labelOf('infra', 'objective'), 'J');
 // Unbind: the key does nothing.
 I.unbind('infra', 'map'); assert.equal(I.legacyKey('infra', 'KeyM'), null); assert.equal(I.labelOf('infra', 'map'), 'unbound'); I.resetAll();
-console.log('PASS: controls · per-context bindings, guns only in Global Defensive, R reload/remove by situation, rebind + conflict swap, reserved Esc, mouse buttons, export/import with validation, reset, unbind');
+// Grenade slots (CS2): 6 HE · 7 flashbang · 8 smoke · 9 decoy · 0 molotov / incendiary (slot 10); 4 still cycles. Only in
+// Global Defensive: Infra's 0 (empty hands) is untouched, Payday has no guns.
+for (const [code, slot] of [['Digit6', 'slot6'], ['Digit7', 'slot7'], ['Digit8', 'slot8'], ['Digit9', 'slot9'], ['Digit0', 'slot10'], ['Digit4', 'slot4']]) assert.equal(I.legacyKey('arena', code), slot, code + ' → ' + slot);
+assert.equal(I.legacyKey('infra', 'Digit0'), '0', 'infra: 0 empties your hands'); assert.equal(I.legacyKey('payday', 'Digit6'), null); assert.equal(I.legacyKey('infra', 'Digit7'), null);
+assert.deepEqual(['a-he', 'a-flash', 'a-smoke', 'a-decoy', 'a-molotov'].map(id => I.labelOf('arena', id)), ['6', '7', '8', '9', '0']);
+assert.deepEqual(I.actionsIn('arena').filter(a => /^slot(6|7|8|9|10)$/.test(a.legacy)).map(a => a.id), ['a-he', 'a-flash', 'a-smoke', 'a-decoy', 'a-molotov'], 'the controls screen lists them, in slot order');
+{ const used = new Map(); for (const a of I.actionsIn('arena')) for (const c of a.def) { assert(!used.has(c), c + ' is the default of both ' + used.get(c) + ' and ' + a.id); used.set(c, a.id); } }   // no default key clash in the arena
+// Mouse wheel: Global Defensive's jump only (CS2 jump on the wheel); kept across a reload; never for another action.
+assert.equal(I.legacyKey('arena', 'WheelDown'), 'jump'); assert.deepEqual(I.rebind('arena', 'a-jump', 'WheelUp'), { ok: true }); assert.equal(I.labelOf('arena', 'a-jump'), 'Wheel up');
+assert.match(I.rebind('infra', 'forward', 'WheelUp').error, /wheel/i, 'infra: the wheel zooms'); assert.match(I.rebind('arena', 'a-he', 'WheelDown').error, /Jump/);
+I.resetAll(); assert.deepEqual(I.rebind('arena', 'a-crouch', 'Space', { swap: true }), { ok: true }); assert.deepEqual(I.bindingOf('arena', 'a-jump'), ['WheelDown', 'ControlLeft'], 'swap: jump keeps the wheel');
+{ const W = await import('../dist/input.js?reload-wheel'); assert.deepEqual(W.bindingOf('arena', 'a-jump'), ['WheelDown', 'ControlLeft'], 'the wheel survives a reload'); assert.equal(W.legacyKey('arena', 'WheelDown'), 'jump'); }
+I.resetAll(); I.rebind('arena', 'a-jump', 'Digit6', { swap: true }); assert.deepEqual(I.bindingOf('arena', 'a-he'), ['Space'], 'a swap never hands the wheel to the HE key'); I.resetAll();
+// Saved controls from before the grenade keys (no version = v1): a key the player gave to another arena action keeps
+// that meaning (the new grenade action starts unbound); the other new actions get their defaults; nothing else changes.
+store['infra-bindings-v1'] = JSON.stringify({ infra: { objective: ['KeyK'] }, arena: { 'a-radio': ['Digit6'], 'a-voice': ['Digit0'], 'a-reload': ['KeyR'] } });
+{ const M = await import('../dist/input.js?v1-save');
+  assert.deepEqual(M.bindingOf('arena', 'a-he'), [], 'HE starts unbound: 6 was the player\'s radio'); assert.equal(M.legacyKey('arena', 'Digit6'), 'radio'); assert.equal(M.labelOf('arena', 'a-he'), 'unbound');
+  assert.deepEqual(M.bindingOf('arena', 'a-molotov'), []); assert.equal(M.legacyKey('arena', 'Digit0'), 'voice', '0 stays push-to-talk');
+  assert.equal(M.legacyKey('arena', 'Digit7'), 'slot7'); assert.equal(M.legacyKey('arena', 'Digit8'), 'slot8'); assert.equal(M.legacyKey('arena', 'Digit9'), 'slot9', 'free keys: the new defaults');
+  assert.equal(M.legacyKey('infra', 'KeyK'), 'j', 'other controls kept'); assert.equal(M.legacyKey('infra', 'Digit0'), '0'); assert.equal(M.legacyKey('arena', 'KeyZ'), null, 'the radio moved to 6 stays moved');
+  assert.equal(JSON.parse(store['infra-bindings-v1']).v, 2, 'migrated once (saved as v2)');
+  M.rebind('arena', 'a-he', 'KeyH'); assert.equal(M.legacyKey('arena', 'KeyH'), 'slot6', 'and it can be bound afterwards'); }
+{ const M2 = await import('../dist/input.js?v2-save'); assert.equal(M2.legacyKey('arena', 'KeyH'), 'slot6'); assert.equal(M2.legacyKey('arena', 'Digit6'), 'radio'); assert.deepEqual(M2.bindingOf('arena', 'a-molotov'), [], 'a v2 save is read as it is'); }
+// Untouched players: the new defaults.
+delete store['infra-bindings-v1']; { const F = await import('../dist/input.js?fresh'); assert.equal(F.legacyKey('arena', 'Digit6'), 'slot6'); assert.equal(F.legacyKey('arena', 'Digit0'), 'slot10'); assert.equal(store['infra-bindings-v1'], undefined, 'nothing written for a player with no saved controls'); }
+// An old exported controls file (version 1) imports the same way; a v2 file as it is.
+I.importBindings(JSON.stringify({ app: 'infra-simulator', kind: 'bindings', version: 1, bindings: { arena: { 'a-reload': ['Digit9'] } } }));
+assert.deepEqual(I.bindingOf('arena', 'a-decoy'), [], 'decoy unbound: 9 reloads'); assert.equal(I.legacyKey('arena', 'Digit9'), 'reload', 'and R reloads no longer'); assert.equal(I.legacyKey('arena', 'Digit6'), 'slot6');
+I.rebind('arena', 'a-decoy', 'KeyJ'); const ex2 = I.exportBindings(); assert.equal(JSON.parse(ex2).version, 2); I.resetAll(); I.importBindings(ex2); assert.equal(I.legacyKey('arena', 'KeyJ'), 'slot9'); assert.equal(I.legacyKey('arena', 'Digit9'), 'reload'); I.resetAll();
+console.log('PASS: controls · per-context bindings, guns only in Global Defensive, R reload/remove by situation, rebind + conflict swap, reserved Esc, mouse buttons, export/import with validation, reset, unbind, grenade slots 6–0 (+ 4 cycles), wheel jump kept, v1 → v2 migration keeps custom keys');

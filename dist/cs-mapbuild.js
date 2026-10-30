@@ -50,13 +50,16 @@ export function buildCsMap(id, nav, T) {
 // walk] (Hammer units). Also the bullets' boxes of a CS2 map (bsp-map.js).
 export function mergeSegs(cols, rows, segs, zLow) {
   const N = cols * rows, W = cols * CELL * U, D = rows * CELL * U, gx = c => -W / 2 + (c + .5) * CELL * U, gz = r => -D / 2 + (r + .5) * CELL * U, gy = h => (h - zLow) * U;
-  const solids = [], keyOf = s => s[0] + '|' + s[1] + '|' + s[2] + '|' + s[3], byKey = new Map(), cells = new Uint8Array(N);
+  // (s[4], CS2 map files only — bsp-map.js trimOf: the side of the column the stretch's solid is not in, 1 −x, 2 +x, 3 −z,
+  // 4 +z; its box loses that half column and grows only along the face. Segments without it make the same boxes as ever.)
+  const solids = [], keyOf = s => s[0] + '|' + s[1] + '|' + s[2] + '|' + s[3] + (s[4] ? '|' + s[4] : ''), byKey = new Map(), cells = new Uint8Array(N), H = CELL * U / 2;
   for (let i = 0; i < N; i++) for (const s of segs[i]) { const k = keyOf(s); let e = byKey.get(k); if (!e) byKey.set(k, e = { s, list: [] }); e.list.push(i); }
-  for (const { s, list } of byKey.values()) { for (const i of list) cells[i] = 1;
-    for (const i of list) { if (!cells[i]) continue; const r = (i / cols) | 0, c = i - r * cols; let c1 = c; while (c1 + 1 < cols && cells[r * cols + c1 + 1]) c1++;
-      let r1 = r; grow: while (r1 + 1 < rows) { for (let cc = c; cc <= c1; cc++) if (!cells[(r1 + 1) * cols + cc]) break grow; r1++; }
+  for (const { s, list } of byKey.values()) { for (const i of list) cells[i] = 1; const tr = s[4] || 0;
+    for (const i of list) { if (!cells[i]) continue; const r = (i / cols) | 0, c = i - r * cols; let c1 = c; while (tr !== 1 && tr !== 2 && c1 + 1 < cols && cells[r * cols + c1 + 1]) c1++;
+      let r1 = r; grow: while (tr !== 3 && tr !== 4 && r1 + 1 < rows) { for (let cc = c; cc <= c1; cc++) if (!cells[(r1 + 1) * cols + cc]) break grow; r1++; }
       for (let rr = r; rr <= r1; rr++) cells.fill(0, rr * cols + c, rr * cols + c1 + 1);
-      const b = B((gx(c) + gx(c1)) / 2, (gz(r) + gz(r1)) / 2, (c1 - c + 1) * CELL * U, (r1 - r + 1) * CELL * U, (s[1] - s[0]) * U, s[2], gy(s[0])); if (s[3]) b.walk = true; solids.push(b); } }
+      const b = tr ? B((gx(c) + gx(c1)) / 2 + (tr === 1 ? H / 2 : tr === 2 ? -H / 2 : 0), (gz(r) + gz(r1)) / 2 + (tr === 3 ? H / 2 : tr === 4 ? -H / 2 : 0), (c1 - c + 1) * CELL * U - (tr <= 2 ? H : 0), (r1 - r + 1) * CELL * U - (tr >= 3 ? H : 0), (s[1] - s[0]) * U, s[2], gy(s[0]))
+        : B((gx(c) + gx(c1)) / 2, (gz(r) + gz(r1)) / 2, (c1 - c + 1) * CELL * U, (r1 - r + 1) * CELL * U, (s[1] - s[0]) * U, s[2], gy(s[0])); if (s[3]) b.walk = true; solids.push(b); } }
   return solids;
 }
 export function finishMap(id, G, T, { segs, above, zLow, spawns = null, extra = {} }) {
@@ -164,28 +167,37 @@ function openAt(G, i, h) { const { n, z } = G; if (!n[i]) return false; for (let
 // straight walk is clear (a body's width, climbable all the way); [x, z] points in game units.
 // avoid: optional extra cost per column floor (a Uint8Array, index column × MAXF + floor), e.g. round the other bomb site.
 // Points are [x, z, y]: y the floor the walk is on there (game units; a stacked column has several), when toY is given.
+// (Host tick cost, v51: a route ran 11–57 ms on the built-in maps, inside the room's 50 ms tick. Most of it was re-asking
+// the same "is there floor beside this column at this height" for a node from each of its 8 neighbours (12 near() calls per
+// relaxation) and fresh arrays per neighbour: each node's shape (narrow / not roomy) is now worked out once per route
+// (PB_SCRATCH.shape) and the search arrays are reused — the same routes, point for point.)
+const DIR8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]], PB_SCRATCH = { prev: null, cost: null, shape: null };
 function pathBetween(G, a, b, W, D, startFloor = null, goalFloor = null, avoid = null, toY = null) {
   const { cols, rows, n, z } = G; if (a < 0 || b < 0 || !n[a] || !n[b]) return [];
   // Cheapest walk (bucket queue): a column without a body's width of floor at its height round it (a wall, a ledge or
   // a ramp edge beside it) costs extra, so routes keep clear of edges but still pass narrow doorways.
-  const key = (i, k) => i * MAXF + k, M = cols * rows * MAXF, prev = new Int32Array(M).fill(-1), cost = new Float32Array(M).fill(Infinity), buckets = []; let goal = -1;
+  const key = (i, k) => i * MAXF + k, M = cols * rows * MAXF, S = PB_SCRATCH; if (!S.prev || S.prev.length !== M) { S.prev = new Int32Array(M); S.cost = new Float32Array(M); S.shape = new Uint8Array(M); }
+  const prev = S.prev.fill(-1), cost = S.cost.fill(Infinity), shape = S.shape.fill(0), buckets = []; let goal = -1;   // (shape[v]: 0 not yet known, else 1 | 2 narrow | 4 not roomy)
   const push = (v, c2) => { const bi = Math.round(c2); (buckets[bi] ??= []).push(v); };
   let k0 = n[a] - 1; if (startFloor !== null) { let bd = Infinity; for (let k = 0; k < n[a]; k++) { const d = Math.abs(z[a * MAXF + k] - startFloor); if (d < bd) { bd = d; k0 = k; } } }
   const start = key(a, k0); prev[start] = start; cost[start] = 0; push(start, 0);
   const near = (m, h) => { for (let q2 = 0; q2 < n[m]; q2++) if (Math.abs(z[m * MAXF + q2] - h) <= STEP) return true; return false; };
   search: for (let bi = 0; bi < buckets.length; bi++) { const list = buckets[bi]; if (!list) continue; for (let li = 0; li < list.length; li++) { const u = list[li]; if (Math.round(cost[u]) !== bi) continue;
     const i = (u / MAXF) | 0, h = z[u], c = i % cols, r = (i / cols) | 0; if (i === b && (goalFloor === null || Math.abs(h - goalFloor) < 24)) { goal = u; break search; }
-    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) { const cc = c + dc, rr = r + dr; if (cc < 0 || rr < 0 || cc >= cols || rr >= rows) continue; const j = rr * cols + cc;
+    for (let di = 0; di < 8; di++) { const dc = DIR8[di][0], dr = DIR8[di][1], cc = c + dc, rr = r + dr; if (cc < 0 || rr < 0 || cc >= cols || rr >= rows) continue; const j = rr * cols + cc;
       for (let kk = 0; kk < n[j]; kk++) { const hj = z[j * MAXF + kk]; if (hj > h + STEP || h - hj > DROP || G.ceil[j * MAXF + kk] - Math.max(h, hj) < BODY) continue; if (dc && dr && (!near(r * cols + cc, h) || !near(rr * cols + c, h))) continue;
         // Falling needs room for the body: off a ledge, yes; through a hole or slit narrower than a body, no. Past the edge
         // (the columns round j away from where you come from) nothing may hold the body up (floor between the landing + a
         // step and the ledge + a step): bots and players rest on the highest floor under them and would never drop.
-        if (h - hj > STEP * 1.5) { let held = false; for (const [ec, er] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) { if ((ec === -dc && dc) || (er === -dr && dr)) continue; const c2 = cc + ec, r2 = rr + er; if (c2 < 0 || r2 < 0 || c2 >= cols || r2 >= rows) continue; const m = r2 * cols + c2; for (let q2 = 0; q2 < n[m]; q2++) { const hm = z[m * MAXF + q2]; if (hm > hj + STEP && hm <= h + STEP) { held = true; break; } } if (held) break; } if (held) continue; }
-        const op = d => { const m = j + d; return m >= 0 && m < n.length && near(m, hj); };
-        if (j !== b && ((!op(-1) && !op(1)) || (!op(-cols) && !op(cols)) || (!op(-cols - 1) && !op(cols + 1)) || (!op(-cols + 1) && !op(cols - 1)))) continue;   // obstacles on opposite sides (square hull, corners too): narrower than a body
-        let roomy = true; for (const d of [1, -1, cols, -cols]) { const m = j + d; if (m < 0 || m >= n.length || !near(m, hj)) { roomy = false; break; } }
-        const v = key(j, kk), nc = cost[u] + (dc && dr ? 1.4 : 1) + (roomy ? 0 : 6) + (avoid ? (typeof avoid === 'function' ? avoid(v) : avoid[v]) : 0); if (nc < cost[v]) { cost[v] = nc; prev[v] = u; push(v, nc); } } } } }
-  if (globalThis.__navDebug) globalThis.__navDebug.cost = cost;   // tools/maps/frontier.mjs
+        if (h - hj > STEP * 1.5) { let held = false; for (const [ec, er] of DIR8) { if ((ec === -dc && dc) || (er === -dr && dr)) continue; const c2 = cc + ec, r2 = rr + er; if (c2 < 0 || r2 < 0 || c2 >= cols || r2 >= rows) continue; const m = r2 * cols + c2; for (let q2 = 0; q2 < n[m]; q2++) { const hm = z[m * MAXF + q2]; if (hm > hj + STEP && hm <= h + STEP) { held = true; break; } } if (held) break; } if (held) continue; }
+        const v = key(j, kk); let sh = shape[v];
+        if (!sh) { const op = d => { const m = j + d; return m >= 0 && m < n.length && near(m, hj); };   // (this node's shape: the same from whichever neighbour)
+          const narrow = (!op(-1) && !op(1)) || (!op(-cols) && !op(cols)) || (!op(-cols - 1) && !op(cols + 1)) || (!op(-cols + 1) && !op(cols - 1));
+          const roomy0 = op(1) && op(-1) && op(cols) && op(-cols); sh = shape[v] = 1 | (narrow ? 2 : 0) | (roomy0 ? 0 : 4); }
+        if (j !== b && (sh & 2)) continue;   // obstacles on opposite sides (square hull, corners too): narrower than a body
+        const roomy = !(sh & 4);
+        const nc = cost[u] + (dc && dr ? 1.4 : 1) + (roomy ? 0 : 6) + (avoid ? (typeof avoid === 'function' ? avoid(v) : avoid[v]) : 0); if (nc < cost[v]) { cost[v] = nc; prev[v] = u; push(v, nc); } } } } }
+  if (globalThis.__navDebug) globalThis.__navDebug.cost = cost.slice();   // tools/maps/frontier.mjs (a copy: the search arrays are reused)
   if (goal < 0) return []; const nodes = []; for (let v = goal; ; v = prev[v]) { nodes.push(v); if (v === start) break; } nodes.reverse();
   // A straight walk from node A to node B: half-column samples, each within a step of the last (or a drop), on both sides.
   const cx = v => ((v / MAXF) | 0) % cols, cr = v => (((v / MAXF) | 0) / cols) | 0;

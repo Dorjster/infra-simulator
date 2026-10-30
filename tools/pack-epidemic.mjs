@@ -103,5 +103,4 @@ one('fx-death-0', 'Gore, Bone, Arm, Leg, Break, Male Scream 02', { len: .8 });
 for (const [surf, src] of [['concrete', 'Footsteps, Human, Boots, Concrete, Sprint, Distant'], ['grass', 'Footsteps, Human, Boots, Running, Gravel'], ['wood', 'Footsteps, Human, Sneakers Footsteps, Linoleum, Running 02'], ['carpet', 'Footsteps, Human, Forest Footsteps, Heavy, Running'], ['metal', 'Footsteps, Human, Slippers, Old Car, Sprint, Distant']])
   takes(F(src), { count: 5, len: .32, thr: .25, ratio: 2.5 }).forEach((s, i) => save(`step-${surf}-${i}`, s));
 many('fx-land', 'Footsteps, Human, Boots, Tile, Jump, Land, Distant', 2, { len: .5, pick: 'loud' });
-// ── Freeze-time music: the jazz loop, mono 32 kHz (small), looped softly while everyone waits at spawn. ──
-{ const s = load(F('Musical, Loop, Jazz, Trumpet, Cool, Calm'), 32000, 1); save('music-freeze', s, { rate: 32000, gain: .9 }); }
+// (No freeze-time music: Global Defensive's freeze time is silent — the countdown is on screen only.)

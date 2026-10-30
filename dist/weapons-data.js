@@ -77,8 +77,30 @@ export const KNIVES = [
 // the victim within 61.6° of the way the victim faces (dot > backDot).
 const KHU = 2.54 / 16.5;
 export const KNIFE = { light: { front: 40, chain: 25, back: 90, rateMs: 400, hitMs: 0, range: 64 * KHU }, heavy: { front: 65, back: 180, rateMs: 1000, hitMs: 0, range: 48 * KHU }, hull: 16 * KHU, backDot: .475, chainMs: 400 };
-// Grenades (slot 4) and the bomb (slot 5); their effects are host-run (arena-nades.js, arena-defuse.js).
-export const GRENADES = [['he', 'HE Grenade', 300], ['flash', 'Flashbang', 200], ['smoke', 'Smoke Grenade', 300], ['molotov', 'Molotov', 400]].map(([id, name, price]) => ({ id, name, kind: 'nade', price, reward: 300, dmg: 0, ap: 1, rangeMod: 1, rateMs: 900, mode: 'semi', range: 0, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 245 }));
+// Grenades and the bomb (slot 5); their effects are host-run (arena-nades.js, arena-defuse.js). Listed in CS2's grenade
+// order (items_game item_gear_slot_position 0–4 = slots 6–10, keys 6 7 8 9 0; key 4 cycles them in this order): HE,
+// Flashbang, Smoke, Decoy, then slot 10's fire grenade — the Molotov for Terrorists, the Incendiary for Counter-
+// Terrorists (items_game used_by_classes). Prices and kill award: weapons.vdata m_nPrice, m_nKillAward (300 each);
+// speed: m_flMaxSpeed 245. desc: the buy menu's line (ours).
+export const GRENADES = [['he', 'HE Grenade', 300, 6, null, 'Explodes after a short fuse, hurting everyone close by'], ['flash', 'Flashbang', 200, 7, null, 'Blinds everyone who looks at it · carry two'], ['smoke', 'Smoke Grenade', 300, 8, null, 'A cloud no one sees or shoots through'], ['decoy', 'Decoy Grenade', 50, 9, null, 'Sounds like your gun firing and shows on the enemy radar'], ['molotov', 'Molotov', 400, 10, 't', 'Sets the floor on fire where it breaks · Terrorists'], ['incendiary', 'Incendiary Grenade', 500, 10, 'ct', 'Sets the floor on fire where it lands · Counter-Terrorists']].map(([id, name, price, slot, team, desc]) => ({ id, name, kind: 'nade', price, slot, ...(team ? { team } : {}), desc, reward: 300, dmg: 0, ap: 1, rangeMod: 1, rateMs: 900, mode: 'semi', range: 0, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 245 }));
+export const NADE_ORDER = GRENADES.map(g => g.id), NADE_SLOT = Object.fromEntries(GRENADES.map(g => [g.id, g.slot]));
+// What you may carry (CS2: ammo_grenade_limit_total 4, ammo_grenade_limit_flashbang 2, one of each other kind; the
+// Molotov and the Incendiary share AMMO_TYPE_MOLOTOV, so one fire grenade at a time). A list is the kinds carried,
+// a kind twice for two flashbangs (the loadout's `nades`, as the host streams it). '' = one more of `kind` fits.
+export const NADE_MAX = 4, FLASH_MAX = 2;
+const FIRE_NADES = ['molotov', 'incendiary'], countIn = (list, kind) => { let n = 0; for (const k of list) if (k === kind) n++; return n; };
+export function nadeRefusal(list, kind) { const g = NADE_SLOT[kind] ? weaponById(kind) : null; if (!g) return 'Unknown grenade'; list = Array.isArray(list) ? list : [];
+  if (list.length >= NADE_MAX) return 'You carry four grenades already'; if (kind === 'flash') return countIn(list, 'flash') >= FLASH_MAX ? 'Two flashbangs at most' : '';
+  if (list.includes(kind)) return 'You already have a ' + g.name; if (FIRE_NADES.includes(kind) && list.some(k => FIRE_NADES.includes(k))) return 'One fire grenade at a time (Molotov or Incendiary)'; return ''; }
+// A side's own grenade (Defuse buys): the Molotov is the Terrorists', the Incendiary the Counter-Terrorists'. '' = yours.
+export const nadeSideRefusal = (kind, team) => { const g = weaponById(kind); return g?.team && team && g.team !== team ? g.name + ' is a ' + (g.team === 't' ? 'Terrorist' : 'Counter-Terrorist') + ' grenade · ' + (team === 't' ? 'buy the Molotov' : 'buy the Incendiary Grenade') : ''; };
+// Grenade keys (lab.js): slot 6–10 = exactly the grenade in that slot among the ids you own, or null (never another
+// kind); key 4 = the next kind after the one in hand in slot order, wrapping round (two flashbangs are one stop).
+export const nadeInSlot = (own, slot) => { for (const id of own) if (NADE_SLOT[id] === slot) return id; return null; };
+export function nextNade(own, held) { const h = NADE_ORDER.indexOf(held); let first = null; for (let i = 0; i < NADE_ORDER.length; i++) { if (!own.includes(NADE_ORDER[i])) continue; if (i > h) return NADE_ORDER[i]; first ??= NADE_ORDER[i]; } return first; }
+// How many of each kind a list holds, in slot order (HUD, buy menu): fills `out` (reused: no allocation per frame)
+// flat — kind, count, kind, count… — with the kinds carried only.
+export function nadeCounts(list, out = []) { out.length = 0; if (!Array.isArray(list)) return out; for (const id of NADE_ORDER) { const n = countIn(list, id); if (n) out.push(id, n); } return out; }
 export const C4 = { id: 'c4', name: 'C4 bomb', kind: 'bomb', price: 0, reward: 0, dmg: 0, ap: 1, rangeMod: 1, rateMs: 500, mode: 'semi', range: 0, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 250 };
 // Grenade throwing (one place for the input timing; flight is arena-nades.js): the pin takes primeMs to come out; a
 // release before that throws nothing.

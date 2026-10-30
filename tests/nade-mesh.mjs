@@ -30,6 +30,22 @@ check('contact at the wall\'s edge is round (an edge, not a face)', M.contact(10
 check('blocked: a line through the wall is', M.blocked(50, 50, 0, 150, 50, 0));
 check('…a line beside it is not', !M.blocked(50, 50, 0, 90, 50, 0));
 check('sight passes the fence, grenades do not', M.blocked(-300, 50, -50, -300, 50, -150) && !M.blocked(-300, 50, -50, -300, 50, -150, true));
+// first (bullets' fine phase, arena-maps.js bulletPath): the nearest crossing's fraction and its face's outward normal —
+// toward the line where it enters a solid, along it where it leaves one; Infinity where nothing is crossed.
+{ const n = new Float64Array(3), e = 3e-4, w = M.first(50, 50, 0, 150, 50, 0, false, n);   // (e: the mesh's 16-bit corners, ~.015 units here)
+  check('first: the nearest of the wall\'s two faces, its normal facing the shooter', near(w, .5, e) && near(n[0], -1, 1e-6) && near(n[1], 0, 1e-6), w.toFixed(5) + ' ' + Array.from(n).join(','));
+  const b = M.first(150, 50, 0, 50, 50, 0, false, n); check('…from the other side, the other face', near(b, .49, e) && near(n[0], 1, 1e-6), b.toFixed(5));
+  const i = M.first(100.5, 50, 0, 150, 50, 0, false, n); check('…from inside the wall, the face it leaves by (normal along the line)', near(i, .5 / 49.5, e) && n[0] > .99, i.toFixed(5));
+  check('…nothing crossed: Infinity', M.first(50, 50, 0, 90, 50, 0) === Infinity);
+  check('…sight only: the fence is not crossed', M.first(-300, 50, -50, -300, 50, -150, true) === Infinity && near(M.first(-300, 50, -50, -300, 50, -150), .5, e)); }
+// anyIn (bullets: a box with no sight triangle round it holds a surface the mesh lost): any triangle's bounds in a box.
+check('anyIn: a box round the wall has triangles; one in open air has none; by the fence, only grenades\' (sight: none)', M.anyIn(95, 40, -10, 105, 60, 10) && !M.anyIn(95, 40, -10, 99.5, 60, 10) && !M.anyIn(30, 40, -10, 60, 60, 10) && M.anyIn(-260, 40, -102, -240, 60, -98) && !M.anyIn(-260, 40, -102, -240, 60, -98, true));
+// Two faces at one point, one facing the line and one away — a wall of two brushes face to face, one's exit face the
+// other's entry: first() says so (out[3] 1: nothing crossed on balance), whichever the tree meets first; a lone face no.
+{ const T = meshOf([{ p: [[210, 0, -50], [210, 0, 50], [210, 100, 50], [210, 100, -50]] }, { p: [[210, 0, -50], [210, 100, -50], [210, 100, 50], [210, 0, 50]] }, { p: [[230, 0, -50], [230, 100, -50], [230, 100, 50], [230, 0, 50]] }]), o = new Float64Array(4);
+  const w = T.first(200, 40, 0, 240, 40, 0, false, o); check('first: an entry and an exit at one point are a tie (out[3] 1)', near(w, .25, 1e-3) && o[3] === 1, w.toFixed(5) + ' ' + Array.from(o).join(','));
+  const r = T.first(220, 40, 0, 200, 40, 0, false, o); check('…from the other side too', near(r, .5, 1e-3) && o[3] === 1, r.toFixed(5));
+  const v = T.first(215, 40, 0, 240, 40, 0, false, o); check('…a lone face is no tie, its own normal', near(v, .6, 1e-3) && o[3] === 0 && near(o[0], 1, 1e-6), v.toFixed(5) + ' ' + Array.from(o).join(',')); }
 // Grenades on it: the world's surfaces by the mesh, no doors, a big bound.
 const boxes = { nadeMesh: M, movers: [] }, bounds = { minX: -F, maxX: F, minZ: -F, maxZ: F }, R = .35;
 const fly = (g, s, dt = 1 / 64) => { for (let i = 0; i < s && !g.rest; i++) stepNade(g, boxes, bounds, dt); return g; };

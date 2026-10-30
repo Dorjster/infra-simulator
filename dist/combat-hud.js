@@ -2,8 +2,9 @@
 // countdown, and the respawn move back to the entrance. Remote engineers who are down play the "dead" emote.
 import { hpOf, isDown } from './combat-logic.js';
 import { MAX_HP } from './weapons-data.js';
+import { hostNow } from './host-clock.js';   // (when the knocked-out come back is the host's time: its clock, not this computer's — host-clock.js)
 
-const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
+const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer', NONE = [];
 
 // Hit feedback sounds (synthesized): a short tick for a body hit, a bright ding for a head shot, two notes for a knock-out.
 import { audioCtx, uiBus } from './spatial-audio.js';
@@ -29,24 +30,26 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {}, onHurt
   (document.head || document.body).append?.(css);
   document.body.insertAdjacentHTML('beforeend', '<div id="cb-hp" hidden><b>✚</b><span id="cb-hp-n">100</span><small>HEALTH</small><span id="cb-hp-t" hidden>HP 100</span></div><div id="cb-flash"></div><div id="cb-mark"></div><div id="cb-feed"></div><div id="cb-down" hidden></div>');
   const $ = id => document.getElementById(id);
-  let lastHp = MAX_HP, lastRespawn = null, markTimer = 0, feedKey = '';
+  let lastHp = MAX_HP, lastRespawn = null, markTimer = 0, feedKey = '', els = null, shownHp = null;
   return {
     hitMarker(kill, head) { hitSound(kill ? 'kill' : head ? 'head' : 'body'); const m = $('cb-mark'); m.className = kill ? 'kill' : ''; m.style.opacity = 1; clearTimeout(markTimer); markTimer = setTimeout(() => m.style.opacity = 0, kill ? 500 : 160); },
-    get down() { const g = world.operations.game; return g.mode === 'arena' && isDown(g, name()); },
+    get down() { const g = world.operations.game; return g.mode === 'arena' && isDown(g, name(), hostNow()); },
     update() {
       const g = world.operations.game, arena = g.mode === 'arena', on = arena && lan.connected;   // HP only in Global Defensive (no guns elsewhere); shown by gd-hud.js there
-      $('cb-hp').hidden = true;
-      if (!on) { $('cb-down').hidden = true; return; }
-      const hp = hpOf(g, name()); $('cb-hp-t').textContent = 'HP ' + hp; $('cb-hp-n').textContent = hp; $('cb-hp').classList.toggle('low', hp <= 25);
+      // (every frame: DOM written only when a value changed — the same text written again still costs a style pass; GD's own HUD
+      // shows the HP, so this hidden bar's numbers only follow a change)
+      const E = els ??= { hp: $('cb-hp'), hpT: $('cb-hp-t'), hpN: $('cb-hp-n'), down: $('cb-down'), feed: $('cb-feed') };
+      if (!E.hp.hidden) E.hp.hidden = true;
+      if (!on) { if (!E.down.hidden) E.down.hidden = true; return; }
+      const hp = hpOf(g, name()); if (hp !== shownHp) { shownHp = hp; E.hpT.textContent = 'HP ' + hp; E.hpN.textContent = hp; E.hp.classList.toggle('low', hp <= 25); }
       if (hp < lastHp && hp > 0) onHurt(lastHp - hp);
       if (hp < lastHp) { const f = $('cb-flash'); f.style.opacity = .85; setTimeout(() => f.style.opacity = 0, 120); } lastHp = hp;
-      const d = g.combat?.down?.[key(name())], down = d && d.until > Date.now(); $('cb-down').hidden = !down || arena;   // the arena spectates instead (arena-spectate.js)
-      if (down) $('cb-down').innerHTML = `<div>KNOCKED OUT<small>by ${String(d.by).replace(/[<>&]/g, '')} · ${d.weapon} · back in ${Math.max(0, Math.ceil((d.until - Date.now()) / 1000))} s</small></div>`;
+      const d = g.combat?.down?.[key(name())], down = d && d.until > hostNow(); if (E.down.hidden !== (!down || arena)) E.down.hidden = !down || arena;   // the arena spectates instead (arena-spectate.js)
+      if (down && !arena) E.down.innerHTML =`<div>KNOCKED OUT<small>by ${String(d.by).replace(/[<>&]/g, '')} · ${d.weapon} · back in ${Math.max(0, Math.ceil((d.until - hostNow()) / 1000))} s</small></div>`;
       const r = g.combat?.respawns?.[key(name())] || 0; if (lastRespawn !== null && r > lastRespawn) onRespawn(); lastRespawn = r;
-      const feed = (g.combat?.feed || []).filter(f => Date.now() - f.at < 8000), fk = feed.map(f => f.at).join();
-      if (arena) { $('cb-feed').innerHTML = ''; feedKey = ''; } else if (fk !== feedKey) { feedKey = fk; $('cb-feed').innerHTML = feed.map(f => `<p>${String(f.by).replace(/[<>&]/g, '')} <b style="color:#ffb347">⟶</b> ${String(f.target).replace(/[<>&]/g, '')} <small>${f.weapon}${f.head ? ' · head' : ''}</small></p>`).join(''); }
+      if (arena) { if (feedKey !== '' || E.feed.firstChild) { E.feed.innerHTML = ''; feedKey = ''; } } else { const feed = (g.combat?.feed || []).filter(f => hostNow() - f.at < 8000), fk = feed.map(f => f.at).join(); if (fk !== feedKey) { feedKey = fk; $('cb-feed').innerHTML = feed.map(f => `<p>${String(f.by).replace(/[<>&]/g, '')} <b style="color:#ffb347">⟶</b> ${String(f.target).replace(/[<>&]/g, '')} <small>${f.weapon}${f.head ? ' · head' : ''}</small></p>`).join(''); } }
       // Engineers who are down fall over on everyone's screen.
-      for (const [id, m] of lan.models || []) { const p = lan.players?.find(x => x.id === id); const dn = !!p && isDown(g, p.name); if (dn && !m.cbDown) m.play?.('dead'); else if (!dn && m.cbDown) m.play?.(null); m.cbDown = dn; }   // alive again (respawn, new round): stand up at once
+      const P = lan.players || NONE; for (const [id, m] of lan.models || []) { let p = null; for (let i = 0; i < P.length; i++) if (P[i].id === id) { p = P[i]; break; } const dn = !!p && isDown(g, p.name, hostNow()); if (dn && !m.cbDown) m.play?.('dead'); else if (!dn && m.cbDown) m.play?.(null); m.cbDown = dn; }   // alive again (respawn, new round): stand up at once
     }
   };
 }

@@ -1,34 +1,41 @@
 // Arena screens: entering / leaving the arena (map + spawn), the scoreboard (Tab, held), a CS-style kill feed
 // (killer · weapon · head-shot mark · victim), the match clock, the buy menu (B, CS2-style categories) and
 // bot controls. Reads the shared world (game.arena, game.combat); every change is an arena action to the host.
-import { ARENA_MAPS, MAP_LIST, mapOffered, inBuyZone as buyZoneAt } from './arena-maps.js';
+import { ARENA_MAPS, MAP_LIST, mapOffered, inBuyZone as buyZoneAt, mapFileOf } from './arena-maps.js';
 import { userMapList } from './user-maps.js'; import { progressText } from './load-progress.js';
-import { fx as recFx, freezeMusic, play as playSound } from './sound-bank.js';
+import { fx as recFx, play as playSound } from './sound-bank.js';
+import { gdPlay, gdEvent } from './gd-sounds.js';   // (Global Defensive's sound events: CS2's when the room has them — gd-sounds.js)
+import { playClipAt } from './fp-sounds.js';
 import { ARENA } from './facility-layout.js';
-import { WEAPONS, KNIVES, weaponById, ARMOR, hitDamage, defaultPistol } from './weapons-data.js';
+import { WEAPONS, KNIVES, weaponById, ARMOR, hitDamage, defaultPistol, NADE_ORDER, nadeRefusal, nadeSideRefusal } from './weapons-data.js';
+import { labelOf } from './input.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { arenaArsenalOf } from './combat-logic.js';
 import { slotOf, PICK_R, ROUND_BOUND } from './arena-logic.js';
+import { hostNow } from './host-clock.js';   // (round, buy, bomb, lobby and respawn times are the host's: compared on its clock)
 import { weaponModel } from './weapon-models.js';
 import { NADES, stepNade, TOSS_DT, TOSS_GRAVITY } from './arena-nades.js';
 import { FINISHES, STICKERS, STICKER_IDS, stickerSlots, wearName, skinTitle } from './skins.js';
 import { finishSwatch } from './skin-render.js';
-import { throwSound, explosion, beep, defuseClick } from './arena-nades-view.js';
+import { explosion, beep, defuseClick } from './arena-nades-view.js';
 import { PRICE, DEFUSE, DEFAULT_RULES } from './arena-defuse.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // CS2 buy-menu prices (for reference in deathmatch, where everything is free; defuse uses them).
-export const CS_PRICE = { he: 300, flash: 200, smoke: 300, molotov: 400, pistol: 200, deagle: 700, smg: 1500, shotgun: 1050, lmg: 5200, ak: 2700, m4: 2900, sniper: 4750 };
-const CATS = [['Pistols', ['pistol', 'deagle']], ['Mid-tier', ['smg', 'shotgun', 'lmg']], ['Rifles', ['ak', 'm4', 'sniper']], ['Equipment', []], ['Grenades', ['he', 'flash', 'smoke', 'molotov']]];
+export const CS_PRICE = { he: 300, flash: 200, smoke: 300, decoy: 50, molotov: 400, incendiary: 500, pistol: 200, deagle: 700, smg: 1500, shotgun: 1050, lmg: 5200, ak: 2700, m4: 2900, sniper: 4750 };
+const CATS = [['Pistols', ['pistol', 'deagle']], ['Mid-tier', ['smg', 'shotgun', 'lmg']], ['Rifles', ['ak', 'm4', 'sniper']], ['Equipment', []], ['Grenades', NADE_ORDER]];
+const isNade = id => weaponById(id)?.kind === 'nade';   // (the grenade list: weapons-data.js GRENADES, slot order)
+const NADE_ACT = { he: 'a-he', flash: 'a-flash', smoke: 'a-smoke', decoy: 'a-decoy', molotov: 'a-molotov', incendiary: 'a-molotov' };   // the key that draws each (input.js)
 // Small weapon silhouettes for the kill feed and buy menu (original line drawings).
 const ICON = { pistol: 'M2 6h14v3H9l-1 5H4l1-5H2z', deagle: 'M1 5h17v4H10l-1 6H5l1-6H1z', cannon: 'M1 5h17v4H10l-1 6H5l1-6H1z', smg: 'M1 6h20v3h-6l-1 6h-3l1-6H8l-1 4H4l1-4H1z', shotgun: 'M0 6h26v2H12l-2 5H5l2-5H0z', ak: 'M0 6h26v3h-9l2 6h-3l-2-6h-3l-2 4H6l2-4H0z', m4: 'M0 6h26v3h-9l1 6h-3l-1-6h-4l-2 4H5l2-4H0z', sniper: 'M0 6h30v2H17v-3h5v3h-5l-3 5H9l3-5H0z', lmg: 'M0 6h28v3h-8v5h-5V9h-3l-2 4H6l2-4H0z', knife: 'M2 9l14-3 4 2-14 3z', karambit: 'M3 11c4-8 12-8 16-4l-3 1c-3-2-8-2-11 4z' };
-const NADE_ICON = { he: 'M11 3h4v2h-4zM13 5a6 6 0 1 1-.01 0z', flash: 'M10 3h6v3h-6zM10 6h6v9h-6z', smoke: 'M9 3h8v3H9zM9 6h8v9H9z', molotov: 'M12 1h2v4h-2zM11 5h4v2l2 2v6H9V9l2-2z' };
+// (decoy: a short can with a speaker grille — the slots cut out; incendiary: a can with a flame cut out of it)
+const NADE_ICON = { he: 'M11 3h4v2h-4zM13 5a6 6 0 1 1-.01 0z', flash: 'M10 3h6v3h-6zM10 6h6v9h-6z', smoke: 'M9 3h8v3H9zM9 6h8v9H9z', decoy: 'M11 4h4v2h-4zM9 6h8v9H9zM10 8.5v1.2h6V8.5zM10 11v1.2h6V11z', molotov: 'M12 1h2v4h-2zM11 5h4v2l2 2v6H9V9l2-2z', incendiary: 'M10 2h6v3h-6zM9 5h8v10H9zM13 7c-2.2 1.8-2.2 4.2 0 6.2 2.2-2 2.2-4.4 0-6.2z' };
 Object.assign(ICON, NADE_ICON);
 const icon = id => `<svg viewBox="0 0 30 16" width="44" height="20" fill="currentColor"><path d="${ICON[id] || ICON.pistol}"/></svg>`;
 // Pictures of every gun and knife (rendered from the game's models: tools/render-weapon-icons.mjs); drawn ones for the rest.
 const ICON_DIR = new URL('./icons/', import.meta.url).href, HAS_PIC = new Set([...WEAPONS.map(w => w.id), ...KNIVES.map(k => k.id)]);
-const GEAR_SVG = { he: '<circle cx="32" cy="38" r="17" fill="#3d4a2c"/><rect x="26" y="12" width="12" height="10" rx="2" fill="#777"/><path d="M38 16h10v4H38" stroke="#aaa" stroke-width="3" fill="none"/><path d="M20 32h24M18 40h28M20 48h24" stroke="#2a331e" stroke-width="2"/>', flash: '<rect x="22" y="18" width="20" height="38" rx="4" fill="#9aa3ab"/><rect x="25" y="9" width="14" height="10" fill="#666"/><path d="M39 13h10v4H39" stroke="#aaa" stroke-width="3" fill="none"/><path d="M22 28h20M22 46h20" stroke="#6c757d" stroke-width="3"/>', smoke: '<rect x="20" y="18" width="24" height="38" rx="3" fill="#56606a"/><rect x="25" y="9" width="14" height="10" fill="#666"/><path d="M39 13h10v4H39" stroke="#aaa" stroke-width="3" fill="none"/><rect x="20" y="30" width="24" height="8" fill="#c9cfd4"/>', molotov: '<path d="M27 6h10v14l7 9v27H20V29l7-9z" fill="#6b4a1f" opacity=".9"/><path d="M27 6h10v8H27z" fill="#e8e0c8"/><path d="M30 2c6 2 4 6 2 7-3-1-5-4-2-7z" fill="#ff8a1a"/><rect x="20" y="36" width="24" height="12" fill="#c45a1a" opacity=".7"/>', kevlar: '<path d="M18 12l8-4h12l8 4 4 10-6 4v28H20V26l-6-4z" fill="#4e5a46"/><path d="M26 8c2 6 10 6 12 0" stroke="#2c3428" stroke-width="3" fill="none"/>', helmet: '<path d="M10 40c0-18 10-28 22-28s22 10 22 28z" fill="#4e5a46"/><path d="M6 40h52v5H6z" fill="#3a4434"/><path d="M18 48l4 6M46 48l-4 6" stroke="#222" stroke-width="3"/>', kit: '<rect x="12" y="18" width="40" height="28" rx="4" fill="#3b5f8a"/><rect x="26" y="12" width="12" height="8" rx="2" fill="none" stroke="#9fb4c9" stroke-width="3"/><path d="M32 24v16M24 32h16" stroke="#e8eef2" stroke-width="4"/>' };
+const GEAR_SVG = { he: '<circle cx="32" cy="38" r="17" fill="#3d4a2c"/><rect x="26" y="12" width="12" height="10" rx="2" fill="#777"/><path d="M38 16h10v4H38" stroke="#aaa" stroke-width="3" fill="none"/><path d="M20 32h24M18 40h28M20 48h24" stroke="#2a331e" stroke-width="2"/>', flash: '<rect x="22" y="18" width="20" height="38" rx="4" fill="#9aa3ab"/><rect x="25" y="9" width="14" height="10" fill="#666"/><path d="M39 13h10v4H39" stroke="#aaa" stroke-width="3" fill="none"/><path d="M22 28h20M22 46h20" stroke="#6c757d" stroke-width="3"/>', smoke: '<rect x="20" y="18" width="24" height="38" rx="3" fill="#56606a"/><rect x="25" y="9" width="14" height="10" fill="#666"/><path d="M39 13h10v4H39" stroke="#aaa" stroke-width="3" fill="none"/><rect x="20" y="30" width="24" height="8" fill="#c9cfd4"/>', molotov: '<path d="M27 6h10v14l7 9v27H20V29l7-9z" fill="#6b4a1f" opacity=".9"/><path d="M27 6h10v8H27z" fill="#e8e0c8"/><path d="M30 2c6 2 4 6 2 7-3-1-5-4-2-7z" fill="#ff8a1a"/><rect x="20" y="36" width="24" height="12" fill="#c45a1a" opacity=".7"/>', decoy: '<rect x="21" y="22" width="22" height="32" rx="3" fill="#8a7a4e"/><rect x="25" y="12" width="14" height="10" fill="#666"/><path d="M39 16h10v4H39" stroke="#aaa" stroke-width="3" fill="none"/><rect x="21" y="29" width="22" height="13" fill="#2b2e29"/><path d="M25 32v7M29 32v7M33 32v7M37 32v7M41 32v7" stroke="#a8a690" stroke-width="1.6"/>', incendiary: '<rect x="20" y="18" width="24" height="38" rx="3" fill="#6b7277"/><rect x="25" y="9" width="14" height="10" fill="#666"/><path d="M39 13h10v4H39" stroke="#aaa" stroke-width="3" fill="none"/><rect x="20" y="23" width="24" height="5" fill="#c8361e"/><path d="M32 32c6 5 6 11 0 17-6-6-6-12 0-17z" fill="#ff8a1a"/><path d="M32 39c2.5 2 2.5 5 0 8-2.5-3-2.5-6 0-8z" fill="#ffd36b"/>', kevlar: '<path d="M18 12l8-4h12l8 4 4 10-6 4v28H20V26l-6-4z" fill="#4e5a46"/><path d="M26 8c2 6 10 6 12 0" stroke="#2c3428" stroke-width="3" fill="none"/>', helmet: '<path d="M10 40c0-18 10-28 22-28s22 10 22 28z" fill="#4e5a46"/><path d="M6 40h52v5H6z" fill="#3a4434"/><path d="M18 48l4 6M46 48l-4 6" stroke="#222" stroke-width="3"/>', kit: '<rect x="12" y="18" width="40" height="28" rx="4" fill="#3b5f8a"/><rect x="26" y="12" width="12" height="8" rx="2" fill="none" stroke="#9fb4c9" stroke-width="3"/><path d="M32 24v16M24 32h16" stroke="#e8eef2" stroke-width="4"/>' };
 const pic = id => HAS_PIC.has(id) ? `<img class="pic" src="${ICON_DIR}w-${id}.png" alt="" draggable="false" loading="lazy">` : GEAR_SVG[id] ? `<svg class="pic gear" viewBox="0 0 64 64">${GEAR_SVG[id]}</svg>` : icon(id);
 // Kill-feed marks, in CS2's order around the weapon: blind (before), no-scope, airborne, through smoke, wallbang, head shot.
 const MARK = { blind: '<svg viewBox="0 0 20 16" width="20" height="16"><path d="M1 8c3-5 15-5 18 0-3 5-15 5-18 0z" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="10" cy="8" r="2.6" fill="#fff"/><path d="M2 15L18 1" stroke="#fff" stroke-width="1.8"/></svg>', noscope: '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="8" cy="8" r="6" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M8 2v12M2 8h12" stroke="#fff" stroke-width="1"/><path d="M2 14L14 2" stroke="#f55" stroke-width="2"/></svg>', air: '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="9" cy="3" r="2" fill="#fff"/><path d="M8 6l-3 4 3 1-1 4M8 6l3 3 3-1M5 10l-3 1" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>', smoke: '<svg viewBox="0 0 20 16" width="20" height="16"><path d="M4 13a3.5 3.5 0 0 1 0-7 4.5 4.5 0 0 1 8.5-1.5A3.5 3.5 0 0 1 16 13z" fill="#fff"/></svg>', wallbang: '<svg viewBox="0 0 20 16" width="20" height="16"><rect x="8" y="1" width="4" height="14" fill="#fff" opacity=".85"/><path d="M1 8h17M14 5l4 3-4 3" stroke="#fff" stroke-width="1.8" fill="none"/></svg>' };
@@ -73,15 +80,21 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   (document.head || document.body).append?.(css);
   document.body.insertAdjacentHTML('beforeend', '<div id="ar-top" hidden></div><div id="ar-alive" hidden></div><div id="ar-money" hidden></div><div id="ar-banner" hidden></div><div id="ar-paused" hidden style="position:fixed;top:14%;left:50%;transform:translateX(-50%);z-index:42;padding:8px 22px;border-radius:8px;background:#000c;border:1px solid #ffd36b;color:#ffd36b;font:900 22px system-ui;letter-spacing:.12em;pointer-events:none">⏸ PAUSED BY HOST</div><div id="ar-prog" hidden><span></span><b></b></div><div id="ar-feed"></div><div id="ar-board" hidden><div></div></div><div id="ar-buy" hidden><div></div></div><div id="ar-over" hidden></div><div id="ar-look" hidden></div><div id="ar-team" hidden><div></div></div><div id="ar-lobby" hidden></div><div id="ar-load" hidden><b>GLOBAL DEFENSIVE</b><small>Loading…</small></div>');
   const $ = id => document.getElementById(id);
+  // The 5 Hz HUD widgets: shown and written only when their text changed (an unchanged innerHTML written again rebuilds the
+  // nodes and restyles them — a style pass every 200 ms for nothing).
+  const shown = (el, html, text) => { if (el.hidden) el.hidden = false; if (el.__v !== html) { el.__v = html; if (text) el.textContent = html; else el.innerHTML = html; } };
   // Campaign objective + hotbar hidden in the arena — set on those two elements only (a class on <body> would
   // restyle the whole page: a 50 ms frame on entering).
   const campaignHud = show => { for (const id of ['eng-objective', 'inventory', 'game-bar', 'lan-invite']) { const el = $(id); if (!el) continue; if (show) el.style.removeProperty('display'); else el.style.setProperty('display', 'none', 'important'); } };
-  let entered = null, spawnAt = null, buyOpen = false, boardOpen = false, feedKey = '', deathAt = Date.now();
+  let entered = null, spawnAt = null, buyOpen = false, boardOpen = false, feedKey = '', deathAt = hostNow();   // (the feed's times are the host's: compared on its clock — GD-AUD-09)
+  // In this match on this map — and on the same map file: the host's copy fetched again after it refused ours (multiplayer.js
+  // sendReady) is entered again (the map rebuilt from it; that entry tells the host it is ready). Compared field by field: per frame.
+  let enteredMap = null, enteredAt = null, enteredHash = null; const isIn = A => entered !== null && enteredMap === A.map && enteredAt === A.startedAt && enteredHash === (mapFileOf(A.map)?.hash ?? null);
   // A kill just reported: the victim's death cry where they fell (3D; once per kill).
-  const deathSounds = feed => { for (const f of feed) { if (f.at <= deathAt) continue; const p = (lan.players || []).find(x => key(x.name) === key(f.target))?.pose; recFx('death', { at: p && key(f.target) !== me() ? { x: p.x, y: p.y - 3, z: p.z } : null, volume: .7, rate: .92 + Math.random() * .16, kind: 'effect' }); } deathAt = Math.max(deathAt, ...feed.map(f => f.at)); };
+  const deathSounds = feed => { for (const f of feed) { if (f.at <= deathAt) continue; const p = (lan.players || []).find(x => key(x.name) === key(f.target))?.pose, at = p && key(f.target) !== me() ? { x: p.x, y: p.y - 3, z: p.z } : null; if (!gdPlay('player.death', { at, src: key(f.target), key: 'death:' + key(f.target) + ':' + f.at })) recFx('death', { at, volume: .7, rate: .92 + Math.random() * .16, kind: 'effect' }); } deathAt = Math.max(deathAt, ...feed.map(f => f.at)); };
   const inArena = () => g().mode === 'arena' && !!g().arena;
   const names = () => { const A = g().arena, C = g().combat || {}, list = new Map(); for (const p of lan.players || []) if (p.pose?.z < -200 || p.bot) list.set(key(p.name), p.name); list.set(me(), name()); for (const b of A?.bots || []) list.set(key(b.name), b.name); for (const k of Object.keys(C.kills || {})) if (!list.has(k)) list.set(k, C.names?.[k] || k); return [...list.values()]; };
-  const isDownNow = n => (g().combat?.down?.[key(n)]?.until || 0) > Date.now();
+  const isDownNow = n => (g().combat?.down?.[key(n)]?.until || 0) > hostNow();
   const D = () => g().combat?.d || null, myTeam = () => D()?.teams?.[me()] || null;
   function spawnIndex() { const so = g().combat?.spawnTo?.[me()]; if (D()) return so ? so.i : myTeam() === 'ct' ? ARENA_MAPS[g().arena.map].t.length : 0; const players = (lan.players || []).filter(p => !p.bot); const i = players.findIndex(p => p.id === lan.selfID); return i >= 0 ? i * 3 + 1 : Math.floor(Math.random() * 8); }
   // Spawn, facing the middle of the map (camera looks along (−sin yaw, −cos yaw)).
@@ -103,8 +116,8 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   function enter() { const r = ready(); if (r && !r.done) { if (!loading) { loading = true; performance.mark?.('arena:loading'); $('ar-load').hidden = false; showProgress(); r.catch(() => {}).finally(() => { loading = false; revealWhenSmooth(); }); } return; } enterNow(); }
   function enterNow() { performance.mark?.('arena:enter'); const A = g().arena;
     // The map's first frames (GPU uploads, first shadow pass) are drawn behind the loading card; play starts warm.
-    $('ar-load').hidden = false; revealWhenSmooth(); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => slotOf(id) === 'secondary') || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
-  function leave() { freezeMusic(false); for (const id of ['ar-paused', 'ar-alive', 'ar-money', 'ar-banner', 'ar-prog', 'ar-lobby', 'ar-team', 'ar-look']) $(id).hidden = true; teamOpen = false; bombView(null); for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
+    $('ar-load').hidden = false; revealWhenSmooth(); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; enteredMap = A.map; enteredAt = A.startedAt; enteredHash = mapFileOf(A.map)?.hash ?? null; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => slotOf(id) === 'secondary') || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
+  function leave() { for (const id of ['ar-paused', 'ar-alive', 'ar-money', 'ar-banner', 'ar-prog', 'ar-lobby', 'ar-team', 'ar-look']) $(id).hidden = true; teamOpen = false; bombView(null); for (const m of groundMeshes.values()) m.removeFromParent(); groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
   // Buy menu (B opens and closes it, Escape closes it). Guns by category with an info card; equipment (armor, kit);
   // grenades; and, apart from the shop, the guns lying near you (free to pick up, E or click).
   const CATS2 = [['Pistols', w => w.kind === 'pistol'], ['SMGs', w => w.kind === 'smg'], ['Heavy', w => w.kind === 'shotgun' || w.kind === 'lmg'], ['Rifles', w => w.kind === 'rifle'], ['Snipers', w => w.kind === 'sniper']];
@@ -124,7 +137,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   // purchase) while buy time lasts. Keys: 1–5 pick a column, then 1–9 buy in it; R rebuys, F full buy. In a Defuse match
   // B opens it only in buy time and in your spawn (as CS2), and it closes when buy time runs out.
   const ofKind = (...k) => WEAPONS.filter(w => k.includes(w.kind)).map(w => w.id);
-  const COLS = [['Equipment', ['kevlar', 'helmet', 'kit']], ['Pistols', ofKind('pistol')], ['Mid-Tier', ofKind('smg', 'shotgun', 'lmg')], ['Rifles', ofKind('rifle', 'sniper')], ['Grenades', ['flash', 'smoke', 'he', 'molotov']]];
+  const COLS = [['Equipment', ['kevlar', 'helmet', 'kit']], ['Pistols', ofKind('pistol')], ['Mid-Tier', ofKind('smg', 'shotgun', 'lmg')], ['Rifles', ofKind('rifle', 'sniper')], ['Grenades', NADE_ORDER]];   // (grenades in slot order 6–10: HE, flash, smoke, decoy, then your side's molotov / incendiary)
   let cs2Icons = null; userAssets().then(ua => { const I = ua.models?.icons; if (I && Object.keys(I).length) cs2Icons = Object.fromEntries(Object.entries(I).map(([id, v]) => [id, userAssetURL(ua, v.file)])); }).catch(() => {});
   const art = id => cs2Icons?.[id] ? `<i class="ic" style="--m:url('${cs2Icons[id]}')"></i>` : pic(id);
   let col = -1;
@@ -141,50 +154,58 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   const fullBuy = () => myTeam() === 'ct' ? ['helmet', 'm4', 'kit', 'smoke', 'flash'] : ['helmet', 'ak', 'smoke', 'flash'];
   // Already have it? Grenades: as many as the list asked for so far (rebuying a smoke you kept buys nothing).
   function owns(id, want) { const l = g().arena.loadout?.[me()] || {}, arm = g().combat?.armor?.[me()] || {}, d = D();
-    return id === 'kit' ? !!d?.kits?.[me()] : id === 'kevlar' ? arm.kevlar >= 100 : id === 'helmet' ? arm.kevlar >= 100 && !!arm.helmet : NADES[id] ? (l.nades || []).filter(x => x === id).length >= want : l.primary === id || l.secondary === id; }
-  async function quickBuy(list, label) { if (quickBusy || !D()) return; if (!list.length) { notify('Nothing to rebuy yet'); return; } quickBusy = true; const got = [], miss = [];
+    return id === 'kit' ? !!d?.kits?.[me()] : id === 'kevlar' ? arm.kevlar >= 100 : id === 'helmet' ? arm.kevlar >= 100 && !!arm.helmet : isNade(id) ? (l.nades || []).filter(x => x === id).length >= want : l.primary === id || l.secondary === id; }
+  // A fire grenade bought on the other side (rebuy after the halves swap): your side's own one instead.
+  const sideNade = id => (id === 'molotov' || id === 'incendiary') && (myTeam() === 't' || myTeam() === 'ct') ? (myTeam() === 't' ? 'molotov' : 'incendiary') : id;
+  async function quickBuy(list, label) { if (quickBusy || !D()) return; if (!list.length) { notify('Nothing to rebuy yet'); return; } quickBusy = true; const got = [], miss = []; list = list.map(sideNade);
     const want = {}; try { for (const id of list) { want[id] = (want[id] || 0) + 1; if (owns(id, want[id])) continue; const w = weaponById(id), at = where();
-        const r = await send(NADES[id] ? { type: 'buy-nade', kind: id } : id === 'kevlar' || id === 'helmet' ? { type: 'buy-armor', kind: id } : id === 'kit' ? { type: 'buy-kit' } : w?.kind === 'pistol' ? { type: 'loadout', secondary: id, x: at?.x, y: at?.y, z: at?.z } : { type: 'loadout', primary: id, x: at?.x, y: at?.y, z: at?.z });
+        const r = await send(isNade(id) ? { type: 'buy-nade', kind: id } : id === 'kevlar' || id === 'helmet' ? { type: 'buy-armor', kind: id } : id === 'kit' ? { type: 'buy-kit' } : w?.kind === 'pistol' ? { type: 'loadout', secondary: id, x: at?.x, y: at?.y, z: at?.z } : { type: 'loadout', primary: id, x: at?.x, y: at?.y, z: at?.z });
         if (r?.error) { miss.push(r.error); if (/buy time|spawn/i.test(r.error)) break; continue; } got.push(id); if (w?.mag) { setAmmo?.(id, null); equip(id); } } }
     finally { quickBusy = false; }
-    notify(label + ': ' + (got.length ? got.map(id => weaponById(id)?.name || NADES[id]?.name || { kevlar: 'Kevlar', helmet: 'Kevlar + Helmet', kit: 'Defuse Kit' }[id] || id).join(', ') : 'nothing bought') + (miss.length ? ' · ' + miss[miss.length - 1] : '')); if (buyOpen) buy(true); }
+    notify(label + ': ' + (got.length ? got.map(id => weaponById(id)?.name || { kevlar: 'Kevlar', helmet: 'Kevlar + Helmet', kit: 'Defuse Kit' }[id] || id).join(', ') : 'nothing bought') + (miss.length ? ' · ' + miss[miss.length - 1] : '')); if (buyOpen) buy(true); }
   addEventListener('keydown', e => { if (!buyOpen || e.repeat || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target?.tagName)) return;
     if (e.code === 'Backspace') { e.preventDefault(); e.stopImmediatePropagation(); refund(); return; }
     if (['KeyR', 'KeyF', 'F3', 'F4'].includes(e.code) && D()) { e.preventDefault(); e.stopImmediatePropagation(); if (e.code === 'KeyR' || e.code === 'F4') quickBuy(prevBuy, 'Rebuy'); else quickBuy(fullBuy(), 'Full buy'); return; }   // (CS2: F4 rebuys, F3 auto-buys)
+    if (e.code === 'Digit0') { e.preventDefault(); e.stopImmediatePropagation(); if (col >= 0) { col = -1; buy(true); } return; }   // 0: back out of a column (never the slot-10 grenade behind the menu)
     const n = /^Digit([1-9])$/.exec(e.code)?.[1]; if (!n) return; e.preventDefault(); e.stopImmediatePropagation();
     if (col < 0) { col = Math.min(COLS.length - 1, +n - 1); buy(true); return; } const cards = [...$('ar-buy').querySelectorAll(`.col[data-col="${col}"] [data-pick]`)], c = cards[+n - 1]; col = -1; if (c && !c.disabled) c.click(); else buy(true); }, true);
   // Why you can't buy now (Defuse), or null: buy time over, or out of your spawn.
-  const buyBlock = () => { const d = D(), r = d?.round; return !d ? null : !r || r.phase === 'over' || (r.phase !== 'freeze' && Date.now() > r.buyUntil) ? 'The buy time has expired' : !inBuyZone() ? 'You can only buy in your spawn' : null; };
+  const buyBlock = () => { const d = D(), r = d?.round; return !d ? null : !r || r.phase === 'over' || (r.phase !== 'freeze' && hostNow() > r.buyUntil) ? 'The buy time has expired' : !inBuyZone() ? 'You can only buy in your spawn' : null; };
   let buyTick = 0;
   function buy(open = !buyOpen) {
     if (open && !buyOpen && inArena() && buyBlock()) { notify(buyBlock()); return; }   // (CS2: B does nothing after buy time / outside the buy zone)
     const was = buyOpen; buyOpen = !!open && inArena(); $('ar-buy').hidden = !buyOpen;
     if (!buyOpen) { col = -1; clearInterval(buyTick); buyTick = 0; if (was) onBuyClose(); return; } document.exitPointerLock?.();
     // Open: the clock counts down; when buy time runs out (or you walk out of your spawn) the menu closes.
-    if (!buyTick) buyTick = setInterval(() => { if (!buyOpen) return; if (buyBlock()) { buy(false); return; } const r = D()?.round, el = $('ar-buy').querySelector('.bt b'); if (r && el) el.textContent = clock(r.buyUntil - Date.now()); }, 250);
+    if (!buyTick) buyTick = setInterval(() => { if (!buyOpen) return; if (buyBlock()) { buy(false); return; } const r = D()?.round, el = $('ar-buy').querySelector('.bt b'); if (r && el) el.textContent = clock(r.buyUntil - hostNow()); }, 250);
     const team = myTeam(), l = { secondary: D() && (team === 't' || team === 'ct') ? defaultPistol(team) : undefined, ...(g().arena.loadout?.[me()] || {}) };
     const d = D(), money = d ? (d.money?.[me()] ?? 800) : 0, r = d?.round, buyErr = buyBlock(), arm = g().combat?.armor?.[me()] || { kevlar: 0, helmet: false };
     const sells = buyErr ? [] : refundable(), sellOf = id => sells.findLast(b => b.item === id);
     // A card: number, name, picture, price; owned ones lit, ones you can't buy dimmed (why: on hover).
-    const card = (k, id, label, price, on, why) => { const s = sellOf(id); return `<div class="card${on ? ' on' : ''}${why ? ' off' : ''}"><button class="item" data-pick="${id}" ${why ? `disabled title="${esc(why)}"` : ''}><i class="k">${k}</i><span class="nm">${esc(label)}</span>${art(id)}${d ? `<em>$${price.toLocaleString('en-US')}</em>` : `<s>$${price.toLocaleString('en-US')}</s><em>Free</em>`}</button>${s ? `<button class="sell" data-sell="${id}" title="Sell back for $${s.price} (right-click the card · Backspace undoes the last)">↺ $${s.price}</button>` : ''}</div>`; };
+    const card = (k, id, label, price, on, why, tip = '') => { const s = sellOf(id); return `<div class="card${on ? ' on' : ''}${why ? ' off' : ''}"><button class="item" data-pick="${id}" ${why ? `disabled title="${esc(why + (tip ? ' · ' + tip : ''))}"` : tip ? `title="${esc(tip)}"` : ''}><i class="k">${k}</i><span class="nm">${esc(label)}</span>${art(id)}${d ? `<em>$${price.toLocaleString('en-US')}</em>` : `<s>$${price.toLocaleString('en-US')}</s><em>Free</em>`}</button>${s ? `<button class="sell" data-sell="${id}" title="Sell back for $${s.price} (right-click the card · Backspace undoes the last)">↺ $${s.price}</button>` : ''}</div>`; };
     const poor = p => d && p > money ? 'Not enough money' : '';
     const item = (id, k) => {
       if (id === 'kevlar') return card(k, id, 'Kevlar Vest', ARMOR.kevlar.price, arm.kevlar >= 100, buyErr || (arm.kevlar >= 100 ? 'Full' : poor(ARMOR.kevlar.price)));
       if (id === 'helmet') { const p = arm.kevlar >= 100 ? ARMOR.helmet.upgrade : ARMOR.helmet.price; return card(k, id, 'Kevlar + Helmet', p, arm.kevlar >= 100 && arm.helmet, buyErr || (arm.kevlar >= 100 && arm.helmet ? 'Full' : poor(p))); }
       if (id === 'kit') return card(k, id, 'Defuse Kit', PRICE.kit, !!d?.kits?.[me()], buyErr || (d?.kits?.[me()] ? 'Owned' : poor(PRICE.kit)));
-      if (NADES[id]) { const n = (l.nades || []).filter(x => x === id).length; return card(k, id, NADES[id].name + (n > 1 ? ' ×' + n : ''), PRICE[id], n > 0, buyErr || poor(PRICE[id])); }
+      // A grenade: how many you carry (two flashbangs: ×2), what it does and its slot key (hover); dimmed with the reason
+      // when it can't be bought — the other side's fire grenade, four carried, two flashbangs, one fire grenade.
+      if (isNade(id)) { const n = (l.nades || []).filter(x => x === id).length, G = weaponById(id), kl = labelOf('arena', NADE_ACT[id]), tip = G.desc + ' · slot ' + G.slot + (kl === 'unbound' ? ' (no key: Settings → Controls)' : ' · key ' + kl);
+        return card(k, id, G.name + (n > 1 ? ' ×' + n : ''), PRICE[id], n > 0, buyErr || (d ? nadeSideRefusal(id, team) : '') || nadeRefusal(l.nades, id) || poor(PRICE[id]), tip); }
       const w = weaponById(id); return card(k, id, w.name, w.price, l.primary === id || l.secondary === id, buyErr || poor(PRICE[id] ?? w.price)); };
     // Each column: what your side can buy (Deathmatch: everything; the kit: Counter-Terrorists in Defuse).
     const mineToo = id => id === 'kit' ? !!d && team === 'ct' : !d || !team || !weaponById(id)?.team || weaponById(id).team === team;
-    const cols = COLS.map(([title, ids], i) => `<div class="col${col === i ? ' sel' : ''}${ids.filter(mineToo).length > 5 ? ' wide' : ''}" data-col="${i}"><h3><i>${i + 1}</i>${title}</h3><div class="cards">${ids.filter(mineToo).map((id, j) => item(id, j + 1)).join('')}</div></div>`).join('');
-    const widths = COLS.map(([, ids]) => ids.filter(mineToo).length > 5 ? '2fr' : '1fr').join(' ');   // (a column of more than five: two cards a row — Mid-Tier; in Deathmatch every gun, so Pistols and Rifles too)
+    const wide = (title, ids) => title !== 'Grenades' && ids.filter(mineToo).length > 5;
+    const rowsOf = (title, ids) => { const n = ids.filter(mineToo).length; return wide(title, ids) && n > 10 ? ` style="grid-template-rows:repeat(${Math.ceil(n / 2)},76px)"` : ''; };   // (two cards a row, as many rows as it takes: Deathmatch's Mid-Tier has 11 since the Negev, and a 3rd column spilled over Rifles)   // (grenades stay one column in slot order: six in Deathmatch, both fire grenades)
+    const cols = COLS.map(([title, ids], i) => `<div class="col${col === i ? ' sel' : ''}${wide(title, ids) ? ' wide' : ''}" data-col="${i}"><h3><i>${i + 1}</i>${title}</h3><div class="cards"${rowsOf(title, ids)}>${ids.filter(mineToo).map((id, j) => item(id, j + 1)).join('')}</div></div>`).join('');
+    const widths = COLS.map(([title, ids]) => wide(title, ids) ? '2fr' : '1fr').join(' ');   // (a column of more than five: two cards a row — Mid-Tier; in Deathmatch every gun, so Pistols and Rifles too)
     const w0 = weaponById(infoId) || weaponById(l.primary) || weaponById(l.secondary) || WEAPONS[0];
-    $('ar-buy').firstElementChild.innerHTML = `<div class="bt${d ? '' : ' free'}">${d ? `Buy Time Remaining<b>${clock(r.buyUntil - Date.now())}</b>` : 'Deathmatch<b>everything is free</b>'}</div>
+    $('ar-buy').firstElementChild.innerHTML = `<div class="bt${d ? '' : ' free'}">${d ? `Buy Time Remaining<b>${clock(r.buyUntil - hostNow())}</b>` : 'Deathmatch<b>everything is free</b>'}</div>
       <div class="panel" style="grid-template-columns:${widths}">${cols}</div><div class="info">${info(w0)}</div>
       <div class="bottom"><div class="cash">${d ? '$' + money.toLocaleString('en-US') : 'FREE'}</div><div class="keys">${d ? `<button data-act="undo" ${sells.length ? '' : 'disabled'}><kbd>⌫</kbd>UNDO</button><button data-act="rebuy" ${buyErr || !prevBuy.length ? 'disabled' : ''} title="${esc(prevBuy.map(id => weaponById(id)?.name || NADES[id]?.name || id).join(', ') || 'Nothing bought in an earlier round yet')}"><kbd>F4</kbd>RE-BUY PREVIOUS</button><button data-act="full" ${buyErr ? 'disabled' : ''} title="${esc(fullBuy().map(id => weaponById(id)?.name || NADES[id]?.name || { helmet: 'Kevlar + Helmet', kit: 'Defuse Kit' }[id]).join(', '))}"><kbd>F3</kbd>AUTO BUY</button>` : ''}<button data-act="close"><kbd>ESC</kbd>BACK</button></div></div>`;
     const root = $('ar-buy');
     root.querySelectorAll('[data-pick]').forEach(b => { const id = b.dataset.pick; if (weaponById(id)?.mag) { b.onmouseenter = b.onfocus = () => { infoId = id; root.querySelector('.info').innerHTML = info(weaponById(id)); }; }
-      b.onclick = async () => { b.blur(); const pistol = weaponById(id)?.kind === 'pistol', at = where(); const r = await send(id === 'kit' ? { type: 'buy-kit' } : NADES[id] ? { type: 'buy-nade', kind: id } : id === 'kevlar' || id === 'helmet' ? { type: 'buy-armor', kind: id } : pistol ? { type: 'loadout', secondary: id, x: at?.x, y: at?.y, z: at?.z } : { type: 'loadout', primary: id, x: at?.x, y: at?.y, z: at?.z });
+      b.onclick = async () => { b.blur(); const pistol = weaponById(id)?.kind === 'pistol', at = where(); const r = await send(id === 'kit' ? { type: 'buy-kit' } : isNade(id) ? { type: 'buy-nade', kind: id } : id === 'kevlar' || id === 'helmet' ? { type: 'buy-armor', kind: id } : pistol ? { type: 'loadout', secondary: id, x: at?.x, y: at?.y, z: at?.z } : { type: 'loadout', primary: id, x: at?.x, y: at?.y, z: at?.z });
         if (r?.error) { notify(r.error); buy(true); return; } notify(typeof r === 'string' ? r : r?.message || 'Bought'); if (weaponById(id)?.mag) { setAmmo?.(id, null); equip(id); } buy(true); }; });
     root.querySelectorAll('.card').forEach(c => c.oncontextmenu = e => { e.preventDefault(); const s = c.querySelector('[data-sell]'); if (s) refund(s.dataset.sell); });
     root.querySelectorAll('[data-sell]').forEach(b => b.onclick = e => { e.stopPropagation(); refund(b.dataset.sell); });
@@ -304,7 +325,7 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   let lobbyKey = '';
   function lobbyPanel() {
     const A = g().arena, L = A?.lobby && !A.lobby.started ? A.lobby : null; if (!L) { if (!$('ar-lobby').hidden) $('ar-lobby').hidden = true; lobbyKey = ''; return; }
-    const d = D(), left = Math.max(0, Math.ceil((L.until - Date.now()) / 1000)), inv = invite?.(), people = names().filter(n => !/^BOT /.test(n)), bots = A.bots.length;
+    const d = D(), left = Math.max(0, Math.ceil((L.until - hostNow()) / 1000)), inv = invite?.(), people = names().filter(n => !/^BOT /.test(n)), bots = A.bots.length;
     const k = [left, A.warmupS, A.freezeMs, !!D()?.paused, L.note, JSON.stringify(L.ready), people.join(), bots, d ? JSON.stringify(d.teams) : '', (lan.players || []).map(p => p.pose?.ping).join(), !!inv].join('|'); if (k === lobbyKey) return; lobbyKey = k;
     $('ar-lobby').hidden = false; $('ar-lobby').innerHTML = `<b>LOBBY · ${A.kind === 'defuse' ? 'DEFUSE' : 'DEATHMATCH'} · ${esc(ARENA_MAPS[A.map].name)}</b><div class="clock">Match starts in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</div><small>Warmup ${A.warmupS ?? 120} s · freeze time ${Math.round((A.freezeMs ?? 15000) / 1000)} s per round${d?.paused ? ' · <b>paused</b>' : ''}</small>${L.note ? `<div class="warn">${esc(L.note)}</div>` : ''}
       <ul>${people.map(n => { const t = d?.teams[key(n)], p = ping(n); return `<li class="${t || ''}"><span>${esc(n)}${key(n) === me() ? ' (you)' : ''}</span><small>${t === 't' ? 'T' : t === 'ct' ? 'CT' : t === 'spec' ? 'SPEC' : ''} · ${L.ready[key(n)] ? '✓ ready' : 'not ready'} · ${p === 'left' ? 'disconnected' : p}</small></li>`; }).join('')}${bots ? `<li><span>🤖 ${bots} bot${bots > 1 ? 's' : ''}</span><small>${A.difficulty}</small></li>` : ''}</ul>
@@ -312,12 +333,12 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
   }
   function hud() {
     if (D()) return defuseHud();
-    const A = g().arena, C = g().combat || {}, left = Math.max(0, A.endsAt - Date.now()), mm = Math.floor(left / 60000), ss = String(Math.floor(left / 1000) % 60).padStart(2, '0');
+    const A = g().arena, C = g().combat || {}, left = Math.max(0, A.endsAt - hostNow()), mm = Math.floor(left / 60000), ss = String(Math.floor(left / 1000) % 60).padStart(2, '0');
     const top = Object.entries(C.kills || {}).sort((a, b) => b[1] - a[1])[0], mine = C.kills?.[me()] || 0;
-    $('ar-top').hidden = false; $('ar-top').innerHTML = `<span><small>KILLS</small> ${mine}</span><span>${A.practice ? 'PRACTICE' : mm + ':' + ss}</span><span><small>LEADER</small> ${top ? esc(C.names?.[top[0]] || top[0]) + ' ' + top[1] : '—'}</span>`;
-    const feed = (C.feed || []).filter(f => Date.now() - f.at < 7000), fk = feed.map(f => f.at).join();
+    shown($('ar-top'), `<span><small>KILLS</small> ${mine}</span><span>${A.practice ? 'PRACTICE' : mm + ':' + ss}</span><span><small>LEADER</small> ${top ? esc(C.names?.[top[0]] || top[0]) + ' ' + top[1] : '—'}</span>`);
+    const feed = (C.feed || []).filter(f => hostNow() - f.at < 7000), fk = feed.map(f => f.at).join();
     if (fk !== feedKey) { feedKey = fk; deathSounds(feed); $('ar-feed').innerHTML = feed.map(f => feedLine(f, key(f.by) === me() || key(f.target) === me())).join(''); }
-    $('ar-over').hidden = !A.over; if (A.over) $('ar-over').innerHTML = `MATCH OVER<small>${A.over.winner ? 'Winner: ' + esc(A.over.winner) : 'No kills'} · next match in ${Math.max(0, Math.ceil((A.over.at + 12000 - Date.now()) / 1000))} s</small>`;
+    $('ar-over').hidden = !A.over; if (A.over) $('ar-over').innerHTML = `MATCH OVER<small>${A.over.winner ? 'Winner: ' + esc(A.over.winner) : 'No kills'} · next match in ${Math.max(0, Math.ceil((A.over.at + 12000 - hostNow()) / 1000))} s</small>`;
     if (boardOpen) scoreboard(true);
   }
   // Dropped items: drawn lying on their side; rebuilt only when the list changes (no per-frame work).
@@ -328,12 +349,12 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     for (const [id, m] of groundMeshes) if (!live.has(id)) { m.removeFromParent(); groundMeshes.delete(id); }
     for (const it of list) if (!groundMeshes.has(it.id)) { const m = weaponModel(it.item, 1); m.userData.ground = true; m.rotation.set(0, it.yaw, Math.PI / 2); m.position.set(it.x, it.y + .35, it.z); scene.group.add(m); groundMeshes.set(it.id, m);
       // Tossed (a drop, a body's gun): it flies there first — the host's own flight replayed, landing where it lies.
-      if (it.fly && Date.now() - it.at < it.fly.ms + 600) { const f = it.fly; flying.push({ m, it, g: { x: f.x, y: f.y, z: f.z, vx: f.vx, vy: f.vy, vz: f.vz, still: 0, grav: TOSS_GRAVITY }, t: 0, run: 0, landed: false }); m.position.set(f.x, f.y, f.z); } }
+      if (it.fly && hostNow() - it.at < it.fly.ms + 600) { const f = it.fly; flying.push({ m, it, g: { x: f.x, y: f.y, z: f.z, vx: f.vx, vy: f.vy, vz: f.vz, still: 0, grav: TOSS_GRAVITY, panes: Array.isArray(f.glass) ? f.glass : null /* the panes the host's toss broke: this copy slows at them as it did, though they are already broken here */, view: true /* a copy of the host's toss: it never switches a pane off in this client's collision (the host breaks it in the map state) */ }, t: 0, run: 0, landed: false }); m.position.set(f.x, f.y, f.z); } }
   }
   // Guns in the air (tossed): stepped like the host stepped them, spinning as they go; a clatter where they land.
   const flying = []; let flyAt = 0;
   function flyGround() { const t = performance.now(), dt = flyAt ? Math.min(.1, (t - flyAt) / 1000) : 0; flyAt = t; for (let i = flying.length - 1; i >= 0; i--) { const F = flying[i]; F.run += Math.min(dt, .1);
-      while (F.t < F.run && !F.g.rest && F.t < F.it.fly.ms / 1000) { const hit = stepNade(F.g, scene.boxes, scene.bounds, TOSS_DT); F.t += TOSS_DT; if (hit && !F.landed) { F.landed = true; recFx('bounce', { at: { x: F.g.x, y: F.g.y, z: F.g.z }, volume: .5, rate: .7, kind: 'effect' }); } }
+      while (F.t < F.run && !F.g.rest && F.t < F.it.fly.ms / 1000) { const hit = stepNade(F.g, scene.boxes, scene.bounds, TOSS_DT); F.t += TOSS_DT; if (hit && !F.landed) { F.landed = true; const at = { x: F.g.x, y: F.g.y, z: F.g.z }, k = weaponById(F.it.id)?.kind; if (!gdPlay(F.it.id === 'c4' ? 'c4.drop' : k === 'pistol' ? 'item.drop.pistol' : 'item.drop', { at })) recFx('bounce', { at, volume: .5, rate: .7, kind: 'effect' }); } }   // (CS2's weapon impact where it lands)
       const done = F.g.rest || F.t >= F.it.fly.ms / 1000 || !F.m.parent;
       if (done) { F.m.position.set(F.it.x, F.it.y + .35, F.it.z); F.m.rotation.set(0, F.it.yaw, Math.PI / 2); flying.splice(i, 1); continue; }
       F.m.position.set(F.g.x, F.g.y, F.g.z); if (!F.landed) { F.m.rotation.x += dt * 9; F.m.rotation.y += dt * 4; } } }
@@ -366,47 +387,59 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
 
   // Defuse HUD: T score · clock · CT score, alive tiles (dead dimmed), money, banners, plant / defuse progress.
   let banner = '', bannerUntil = 0, lastPhase = '', lastN = 0;
-  const show = (html, cls, ms) => { $('ar-banner').className = cls; $('ar-banner').innerHTML = html; $('ar-banner').hidden = false; bannerUntil = Date.now() + ms; };
+  const show = (html, cls, ms) => { const b = $('ar-banner'); if (b.className !== cls) b.className = cls; if (b.__v !== html || b.hidden) { b.__v = html; b.innerHTML = html; } if (b.hidden) b.hidden = false; bannerUntil = hostNow() + ms; };   // (the match-over banner is re-shown 5× a second: written once)
   function defuseHud() {
-    const d = D(), r = d.round, C = g().combat || {}, now = Date.now(); if (!r) return;
+    const d = D(), r = d.round, C = g().combat || {}, now = hostNow(); if (!r) return;   // (the round's clocks are the host's)
     const clock = r.phase === 'freeze' ? r.freezeUntil - now : r.phase === 'live' ? r.endsAt - now : 0, t = Math.max(0, Math.ceil(clock / 1000));
     const mid = r.phase === 'planted' ? '<span style="color:#ff6060">💣</span>' : r.phase === 'over' ? '<span>—</span>' : `<span>${r.phase === 'freeze' ? '<small>BUY</small> ' : ''}${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}</span>`;
-    $('ar-top').hidden = false; $('ar-top').innerHTML = `<span class="t"><small>T</small> ${d.score.t}</span>${mid}<span class="ct">${d.score.ct} <small>CT</small></span>`;
+    shown($('ar-top'), `<span class="t"><small>T</small> ${d.score.t}</span>${mid}<span class="ct">${d.score.ct} <small>CT</small></span>`);
     const tiles = team => names().filter(n => d.teams[key(n)] === team).map(n => `<i class="${isDownNow(n) ? 'dead' : ''}" title="${esc(n)}"></i>`).join('');
-    $('ar-alive').hidden = false; $('ar-alive').innerHTML = `<div class="t">${tiles('t')}</div><div class="ct">${tiles('ct')}</div>`;
-    $('ar-money').hidden = false; $('ar-money').textContent = '$ ' + (d.money?.[me()] ?? 800).toLocaleString('en-US');
+    shown($('ar-alive'), `<div class="t">${tiles('t')}</div><div class="ct">${tiles('ct')}</div>`);
+    shown($('ar-money'), '$ ' + (d.money?.[me()] ?? 800).toLocaleString('en-US'), true);
     // Banners when something happens.
     if (d.n !== lastN) { lastN = d.n; if (r.phase === 'freeze') show(`ROUND ${d.n}<small>${myTeam() === 'ct' ? 'Counter-Terrorist · defend A and B' : 'Terrorist · plant the bomb on A or B'}${d.bomb?.carrier === me() ? ' · you have the bomb (5)' : ''}</small>`, myTeam() || '', 3500); }
     if (r.phase !== lastPhase) { if (r.phase === 'planted') show('Bomb has been planted', 'bomb', 3500);   // (CS2: just that — no site, no red box)
       if (r.phase === 'over') show((r.winner === 't' ? 'TERRORISTS WIN' : 'COUNTER-TERRORISTS WIN') + `<small>${{ elim: 'eliminated', bomb: 'target bombed', defuse: 'bomb defused', time: 'time ran out' }[r.reason]} · ${d.score.t} – ${d.score.ct}</small>`, r.winner, DEFUSE.overMs);
-      if (r.phase === 'over' && r.reason === 'bomb' && r.planted) explosion(scene.group, r.planted, 4); if ((r.phase === 'freeze' || r.phase === 'warmup') && lastPhase) scene.physReset?.(); lastPhase = r.phase; }   // (a new round: the map's pots and cans back in place)
+      if (r.phase === 'over' && r.reason === 'bomb' && r.planted) explosion(scene.group, r.planted, 4);
+      if (r.phase === 'over' && r.reason === 'defuse' && r.planted) gdPlay('c4.disarm.finish', { at: { x: r.planted.x, y: (r.planted.y ?? 0) + 1, z: r.planted.z }, key: 'c4df:' + d.n });   // (CS2's c4.disarmfinish where the bomb lies)
+      if (r.phase === 'over' && lastPhase && myTeam()) gdPlay(r.winner === myTeam() ? 'ui.round.won' : 'ui.round.lost', { key: 'round:' + d.n }); if ((r.phase === 'freeze' || r.phase === 'warmup') && lastPhase) scene.physReset?.(); lastPhase = r.phase; }   // (a new round: the map's pots and cans back in place)
     if (d.matchOver) show(`MATCH OVER · ${!d.matchOver.winner ? 'DRAW' : d.matchOver.winner === 't' ? 'TERRORISTS WIN' : 'COUNTER-TERRORISTS WIN'}<small>${d.score.t} – ${d.score.ct} · new match soon</small>`, d.matchOver.winner, 2000);
     if (now > bannerUntil) $('ar-banner').hidden = true;
     const act = r.plant?.by === me() ? ['Planting…', (now - r.plant.start) / DEFUSE.plantMs] : r.defuse?.by === me() ? ['Defusing…', (now - r.defuse.start) / r.defuse.ms] : null;
     $('ar-prog').hidden = !act; if (act) { $('ar-prog').firstElementChild.textContent = act[0]; $('ar-prog').lastElementChild.style.width = Math.min(100, act[1] * 100) + '%'; }
     const feed = (C.feed || []).filter(f => now - f.at < 7000), fk = feed.map(f => f.at).join(), col = n => d.teams[key(n)] === 'ct' ? '#8fc4ff' : '#ffc36b';
     if (fk !== feedKey) { feedKey = fk; deathSounds(feed); $('ar-feed').innerHTML = feed.map(f => feedLine(f, key(f.by) === me() || key(f.target) === me(), col(f.by), col(f.target))).join(''); }
-    freezeMusic(r.phase === 'freeze' && !d.matchOver);   // the calm jazz while everyone waits at spawn
     $('ar-over').hidden = true; if (boardOpen) scoreboard(true);
   }
   // The planted bomb: its model, a blinking light and beeps that speed up (3D, everyone hears them).
-  let bombObj = null, beepAt = 0;
+  // Its beeps are scheduled on the host's clock from this bomb's own timer (GD-AUD-09): every client beeps at the same
+  // host moments, a client's clock offset changes nothing, and a new plant (another explodeAt: the next round, a
+  // rematch) restarts them — nothing carries over. CS2's beep: C4.PlantSound (c4_beep2, linear to silence at 1300 HU).
+  let bombObj = null, beepNext = 0, beepFor = null; const BEEP_AT = { x: 0, y: 0, z: 0 };
   function bombView(p) {
-    if (!p) { if (bombObj) { bombObj.removeFromParent(); bombObj = null; } return; }
+    if (!p) { if (bombObj) { bombObj.removeFromParent(); bombObj = null; } beepFor = null; return; }
     if (!bombObj) { bombObj = weaponModel('c4', 1.4); bombObj.userData.ground = true; bombObj.position.set(p.x, p.y + .2, p.z); scene.group.add(bombObj); }
-    const left = (p.explodeAt - Date.now()) / 1000, gap = Math.max(.12, Math.min(1, left / 40)) * 1000;
-    if (Date.now() - beepAt > gap) { beepAt = Date.now(); beep({ x: p.x, y: p.y + 1, z: p.z }, left < 10 ? 1.25 : 1); }
+    const hn = hostNow(); if (beepFor !== p.explodeAt) { beepFor = p.explodeAt; beepNext = hn; }
+    if (hn >= beepNext) { const left = (p.explodeAt - hn) / 1000, gap = Math.max(.15, .1 + .9 * Math.min(1, left / (DEFUSE.bombMs / 1000))) * 1000;   // (the planted bomb's beep schedule as CS has it (CS:GO's planted_c4: next beep after max(0.1 + 0.9 × the share of the timer left, 0.15) s — 1 s apart at the plant, 0.15 s at the end); CS2's own schedule isn't in its data files, so this is that rule, not a measured CS2 value)
+      beepNext = Math.max(beepNext + gap, hn - 50); if (left > 0) { BEEP_AT.x = p.x; BEEP_AT.y = p.y + 1; BEEP_AT.z = p.z; if (!gdPlay('c4.beep', BEEP_OPTS)) beep(BEEP_AT, left < 10 ? 1.25 : 1); } }
   }
+  const BEEP_OPTS = { at: BEEP_AT, src: 'c4' };
   // Someone planting or defusing (CS2): everyone near hears it where it happens — the case armed and its keypad beeps
   // round the site while it's planted, a defuse's snips and clicks close to the bomb.
   let plantSeen = 0, plantBeepAt = 0, defuseSeen = 0, defuseClickAt = 0; const PLANT_AT = { x: 0, y: 0, z: 0 }, DEFUSE_AT = { x: 0, y: 0, z: 0 };   // (reused: nothing made per frame)
   function bombActs(r) {
-    const now = Date.now(), p = r?.plant, df = r?.defuse;
+    // (the host's clock — plant / defuse starts are its times: GD-AUD-09.) Planting: CS2's c4.initiate, then its keypad
+    // (c4.keypressquiet) at the plant clip's own moments (fpSounds.c4.plant: CS2's clip events, stopped if the plant is
+    // let go) — not the planted bomb's beep, which is what played here before (GD-AUD-07); without CS2's clip, its
+    // keypress event (or a soft synth beep) every ~400 ms. Defusing: CS2's c4.disarmstart (the snips are in it); the
+    // synth clicks only when that file isn't here.
+    const now = hostNow(), p = r?.plant, df = r?.defuse;
     if (p && r.phase === 'live') { const at = PLANT_AT; at.x = p.x; at.y = (p.y ?? 0) + 1.5; at.z = p.z;
-      if (p.start !== plantSeen) { plantSeen = p.start; plantBeepAt = now + 260; if (!playSound('fp-c4_initiate', { at, volume: .9, kind: 'plant' })) beep(at, 1.3); }
-      else if (now >= plantBeepAt && now - p.start < DEFUSE.plantMs - 150) { plantBeepAt = now + 360 + Math.random() * 60; if (!playSound('fp-c4_beep2', { at, volume: .55, rate: 1.1 + Math.random() * .15, kind: 'plant' })) beep(at, 1.45); } }
+      if (p.start !== plantSeen) { plantSeen = p.start; plantBeepAt = now + 260; if (!gdPlay('c4.initiate', { at, src: p.by, key: 'c4i:' + p.start }) && !playSound('fp-c4_initiate', { at, volume: .9, kind: 'plant' })) beep(at, 1.3);
+        const st = p.start; if (playClipAt('c4', 'plant', DEFUSE.plantMs, at, () => D()?.round?.plant?.start === st, p.by)) plantBeepAt = Infinity; }
+      else if (now >= plantBeepAt && now - p.start < DEFUSE.plantMs - 150) { plantBeepAt = now + 360 + Math.random() * 60; if (!gdPlay('c4.key', { at, src: p.by })) beep(at, 1.45); } }
     if (df && r.phase === 'planted' && r.planted) { const at = DEFUSE_AT; at.x = r.planted.x; at.y = (r.planted.y ?? 0) + 1; at.z = r.planted.z;
-      if (df.start !== defuseSeen) { defuseSeen = df.start; defuseClickAt = now; playSound('fp-c4_draw_grab_0' + (1 + (Math.random() * 4 | 0)), { at, volume: .7, kind: 'defuse' }); }
+      if (df.start !== defuseSeen) { defuseSeen = df.start; defuseClickAt = gdPlay('c4.disarm.start', { at, src: df.by, key: 'c4ds:' + df.start }) && gdEvent('c4.disarm.start')?.cs2 ? Infinity : now; }
       if (now >= defuseClickAt) { defuseClickAt = now + 220 + Math.random() * 140; defuseClick(at); } }
   }
   let hudAt = 0, hudPhase = '', lastNear = '', teamAt = 0;
@@ -420,13 +453,16 @@ body:has(#ar-top:not([hidden])) #game-notifications{top:auto;right:auto;left:22p
     defuseHold(hold) { const at = where(); return send({ type: 'defuse', hold, x: at?.x, y: at?.y, z: at?.z }).then(r => { if (hold && r?.error) notify(r.error); return r; }); },
     nearBomb() { const p = D()?.round?.phase === 'planted' && D().round.planted, at = where(); return !!(p && at && myTeam() === 'ct' && Math.hypot(at.x - p.x, at.z - p.z) < 7); },
     // Throw the grenade in hand (left click); then the next one of that kind, or back to your best gun.
-    async throwNade(id, strength = 'long') { const at = where(), a = aim(); if (!at) return; throwSound(); const r = await send({ type: 'throw', kind: id, x: at.x, y: at.y, z: at.z, strength, ...a }); if (r?.error) { notify(r.error); return; } dispatchEvent(new CustomEvent('gd-throw', { detail: { kind: id, a: { x: at.x, y: at.y, z: at.z, strength, ...a } } }));   /* (practice: its flight path) */
+    // (A: the eye and aim at the release, kept — the camera moves on during the round trip; gd-throw-start: the grenade
+    // view draws it leaving your hand at once, until the host's arrives — arena-nades-view.js)
+    async throwNade(id, strength = 'long') { const at = where(), a = aim(); if (!at) return; /* (the throw's sound is weapons.js's alone: CS2's clip, else its event — one sound, not two: GD-AUD-07) */const A = { x: at.x, y: at.y, z: at.z, strength, ...a }, seq = Math.random(); dispatchEvent(new CustomEvent('gd-throw-start', { detail: { kind: id, a: A, by: name(), seq } }));
+      const r = await send({ type: 'throw', kind: id, ...A }); if (r?.error) { dispatchEvent(new CustomEvent('gd-throw-refused', { detail: { seq } })); notify(r.error); return; } dispatchEvent(new CustomEvent('gd-throw', { detail: { kind: id, a: A } }));   /* (practice: its flight path) */
       const own = arenaArsenalOf(g(), name()); equip(own.includes(id) ? id : own[0]); },
     update() {
       if (!inArena()) { if (entered) leave(); return; }
       { const P = !!D()?.paused; if ($('ar-paused').hidden === P) $('ar-paused').hidden = !P; }
       if (boardOpen) { const v = voice?.(); if (v) for (const el of document.querySelectorAll('#ar-board .vc')) { const on = v.speaking(el.dataset.vcname); if (el.classList.contains('on') !== on) el.classList.toggle('on', on); } }   // speaking now (real audio level)
-      const A = g().arena; if (entered !== A.map + ':' + A.startedAt) { enter(); if (entered !== A.map + ':' + A.startedAt) return; }
+      const A = g().arena; if (!isIn(A)) { enter(); if (!isIn(A)) return; }
       // Respawn: the host picks the spawn farthest from enemies.
       // Something outside the arena moved us back to the hall (joining, a menu): return to a spawn point.
       const at = where(); if (at && !scene.inArena(at.z)) { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); }

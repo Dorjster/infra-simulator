@@ -9,7 +9,10 @@ import { combatApply, isDown, applyHit, takeShots, hurt, SPAWN_SAFE_MS } from '.
 import { buildReport } from '../dist/gd-report.js';
 import { ARENA_MAPS, mapBoxes, walkable } from '../dist/arena-maps.js';
 import { ARENA } from '../dist/facility-layout.js';
-import { weaponById } from '../dist/weapons-data.js';
+import { weaponById, defaultPistol } from '../dist/weapons-data.js';
+import { arenaArsenalOf, armorOf } from '../dist/combat-logic.js';
+import { epochError, shiftClock, rematch } from '../dist/arena-logic.js';
+import { newRound } from '../dist/arena-defuse.js';
 let seed = 5; Math.random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 let n = 0; const ok = (name, c, d = '') => { n++; assert(c, name + (d ? ' · ' + d : '')); };
 const throws = (f, re, name) => { n++; assert.throws(f, re, name); };
@@ -135,5 +138,103 @@ const spread = pts => { let m = Infinity; for (let i = 0; i < pts.length; i++) f
   ok('respawned', !isDown(g, 'Ann', t)); ok('protected after the respawn', applyHit(g, 'Bo', 'Ann', ak, 'chest', 10, 1, t + 100).dmg === 0);
   g.combat.ammo = { ann: { ak: [30, 90] } }; takeShots(g, 'Ann', 1, 'ak'); ok('firing ends the protection at once', applyHit(g, 'Bo', 'Ann', ak, 'chest', 10, 1, t + 200).dmg > 0);
   const gd = { levels: {} }; startArena(gd, { map: 'dust2', kind: 'defuse', bots: 0 }, t); ok('Defuse has no spawn protection (no respawns)', !gd.combat.safe); }
+
+// ── Match lifecycle: a new match starts clean — three rematches in a row, after guns, armor, a kit and grenades bought and
+// thrown, with someone dead and someone spectating, bots holding rifles; knives and host settings stay ──
+{ let t = 7e11; const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 4, difficulty: 'hard', freezeS: 5, rules: { win: 5, start: 1000 } }, t);
+  const M = ARENA_MAPS.dust2, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7 + M.nav.floorAt(x, z), z: ARENA.cz + z, yaw: 0 });
+  const P = [{ id: 'a', name: 'Ann', pose: at(M.t[0]) }, { id: 'c', name: 'Cy', pose: at(M.ct[0]) }, { id: 's', name: 'Sam', pose: at(M.ct[1]) }];
+  const tick = ms => { for (let i = 0; i < ms / 50; i++) arenaTick(g, P, .05, t += 50); }, follow = () => { for (const p of P) { const s = g.combat.spawnTo[p.name.toLowerCase()]; if (s) { p.pose.x = s.x; p.pose.z = s.z; if (s.y !== undefined) p.pose.y = s.y + 9.7; } } };
+  tick(100); const side = k => g.combat.d.teams[k];
+  ok('a fresh Defuse match: bots hold their side’s pistol, not a deathmatch rifle', g.arena.bots.every(b => b.weapon === defaultPistol(side(b.name.toLowerCase()))), JSON.stringify(g.arena.bots.map(b => b.weapon)));
+  g.combat.d.teams.ann = 't'; g.combat.d.teams.cy = 'ct'; g.combat.d.teams.sam = 'ct'; arenaApply(g, { type: 'restart-round' }, 'Host', P, t); follow(); tick(100);
+  arenaApply(g, { type: 'knife', knife: 'butterfly' }, 'Ann', P, t); arenaApply(g, { type: 'move-spec', name: 'Sam' }, 'Host', P, t);
+  for (let k = 1; k <= 3; k++) { const d = g.combat.d, m0 = g.arena.match, s0 = g.arena.startedAt; d.money.ann = 16000; d.money.cy = 16000;
+    for (const a of [{ type: 'buy', primary: 'ak' }, { type: 'buy-armor', kind: 'helmet' }, { type: 'buy-nade', kind: 'he' }, { type: 'buy-nade', kind: 'flash' }, { type: 'buy-nade', kind: 'smoke' }]) arenaApply(g, a, 'Ann', P, t);
+    arenaApply(g, { type: 'buy-kit' }, 'Cy', P, t); arenaApply(g, { type: 'buy', primary: 'm4' }, 'Cy', P, t);
+    tick(5100); ok(`match ${k}: live`, d.round.phase === 'live', d.round.phase);
+    arenaApply(g, { type: 'throw', kind: 'he', x: P[0].pose.x, y: P[0].pose.y, z: P[0].pose.z, dx: 0, dy: .2, dz: -1 }, 'Ann', P, t);   // utility used
+    hurt(g, 'Ann', 'Cy', weaponById('ak'), 40, 'chest', t); hurt(g, 'BOT Bat', 'Cy', weaponById('ak'), 500, 'head', t); g.arena.bots[0].weapon = 'ak'; g.arena.bots[1].weapon = 'sniper'; tick(100);
+    ok(`match ${k}: before the end — Ann armed with rifle, armor and grenades; Cy dead (his rifle on the ground), assist and damage tallied`, arenaArsenalOf(g, 'Ann').includes('ak') && armorOf(g, 'Ann').helmet && isDown(g, 'Cy', t) && (g.combat.ground || []).length > 0 && (g.combat.nades || []).length > 0, JSON.stringify({ own: arenaArsenalOf(g, 'Ann'), ground: g.combat.ground?.length, nades: g.combat.nades?.length }));
+    d.matchOver = { at: t, winner: 't' }; tick(DEFUSE.matchOverMs + 100); follow(); const D = g.combat.d, C = g.combat;
+    ok(`rematch ${k}: a new match (new id, new start), round 1 in its freeze`, g.arena.match !== m0 && g.arena.startedAt !== s0 && D.match === g.arena.match && D !== d && D.n === 1 && D.round.phase === 'freeze', JSON.stringify([D.n, D.round.phase]));
+    ok(`rematch ${k}: no gun, grenade or armor kept — the side pistol and the knife only`, arenaArsenalOf(g, 'Ann').every(x => ['pistol', 'knife', 'c4'].includes(x)) && armorOf(g, 'Ann').kevlar === 0 && !armorOf(g, 'Ann').helmet && !(g.arena.loadout.ann?.nades || []).length && arenaArsenalOf(g, 'Cy').every(x => ['usps', 'knife'].includes(x)), JSON.stringify([arenaArsenalOf(g, 'Ann'), arenaArsenalOf(g, 'Cy'), armorOf(g, 'Ann')]));
+    ok(`rematch ${k}: kits, kills, deaths, assists, damage, report and history gone; nothing on the ground or in the air`, !Object.keys(D.kits).length && !Object.keys(C.kills).length && !Object.keys(C.deaths).length && !Object.keys(C.assists || {}).length && !Object.keys(C.dmg || {}).length && !Object.keys(C.stats || {}).length && !D.history.length && !C.ground.length && !C.nades.length && !Object.keys(C.ammo || {}).some(k2 => Object.keys(C.ammo[k2]).some(w => w === 'ak' || w === 'm4')), JSON.stringify({ kits: D.kits, kills: C.kills, ground: C.ground.length, nades: C.nades.length, ammo: C.ammo }));
+    ok(`rematch ${k}: the economy from the rules ($1,000 each), the dead alive with full HP, the spectator still watching`, D.money.ann === 1000 && D.money.cy === 1000 && !isDown(g, 'Cy', t) && side('sam') === 'spec' && isDown(g, 'Sam', t), JSON.stringify([D.money, side('sam')]));
+    ok(`rematch ${k}: bots back to their side’s pistol, no target, no route`, g.arena.bots.every(b => b.weapon === defaultPistol(side(b.name.toLowerCase())) && !b.target && !b.path), JSON.stringify(g.arena.bots.map(b => [b.weapon, side(b.name.toLowerCase())])));
+    ok(`rematch ${k}: host settings (bots, difficulty, freeze, rules) and Ann’s knife stay; people keep their side; spawn orders on their side`, g.arena.bots.length === 4 && g.arena.difficulty === 'hard' && g.arena.freezeMs === 5000 && D.rules.win === 5 && D.rules.start === 1000 && g.arena.knives.ann === 'butterfly' && side('ann') === 't' && side('cy') === 'ct' && C.spawnTo.ann?.at === g.arena.startedAt && C.spawnTo.cy?.at === g.arena.startedAt, JSON.stringify({ knives: g.arena.knives, ann: side('ann'), sp: C.spawnTo.ann }));
+    ok(`rematch ${k}: ground and grenade ids keep counting (no id names two things on a client)`, C.groundSeq > 0 && C.nadeSeq >= k, JSON.stringify([C.groundSeq, C.nadeSeq])); }
+  // Round to round (not a new match): survivors keep their gear, the dead get the pistol; assist damage is per round.
+  const d = g.combat.d; d.money.ann = 16000; arenaApply(g, { type: 'buy', primary: 'ak' }, 'Ann', P, t); tick(5100); hurt(g, 'Ann', 'Cy', weaponById('ak'), 30, 'chest', t);
+  d.round.phase = 'over'; d.round.overAt = t - DEFUSE.overMs - 1; tick(50); follow();
+  ok('next round: the survivor keeps the rifle (round-to-round retention), damage tallies start again', arenaArsenalOf(g, 'Ann').includes('ak') && !Object.keys(g.combat.dmg || {}).length, JSON.stringify([arenaArsenalOf(g, 'Ann'), g.combat.dmg]));
+  tick(5100); hurt(g, 'Ann', 'Cy', weaponById('ak'), 15, 'chest', t); hurt(g, 'BOT Bat', 'Cy', weaponById('ak'), 500, 'head', t);
+  ok('an assist needs 41 damage within one round (30 last round + 15 now is none)', !g.combat.assists?.ann, JSON.stringify(g.combat.assists)); }
+// Deathmatch: the automatic rematch keeps the host's settings and starts everyone clean.
+{ let t = 8e11; const g = { levels: {} }; startArena(g, { map: 'yard', bots: 3, difficulty: 'hard' }, t); const P = [{ id: 'a', name: 'Ann', pose: { x: 0, y: 9.7, z: -800 } }];
+  arenaTick(g, P, .05, t += 50); g.arena.loadout.ann = { primary: 'ak', secondary: 'deagle', nades: [] }; g.combat.kills.ann = 7; const s0 = g.arena.startedAt;
+  g.arena.endsAt = t; arenaTick(g, P, .05, t += 50); ok('deathmatch: the clock runs out → match over', !!g.arena.over);
+  arenaTick(g, P, .05, t += 12001); ok('deathmatch rematch: new match, same bots and difficulty, loadouts and kills gone', g.arena.startedAt !== s0 && g.arena.bots.length === 3 && g.arena.difficulty === 'hard' && !g.arena.loadout.ann?.primary && !g.combat.kills.ann && !g.arena.over, JSON.stringify([g.arena.difficulty, g.arena.bots.length, g.arena.loadout.ann]));
+  throws(() => arenaApply(g, { type: 'restart' }, 'Guest', P, t, { isHost: false }), /Only the host/, 'a guest cannot start a new match'); }
+// The host's map change keeps its settings (freeze, rules, difficulty) and starts a clean match there.
+{ let t = 9e11; const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 2, difficulty: 'easy', freezeS: 7, rules: { win: 6 } }, t); g.arena.loadout.x = { primary: 'ak', secondary: 'pistol', nades: ['he'] };
+  arenaApply(g, { type: 'change-map', map: 'mirage' }, 'Host', [], t + 10); ok('change map: the host’s freeze, rules and difficulty stay; gear does not', g.arena.map === 'mirage' && g.arena.freezeMs === 7000 && g.combat.d.rules.win === 6 && g.arena.difficulty === 'easy' && !g.arena.loadout.x, JSON.stringify([g.arena.freezeMs, g.combat.d.rules.win])); }
+// Requests from an earlier round or match (epochError): refused; without ids (older clients): judged as before.
+{ let t = 1e12; const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 0 }, t); const r0 = g.combat.d.round.id, m0 = g.arena.match;
+  ok('ids of this round and match pass', epochError(g, { type: 'throw', round: r0, match: m0 }) === null && epochError(g, { type: 'throw' }) === null);
+  arenaApply(g, { type: 'restart-round' }, 'Host', [], t);
+  ok('a throw, drop, pickup, door or hit from the round before is refused', ['throw', 'drop', 'pickup', 'use', 'break', 'hit', 'buy'].every(type => /round has ended/.test(epochError(g, { type, round: r0 }) || '')));
+  ok('host settings and team changes are never bound to a round', epochError(g, { type: 'settings', round: r0 }) === null && epochError(g, { type: 'team', round: r0 }) === null);
+  rematch(g, [], t + 5); ok('anything from the match before is refused', /match has ended/.test(epochError(g, { type: 'buy', match: m0, round: g.combat.d.round.id }) || '')); }
+// The host's computer slept: every match timer moves on by the gap (as a pause), the stamps clients act on do not.
+{ let t = Date.now(); const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 2 }, t); const P = [{ id: 'a', name: 'Ann', pose: { x: ARENA.cx, y: 9.7, z: ARENA.cz } }]; arenaTick(g, P, .05, t + 50);
+  const r = g.combat.d.round, f0 = r.freezeUntil, e0 = r.endsAt, s0 = g.arena.startedAt, sp0 = g.combat.spawnTo.ann?.at, gap = 600000;
+  const n = shiftClock(g, gap, t + gap); ok('asleep 10 min: the round clock moves on by the gap (still the same freeze left), startedAt and spawn orders untouched', n > 0 && r.freezeUntil === f0 + gap && r.endsAt === e0 + gap && g.arena.startedAt === s0 && g.combat.spawnTo.ann?.at === sp0, JSON.stringify({ n, f: r.freezeUntil - f0 }));
+  arenaTick(g, P, .05, t + gap + 100); ok('…so the round is still in its freeze on waking (no backlog of rounds)', g.combat.d.round === r && r.phase === 'freeze'); }
+// Readiness: a player still loading the map (the room marks them `loading`) is not in the match; once loaded, in the freeze
+// they get a spot of their own.
+{ let t = 1.1e12; const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 2 }, t); const M = ARENA_MAPS.dust2;
+  const P = [{ id: 'a', name: 'Ann', pose: { x: ARENA.cx + M.t[0][0], y: 9.7, z: ARENA.cz + M.t[0][1] } }, { id: 'b', name: 'Bo', loading: true, pose: { x: ARENA.cx + 44, y: 9.7, z: ARENA.cz - 1006 } }];
+  for (let i = 0; i < 4; i++) arenaTick(g, P, .05, t += 50);
+  ok('loading: not in the round, no spawn order, not counted', !g.combat.d.round.here.bo && !g.combat.spawnTo.bo && !g.combat.d.teams.bo, JSON.stringify([g.combat.d.round.here, g.combat.spawnTo.bo]));
+  g.combat.d.round.phase = 'live'; g.combat.d.round.freezeUntil = t; const bot = g.arena.bots.find(b => g.combat.d.teams[b.name.toLowerCase()] === 'ct') || g.arena.bots[0]; bot.x = P[1].pose.x + 3; bot.z = P[1].pose.z; bot.y = undefined;
+  for (let i = 0; i < 40; i++) arenaTick(g, P, .05, t += 50); ok('loading: bots never shoot at the old-map spot', (g.combat.hp.bo ?? 100) === 100 && !isDown(g, 'Bo', t));
+  g.combat.d.round.phase = 'freeze'; g.combat.d.round.freezeUntil = t + 10000; delete P[1].loading; arenaTick(g, P, .05, t += 50);
+  ok('loaded in the freeze: a side, money and a spot of their own', !!g.combat.d.teams.bo && g.combat.d.money.bo >= 800 && Number.isFinite(g.combat.spawnTo.bo?.x), JSON.stringify(g.combat.spawnTo.bo)); }
+// Round 1 on a new map waits for whoever still loads it (readyMap: the map the room says they have) — its freeze keeps 3 s
+// left, 30 s from the match's start at most — so a slower computer never sits out round 1, and can still buy when it's in.
+{ let t = 1.2e12; const g = { levels: {} }; startArena(g, { map: 'dust2', kind: 'defuse', bots: 2, freezeS: 3 }, t); const M = ARENA_MAPS.dust2, r = () => g.combat.d.round;
+  const P = [{ id: 'a', name: 'Ann', readyMap: 'dust2', pose: { x: ARENA.cx + M.t[0][0], y: 9.7, z: ARENA.cz + M.t[0][1] } }, { id: 'b', name: 'Bo', readyMap: 'nuke', pose: { x: ARENA.cx + 44, y: 9.7, z: ARENA.cz - 1006 } }];
+  for (let i = 0; i < 100; i++) arenaTick(g, P, .05, t += 50);
+  ok('5 s into a 3 s freeze with Bo still loading: round 1 is still in its freeze, ≥ 2.9 s left, buy time moved with it', r().phase === 'freeze' && r().freezeUntil - t >= 2900 && r().buyUntil - r().freezeUntil === DEFUSE.buyMs, JSON.stringify([r().phase, r().freezeUntil - t]));
+  P[1].readyMap = 'dust2'; arenaTick(g, P, .05, t += 50);
+  ok('…Bo has the map: in round 1 with a spot of their own, still time to buy', !!g.combat.spawnTo.bo && r().phase === 'freeze' && r().freezeUntil - t > 2500, JSON.stringify([g.combat.spawnTo.bo, r().freezeUntil - t]));
+  for (let i = 0; i < 64; i++) arenaTick(g, P, .05, t += 50); ok('…and the round goes live once the freeze is over', r().phase === 'live', r().phase);
+  const h = { levels: {} }; let u = 1.3e12; startArena(h, { map: 'dust2', kind: 'defuse', bots: 2, freezeS: 3 }, u); for (let i = 0; i < 700; i++) arenaTick(h, [P[0], { ...P[1], readyMap: 'nuke' }], .05, u += 50);
+  ok('someone who never finishes loading holds round 1 for 30 s at most', h.combat.d.round.phase !== 'freeze', h.combat.d.round.phase); }
+// Still loading the map (after a change of map; Deathmatch has no freeze): an HE at their last map's pose leaves them alone
+// (grenades, fire, flashes and decoys reach only those in this map), while it hurts the same player once loaded.
+for (const loading of [false, true]) { let t = 1.35e12; const g = { levels: {} }; startArena(g, { map: 'yard', kind: 'dm', bots: 0 }, t);
+  const at = { x: ARENA.cx, y: 9.7, z: ARENA.cz, yaw: 0, active: true, crouched: false }, P = [{ id: 'a', name: 'Ann', readyMap: 'yard', pose: { ...at, t } }, { id: 'b', name: 'Bo', readyMap: loading ? 'dust2' : 'yard', pose: { ...at, x: at.x + 3, t } }];
+  for (let i = 0; i < 80; i++) arenaTick(g, P, .05, t += 50); g.combat.safe = {};
+  arenaApply(g, { type: 'buy-nade', kind: 'he' }, 'Ann', P, t); arenaApply(g, { type: 'throw', kind: 'he', x: at.x, y: at.y, z: at.z, strength: 'short', dx: 0, dy: -1, dz: 0, pitch: -1.5, yaw: 0 }, 'Ann', P, t);
+  for (let i = 0; i < 80; i++) arenaTick(g, P, .05, t += 50); const hp = g.combat.hp.bo ?? 100;
+  ok(loading ? 'still loading: an HE at their last pose does no damage' : 'loaded: the same HE hurts them', loading ? hp === 100 : hp < 100, 'HP ' + hp + ' · Ann ' + (g.combat.hp.ann ?? 100)); }
+// Doors and glass across a rematch (map files have them; a synthetic copy of the built-in Dust II with one sliding door and
+// one pane stands in, as CI has no map files): the next match starts with the door shut and the pane whole in the HOST's
+// collision too (its bots' sight, grenades, smoke) — as every client draws it — not the last match's open door and hole.
+{ const base = ARENA_MAPS.dust2, M = Object.defineProperties({}, Object.getOwnPropertyDescriptors(base)); M.id = 'movetest'; M.name = 'Mover test';
+  M.movers = [{ kind: 'break', glass: true, health: 1, box: [10, 10.2, -4, 4, 0, 12] }, { kind: 'door', health: 0, box: [20, 20.3, -3, 3, 0, 12], open: { open: [20, 20.3, 3, 9, 0, 12] } }];
+  ARENA_MAPS.movetest = M; let t = 1.4e12; const g = { levels: {} }; startArena(g, { map: 'movetest', kind: 'defuse', bots: 0, freezeS: 0 }, t);
+  const tick = (ms, k = 1) => { for (let i = 0; i < k; i++) arenaTick(g, [], .05, t += ms); }; tick(50, 5);
+  const B = mapBoxes(M, ARENA.cx, ARENA.cz).movers, off = (id, role) => B.filter(b => b.mover === id && (!role || b.role === role)).map(b => b.off);
+  ok('mover test map: one pane and one door, shut and whole at the start', B.length === 3 && off(0)[0] === false && off(1, 'shut')[0] === false && off(1, 'open')[0] === true, JSON.stringify(B.map(b => [b.mover, b.role, b.off])));
+  arenaApply(g, { type: 'break', id: 0, dmg: 500 }, 'Ann', [], t); arenaApply(g, { type: 'use', id: 1 }, 'Ann', [], t); tick(50, 30);
+  ok('…pane broken and door open in match 1 (host collision)', off(0)[0] === true && off(1, 'shut')[0] === true && off(1, 'open')[0] === false, JSON.stringify(B.map(b => [b.mover, b.role, b.off])));
+  const m1 = g.arena.match; g.combat.d.matchOver = { at: t, winner: 't' }; tick(DEFUSE.matchOverMs + 100); tick(50, 10);
+  ok('rematch on the same map: door shut and pane whole again in the host\'s collision', g.arena.match !== m1 && off(0)[0] === false && off(1, 'shut')[0] === false && off(1, 'open')[0] === true, JSON.stringify(B.map(b => [b.mover, b.role, b.off])));
+  arenaApply(g, { type: 'break', id: 0, dmg: 500 }, 'Ann', [], t); tick(50, 2); rematch(g, [], t, 'dust2'); tick(50, 2); rematch(g, [], t, 'movetest'); tick(50, 2);
+  ok('…and after leaving for another map and coming back (the boxes are cached per map)', off(0)[0] === false, JSON.stringify(B.map(b => [b.mover, b.role, b.off])));
+  delete ARENA_MAPS.movetest; }
 
 console.log('PASS: Global Defensive match flow · ' + n + ' checks (unique spawns for 12, one-attempt plant / defuse with stale positions, one outcome, lobby window + start rules, team changes + balance + spectator, host settings, map changes, no Defuse → Deathmatch fallback)');

@@ -29,7 +29,14 @@ const shots = new Map();   // file hash → 'id-take'
 for (const id of guns) for (const sfx of ['', '-b', '-c', '-far']) { const f = ['wav', 'ogg'].map(e => new URL(`sounds/shot-${id}${sfx}.${e}`, root)).find(existsSync); ok(`${id}: has its gunshot "${sfx || 'close'}"`, !!f); const h = hash(f); ok(`${id}${sfx}: a recording of its own`, !shots.has(h), shots.get(h)); shots.set(h, id + sfx); }
 // The same take cut to another length is the same sound: no two gunshot files may start alike (first 0.2 s).
 const starts = new Map(); for (const [h, name] of shots) { const f = ['wav', 'ogg'].map(e => new URL(`sounds/shot-${name}.${e}`, root)).find(existsSync), b = readFileSync(f), head = createHash('sha1').update(b.subarray(44, 44 + 44100 * .2 * 2)).digest('hex'); ok(`${name}: not the same take as another gunshot`, !starts.has(head), starts.get(head)); starts.set(head, name); }
-// First person: every gun and knife has an arms rig.
+// First person: every gun, knife and grenade has an arms rig.
 const fpSrc = readFileSync(new URL('fp-view.js', root), 'utf8'), FP = table('FP', fpSrc), KIND_FP = table('KIND_FP', fpSrc, 'const ');
-for (const w of [...WEAPONS, ...KNIVES]) ok(`${w.id}: has a first-person rig`, !!(FP[w.id] || KIND_FP[w.kind])?.pack, w.kind);
-console.log('PASS: asset identity · ' + n + ' checks (' + guns.length + ' guns, knives, grenades, bomb: own model, no duplicate looks, AWP ≠ SSG 08, own icon, own gunshots ×4, first-person rig)');
+for (const w of [...WEAPONS, ...KNIVES, ...GRENADES]) ok(`${w.id}: has a first-person rig`, !!(FP[w.id] || KIND_FP[w.kind])?.pack, w.kind);
+// Grenades (HE, flashbang, smoke, decoy, molotov, incendiary): each its own look — no two the same model — and its own
+// buy-menu picture, kill-feed silhouette and HUD mark; a view-model placement.
+const uiSrc = readFileSync(new URL('arena-ui.js', root), 'utf8'), hudSrc = readFileSync(new URL('gd-hud.js', root), 'utf8');
+const GEAR = table('GEAR_SVG', uiSrc, 'const '), FEED = table('NADE_ICON', uiSrc, 'const '), MARK = table('NADE_ICON', hudSrc), VIEWS = table('VIEW', src);
+ok('every grenade of CS2 is there (decoy and incendiary too)', ['he', 'flash', 'smoke', 'decoy', 'molotov', 'incendiary'].every(id => nades.includes(id)), nades.join());
+for (const [what, T] of [['model', Object.fromEntries(nades.map(id => [id, look(id)]))], ['buy picture', GEAR], ['kill-feed icon', FEED], ['HUD mark', MARK]]) { const seen = new Map(); for (const id of nades) { ok(`${id}: has a ${what}`, !!T[id]); ok(`${id}: its ${what} is its own`, !seen.has(T[id]), seen.get(T[id])); seen.set(T[id], id); } }
+for (const id of nades) ok(`${id}: has a view-model placement`, Array.isArray(VIEWS[id]) && VIEWS[id].length === 4);
+console.log('PASS: asset identity · ' + n + ' checks (' + guns.length + ' guns, knives, ' + nades.length + ' grenades, bomb: own model, no duplicate looks, AWP ≠ SSG 08, own icon, own gunshots ×4, first-person rig; grenades: own look, buy picture, kill-feed icon, HUD mark)');

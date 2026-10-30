@@ -43,6 +43,9 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     sunOffset = sun.position.clone(), LIGHT_DIST = 17;
   sun.shadow.camera.left = sun.shadow.camera.bottom = -SHADOW_BOX; sun.shadow.camera.right = sun.shadow.camera.top = SHADOW_BOX;
   sun.shadow.camera.near = .5; sun.shadow.camera.far = 170; sun.shadow.bias = -.0004; sun.shadow.normalBias = .04; scene.add(sun.target);
+  // The Global Defensive smoke's slot in the post-processing (right after the scene, before the glow): disabled — skipped —
+  // unless a smoke is up (draw()); it hands the frame to scene.userData.gdSmoke (arena-smoke-pass.js).
+  const smokeHook = { enabled: false, needsSwap: true, clear: false, renderToScreen: false, setSize() {}, dispose() {}, render: (r, writeBuffer, readBuffer) => scene.userData.gdSmoke?.composite(r, writeBuffer, readBuffer) };
   let composer = null, bloom = null, mode = '', frame = 0, fxOn = false; const hemi = scene.children.find(o => o.isHemisphereLight), base = { sun: sun.intensity, hemi: hemi?.intensity, sunColor: sun.color.clone(), sky: hemi?.color.clone(), ground: hemi?.groundColor.clone() };
   // scene.userData.outdoor (Global Defensive maps): { sun, sunK, sky, ground, hemiK } — that map's sunlight and sky light, and the sun
   // far enough out for buildings to cast their shadows; the hall's lighting comes back when it is cleared.
@@ -74,7 +77,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     if (needPost && !composer) {
       const size = renderer.getDrawingBufferSize(new THREE.Vector2());
       const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: G.aa });
-      composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera));
+      composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera)); composer.addPass(smokeHook);   // (smokeHook: off unless a Global Defensive smoke is up)
       bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05);
       // The composer sizes every pass to the full buffer; the glow is a blur, so its mips start at a quarter of
       // the screen, not half (a third of High's cost on a Retina screen, the same look).
@@ -172,6 +175,15 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     // scene.userData.renderOnly only the top-level objects it keeps — and its target): fp-view.js's first-person sets.
     compileFor(root) { apply(); const only = scene.userData.renderOnly, all = scene.children, was = root.visible; let job = null; if (only) scene.children = all.filter(only); root.visible = true;
       try { job = compileWarm(root); } catch {} finally { scene.children = all; root.visible = was; } return job || Promise.resolve(); },
+    // Every texture root's materials use, sent to the GPU now — a few ms a frame (`budget`), never in one long frame — instead of
+    // on first sight. renderer.compile builds programs but uploads no texture: a CS2 map's 360 materials (each its own colour,
+    // normal and light-map pictures) went up the first time each came into view, mid-fight — a 50–300 ms frame here on a
+    // turn (and slower through ANGLE → Direct3D 11 on a Windows laptop). Already uploaded ones cost a lookup. (package W)
+    async uploadTextures(root, budget = 6) {
+      const seen = new Set(), add = t => { if (t?.isTexture && !renderer.properties.get(t).__webglTexture) seen.add(t); };
+      root.traverse(o => { for (const m of [].concat(o.material || [])) { if (!m) continue; for (const k in m) add(m[k]); if (m.uniforms) for (const k in m.uniforms) add(m.uniforms[k]?.value); } });
+      let t0 = performance.now(), n = 0; for (const t of seen) { try { renderer.initTexture(t); n++; } catch {} if (performance.now() - t0 > budget) { await new Promise(r => requestAnimationFrame(r)); t0 = performance.now(); } } return n;
+    },
     get post() { return !!composer; },
     get settings() { return G; },
     get passes() { return composer?.passes || []; },
@@ -197,9 +209,13 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       AVATAR_SHADOW.visible = scene.userData.baked ? preset() === 'Low' : !shadowOn;   // contact shadows without real ones (a baked map: the players' own sun shadows from Medium up, sun-shadows.js)
       if (shadowOn) { const O = scene.userData.outdoor, tx = O ? 2 * OUT_BOX / sun.shadow.mapSize.x : 0;   // whole shadow texels: shadows don't crawl as you move
         sun.target.position.set(tx ? Math.round(camera.position.x / tx) * tx : camera.position.x, 0, tx ? Math.round(camera.position.z / tx) * tx : camera.position.z); sun.position.copy(sun.target.position).add(SUN_DIR.copy(sunOffset).multiply(O ? OUT_TILT : ONE3).setLength(O ? 260 : LIGHT_DIST)); }   // just under the ceilings, so they don't shade the rooms
+      // Global Defensive smoke (arena-smoke-pass.js, scene.userData.gdSmoke): while one is up, every cloud in one pass after
+      // the scene — into the HDR buffer before the glow, or (no post-processing) via its own buffer onto the screen.
+      // Otherwise this draw is exactly as without it.
+      const sm = scene.userData.gdSmoke, smoke = !!sm?.active(); if (composer && sm?.armed) sm.wire(composer);   // (armed: in a match — its buffers' depth textures made at the start, not at the first smoke)
       if (composer) {
         const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
-        composer.render();
-      } else renderer.render(scene, camera);
+        smokeHook.enabled = smoke; if (smoke) sm.begin(composer); try { composer.render(); } finally { if (smoke) sm.end(); }
+      } else if (smoke) sm.renderDirect(); else renderer.render(scene, camera);
   }
 }

@@ -53,10 +53,18 @@ function prepare(scene) {
     if (n.dot(loc('finger_thumb_1_' + sd)) < 0) n.negate(); n.addScaledVector(d, -n.dot(d)).normalize(); hands[sd] = { d, n, m: new THREE.Vector3().crossVectors(d, n), palm: knuckle.length() }; }
   return { scene, P, hands, k: 100 / 16.5,   /* true size: the models are in metres, a game unit is 16.5 cm (CS2's agents stand 72 u, the hit capsule's height) */ arm: [len('arm_upper_l', 'arm_lower_l'), len('arm_lower_l', 'hand_l')], leg: [len('leg_upper_l', 'leg_lower_l'), len('leg_lower_l', 'ankle_l')] };
 }
-// A copy with its own bones (meshes, materials and pictures shared).
-function cloneSkinned(src) {
-  const out = src.clone(true), a = [], b = []; src.traverse(o => a.push(o)); out.traverse(o => b.push(o)); const map = new Map(a.map((o, i) => [o, b[i]]));
-  b.forEach((o, i) => { if (o.isSkinnedMesh) { const s = a[i]; o.bind(new THREE.Skeleton(s.skeleton.bones.map(x => map.get(x)), s.skeleton.boneInverses), s.bindMatrix); } });
+// A copy with its own bones (meshes, materials and pictures shared). The parts one skin drives (body, head, gloves, legs…:
+// GLTFLoader gives each its own Skeleton over the same bones) share ONE skeleton in the copy: three.js recomputes every
+// skeleton's bone matrices (bones × a matrix product) and re-sends its bone texture on every render() — measured in a
+// 10-player Defuse: 47 skeletons, 4 089 bones a pass for 9 agents. Shared only when the bones and their inverse bind
+// matrices are the same, so every part is drawn exactly as before.
+// (makeAgent) Bones with nothing drawn under them out of the render's walk; `hang`: the bone things are hung on later (kept, with its chain).
+export function hideBareBones(body, hang) { let n = 0; const keep = new Set(), drawn = o => { let d = false; o.traverse(c => { if (c.isMesh || c.isLine || c.isPoints || c.isSprite) d = true; }); return d; };
+  for (let o = hang ? body.getObjectByName(hang) : null; o; o = o.parent) keep.add(o); body.traverse(o => { if (o.isBone && o.visible && !keep.has(o) && !drawn(o)) { o.visible = false; n++; } }); return n; }
+export function cloneSkinned(src) {
+  const out = src.clone(true), a = [], b = []; src.traverse(o => a.push(o)); out.traverse(o => b.push(o)); const map = new Map(a.map((o, i) => [o, b[i]])), made = [];
+  const same = (s, t) => s.bones.length === t.bones.length && s.bones.every((x, k) => x === t.bones[k]) && s.boneInverses.every((m, k) => m.equals(t.boneInverses[k]));
+  b.forEach((o, i) => { if (o.isSkinnedMesh) { const s = a[i].skeleton; let m = made.find(e => same(e.src, s)); if (!m) made.push(m = { src: s, sk: new THREE.Skeleton(s.bones.map(x => map.get(x)), s.boneInverses) }); o.bind(m.sk, a[i].bindMatrix); } });
   return out;
 }
 
@@ -113,6 +121,11 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   g.updateMatrixWorld(true); for (const s of ['l', 'r']) { B['ankle_' + s].getWorldQuaternion(ankleRest[s]); model.getWorldQuaternion(q1); ankleRest[s].premultiply(q1.invert()); }   // feet flat: their rotation in model space
   const holder = new THREE.Group(); holder.scale.setScalar(1 / T.k); holder.rotation.y = Math.PI; model.add(holder);   // the gun, in game units, muzzle → +z
   const A = CLIPS ? animator(body, T) : null;   // CS2's own clips when the room has them; else posed here (below)
+  // Bones draw nothing, yet three.js's render walks every object of every pass (≈ 80 bones an agent: 700+ visits a pass for 9
+  // agents, a weak laptop's CPU — package W). A bone with nothing drawn under it — any but the gun's bone (wpn) and the chain
+  // down to it, where the gun is hung later — is left out of that walk (visible false); updateMatrixWorld ignores visibility,
+  // so the skinning (bone matrices) and the look are exactly as before.
+  hideBareBones(body, 'wpn');
   let gun = null, gunId = null, kind = 'none', fall = 0, phase = 0, stock = .3, reachFwd = .6; const st = { speed: 0, crouch: 0, gun: 0, reload: 0, throwA: 0 };
   const side = T.P.arm_upper_r.x < 0 ? -1 : 1;   // which way (model x) the right shoulder is
   const M = (x, y, z, out) => model.localToWorld(out.set(x, y, z));   // model space (metres) → world
@@ -121,7 +134,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   const shR = new THREE.Vector3(), shL = new THREE.Vector3(), hR = new THREE.Vector3(), hL = new THREE.Vector3(), poleW = new THREE.Vector3(), fwdW = new THREE.Vector3(), rightW = new THREE.Vector3(), upW = new THREE.Vector3(), footW = new THREE.Vector3();
   function setWeapon(id) {
     id = id ? knifeFor(id, team) : null; if (id === gunId) return; gunId = id; if (gun) { unskinObject(gun); gun.removeFromParent(); gun = null; } if (!id) { kind = 'none'; A?.setGun(null, 'none'); return; }
-    const w = weaponById(id === 'knife-t' ? 'knife' : id); kind = /knife|karambit/.test(id) ? 'knife' : ['he', 'flash', 'smoke', 'molotov', 'c4', 'incgrenade', 'decoy'].includes(id) ? 'item' : w?.kind === 'pistol' ? 'pistol' : 'rifle';
+    const w = weaponById(id === 'knife-t' ? 'knife' : id); kind = /knife|karambit/.test(id) ? 'knife' : ['he', 'flash', 'smoke', 'molotov', 'c4', 'incendiary', 'incgrenade', 'decoy'].includes(id) ? 'item' : w?.kind === 'pistol' ? 'pistol' : 'rifle';
     gun = weaponModel(id, 1); gun.traverse(o => { if (o.isMesh) { o.castShadow = true; o.layers.enable(CASTER); } }); (A ? A.carry : holder).add(gun); A?.setGun(id, kind); if (skinNow) skinObject(gun, skinNow);
     { const box = new THREE.Box3().setFromObject(gun); stock = Math.max(.12, box.max.z / T.k); reachFwd = Math.max(.1, -box.min.z / T.k); }   // grip → butt and grip → muzzle, metres
   }
@@ -196,7 +209,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
 // bone (wpn). Allocation-free per frame.
 const DIR8 = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'], U = 2.54 / 16.5;
 const WALK = 130 * U, RUN = 250 * U, CROUCH = 85 * U;   // CS2's speeds (u/s) in game units: the clips' own pace
-const NADE_IDS = new Set(['he', 'flash', 'smoke', 'molotov', 'incgrenade', 'decoy']);
+const NADE_IDS = new Set(['he', 'flash', 'smoke', 'molotov', 'incendiary', 'incgrenade', 'decoy']);   // game kind ids ('incendiary'); 'incgrenade' = CS2's own name
 const fq = new THREE.Quaternion(), fv = new THREE.Vector3(), aq = new THREE.Quaternion(), aq2 = new THREE.Quaternion();
 function animator(body, T) {
   const mixer = new THREE.AnimationMixer(body), acts = new Map();

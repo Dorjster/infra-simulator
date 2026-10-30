@@ -66,7 +66,10 @@ try {
     await host.evaluate(() => __infra.lab.arenaUI.teamMenu(true)); await host.waitForTimeout(300); await host.evaluate(() => document.querySelector('#ar-team [data-tab=host]')?.click()); await host.waitForTimeout(200);
     await host.evaluate(m => { document.getElementById('ar-mapsel').value = m; document.querySelector('[data-map-go]').click(); }, map); await host.waitForTimeout(400); await host.evaluate(() => __infra.lab.arenaUI.teamMenu(false)).catch(() => {});
     const landed = await Promise.all(pages.map(([, p]) => p.waitForFunction(([m, cs2]) => { const S = __infra.lab.arenaScene; return __infra.lab.world.operations.game.arena?.map === m && S?.map === m && S.inArena(__infra.camera.position.z) && document.getElementById('ar-load')?.hidden !== false && (!cs2 || S.group.children.some(o => o.userData.cs2Render)); }, [map, CS2], { timeout: 180000 }).then(() => true).catch(() => false)));
-    await host.waitForTimeout(1500); const st = await Promise.all(pages.map(([, p]) => G(p))), [tm, cm] = count(st[0].present), sp = await apart(host);
+    await host.waitForTimeout(1500); const st = await Promise.all(pages.map(([, p]) => G(p))), [tm, cm] = count(st[0].present);
+    // (spots are judged at a round start: once the round is live — a slow map load on a busy machine — the bots have walked off together)
+    if (st[0].phase !== 'freeze') { await act(host, { type: 'restart-round' }); await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'freeze', null, { timeout: 20000 }).catch(() => {}); await host.waitForTimeout(1200); }
+    const sp = await apart(host);
     check(`map change to ${map}: every screen on it${CS2 ? ' (CS2 look in)' : ''}, the same map, round 1`, landed.every(Boolean) && st.every(s => s.map === map && s.built === map && s.boxes === st[0].boxes && s.n === 1 && s.inArena), `${((Date.now() - t1) / 1000).toFixed(1)} s · ` + JSON.stringify(st.map(s => [s.map, s.built, s.boxes, s.look, s.n, s.phase])));
     check(`…on ${map} still 5 vs 5, everyone on a spot of their own`, tm === 5 && cm === 5 && sp.close === 0, JSON.stringify({ t: tm, ct: cm, ...sp }));
     await bo.p.screenshot({ path: path.join(out_dir, `bo-${map}.png`) });

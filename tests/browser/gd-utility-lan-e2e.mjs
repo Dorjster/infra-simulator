@@ -24,7 +24,9 @@ await guest.evaluate(() => document.querySelector('[data-start=join]').click());
 await guest.waitForFunction(() => document.getElementById('ar-load')?.hidden !== false && __infra.lab.world.operations.game.combat?.d?.teams?.guest, null, { timeout: 30000 });
 await act(host, { type: 'start-match' }); await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'freeze', null, { timeout: 8000 });
 const buy = (p, kind) => p.evaluate(k => __infra.lab.lan.act({ type: 'arena', action: { type: 'buy-nade', kind: k } }), kind);
-const b1 = await buy(host, 'smoke'), b2 = await buy(host, 'he'), b3 = await buy(guest, 'molotov'); check('bought a smoke and an HE (host) and a molotov (guest)', ![b1, b2, b3].some(r => r?.error), JSON.stringify([b1, b2, b3]));
+// (the guest's side's fire grenade: CS2's molotov is the Terrorists', the incendiary the Counter-Terrorists' — v51)
+const FIRE = await guest.evaluate(() => __infra.lab.world.operations.game.combat.d.teams.guest === 't' ? 'molotov' : 'incendiary');
+const b1 = await buy(host, 'smoke'), b2 = await buy(host, 'he'), b3 = await buy(guest, FIRE); check('bought a smoke and an HE (host) and a fire grenade (guest: ' + FIRE + ')', ![b1, b2, b3].some(r => r?.error), JSON.stringify([b1, b2, b3]));
 await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 30000 });
 // Both on Long A, 80 units apart along the street; utility lands between them.
 const spot = await host.evaluate(async () => { const { ARENA } = await import('/facility-layout.js'), { ARENA_MAPS } = await import('/arena-maps.js'), M = ARENA_MAPS.dust2, c = M.callouts.find(x => x.name === 'Long A'); return { x: ARENA.cx + c.x, z: ARENA.cz + c.z, y: M.nav.floorAt(c.x, c.z) }; });   // Long A: a long straight street (true-scale Dust II)
@@ -32,10 +34,10 @@ const place = (p, dz) => p.evaluate(([s, dz]) => __infra.lab.look(s.x, s.z + dz,
 await place(host, -40); await place(guest, 40); await host.waitForTimeout(800);
 const thr = (p, kind) => p.evaluate(([k, s]) => __infra.lab.lan.act({ type: 'arena', action: { type: 'throw', kind: k, x: s.x, y: s.y + 3, z: s.z, dx: 0, dy: -1, dz: 0.001, strength: 'short' } }), [kind, spot]);
 const state = p => p.evaluate(() => (__infra.lab.world.operations.game.combat.nades || []).map(n => ({ id: n.id, kind: n.kind, phase: n.phase, holes: (n.holes || []).map(h => h.at) })));
-check('the guest’s molotov burns', !(await thr(guest, 'molotov'))?.error && await guest.waitForFunction(() => __infra.lab.world.operations.game.combat.nades?.some(n => n.kind === 'molotov' && n.phase === 'fire'), null, { timeout: 6000 }).then(() => true).catch(() => false));
+check('the guest’s fire grenade burns', !(await thr(guest, FIRE))?.error && await guest.waitForFunction(k => __infra.lab.world.operations.game.combat.nades?.some(n => n.kind === k && n.phase === 'fire'), FIRE, { timeout: 6000 }).then(() => true).catch(() => false));
 await thr(host, 'smoke');
 check('third person: the guest sees the host throw (arm swing)', await guest.waitForFunction(() => [...__infra.lab.lan.models.values()].some(m => /host/i.test(m.name || '') && m.act === 'throw' && performance.now() < m.actUntil), null, { timeout: 2000 }).then(() => true).catch(() => false));
-const out = await Promise.all([host, guest].map(p => p.waitForFunction(() => { const n = __infra.lab.world.operations.game.combat.nades || []; return n.some(x => x.kind === 'smoke' && x.phase === 'smoke') && !n.some(x => x.kind === 'molotov' && x.phase === 'fire'); }, null, { timeout: 8000 }).then(() => true).catch(() => false)));
+const out = await Promise.all([host, guest].map(p => p.waitForFunction(() => { const n = __infra.lab.world.operations.game.combat.nades || []; return n.some(x => x.kind === 'smoke' && x.phase === 'smoke') && !n.some(x => (x.kind === 'molotov' || x.kind === 'incendiary') && x.phase === 'fire'); }, null, { timeout: 8000 }).then(() => true).catch(() => false)));
 check('the smoke puts the fire out on both screens', out[0] && out[1], JSON.stringify(await state(guest)));
 await host.waitForTimeout(2600);   // the smoke grows to full size
 check('the guest cannot see the host through the smoke (model hidden on the guest’s screen)', await guest.evaluate(() => { const m = [...__infra.lab.lan.models.values()].find(x => /host/i.test(x.name || x.pname || '')); return !!m && m.g.visible === false; }));
@@ -44,9 +46,14 @@ const holes = await Promise.all([host, guest].map(p => p.waitForFunction(() => (
 check('the HE opens the same hole in the smoke on both screens (same place, same moment)', holes[0] && holes[1] && JSON.stringify(holes[0]) === JSON.stringify(holes[1]), JSON.stringify(holes));
 await host.waitForTimeout(3500);   // the hole closes
 await guest.evaluate(s => __infra.lab.look(s.x, s.z, s.x, s.y + 9, s.z - 30), spot); await guest.waitForTimeout(900);
-check('standing in the smoke fills the guest’s view', await guest.evaluate(() => +document.getElementById('gd-smokeveil').style.opacity > .8), await guest.evaluate(() => document.getElementById('gd-smokeveil').style.opacity));
-await guest.screenshot({ path: path.join(out_dir, 'in-smoke.png') }); await place(guest, 70); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out_dir, 'outside-smoke.png') });
-check('outside the smoke the view is clear', await guest.evaluate(() => +document.getElementById('gd-smokeveil').style.opacity < .05));
+// (v51: no screen veil — the smoke pass marches from the eye, so inside a cloud the picture itself is one even smoke colour
+// (gd-smoke-e2e checks the same): the spread of brightness over the middle of the screen, read from a screenshot)
+const evenness = async p => { const vp = p.viewportSize(), png = await p.screenshot({ clip: { x: vp.width * .2, y: vp.height * .3, width: vp.width * .6, height: vp.height * .45 } });
+  return p.evaluate(async b64 => { const im = new Image(); im.src = 'data:image/png;base64,' + b64; await im.decode(); const c = document.createElement('canvas'); c.width = 160; c.height = 90; const x = c.getContext('2d'); x.drawImage(im, 0, 0, 160, 90);
+    const d = x.getImageData(0, 0, 160, 90).data; let s = 0, s2 = 0, n = 0; for (let i = 0; i < d.length; i += 4) { const l = (.2126 * d[i] + .7152 * d[i + 1] + .0722 * d[i + 2]) / 255; s += l; s2 += l * l; n++; } const m = s / n; return { mean: +m.toFixed(3), sd: +Math.sqrt(Math.max(0, s2 / n - m * m)).toFixed(4) }; }, png.toString('base64')); };
+const inside = await evenness(guest); await guest.screenshot({ path: path.join(out_dir, 'in-smoke.png') }); await place(guest, 70); await guest.waitForTimeout(900); await guest.screenshot({ path: path.join(out_dir, 'outside-smoke.png') }); const outside = await evenness(guest);
+check('standing in the smoke fills the guest’s view (one even smoke colour)', inside.sd < .035 && inside.sd < outside.sd * .5, JSON.stringify({ inside, outside }));
+check('outside the smoke the view is clear (the world’s detail is back)', outside.sd > inside.sd * 2, JSON.stringify({ inside, outside }));
 await host.evaluate(() => { __infra.lab.pistol.equip(__infra.lab.pistol.fallback() || 'usps'); }); await host.waitForTimeout(900); await host.evaluate(() => { const P = __infra.lab.pistol; P.button(0, true); P.button(0, false); }); await host.waitForTimeout(300); await host.evaluate(() => __infra.lab.pistol.reload());
 check('third person: the guest sees the host reload (gun dips for the reload time)', await guest.waitForFunction(() => [...__infra.lab.lan.models.values()].some(m => /host/i.test(m.name || '') && m.act === 'reload' && performance.now() < m.actUntil), null, { timeout: 3000 }).then(() => true).catch(() => false));
 check('no page errors', errs.length === 0, errs.slice(0, 4).join(' | '));

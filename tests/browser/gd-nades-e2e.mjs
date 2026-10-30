@@ -54,6 +54,7 @@ await p.waitForTimeout(1500); await snap({ path: path.join(out, 'smoke.png') });
 // Smoke: a sight line through the cloud's middle, from outside it to outside it, is blocked (the volume the rules use).
 const blocked = await p.evaluate(async s => { const { smokeBlocks } = await import('./arena-nades.js'), R = 164 * 2.54 / 16.5; return smokeBlocks(__infra.lab.world.operations.game, s.x - R - 20, s.y + 7, s.z, s.x + R + 20, s.y + 7, s.z); }, s1);   // (the game's own rule — what bots, sight and the flash use: a line through its middle is blocked by its dense core)
 check('smoke: you cannot see through its middle', blocked);
+{ const sp = await p.evaluate(() => { const P = __infra.scene.userData.gdSmoke; return P ? { used: P.used, active: P.active(), ...P.stats() } : null; }); check('smoke: drawn by the one smoke pass (arena-smoke-pass.js: a slot, drawn this frame)', sp && sp.used >= 1 && sp.active && sp.clouds >= 1, JSON.stringify(sp)); }   // (tests/browser/gd-smoke-e2e.mjs: what it hides, overlap, inside)
 check('smoke: 30 % more ground than CS2\'s (164 units round)', await p.evaluate(async () => Math.abs((await import('./arena-nades.js')).NADES.smoke.radius - 164 * 2.54 / 16.5) < .5));
 // Medium and short: shorter.
 const throwSmoke = async (btns) => { await buy('smoke'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150);
@@ -66,7 +67,7 @@ check('a full throw goes far (most of a lane)', d1 > Math.min(135, lane.L - 10),
 await p.waitForFunction(() => !(__infra.lab.world.operations.game.combat.nades || []).some(n => n.phase === 'smoke'), null, { timeout: 30000 }).catch(() => {});   // a molotov into smoke fizzles (CS2): wait for the lane to clear
 await buy('molotov'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.waitForTimeout(150);   // a medium throw well away from us (standing in it would burn us)
 await p.evaluate(() => { __infra.lab.pistol.button(0, true); __infra.lab.pistol.button(2, true); }); await p.waitForTimeout(400); await p.evaluate(() => { __infra.lab.pistol.button(0, false); __infra.lab.pistol.button(2, false); }); await p.waitForTimeout(2400);
-const cells = await p.evaluate(() => { let c = 0; __infra.scene.getObjectByName('nades').traverse(o => { if (o.isInstancedMesh && o.material.blending === 2 && o.count > c) c = o.count; }); return c; });
+const cells = await p.evaluate(() => { let c = 0; for (const g of ['nades', 'nadeFx']) __infra.scene.getObjectByName(g)?.traverse(o => { /* fire is drawn in 'nadeFx' since v51 */ if (o.isInstancedMesh && o.material.blending === 2 && o.count > c) c = o.count; }); return c; });
 check('molotov: fire drawn over its whole area (cells)', cells > 60, cells); await snap({ path: path.join(out, 'fire.png') });
 // HE.
 await buy('he'); await p.keyboard.press('Digit4'); await p.waitForTimeout(700); await stand(); await p.evaluate(() => __infra.lab.pistol.button(0, true)); await p.waitForTimeout(450); await p.evaluate(() => __infra.lab.pistol.button(0, false));

@@ -27,7 +27,7 @@ export function cleanRules(r = {}) { const n = (v, [lo, hi], d) => Number.isFini
   out.start = Math.min(out.start, out.max); return out; }
 export const rulesOf = game => game.combat?.d?.rules || game.arena?.rules || DEFAULT_RULES;
 // Prices come from the weapon table (weapons-data.js); grenades and the kit here.
-export const PRICE = new Proxy({ he: 300, flash: 200, smoke: 300, molotov: 400, kit: 400 }, { get: (o, id) => o[id] ?? weaponById(id)?.price });
+export const PRICE = new Proxy({ he: 300, flash: 200, smoke: 300, decoy: 50, molotov: 400, incendiary: 500, kit: 400 }, { get: (o, id) => o[id] ?? weaponById(id)?.price });   // (grenades: weapons.vdata m_nPrice; the Molotov T-only, the Incendiary CT-only — arena-logic buy-nade)
 const WIN = { elim: 3250, time: 3250, bomb: 3500, defuse: 3500 }, LOSS = [1400, 1900, 2400, 2900, 3400];
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 export const isDefuse = game => game?.mode === 'arena' && game.arena?.kind === 'defuse';
@@ -39,11 +39,11 @@ const gain = (d, k, n) => { const R = d.rules || DEFAULT_RULES; d.money[k] = Mat
 // Friendly fire and kill money (called by combat-logic for every hit in defuse).
 export function defuseDamage(game, shooter, target, wpn, dmg) {
   const d = game.combat?.d; if (!d) return dmg; const a = d.teams[key(shooter)], b = d.teams[key(target)];
-  return a && a === b && key(shooter) !== key(target) && wpn.id !== 'c4' ? (d.rules?.ff === false ? 0 : Math.round(dmg * (['he', 'molotov'].includes(wpn.id) ? .85 : .33))) : dmg;   // friendly fire off: no damage to team mates
+  return a && a === b && key(shooter) !== key(target) && wpn.id !== 'c4' ? (d.rules?.ff === false ? 0 : Math.round(dmg * (['he', 'molotov', 'incendiary', 'decoy'].includes(wpn.id) ? .85 : .33))) : dmg;   // friendly fire off: no damage to team mates
 }
 export function defuseKill(game, shooter, target, wpn) {
   const d = game.combat?.d; if (!d) return; const k = key(shooter), a = d.teams[k], b = d.teams[key(target)]; if (!a || k === key(target)) return;
-  if (a === b && d.rules?.ff === false) return; gain(d, k, a === b ? -300 : ({ he: 300, molotov: 300, c4: 0 })[wpn.id] ?? weaponById(wpn.id)?.reward ?? 300);
+  if (a === b && d.rules?.ff === false) return; gain(d, k, a === b ? -300 : ({ he: 300, molotov: 300, incendiary: 300, decoy: 300, c4: 0 })[wpn.id] ?? weaponById(wpn.id)?.reward ?? 300);
 }
 
 // teams: sides to keep (the lobby's choices); bots without one alternate.
@@ -51,14 +51,23 @@ export function startDefuse(game, now, players = [], teams = null) {
   const A = game.arena; if (A?.rulesNext) { A.rules = A.rulesNext; delete A.rulesNext; }   // rules the host changed during the last match: from this one on
   // match: this match's id; every round gets `round.id` (match id · round sequence, restarts and warmup included), which
   // round-bound requests (buys, plant, defuse) carry so one sent in a round that has since ended is refused.
-  game.combat.d = { match: now.toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0'), rseq: 0, rules: cleanRules(game.arena?.rules), teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {}, history: [] }; game.combat.stats = {};   // a fresh match: fresh report
-  for (const [i, b] of (game.arena.bots || []).entries()) { const k = key(b.name); game.combat.d.teams[k] ??= i % 2 ? 'ct' : 't'; }
+  // (the match id is the arena's — arena-logic.js startArena / beginMatch — so every request and frame names one match)
+  game.combat.d = { match: A?.match || now.toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0'), rseq: 0, rules: cleanRules(game.arena?.rules), teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {}, history: [] }; game.combat.stats = {};   // a fresh match: fresh report
+  // Bots start a match like everyone: their side's pistol, then what round 1's $800 buys (newRound: arm + botBuy) — never
+  // the deathmatch gun addBot gave them, nor the rifle they ended the last match with.
+  for (const [i, b] of (game.arena.bots || []).entries()) { const k = key(b.name); game.combat.d.teams[k] ??= i % 2 ? 'ct' : 't'; b.weapon = null; }
   newRound(game, players, now);
 }
 const warmup = game => !!game.arena?.lobby && !game.arena.lobby.started;
-// Everyone in the match: players present in the arena and bots.
+// Everyone in the match: players present in the arena and bots. A player still loading this map (the room marks them
+// `loading`: their client said it has another map — lan/room.mjs /api/arena-ready) is not in it yet: their last pose is
+// on the old map (not shootable, not counted, no spawn); they join like a newcomer once loaded (defuseTick).
+// (readyMap: the map the room says this client has — judged against the map now, so a roster taken just before a map change
+// already counts them out; `loading` alone: a roster without it)
+export const stillLoading = (game, p) => p.readyMap !== undefined ? p.readyMap !== game.arena?.map : !!p.loading;
+const LOAD_WAIT_MS = 30000, LOAD_TAIL_MS = 3000;   // (defuseTick: round 1 waits for those loading — approximations, see there)
 function members(game, players) {
-  const out = []; for (const p of players) if (!p.bot && p.pose && p.pose.z < ARENA.maxZ) out.push({ k: key(p.name), name: p.name, pose: p.pose });   // (the room's roster lists the bots too: they're counted once, below)
+  const out = []; for (const p of players) if (!p.bot && !stillLoading(game, p) && p.pose && p.pose.z < ARENA.maxZ) out.push({ k: key(p.name), name: p.name, pose: p.pose });   // (the room's roster lists the bots too: they're counted once, below)
   for (const b of game.arena.bots || []) out.push({ k: key(b.name), name: b.name, bot: b }); return out;
 }
 export function teamCounts(game, players = []) { const d = game.combat.d, c = { t: 0, ct: 0 }; for (const m of members(game, players)) if (d.teams[m.k]) c[d.teams[m.k]]++; return c; }
@@ -87,7 +96,7 @@ export function newRound(game, players, now) {
   if (!warmup(game) && !A.restarting) d.n++; A.restarting = false; const firstOfHalf = d.n <= 1 || d.n === half + 1;
   // The dead lose everything (gun, grenades, armor, kit) and start again with their team's pistol.
   for (const k of Object.keys(C.down || {})) { delete (C.armor ??= {})[k]; if (!A.bots.some(b => key(b.name) === k)) { A.loadout[k] = { primary: null, secondary: defaultPistol(d.teams[k]), nades: [] }; delete d.kits[k]; } else { const b = A.bots.find(b => key(b.name) === k); b.weapon = null; } }
-  C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {}; d.bought = {};
+  C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {}; d.bought = {}; C.dmg = {};   // (dmg: who hurt whom this round — an assist is earned within one round, CS2; HP is new, so is the tally)
   for (const [k, t] of Object.entries(d.teams)) if (t === 'spec') C.down[k] = { until: 4e15, by: '', weapon: 'spectating' };   // spectators watch
   for (const mem of members(game, players)) { if (!d.teams[mem.k]) assignTeam(game, mem.name, players); if (firstOfHalf) d.money[mem.k] ??= RU.start; }
   balanceBots(game, players);
@@ -165,7 +174,12 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   // Someone on the Terrorist side always has the bomb during the freeze (e.g. the first players just joined).
   if (r.phase === 'freeze' && !d.bomb.carrier) { const ts = members(game, players).filter(x => d.teams[x.k] === 't'); if (ts.length) { d.bomb.carrier = ts[Math.floor(Math.random() * ts.length)].k; changed = true; } }
   if (r.phase === 'warmup') { for (const [k, dn] of Object.entries(C.down || {})) if (d.teams[k] !== 'spec' && now - (dn.at || 0) > 3000 && dn.until > now) { const t = d.teams[k], at = freeSpot(game, players, t, k), b = game.arena.bots.find(x => key(x.name) === k); delete C.down[k]; C.hp[k] = MAX_HP; if (b) { b.x = at.x; b.z = at.z; b.y = spotY(map(game), at); } else C.spawnTo[k] = { at: now, x: at.x, z: at.z, ...(at.y !== undefined ? { y: at.y } : {}) }; changed = true; } return changed; }   // warmup: back after 3 s
-  if (d.matchOver) { if (now - d.matchOver.at > DEFUSE.matchOverMs) { startDefuse(game, now, players, d.teams); return true; } return false; }
+  if (d.matchOver) return false;   // the next match (same map or the host's next one) starts in arena-logic.js rematch: one full reset for every new match
+  // Round 1 on a map just changed to waits for the people still loading it (a CS2 map file takes seconds to fetch and build;
+  // lan/room.mjs marks them): the freeze keeps LOAD_TAIL_MS left while anyone loads — LOAD_WAIT_MS from the match's start
+  // at most — so a slower computer never sits out round 1 and the last one in still has time to buy. (Our approximation
+  // of CS2 waiting for players to connect, not a CS2 value.)
+  if (r.phase === 'freeze' && d.n <= 1 && r.freezeUntil - now < LOAD_TAIL_MS && now - (game.arena?.startedAt ?? now) < LOAD_WAIT_MS && players.some(p => !p.bot && p.pose && stillLoading(game, p))) { const late = now + LOAD_TAIL_MS - r.freezeUntil; r.freezeUntil += late; r.buyUntil += late; r.endsAt += late; changed = true; }
   if (r.phase === 'freeze' && now >= r.freezeUntil) { r.phase = 'live'; changed = true; }
   const alive = t => members(game, players).filter(m => d.teams[m.k] === t && !(C.down || {})[m.k]).length;
   // Planting: stand still on the site with the bomb.

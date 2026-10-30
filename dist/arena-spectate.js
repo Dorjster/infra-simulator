@@ -5,6 +5,7 @@ import * as THREE from './three.module.js';
 import { isDown, hpOf } from './combat-logic.js';
 import { weaponById } from './weapons-data.js';
 import { lineOfSight } from './arena-maps.js';
+import { hostNow } from './host-clock.js';   // (who is down until when: the host's clock)
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -17,8 +18,8 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [] }) 
   // Everyone alive you can watch: [{ id, name, pos, yaw, pitch, weapon }].
   function alive() {
     const dd = g().combat?.d, mine = dd?.teams?.[key(name())];   // defuse: only your own team (CS2)
-    const out = []; for (const [id, m] of lan.models || []) { if (!m?.g?.visible || isDown(g(), m.name) || (dd && dd.teams[key(m.name)] !== mine)) continue; const p = lan.players?.find(x => x.id === id);
-      out.push({ id, name: m.name, pos: m.g.position, yaw: p?.pose?.yaw ?? m.g.rotation.y, pitch: +p?.pose?.shot?.pitch || 0, weapon: p?.pose?.weapon || null, crouched: !!p?.pose?.crouched }); }
+    const out = []; for (const [id, m] of lan.models || []) { if (!m?.g?.visible || isDown(g(), m.name, hostNow()) || (dd && dd.teams[key(m.name)] !== mine)) continue; const p = lan.players?.find(x => x.id === id);
+      out.push({ id, name: m.name, pos: m.g.position, yaw: p?.pose?.yaw ?? m.g.rotation.y, pitch: +p?.pose?.shot?.pitch || 0, weapon: p?.pose?.weapon || null, crouched: !!p?.pose?.crouched, ey: p?.pose?.ey }); }
     return out;
   }
   function pick(step) { const list = alive(); if (!list.length) { target = null; return; } const i = list.findIndex(x => x.id === target); target = list[((i < 0 ? 0 : i + step) % list.length + list.length) % list.length].id; }
@@ -27,12 +28,12 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [] }) 
     next() { pick(1); }, prev() { pick(-1); }, toggle() { first = !first; },
     // Returns true while spectating (the game then skips your own movement and mouse look).
     update(dt) {
-      const G = g(), d = G.mode === 'arena' && G.combat?.down?.[key(name())], dead = !!d && d.until > Date.now();
+      const G = g(), d = G.mode === 'arena' && G.combat?.down?.[key(name())], dead = !!d && d.until > hostNow();
       if (!dead) { if (on) { on = false; bar.hidden = true; } return false; }
       if (!on) { on = true; first = false; target = null; const killer = alive().find(x => key(x.name) === key(d.by)); target = killer?.id ?? null; if (!target) pick(0); lookNow.copy(camera.position).add(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion)); }
       let t = alive().find(x => x.id === target); if (!t) { pick(1); t = alive().find(x => x.id === target); }
       if (t) {
-        const eye = t.crouched ? 5.9 : 9.7, fx = -Math.sin(t.yaw), fz = -Math.cos(t.yaw);
+        const eye = Number.isFinite(t.ey) ? t.ey : t.crouched ? 46 * 2.54 / 16.5 : 9.7, fx = -Math.sin(t.yaw), fz = -Math.cos(t.yaw);   // their eye over their feet, as their pose tells it (lan/room.mjs ey); else CS2's 64 / 46 HU
         if (first) { want.set(t.pos.x, t.pos.y + eye, t.pos.z); look.set(t.pos.x + fx * 10, t.pos.y + eye + Math.tan(t.pitch) * 10, t.pos.z + fz * 10); }
         else { // chase camera behind them, pulled in if a wall is in the way
           let dist = 11; while (dist > 3 && !lineOfSight(boxes(), t.pos.x, t.pos.z, t.pos.x - fx * dist, t.pos.z - fz * dist, t.pos.y + 11)) dist -= 1.5;
@@ -41,7 +42,7 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [] }) 
         m4.lookAt(camera.position, lookNow, camera.up); q.setFromRotationMatrix(m4); camera.quaternion.copy(q);
       }
       if (performance.now() - barAt > 200) { barAt = performance.now();
-        const w = t?.weapon ? weaponById(t.weapon)?.name : null, left = Math.max(0, Math.ceil((d.until - Date.now()) / 1000)), next = G.combat?.d ? 'back next round' : 'respawn in ' + left;
+        const w = t?.weapon ? weaponById(t.weapon)?.name : null, left = Math.max(0, Math.ceil((d.until - hostNow()) / 1000)), next = G.combat?.d ? 'back next round' : 'respawn in ' + left;
         bar.hidden = false; bar.innerHTML = t ? `<small>SPECTATING</small><b>${esc(t.name)}</b><span>✚ ${hpOf(G, t.name)}</span>${w ? `<span>${esc(w)}</span>` : ''}<small>click: next · Space: ${first ? 'chase cam' : 'their eyes'}</small><small class="k">killed by ${esc(d.by)} · ${next}</small>`
           : `<small>killed by</small><b class="k">${esc(d.by)}</b><small>${next}</small>`; }
       return true;
