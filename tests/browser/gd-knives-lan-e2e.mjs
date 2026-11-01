@@ -1,5 +1,5 @@
 // Knives and their skins over LAN (two browsers, Defuse on Dust II, no bots): Darja hosts, Bob joins. Darja gives Bob a
-// knife and a skin; Bob picks his own knife and his own skin; a gun takes no skin. On Bob's screen the knife in his
+// knife and a skin; Bob picks his own knife and his own skin; a gun takes its own skin too (v52). On Bob's screen the knife in his
 // hands is the chosen one and painted; on Darja's, Bob's knife wears his skin. No page errors.
 //   node tests/browser/gd-knives-lan-e2e.mjs <repo-root> <out-dir>
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync, mkdirSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
@@ -31,7 +31,7 @@ try {
   check('Bob picks his own knife (an M9) and holds it, still painted', /M9 Bayonet equipped/.test(say(r3)) && h2.set === 'm9' && h2.painted > 0, say([r3, h2]));
   const r4 = await act(B, { type: 'skin', weapon: 'knife', skin: { finish: 'tiger', wear: .1, seed: 3 } }); await B.waitForTimeout(1200);
   check('Bob picks his own skin for it', /Tiger Tooth/.test(say(r4)) && (await hands()).painted > 0 && await B.evaluate(() => __infra.lab.world.operations.game.arena.skins.bob.knife.finish === 'tiger'), say(r4)); await B.screenshot({ path: path.join(out_dir, 'bob-own.png') });
-  check('a gun takes no skin', /knives/.test(say(await act(B, { type: 'skin', weapon: 'ak', skin: { finish: 'fade' } }))));
+  { const r = await act(B, { type: 'skin', weapon: 'ak', skin: { finish: 'fade' } }); check('a gun takes its own skin (every gun, CS2)', /AK-47 \| Fade/.test(say(r)), say(r)); }
   check('only Darja equips a knife on someone else', /Only Darja/.test(say(await act(B, { type: 'knife', knife: 'stiletto', for: 'Darja' }))));
   const bp = await B.evaluate(() => { const c = __infra.camera.position; return { x: c.x, y: c.y, z: c.z }; });
   await D.evaluate(b => __infra.lab.look(b.x + 6, b.z + 6, b.x, b.y - 2, b.z, b.y), bp); await D.waitForTimeout(2500);

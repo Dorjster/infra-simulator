@@ -9,6 +9,26 @@ import * as THREE from './three.module.js';
 export const PICK_LAYER = 2;
 export function pickAllLayers(raycaster) { raycaster.layers.enable(PICK_LAYER); return raycaster; }
 
+// Fixed parts out of three.js's per-frame matrix walk. Every frame scene.updateMatrixWorld() recomputes the world matrix of
+// every object in the scene (the scene's own matrix "changes" each frame, so the whole tree is forced): ~2000 objects on a
+// CS2 map with ten players, 8 % of the main thread at CPU ×4 (an i5 laptop: tests/browser/gd-perf-stress.mjs throttle=4).
+// A map's surfaces never move: a leaf child with matrixAutoUpdate = false whose world matrix was worked out from this
+// group's current one is skipped until this group's world matrix changes, the child is flagged
+// (matrixWorldNeedsUpdate, as three.js asks of anyone who edits a .matrix by hand) or it is new here. Everything else —
+// children that move, have children, or keep matrixAutoUpdate — is walked exactly as three.js does. The same world
+// matrices, fewer multiplications (tests/gd-agents-perf.mjs).
+function fixedWalk(force) {
+  if (this.matrixAutoUpdate) this.updateMatrix();
+  if (this.matrixWorldNeedsUpdate || force) { if (this.matrixWorldAutoUpdate === true) { if (this.parent === null) this.matrixWorld.copy(this.matrix); else this.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.matrix); } this.matrixWorldNeedsUpdate = false; force = true; }
+  const F = this.__fixed; if (!F.at.equals(this.matrixWorld)) { F.at.copy(this.matrixWorld); F.key = {}; }   // (moved, or the first walk: every child again — a new key)
+  const ch = this.children, key = F.key;
+  for (let i = 0, l = ch.length; i < l; i++) { const c = ch[i];
+    if (c.matrixAutoUpdate === false && c.children.length === 0 && c.matrixWorldNeedsUpdate === false && c.matrixWorldAutoUpdate === true) { if (c.__fixedKey !== key) { c.__fixedKey = key; c.updateMatrixWorld(true); } continue; }   // (stale or new here: worked out from this group's matrix now)
+    c.updateMatrixWorld(force); if (c.matrixAutoUpdate === false) c.__fixedKey = key; }
+}
+export function walkFixed(group) { if (!group || group.updateMatrixWorld === fixedWalk) return group; group.__fixed = { at: new THREE.Matrix4().set(NaN, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), key: {} }; group.updateMatrixWorld = fixedWalk; return group; }
+export function unwalkFixed(group) { if (group?.updateMatrixWorld === fixedWalk) { delete group.updateMatrixWorld; delete group.__fixed; } return group; }   // (the prototype's again)
+
 function mergeGeometries(list) {
   let vertices = 0, indices = 0; const hasUV = list.every(({ g }) => g.attributes.uv);
   for (const { g } of list) { vertices += g.attributes.position.count; indices += g.index ? g.index.count : g.attributes.position.count; }

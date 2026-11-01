@@ -4,6 +4,12 @@
 // from the pose, never from the model) don't change. Imported CS 1.6 characters, when present, take priority.
 import { createAvatar } from './avatar.js';
 import { knifeFor } from './weapon-models.js';
+import { weaponById } from './weapons-data.js';
+// The hold, CS2's convention as far as the soldiers' rig allows (the CS2 agents have CS2's own: cs2-agents.js): every
+// pistol held short, up in the hand (the avatar's own default only for its Glock / Deagle); knives with the blade tipped
+// up 52° as CS2's default knife idles carry it (idle_default_ct / _t: the blade along (.24, .79, .57) — asin .79 ≈ 52°,
+// tools/export-cs2-holds.mjs holds-truth). Rifles stay along the forearm, muzzle forward, as before.
+const KNIFE_HOLD = { pitch: 52 * Math.PI / 180 }, PISTOL_HOLD = { short: true };
 
 export const SIDE_LOOK = { t: { color: 0x8c7448, hat: 'balaclava', outfit: 'rig' }, ct: { color: 0x34465e, hat: 'combat', outfit: 'plate' } };
 const hash = s => { let h = 7; for (const c of String(s || '')) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
@@ -17,7 +23,7 @@ export function makeSoldier(p, team) {
   return {
     g: a.g, team,
     update(dt, s) { a.update(dt, { speed: s.speed, crouch: s.crouch, gun: !!s.aim && !s.dead, act: s.act }); fall += ((s.dead ? 1 : 0) - fall) * Math.min(1, dt * 7); a.g.rotation.x = -fall * Math.PI / 2; a.g.position.y = fall * 1.3; },
-    setWeapon(id) { a.setWeapon(knifeFor(id || 'cannon', team)); },
+    setWeapon(id, knife = null) { const w = id ? weaponById(id) : null; a.setWeapon(knifeFor(id || 'cannon', team, knife), w?.kind === 'knife' ? KNIFE_HOLD : w?.kind === 'pistol' ? PISTOL_HOLD : null); },   // (knife: the one this player chose, drawn when its model is in; the hold: CS2's convention, below)
     setSkin(sk) { a.setSkin(sk); },
     dispose() { a.dispose(); },
   };

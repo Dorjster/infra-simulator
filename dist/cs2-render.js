@@ -6,8 +6,8 @@
 import * as THREE from './three.module.js';
 import { gltfLoader } from './gltf-loader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
-import { mapFileOf, ARENA_MAPS } from './arena-maps.js';
-import { anisotropy } from './texture-quality.js'; import { loadPreferences } from './player-preferences.js'; import { noteProgress } from './load-progress.js';
+import { mapFileOf, ARENA_MAPS } from './arena-maps.js'; import { modeOffHit } from './bsp-map.js';
+import { anisotropy } from './texture-quality.js'; import { loadPreferences } from './player-preferences.js'; import { walkFixed } from './render-optimizer.js'; import { noteProgress } from './load-progress.js';
 
 let kept = null; const loading = new Map(), none = new Set();   // kept: { id, root, textures, meshes }; none: maps without a look (or whose look failed)
 // CS2's textures are made for its own baked light (soft, with ambient occlusion); under this game's sun and sky their
@@ -46,6 +46,10 @@ const BAKED_PARS = 'uniform vec3 uSunDir; uniform vec3 uSun; uniform float uSunK
   + '  float s = step( z, texture2D( uPSh, p.xy ).r ) * 2.0 + step( z, texture2D( uPSh, p.xy + vec2( t, t ) ).r ) + step( z, texture2D( uPSh, p.xy + vec2( - t, t ) ).r ) + step( z, texture2D( uPSh, p.xy + vec2( t, - t ) ).r ) + step( z, texture2D( uPSh, p.xy + vec2( - t, - t ) ).r );\n'
   + '  if ( uPShDebug > 0.5 && uPShDebug < 1.5 && n.y > 0.8 ) { float l = s / 6.0; shDbg = vec4( baked < 0.5 && l > 0.5 ? 1.0 : 0.0, l < 0.5 && baked > 0.5 ? 1.0 : 0.0, l < 0.5 && baked < 0.5 ? 1.0 : 0.0, 1.0 ); }\n'
   + '  return uPShDebug > 0.5 && uPShDebug < 1.5 ? mix( baked, s / 6.0, 1.0 - smoothstep( 0.8, 0.97, e ) ) : baked * mix( 1.0, s / 6.0, 1.0 - smoothstep( 0.8, 0.97, e ) ); }\n';   // (uPShDebug: tests — red: only the baked reach is shaded there, green: only the live one, blue: both)
+// The grade alone (skin-render.js: your first-person gun graded as the map it is drawn over, PLAN §5.5): its uniforms
+// (the same objects, so one map setting serves both) and its functions, cut from the chunk above.
+export const GRADE_U = { uGrade: BAKED.uGrade, uCurveA: BAKED.uCurveA, uCurveB: BAKED.uCurveB, uLut: BAKED.uLut, uLutOn: BAKED.uLutOn };
+export const GRADE_PARS = BAKED_PARS.slice(BAKED_PARS.indexOf('uniform float uGrade;'), BAKED_PARS.indexOf('vec3 bakedLight')) + BAKED_PARS.slice(BAKED_PARS.indexOf('vec3 cs2Hable'), BAKED_PARS.indexOf('uniform sampler2D uPSh;'));
 function bakedShader(shader, vertexLight) {
   Object.assign(shader.uniforms, BAKED);
   shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vBakedN; varying vec3 vBakedW;\n#ifdef CS2_TINT\nattribute vec4 tint; varying vec3 vTint;\n#endif').replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvBakedN = normalize( mat3( modelMatrix ) * normal ); vBakedW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\n#ifdef CS2_TINT\n\tvTint = tint.rgb;\n#endif');   // (CS2_TINT: meshes merged into one, each one's colour per vertex — prepare)
@@ -85,7 +89,7 @@ function loadLightMap(url) {
 // bsp-map.js lays the map file out (`hammer`: its x0, y1, size and lowest floor).
 export function placeRender(root, { x0, y1, W, D, zLow, U }, cx = 0, cz = 0) {
   const k = 39.3701 * U; root.matrixAutoUpdate = false;
-  root.matrix.set(0, 0, k, cx - x0 * U - W / 2, 0, k, 0, -zLow * U, -k, 0, 0, cz + y1 * U - D / 2, 0, 0, 0, 1); root.updateMatrixWorld(true); }
+  root.matrix.set(0, 0, k, cx - x0 * U - W / 2, 0, k, 0, -zLow * U, -k, 0, 0, cz + y1 * U - D / 2, 0, 0, 0, 1); walkFixed(root); root.updateMatrixWorld(true); }   // (walkFixed: its fixed surfaces out of the per-frame matrix walk — render-optimizer.js)
 // The look of map `id` when it is loaded (a Group to add), else null.
 export const mapRender = id => kept?.id === id ? kept.root : null;
 // A promise (with .done) while map `id`'s look still has to load; null when there is none or it is in.
@@ -121,7 +125,7 @@ function buildCasters(list) {
     for (const [k, c] of groups) { const start = at.get(k), cg = new THREE.BufferGeometry(); cg.setAttribute('position', P); if (alpha && g.attributes.uv) cg.setAttribute('uv', g.attributes.uv); cg.setIndex(index); cg.setDrawRange(start, c * 3);
       const box = new THREE.Box3(); for (let j = start; j < start + c * 3; j++) box.expandByPoint(v.fromBufferAttribute(P, sorted[j])); cg.boundingBox = box; cg.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
       const cm = new THREE.Mesh(cg, alpha || casterDepth); cm.matrixAutoUpdate = false; cm.matrix.copy(mesh.matrix); cm.layers.set(CASTER_LAYER); cm.userData.noShadow = true; out.add(cm); tris += c; } }
-  out.userData.triangles = tris; return out;
+  out.userData.triangles = tris; return walkFixed(out);
 }
 // Meshes merged into one (one draw): each one's place baked into its points, its normals turned as the baked shader
 // turns them (by the matrix's 3×3), its triangles wound the other way where its matrix mirrors, its colour per vertex
@@ -219,6 +223,23 @@ function prepare(id, gltf, light) {
       const ng = new THREE.BufferGeometry(); for (const a in g.attributes) ng.setAttribute(a, g.attributes[a]); ng.setIndex(new THREE.BufferAttribute(new ia.constructor(keep), 1)); ng.userData.shared = true; mesh.geometry = ng; }
     for (const mesh of gone) { mesh.removeFromParent(); still.splice(still.indexOf(mesh), 1); meshes.splice(meshes.indexOf(mesh), 1); mesh.material.dispose(); }
     root.userData.duplicates = cut; }
+  // Another game mode's walls and props (bsp-map.js modeOffOf — Nuke's 2v2 silo doors on both sides of Ramp and its
+  // roll-up door across Outside → Secret, Overpass's 2v2 walls, Inferno's barricades): CS2 never shows them in a match and
+  // no collision stands there, but the export drew them — doors and walls you walked through. Out of the look triangle by
+  // triangle (the export merges each material across the map): of a mesh of one of their materials, the triangles with
+  // all three corners (Hammer: 39.37 × the look's metres, glTF z x y) inside one entity's own box (bsp-map.js modeOffHit:
+  // a real jamb face beside Overpass's 5-unit wall, the top of Mirage's intact shutter reach out of it and stay; the
+  // barricade ends and cone bases touching the walls and street go with it). Once, at load.
+  if (Hm && Mp.modeOff?.length && !globalThis.__noModeCut) {   /* (__noModeCut: pictures without it, to compare) */ const base = n => String(n || '').replace(/__nolm$/, '').replace(/\.\d+$/, ''), K = 39.3701, gone = []; let cut = 0;
+    for (const mesh of still) { const n = base(mesh.material.name), L = Mp.modeOff.filter(o => o.mats.includes(n)), g = mesh.geometry, I = g.index, P = g.attributes.position; if (!L.length || !I || !P) continue;
+      const E = mesh.matrix.elements, ia = I.array, keep = [], h = new Float64Array(9);
+      for (let t = 0; t < ia.length; t += 3) { for (let c = 0; c < 3; c++) { const v = ia[t + c], sx = P.getX(v), sy = P.getY(v), sz = P.getZ(v);
+          h[c * 3] = K * (E[2] * sx + E[6] * sy + E[10] * sz + E[14]); h[c * 3 + 1] = K * (E[0] * sx + E[4] * sy + E[8] * sz + E[12]); h[c * 3 + 2] = K * (E[1] * sx + E[5] * sy + E[9] * sz + E[13]); }
+        if (!modeOffHit(L, h)) keep.push(ia[t], ia[t + 1], ia[t + 2]); }
+      if (keep.length === ia.length) continue; cut += (ia.length - keep.length) / 3; if (!keep.length) { gone.push(mesh); continue; }
+      const ng = new THREE.BufferGeometry(); for (const a in g.attributes) ng.setAttribute(a, g.attributes[a]); ng.setIndex(new THREE.BufferAttribute(new ia.constructor(keep), 1)); ng.userData.shared = true; mesh.geometry = ng; }
+    for (const mesh of gone) { mesh.removeFromParent(); still.splice(still.indexOf(mesh), 1); meshes.splice(meshes.indexOf(mesh), 1); mesh.material.dispose(); }
+    root.userData.modeCut = cut; }
   // Windows (import-cs2-map.mjs: every glass pane a breakable): each pane's triangles in the look's glass meshes — the
   // export merges a material's glass across the map — found by their middles in the pane's box; broken, they fold to
   // nothing (their indices made one point: no new draws, shared corners untouched), whole again next round. Those meshes

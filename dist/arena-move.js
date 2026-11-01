@@ -14,7 +14,8 @@ export const HU = 2.54 / 16.5;
 // player half-width (32 HU across) against other players and bots. lift: a duck in the air tucks the feet up 9 HU
 // (approximation: half of the 18 HU the hull loses — a crouch-jump then clears ~66 HU against a plain jump's ~57, the
 // community-measured CS numbers; not checked against CS2's code). bhop: CS:GO's no-bunny-hop cap (1.1 × max speed).
-export const MOVE = { friction: 5.2, stopspeed: 80 * HU, accelerate: 5.5, airaccelerate: 12, aircap: 30 * HU, gravity: 800 * HU, jump: 301.993 * HU, walk: .52, duck: .34, step: 18 * HU, height: 72 * HU, duckHeight: 54 * HU, radius: 1.3, bhop: 1.1, hull: 16 * HU, lift: 9 * HU };
+// accelScale: the ground acceleration is figured on at least 250 HU/s (CS:GO's Accelerate: max(250, wishspeed)).
+export const MOVE = { friction: 5.2, stopspeed: 80 * HU, accelerate: 5.5, airaccelerate: 12, aircap: 30 * HU, gravity: 800 * HU, jump: 301.993 * HU, walk: .52, duck: .34, step: 18 * HU, height: 72 * HU, duckHeight: 54 * HU, radius: 1.3, bhop: 1.1, hull: 16 * HU, lift: 9 * HU, accelScale: 250 * HU };
 // Eye heights in Global Defensive (game units): standing 9.7 (63 HU: the hit model and the host's shot origin are built on
 // it; CS2's view offset is 64.06) and crouched CS2's 46 HU (view offset 46.04), in between with the duck. The hall and
 // the office keep their own (lab.js).
@@ -26,11 +27,17 @@ export const eyeAt = duck => EYE_GD.stand + (EYE_GD.duck - EYE_GD.stand) * duck;
 export const MAX_SPEED = { knife: 250, karambit: 250, pistol: 240, deagle: 230, cannon: 240, smg: 235, shotgun: 220, ak: 215, m4: 225, sniper: 200, lmg: 195 };
 const SCOPED = { aug: 150, sg553: 150, sniper: 100, ssg08: 230 };
 export const maxSpeed = (weapon, scoped = false) => ((scoped && SCOPED[weapon]) || weaponById(weapon)?.speed || MAX_SPEED[weapon] || 250) * HU;
-// Stamina (CS2's sv_staminamax 80, sv_staminajumpcost .08, sv_staminalandcost .05, sv_staminarecoveryrate 60): a jump
-// costs 8, a landing 5; on the ground the speed is scaled by (100 − stamina)% until it recovers (CS:GO's use of them).
-const STAMINA = { max: 80, jump: .08 * 100, land: .05 * 100, recover: 60 };
+// Stamina (CS2's cvars sv_staminamax 80, sv_staminajumpcost .08, sv_staminalandcost .05, sv_staminarecoveryrate 60, used
+// as CS:GO's movement used them — CS2 kept the cvars and defaults; derived, not read from CS2's code): a jump adds .08 ×
+// its take-off speed (HU/s: 24 for a full one), a landing .05 × the speed it lands at (15 off a flat jump, more off a
+// drop), never over 80, draining at 60 a second. With stamina S the jump's speed is (100 − S)% (jump on landing: ~41 HU
+// high instead of 57 — a bunny hop or a jump spam is low, a box a plain jump reaches is missed), and on the ground the
+// horizontal velocity is scaled by (100 − S)% per 1/70 s (CS's reference frame time: ratio^(dt·70)) — landing off a running
+// jump costs ~45 % of the speed for a moment (250 → ~140 HU/s, back in ~0.5 s); landing from a step down never counts.
+export const STAMINA = { max: 80, jump: .08, land: .05, recover: 60, ref: 70 };
 // Ducking (approximation: CS:GO's ideal duck speed 8 — fully down or up in 1/8 s — and its duck-spam penalty, from memory
-// of the CS:GO code, not checked against CS2): each fresh press makes the next one slower by 2 (never under 1.5), coming
+// of the CS:GO code; CS2 keeps a crouch-spam slowdown — each rapid press slower — but its numbers aren't published, and
+// no CS2 cvar for it ships in the game's files): each fresh press makes the next one slower by 2 (never under 1.5), coming
 // back at 3 a second. The hull is crouched (54 HU) once fully down; in the air the duck is at once (Source) and tucks
 // the feet up MOVE.lift.
 export const DUCK = { speed: 8, spam: 2, min: 1.5, recover: 3 };
@@ -136,9 +143,12 @@ function roomToStand(boxes, nh, x, z, feet, h0) {
     else if (solidTo(b, feet, MOVE.height, MOVE.step)) return false; }
   return true; }
 
-function accelerate(s, wx, wz, wishspeed, accel, dt, cap = Infinity) {
+// `scale`: the speed the acceleration is figured on — on the ground CS's max(250, wishspeed) (CS:GO's Accelerate,
+// kAccelerationScale; CS2 feels the same: a crouch-walk is at its 85 HU/s in under 0.1 s — on plain Source's wishspeed,
+// friction's 416 HU/s² at a crawl left ~33 HU/s² and a crouch from standing took 2.5 s to get going); in the air the wish.
+function accelerate(s, wx, wz, wishspeed, accel, dt, cap = Infinity, scale = wishspeed) {
   const current = s.vx * wx + s.vz * wz, add = Math.min(wishspeed, cap) - current;
-  if (add <= 0) return; const a = Math.min(accel * dt * wishspeed, add); s.vx += a * wx; s.vz += a * wz;
+  if (add <= 0) return; const a = Math.min(accel * dt * scale, add); s.vx += a * wx; s.vz += a * wz;
 }
 
 // One tick. input: { wish: [x, z] (camera-relative move direction, any length; [0,0] = no keys), walk, duck, jump (the
@@ -193,7 +203,6 @@ export function moveStep(s, input, world, dt) {
   const W = input.wish; let wx = W ? +W[0] || 0 : 0, wz = W ? +W[1] || 0 : 0; const wl = Math.hypot(wx, wz); if (wl > 1e-6) { wx /= wl; wz /= wl; } else wx = wz = 0;
   let wishspeed = wl > 1e-6 ? maxSpeed(input.weapon, input.scoped) : 0;
   wishspeed *= Math.min(input.walk ? MOVE.walk : 1, 1 + (MOVE.duck - 1) * (s.onGround ? s.duck || 0 : 0));   // crouching (as far down as you are) or walking: the slower
-  if (s.stamina > 0 && s.onGround) wishspeed *= (100 - s.stamina) / 100;
   if ((s.velMod ?? 1) < 1) { s.velMod = Math.min(1, s.velMod + TAG.recover * dt); wishspeed *= s.velMod; if (s.onGround) { const top = maxSpeed(input.weapon, input.scoped) * s.velMod, sp = Math.hypot(s.vx, s.vz); if (sp > top) { s.vx *= top / sp; s.vz *= top / sp; } } }   // tagged: slower, and no faster than that on the ground
   // Jumping: a fresh press only (CS2's sv_autobunnyhopping 0: holding the key never jumps again).
   const held = !!input.jump, press = input.jumpPress === undefined ? held && !s.jumpHeld : !!input.jumpPress; s.jumpHeld = held;
@@ -224,13 +233,14 @@ export function moveStep(s, input, world, dt) {
   else if (s.onGround && press) {
     // No bunny hopping (CS: sv_enablebunnyhopping 0): a jump trims horizontal speed to 1.1× the weapon's top speed.
     const sp = Math.hypot(s.vx, s.vz), cap = maxSpeed(input.weapon, input.scoped) * MOVE.bhop; if (sp > cap) { s.vx *= cap / sp; s.vz *= cap / sp; }
-    s.vy = MOVE.jump; s.onGround = false; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.jump);
+    s.vy = MOVE.jump * (100 - s.stamina) / 100; s.onGround = false; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.jump * s.vy / HU);
   }
   if (s.onGround) {
-    // Friction, then acceleration toward the wished direction (counter-strafing stops you in a few ticks).
+    // Friction, the stamina's slow-down (a landing's), then acceleration toward the wished direction (counter-strafing
+    // stops you in a few ticks).
     const sp = Math.hypot(s.vx, s.vz);
-    if (sp > 0) { const drop = Math.max(sp, MOVE.stopspeed) * MOVE.friction * dt, k = Math.max(0, sp - drop) / sp; s.vx *= k; s.vz *= k; }
-    accelerate(s, wx, wz, wishspeed, MOVE.accelerate, dt);
+    if (sp > 0) { const drop = Math.max(sp, MOVE.stopspeed) * MOVE.friction * dt, k = Math.max(0, sp - drop) / sp * (s.stamina > 0 ? Math.pow((100 - s.stamina) / 100, dt * STAMINA.ref) : 1); s.vx *= k; s.vz *= k; }
+    accelerate(s, wx, wz, wishspeed, MOVE.accelerate, dt, Infinity, wishspeed > 0 ? Math.max(MOVE.accelScale, wishspeed) : 0);
   } else if (!climbing) {
     accelerate(s, wx, wz, wishspeed, MOVE.airaccelerate, dt, MOVE.aircap);
     vy0 = s.vy; s.vy -= MOVE.gravity * dt;
@@ -279,7 +289,7 @@ export function moveStep(s, input, world, dt) {
     if (s.vy > 0 && (ceilingIn(near, near.length, s.x, s.z, s.y, ny, height, climbing ? lad : null) || headIn(nh, s.x, s.z, s.y, ny, height))) s.vy = 0;
     else s.y = ny;
     const g = groundBy(boxes, nh, s.x, s.z, Math.max(s.y, ground), y0);
-    if (s.vy <= 0 && s.y <= g) { if (!climbing) { s.landed = 1; s.landSpeed = -s.vy / HU; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.land); } s.y = g; s.vy = 0; s.onGround = true; s.lift = 0; }
+    if (s.vy <= 0 && s.y <= g) { if (!climbing) { s.landed = 1; s.landSpeed = -s.vy / HU; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.land * s.landSpeed); } s.y = g; s.vy = 0; s.onGround = true; s.lift = 0; }
   }
   return s;
 }

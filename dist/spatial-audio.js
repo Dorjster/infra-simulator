@@ -61,9 +61,13 @@ export const SOUND_SPEED = 13504, HU_UNITS = 2.54 / 16.5;   // (Hammer units a s
 // Walls between you and a sound muffle it (quieter, fewer highs): the game sets how blocked a point is (0 … 1).
 let occlusion = null; export const setOcclusion = fn => { occlusion = fn; };
 // Where to connect a sound: the effects bus directly (your own sounds: never distance-muffled) or a panner at `at`.
+// Global Defensive swaps in CS2's ranges (gd-sounds.js GD_RANGE: linear to silence at each family's last curve point, e.g.
+// footsteps 1100 HU) for the shared fallbacks that still come here while its own copy decodes — Web Audio's 'inverse'
+// clamps at maxDistance and never reaches silence: a step across the map stayed audible (package U). null: these.
+let rangeOv = null; export const setRanges = r => { rangeOv = r || null; };
 export function outAt(c, at, kind = 'effect') {
   if (!at) return master(c);
-  const [model, ref, roll, max] = RANGE[kind] || RANGE.effect, p = c.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = model; p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = max;
+  const [model, ref, roll, max] = rangeOv?.[kind] || RANGE[kind] || RANGE.effect, p = c.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = model; p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = max; if (rangeOv) { p.channelCount = 1; p.channelCountMode = 'explicit'; }   // (Global Defensive: a stand-in is a point too — a stereo file folded to mono, GD-AUD-18)
   p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z;
   let occ = 0; try { occ = occlusion ? Math.max(0, Math.min(1, +occlusion(at) || 0)) : 0; } catch {}
   // Sound takes time to arrive: 343 m/s (13 504 Hammer units a second) — a shot across the map is heard a moment after.
@@ -86,6 +90,8 @@ export function setListener(camera) {
   if (L.positionX) { L.positionX.value = x; L.positionY.value = y; L.positionZ.value = z; L.forwardX.value = fwd.x; L.forwardY.value = fwd.y; L.forwardZ.value = fwd.z; L.upX.value = up.x; L.upY.value = up.y; L.upZ.value = up.z; }
   else { L.setPosition?.(x, y, z); L.setOrientation?.(fwd.x, fwd.y, fwd.z, up.x, up.y, up.z); }
 }
+// The listener's forward and up as set this frame (gd-sounds.js: the front / back cue of a placed sound; no object made).
+export const listenerFrame = out => { out.fx = fwd.x; out.fy = fwd.y; out.fz = fwd.z; out.ux = up.x; out.uy = up.y; out.uz = up.z; return out; };
 // The listener's right (forward × up), for a sound beside your own head (sound-bank: your own shell casings).
 export const listenerRight = out => { out.x = fwd.y * up.z - fwd.z * up.y; out.y = fwd.z * up.x - fwd.x * up.z; out.z = fwd.x * up.y - fwd.y * up.x; return out; };
 // Recorded footsteps: the game sets a hook that picks the surface and plays a sample (sound-bank.js); without it

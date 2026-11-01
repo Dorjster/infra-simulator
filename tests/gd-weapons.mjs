@@ -15,8 +15,9 @@ let n = 0; const ok = (name, cond, detail = '') => { n++; assert(cond, name + (d
 // ── Damage: head shots and armor ──
 // CS2: one head shot through a helmet kills with these (close up), not with these; without a helmet the pistols kill too.
 { const H = (id, armor) => hitDamage(weaponById(id), 'head', 5, 1, armor).hp, helm = () => ({ kevlar: 100, helmet: true });
-  for (const id of ['ak', 'deagle', 'sniper', 'ssg08', 'm4s']) ok(weaponById(id).name + ': one head shot kills through a helmet (CS2)', H(id, helm()) >= MAX_HP, H(id, helm()));
-  for (const id of ['pistol', 'usps', 'm4', 'mp9', 'famas', 'galil', 'p250']) ok(weaponById(id).name + ': a head shot through a helmet does not kill (CS2)', H(id, helm()) < MAX_HP, H(id, helm()));
+  for (const id of ['ak', 'deagle', 'sniper', 'ssg08']) ok(weaponById(id).name + ': one head shot kills through a helmet (CS2)', H(id, helm()) >= MAX_HP, H(id, helm()));
+  // (the M4A1-S: CS2's m_flHeadshotMultiplier 3.475 — 38 × 3.475 × 0.7 = 92 through a helmet)
+  for (const id of ['pistol', 'usps', 'm4', 'm4s', 'mp9', 'famas', 'galil', 'p250']) ok(weaponById(id).name + ': a head shot through a helmet does not kill (CS2)', H(id, helm()) < MAX_HP, H(id, helm()));
   for (const id of ['pistol', 'usps', 'p250', 'm4']) ok(weaponById(id).name + ': one head shot kills without a helmet (CS2)', H(id, { kevlar: 100, helmet: false }) >= MAX_HP, H(id, { kevlar: 100, helmet: false }));
   ok('no gun\'s head shot is an automatic kill (damage decides)', WEAPONS.every(w => !hitDamage(w, 'head', 5, 1, helm()).headKill)); }
 for (const w of WEAPONS) ok(w.name + ': finite magazine and reserve', w.mag > 0 && w.reserve > 0 && Array.isArray(w.pattern) && w.pattern.length >= 1 && w.pattern[0][0] === 0 && w.pattern[0][1] === 0);
@@ -113,8 +114,9 @@ ok('money paid once per item: AK 2700 + helmet 1000', d.combat.d.money.tess === 
   arenaApply(d, { type: 'refund', item: 'helmet' }, 'Tess', DP, td); ok('armor refund: $1000 back, no armor', d.combat.d.money.tess === m1 + 1300 && armorOf(d, 'Tess').kevlar === 0);
   arenaApply(d, { type: 'buy-armor', kind: 'helmet' }, 'Tess', DP, td);
   assert.throws(() => arenaApply(d, { type: 'refund', item: 'm4s' }, 'Tess', DP, td), /Nothing to refund/); n++;
-  poseAmmo(d, 'Tess', { n: 0, r: 0 }, 'ak'); poseAmmo(d, 'Tess', { n: 1, r: 0 }, 'ak'); assert.throws(() => arenaApply(d, { type: 'refund', item: 'ak' }, 'Tess', DP, td), /Already used/); n++;
-  ok('a fired gun is not refunded (money unchanged)', loadoutOf(d, 'Tess').primary === 'ak'); d.combat.d.money.tess = 5000 - 2700 - 1000; d.combat.ammo.tess.ak = [30, 90]; delete d.combat.shots.tess; }
+  // (a gun fired once in buy time after the freeze: shots numbered during the freeze itself are the round before's, never charged — SHOOT-15)
+  d.combat.ammo.tess.ak = [29, 90]; assert.throws(() => arenaApply(d, { type: 'refund', item: 'ak' }, 'Tess', DP, td), /Already used/); n++;
+  ok('a fired gun is not refunded (money unchanged)', loadoutOf(d, 'Tess').primary === 'ak'); d.combat.d.money.tess = 5000 - 2700 - 1000; d.combat.ammo.tess.ak = [30, 90]; if (d.combat.shots) delete d.combat.shots.tess; }
 // Live: Tess sprays, Cal dies; the round ends (CT eliminated): Tess won with a half-empty AK → refilled; Cal dead → USP-S only, full.
 td += DEFUSE.freezeMs + 100; arenaTick(d, DP, .05, td); poseAmmo(d, 'Tess', { n: 0, r: 0 }, 'ak'); poseAmmo(d, 'Tess', { n: 17, r: 0 }, 'ak'); ok('Tess fired 17', ammoOf(d, 'Tess', 'ak')[0] === 13);
 applyHit(d, 'Tess', 'Cal', weaponById('ak'), 'head', 20, 1, td); ok('Cal is down', isDown(d, 'Cal', td)); arenaTick(d, DP, .05, td += 50);
@@ -140,16 +142,16 @@ ok('nobody is down at the new round', !isDown(d, 'Cal', td) && hpOf(d, 'Cal') ==
   g.combat.ground = [{ id: 'gz', item: 'p250', x: ann.pose.x, z: ann.pose.z, y: 0, at: T0 + 100, by: 'Ann', ammo: [13, 26] }]; loadoutOf(g, 'Ann').secondary = null; arenaTick(g, [ann], .05, T0 + 600);
   ok('your own drop is not picked straight back up', loadoutOf(g, 'Ann').secondary === null); arenaTick(g, [ann], .05, T0 + 1700); ok('…a moment later it is (empty pistol slot)', loadoutOf(g, 'Ann').secondary === 'p250'); }
 
-// ── Aim: first shot exact, spray learnable ──
-for (const w of WEAPONS) { const [p, y] = sprayAt(w, 0); ok(w.name + ': first bullet exactly at the crosshair', p === 0 && y === 0); ok(w.name + ': standing still is exact', moveInaccuracy(w, { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: !!w.zoom }) === 0 || !!w.unscoped); }
+// ── Aim: no spray on the first shot, CS2's accuracy, spray learnable ──
+for (const w of WEAPONS) { const [p, y] = sprayAt(w, 0); ok(w.name + ': no recoil on the first bullet', p === 0 && y === 0); ok(w.name + ': standing still adds no movement inaccuracy (only the gun\'s CS2 floor)', moveInaccuracy(w, { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: !!w.zoom }) === 0); }
 ok('the AK climbs, then pulls sideways', sprayAt(weaponById('ak'), 9)[0] > 4 && Math.abs(sprayAt(weaponById('ak'), 15)[1]) > 1.5);
 { const autos = WEAPONS.filter(w => w.mode === 'auto' && !w.pellets), shape = w => Array.from({ length: 12 }, (_, i) => sprayAt(w, Math.round(i * (w.mag - 1) / 11))), diff = (a, b) => { const A = shape(a), B = shape(b); return Math.max(...A.map((p, i) => Math.hypot(p[0] - B[i][0], p[1] - B[i][1]))); };
   let worst = 9, pair = ''; for (let i = 0; i < autos.length; i++) for (let j = i + 1; j < autos.length; j++) { const d = diff(autos[i], autos[j]); if (d < worst) { worst = d; pair = autos[i].name + ' / ' + autos[j].name; } }
   ok('every automatic gun has its own spray (no two within 0.8° all the way)', worst > .8, pair + ' ' + worst.toFixed(2)); }
 ok('patterns differ between guns', JSON.stringify(weaponById('ak').pattern) !== JSON.stringify(weaponById('m4').pattern) && JSON.stringify(weaponById('m4').pattern) !== JSON.stringify(weaponById('famas').pattern));
-ok('running and jumping cost accuracy', moveInaccuracy(weaponById('ak'), { speed: 200, max: 200, onGround: true, landedAgo: 9 }) > .03 && moveInaccuracy(weaponById('ak'), { speed: 0, max: 200, onGround: false, landedAgo: 9 }) > .15);
-ok('counter-strafed (slow) is exact again', moveInaccuracy(weaponById('ak'), { speed: 60, max: 200, onGround: true, landedAgo: 9 }) === 0);
-ok('landing costs accuracy for a moment', moveInaccuracy(weaponById('ak'), { speed: 0, max: 200, onGround: true, landedAgo: .05 }) > 0 && moveInaccuracy(weaponById('ak'), { speed: 0, max: 200, onGround: true, landedAgo: .5 }) === 0);
-ok('an unscoped AWP is inaccurate, scoped exact', moveInaccuracy(weaponById('sniper'), { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: false }) > .05 && moveInaccuracy(weaponById('sniper'), { speed: 0, max: 100, onGround: true, landedAgo: 9, scoped: true }) === 0);
+ok('running costs CS2\'s m_flInaccuracyMove (AK 0.175 at full speed)', Math.abs(moveInaccuracy(weaponById('ak'), { speed: 200, max: 200, onGround: true, landedAgo: 9 }) - .17506) < 1e-9);
+ok('in the air the jump penalty (AK, rising fast)', moveInaccuracy(weaponById('ak'), { speed: 0, max: 200, onGround: false, vy: 300 * 2.54 / 16.5, landedAgo: 9 }) > .1);
+ok('counter-strafed (under 34 % of the speed) adds nothing', moveInaccuracy(weaponById('ak'), { speed: 60, max: 200, onGround: true, landedAgo: 9 }) === 0);
+ok('an unscoped AWP stands at CS2\'s 0.0808, scoped 0.002', weaponById('sniper').acc.stand === .0808 && weaponById('sniper').accZ.stand === .002);
 ok('shotgun pellets: a fixed pattern with one in the centre', JSON.stringify(pelletPattern(weaponById('shotgun'))) === JSON.stringify(pelletPattern(weaponById('shotgun'))) && pelletPattern(weaponById('shotgun'))[0][0] === 0 && pelletPattern(weaponById('shotgun')).length === 9);
 console.log('PASS: Global Defensive weapons · ' + n + ' checks (CS2 head shots: a helmet stops some guns from one-tapping, armor, finite ammo + reloads, buy drops the old gun with its rounds, pickups keep rounds, no pickup through walls or twice, no hits through walls, new-round refill after a win and a death, team guns, all-or-nothing purchases, first-shot accuracy, spray patterns)');

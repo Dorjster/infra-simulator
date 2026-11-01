@@ -12,6 +12,9 @@ function copyGame() {
   fs.mkdirSync(path.join(out, 'lan'), { recursive: true });
   // Every room module (room.mjs imports its neighbours, e.g. selfsigned.mjs) plus the starting world — never saves.
   for (const f of [...fs.readdirSync(path.join(root, 'lan')).filter(f => f.endsWith('.mjs')), 'world.json']) fs.copyFileSync(path.join(root, 'lan', f), path.join(out, 'lan', f));
+  // room.mjs installPack imports tools/cs2-skins/manifest.mjs (installSkins, the back-up rule) for a pack's skins-pack/:
+  // pure node logic, no Valve data — without it an asset pack with CS2 finishes failed to install in the desktop app.
+  fs.mkdirSync(path.join(out, 'tools', 'cs2-skins'), { recursive: true }); fs.copyFileSync(path.join(root, 'tools', 'cs2-skins', 'manifest.mjs'), path.join(out, 'tools', 'cs2-skins', 'manifest.mjs'));
   fs.writeFileSync(path.join(out, 'package.json'), JSON.stringify({ type: 'module', private: true }));
 }
 

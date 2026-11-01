@@ -10,8 +10,53 @@ import { CELL, MAXF, NONE, SITE, STEP } from './cs-columns.js';
 import { finishMap, mergeSegs, U } from './cs-mapbuild.js';
 import { floorLight, floorSurface, SURFACES, UNKNOWN } from './map-light.js';
 import { createNadeMesh } from './nade-mesh.js';
+import MODE_PROPS, { SPAWN_PRIORITY } from './cs-maps/cs2-mode-props.js';
 
 const CROUCH = 36, SOLID = /^func_(wall|wall_toggle|breakable|door|door_rotating|pushable|train|tracktrain|plat|rotating|button|brush)$/, Q = 2;
+// Another game mode's walls and spawns (Wingman's 2v2, Retakes, Arms Race, hostage, Deathmatch…), off in a Defuse match:
+// a brush entity of theirs is no solid part, a spawn of theirs no spawn. So is a func_brush or func_wall_toggle that
+// starts off (StartDisabled 1; func_wall_toggle's flag 1, "starts invisible").
+export const MODE_ONLY = /2v2|1v1|retake|wingman|hostage|armsrace|arms_race|gungame|coop|guardian|deathmatch|tutorial|training/i;
+const offAtStart = e => MODE_ONLY.test(e.targetname || '') || /^(1|true)$/i.test(e.StartDisabled ?? e.startdisabled ?? '') || /^(0|false)$/i.test(e.enabled ?? 'true') || (e.classname === 'func_wall_toggle' && (+e.spawnflags || 0) & 1);
+// Counter-Strike 2's competitive spawns for a team from its spawn entities (cs2-map.js: info_player_terrorist /
+// _counterterrorist): only those a 5v5 match uses — not another mode's (CS2 keeps Wingman's 2v2 spawns disabled,
+// `enabled` false, named spawnpoints.2v2: Nuke's T ones in Secret and CT ones by Ramp, Inferno's, Overpass's — one player
+// spawned on mid), then only the team's own spawn area: the largest cluster of spawns linked 200 units or less apart
+// (files imported before v52 carry no `enabled`; over the eight maps CS2's competitive spawns lie at most 125 from their
+// nearest and the 2v2 sets 445–3 465 from the team's), in CS2's order: lower `priority` first (CS2 fills those first —
+// the five of a 5v5; a file without it takes it from `known`, cs-maps/cs2-mode-props.js SPAWN_PRIORITY, by origin),
+// else nearest the cluster's middle first. Entities in that order.
+export function cs2Spawns(list, known = null) {
+  const on = list.filter(e => !offAtStart(e)), src = on.length ? on : list, P = src.map(e => vec(e.origin)), n = P.length; if (n < 2) return src.slice();
+  const up = Int32Array.from({ length: n }, (_, i) => i), find = x => { while (up[x] !== x) x = up[x] = up[up[x]]; return x; };
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (Math.hypot(P[i][0] - P[j][0], P[i][1] - P[j][1], P[i][2] - P[j][2]) <= 200) up[find(j)] = find(i);
+  const size = new Map(); for (let i = 0; i < n; i++) size.set(find(i), (size.get(find(i)) || 0) + 1); let root = -1, most = 0; for (const [r, s] of size) if (s > most) { most = s; root = r; }
+  const keep = []; for (let i = 0; i < n; i++) if (find(i) === root) keep.push(i); const c = [0, 0]; for (const i of keep) { c[0] += P[i][0] / keep.length; c[1] += P[i][1] / keep.length; }
+  const had = i => { if (!known) return null; for (const r of known) if (Math.abs(r[0] - P[i][0]) < 2 && Math.abs(r[1] - P[i][1]) < 2 && Math.abs(r[2] - P[i][2]) < 2) return r[3]; return null; };
+  const pri = i => src[i].priority === undefined || src[i].priority === '' ? had(i) : +src[i].priority || 0, any = keep.some(i => pri(i) !== null), d = i => Math.hypot(P[i][0] - c[0], P[i][1] - c[1]);
+  return keep.sort((a, b) => (any ? (pri(a) ?? 1e9) - (pri(b) ?? 1e9) : 0) || d(a) - d(b) || a - b).map(i => src[i]); }
+// Counter-Strike 2's mode-only scenery (import-cs2-map.mjs header.modeOff since v52; earlier files: cs-maps/cs2-mode-props.js):
+// another mode's walls, doors and props the map's look still draws though no collision stands there (Nuke's 2v2 silo
+// doors on both sides of Ramp, its roll-up door across Outside → Secret). Each: its box as 8-unit columns (Hammer units:
+// corner a, counts n) with the player collision's solid stretches in each (cols[i·n1 + j]: bottom, top, …), and the
+// materials it is drawn with, and its own box lo/hi: cs2-render.js takes the look's triangles of those materials wholly
+// in that box out (modeOffHit). `open`: the columns' 8-unit cells with no solid in them (tests: nothing stands there).
+function modeOffOf(bsp, id) { const C = 8, out = [];
+  for (const r of bsp.modeOff || MODE_PROPS[id] || []) { const lo = Array.isArray(r) ? r.slice(0, 3) : r.mins, hi = Array.isArray(r) ? r.slice(3, 6) : r.maxs, mats = Array.isArray(r) ? String(r[6] || '').split('|').filter(Boolean) : r.mats || [];
+    const a = lo.map(v => Math.floor(v / C) * C - C), n = hi.map((v, k) => Math.max(1, Math.ceil((v + C - a[k]) / C))), open = new Uint8Array(n[0] * n[1] * n[2]), cols = new Array(n[0] * n[1]); let any = 0;
+    for (let i = 0; i < n[0]; i++) for (let j = 0; j < n[1]; j++) { const S = bsp.solidSpans(0, a[0] + (i + .5) * C, a[1] + (j + .5) * C, a[2] - C, a[2] + (n[2] + 1) * C); cols[i * n[1] + j] = Float32Array.from(S.flat());
+      for (let k = 0; k < n[2]; k++) { const z0 = a[2] + k * C, z1 = z0 + C; let solid = false; for (const s of S) if (s[1] > z0 + 1 && s[0] < z1 - 1) { solid = true; break; } if (!solid) { open[(i * n[1] + j) * n[2] + k] = 1; any++; } } }
+    if (any && mats.length) out.push({ a, n, c: C, cols, open, mats, lo: lo.map(Number), hi: hi.map(Number) }); }
+  return out; }
+// Is a look triangle (Hammer corners h[0..8]) one of these entities' own? All three corners inside one entity's own box
+// (1.5 units' leeway — not its 8-unit columns, not just the middle: a real jamb face beside Overpass's 5-unit 2v2 wall
+// reaches out of it and stays), and no solid stretch exempts it: the pieces touching a wall or the floor (Inferno's
+// barricade ends, the cones' bases, Nuke's roll-up door rail) are the entity's and go — no collision is theirs.
+export function modeOffHit(L, h) { const E = 1.5;
+  for (let q = 0; q < L.length; q++) { const lo = L[q].lo, hi = L[q].hi; let all = true;
+    for (let k = 0; k < 9 && all; k++) { const v = h[k], c = k % 3; if (v < lo[c] - E || v > hi[c] + E) all = false; }
+    if (all) return true; }
+  return false; }
 // A solid stretch [lo, hi] cut where its rays change (a wall stands on a floor all four rays are in): the pieces whose
 // solid rays are one side's pair, the others open (bit j: rayP, j = (−4, −4), (4, −4), (−4, 4), (4, 4) Hammer),
 // with the side of the column they can lose (cs-mapbuild.js mergeSegs: 1 −x, 2 +x, 3 −z, 4 +z in game axes; Hammer +y
@@ -36,7 +81,7 @@ export const moverOf = (e, src) => { if (src) return null;   /* (Source map file
 export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // Solid parts: the world and the solid brush entities (with their origin offset), each with its bounds.
   const parts = [{ head: bsp.models[0].head, off: [0, 0, 0], mi: 0, ...bounds(bsp.models[0], [0, 0, 0]) }];
-  for (const e of bsp.entities) { const mi = modelOf(e); if (mi > 0 && SOLID.test(e.classname || '') && bsp.models[mi] && !moverOf(e, bsp.format === 'vbsp' && !bsp.cs2)) { const off = e.origin ? vec(e.origin) : [0, 0, 0]; parts.push({ head: bsp.models[mi].head, off, mi, ...bounds(bsp.models[mi], off) }); } }
+  for (const e of bsp.entities) { const mi = modelOf(e); if (mi > 0 && SOLID.test(e.classname || '') && !offAtStart(e) && bsp.models[mi] && !moverOf(e, bsp.format === 'vbsp' && !bsp.cs2)) { const off = e.origin ? vec(e.origin) : [0, 0, 0]; parts.push({ head: bsp.models[mi].head, off, mi, ...bounds(bsp.models[mi], off) }); } }
   // Source maps (vbsp.js: toGoldSrc) keep their 3D sky box — a miniature far outside the play area — inside the world's
   // bounds: there the area is the spawns' and bomb sites' surroundings (1 500 units round them) and their height range.
   // Source places a spawn at the feet (Counter-Strike 1.6: the body's centre, 36 up).
@@ -103,7 +148,7 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   const floorNear = (i, h) => { let best = -1, bd = Infinity; for (let k = 0; k < n[i]; k++) { const d = Math.abs(z[i * MAXF + k] - h); if (d < bd) { bd = d; best = k; } } return bd < 64 ? best : -1; };
   // Spawns (feet = origin − 36) and bomb sites from the entities.
   const ents = c => bsp.entities.filter(e => e.classname === c), feet = e => { const o = vec(e.origin); return [o[0], o[1], o[2] - feetUp]; };
-  const tSp = ents('info_player_deathmatch').map(feet), ctSp = ents('info_player_start').map(feet);
+  const known = SPAWN_PRIORITY[id] || null, tSp = (bsp.cs2 ? cs2Spawns(ents('info_player_deathmatch'), known) : ents('info_player_deathmatch')).map(feet), ctSp = (bsp.cs2 ? cs2Spawns(ents('info_player_start'), known) : ents('info_player_start')).map(feet);   // (CS2: its competitive spawns, in its order — cs2Spawns; `known`: the priorities a pre-v52 file lacks)
   const siteBoxes = ents('func_bomb_target').concat(ents('info_bomb_target')).map(e => { const mi = modelOf(e); if (mi > 0) return bounds(bsp.models[mi], e.origin ? vec(e.origin) : [0, 0, 0]); const o = vec(e.origin); return { mins: [o[0] - 128, o[1] - 128, o[2] - 64], maxs: [o[0] + 128, o[1] + 128, o[2] + 128] }; });
   // Align to the CS:GO navigation data: a 2D similarity (scale, turn, shift) from the spawn and site centres.
   const centre = pts => pts.reduce((a, p) => [a[0] + p[0] / pts.length, a[1] + p[1] / pts.length, a[2] + p[2] / pts.length], [0, 0, 0]);
@@ -142,7 +187,9 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
     if (got) break; } });
   // Spawns: ten a side, spread out (farthest first) from the map's spawn points; their columns are the spawn places.
   const pickTen = pts => { if (pts.length <= 10) return pts; const c = centre(pts), out = [pts.reduce((a, p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(a[0] - c[0], a[1] - c[1]) ? p : a)]; while (out.length < 10) { let best = null, bd = -1; for (const p of pts) { const d = Math.min(...out.map(q => Math.hypot(p[0] - q[0], p[1] - q[1]))); if (d > bd) { bd = d; best = p; } } out.push(best); } return out; };
-  const T10 = pickTen(tSp), CT10 = pickTen(ctSp);
+  // (Counter-Strike 2: every competitive spawn in CS2's order, never spread farthest first — the first of a team took the
+  // spawn farthest from the rest: Nuke's T in Secret, a CT by Ramp; extras for larger teams round them, arena-maps.js spawnSlots)
+  const T10 = bsp.cs2 ? tSp : pickTen(tSp), CT10 = bsp.cs2 ? ctSp : pickTen(ctSp);
   for (const [pts, name] of [[tSp, 'TSpawn'], [ctSp, 'CTSpawn']]) { const pid = placeId(name); for (const p of pts) { const i = cellOf(p[0], p[1]); if (i < 0) continue; const k = floorNear(i, p[2]); if (k >= 0 && !G.places[place[i * MAXF + k]]) place[i * MAXF + k] = pid; } }
   // Collision segments: the solid stretches, walk-on where a floor is on top.
   const segOf = (L, i) => { const out = []; for (const s of L) { const [b, t] = s; if (t <= zLow - 64) continue; const top = floorOf[i].some(f => f.h === t), wall = T.wall || 'concrete';
@@ -200,7 +247,7 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
     trianglesIn: (gx0, gy0, gz0, gx1, gy1, gz1, out, flags, max) => { const n = NMC.trianglesIn(x0 + (gx0 + W / 2) / U, y1 - (gz1 + D / 2) / U, zLow + gy0 / U, x0 + (gx1 + W / 2) / U, y1 - (gz0 + D / 2) / U, zLow + gy1 / U, out, flags, max);
       for (let k = 0; k < n * 9; k += 3) { const hx = out[k], hy = out[k + 1], hz = out[k + 2]; out[k] = (hx - x0) * U - W / 2; out[k + 1] = (hz - zLow) * U; out[k + 2] = (y1 - hy) * U - D / 2; } return n; } } : null;
   for (const L of bsp.ladderBoxes || []) { const a = toGame(L.mins[0], L.maxs[1], L.mins[2]), c = toGame(L.maxs[0], L.mins[1], L.maxs[2]); ladders.push([a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(2))); }   // (Source: ladder brushes)
-  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: bsp.cs2 ? null : { data: bsp, toGame }, cs2: !!bsp.cs2, hammer: bsp.cs2 ? { x0, y1, W, D, zLow, U } : null, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders, movers, nadeSolid, nadeMesh } });
+  const map = finishMap(id, G, T, { segs, above: new Float32Array(N).fill(NONE), zLow, spawns, extra: { bsp: bsp.cs2 ? null : { data: bsp, toGame }, cs2: !!bsp.cs2, hammer: bsp.cs2 ? { x0, y1, W, D, zLow, U } : null, aligned: align ? +align.err.toFixed(0) : null, fromFile: true, ladders, movers, nadeSolid, nadeMesh, modeOff: bsp.cs2 && bsp.solidSpans ? modeOffOf(bsp, id) : [] } });
   // The segments only made the collision boxes: these maps are drawn from their own faces (bsp-mesh.js), never from
   // the columns, and a large map holds some 200 000 of them (60 MB).
   if (bsegs) map.bulletSolids = mergeSegs(cols, rows, bsegs, zLow);

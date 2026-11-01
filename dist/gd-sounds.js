@@ -7,7 +7,7 @@
 // Units, once: 1 Hammer unit (HU, CS2's) = 1 inch = 2.54 cm; 1 game unit = 16.5 cm ≈ 6.5 HU (arena-move.js HU =
 // 2.54 / 16.5 game units per HU). CS2's curves are in HU: a sound `d` game units away is read at d / HU.
 // docs/GD-SOUNDS.md lists every event, its CS2 event and file, and what the local import covers.
-import { audioCtx, master, uiBus, ringBus, reverb, duck, HU_UNITS } from './spatial-audio.js';
+import { audioCtx, master, uiBus, musicBus, ringBus, reverb, duck, HU_UNITS, listenerFrame, setRanges } from './spatial-audio.js';
 import { want, ready, bufferOf, setSoundRoute, roomSoundNames, sameSource, FX } from './sound-bank.js';
 import { userAssets } from './user-assets.js';
 import { WEAPONS, isFirearm } from './weapons-data.js';
@@ -26,7 +26,7 @@ export const STEP_CS2 = { concrete: 'Concrete', metal: 'SolidMetal', wood: 'Wood
 export const IMPACT_OF = { wood: 'wood', crate: 'wood', door: 'wood', glass: 'glass', plaster: 'plaster', roof: 'plaster', metal: 'metal', 'metal-blue': 'metal', 'metal-green': 'metal', 'metal-red': 'metal', sand: 'sand', adobe: 'concrete', brick: 'concrete', concrete: 'concrete', stone: 'concrete', flesh: 'flesh' };
 // Voice categories ("mix"): how many may sound at once, and the whole bank's cap. Full: the quietest of the lowest
 // priority goes (faded over CS2's 0.1 s fadetime), or the new one is dropped if everything sounding outranks it.
-export const MIX = { gun: 14, far: 6, step: 8, impact: 6, foley: 8, boom: 6, bomb: 3, ui: 4, loop: 4 };
+export const MIX = { gun: 14, far: 6, step: 8, impact: 6, foley: 8, boom: 6, bomb: 3, ui: 4, loop: 4, music: 1, radio: 2 };   // (music: one at a time — CS2's stop_music)
 export const VOICES = 40;
 // The events. cs: CS2's event (game_sounds_*.vsndevts); f: shipped placeholders; cat; mix; pr: priority (0 … 3);
 // pv / prate: the placeholder's own level and rate (never applied to a CS2 file); clip: CS2's first-person clip that
@@ -66,7 +66,9 @@ E('nade.incendiary.ignite', 'IncGrenade.Start', take('glass'), { mix: 'boom', pr
 E('nade.molotov.air', 'Molotov.StartFailed', take('glass'), { mix: 'boom', pr: 2, pv: .8 }); E('nade.incendiary.air', 'IncGrenade.StartFailed', take('glass'), { mix: 'boom', pr: 2, pv: .8 });
 E('nade.fire.loop', 'Inferno.Loop', take('fire'), { mix: 'loop', pr: 2, pv: .55, prate: .8 }); E('nade.fire.crackle', 'Inferno.Fire.Ignite', [], { mix: 'foley', pr: 0, syn: 'crackle' });
 E('nade.fire.fade', 'Inferno.FadeOut', [], { mix: 'foley' }); E('nade.fire.out', 'Molotov.Extinguish', [], { mix: 'boom', pr: 2, syn: 'hiss' });
-for (const [s, M] of Object.entries(STEP_CS2)) { E(`step.${s}`, `CT_${M}.StepLeft`, steps(s), { mix: 'step', pr: 2, pv: .55 }); E(`land.${s}`, `Land_${M}.StepLeft`, take('land'), { mix: 'step', pr: 2, pv: .45 }); }
+// (steps and landings: CS2's Base.Footstep / Base.Land — reverb_wet 1.0, distance_effect_mix 1.0 / 0.6, the sound 20 HU over the
+// feet: position_offset [0, 0, 20] — STEP_UP)
+for (const [s, M] of Object.entries(STEP_CS2)) { E(`step.${s}`, `CT_${M}.StepLeft`, steps(s), { mix: 'step', pr: 2, pv: .55, wet: 1, dm: 1 }); E(`land.${s}`, `Land_${M}.StepLeft`, take('land'), { mix: 'step', pr: 2, pv: .45, wet: 1, dm: .6 }); }
 E('step.ladder', 'CT_Ladder.StepLeft', steps('metal'), { mix: 'step', pr: 2, pv: .5 }); E('step.ladder.wood', 'CT_Wood_Ladder.StepLeft', steps('wood'), { mix: 'step', pr: 2, pv: .5 });
 E('step.gear.ct', 'Gear.CT', [], { mix: 'step', pr: 1, layer: 1 }); E('step.gear.t', 'Gear.T', [], { mix: 'step', pr: 1, layer: 1 }); E('player.jump', 'Default.WalkJump', [], { mix: 'step', pr: 1 });
 for (const [m, cs] of Object.entries({ concrete: 'Concrete', wood: 'Wood', metal: 'SolidMetal', glass: 'Glass', sand: 'Sand', dirt: 'Dirt', plaster: 'drywall', tile: 'Tile', flesh: 'Flesh' }))
@@ -88,8 +90,27 @@ E('ui.buy', 'UIPanorama.buymenu_purchase', [], { cat: 'ui', mix: 'ui', pr: 2 });
 E('ui.round.won', 'UIPanorama.round_report_round_won', [], { cat: 'ui', mix: 'ui', pr: 2 }); E('ui.round.lost', 'UIPanorama.round_report_round_lost', [], { cat: 'ui', mix: 'ui', pr: 2 });
 E('world.glass.break', 'Glass.Break', take('glass'), { mix: 'impact', pr: 1, pv: 1 }); E('world.break', 'Wood.Break', take('wall'), { mix: 'impact', pr: 1, pv: .8 });
 E('world.door.open', 'Door.wood_full_open', [], { pr: 1 }); E('world.door.close', 'Door.wood_full_close', [], { pr: 1 });
-// (CS2's radio and announcer lines live in its game_sounds_vo_* events — not among the reference files read here; no
-// event until they are: docs/GD-SOUNDS.md)
+// The round's end: CS2's default music kit (soundevents/music/valve_cs2_01/game_sounds_music: Music.WonRound / LostRound —
+// volume 1, snd_roundend_volume, priority 4, test_mvp_block; Music.MVPAnthem — volume .9, snd_mvp_volume, priority 5,
+// block_won_lost, stop_music). 2D on the Music bus (Settings → Audio → Music). Which one: roundEndEvent below.
+E('music.won', 'Music.WonRound.valve_cs2_01', [], { cat: 'music', mix: 'music', pr: 3 }); E('music.lost', 'Music.LostRound.valve_cs2_01', [], { cat: 'music', mix: 'music', pr: 3 });
+E('music.mvp', 'Music.MVPAnthem.valve_cs2_01', [], { cat: 'music', mix: 'music', pr: 3 });
+// The round's start: CS2's round start radio in a voice (talker: scripts/talker/<voice>.vrr, the lines of its four round
+// start concepts — tools/import-cs2-sounds.mjs reads them from the install), 2D on the Interface bus, your team only.
+// CS2's agents → their voice: items_game's vo_prefix where an agent has one, else the agent's own set (its model folder);
+// the sides' defaults are CS2's map-based agents (ctm_sas, tm_phoenix). Valve's lines are never shipped: no placeholder.
+export const VOICE_OF = { ctm_sas: 'sas', ctm_st6: 'seal', ctm_swat: 'swat', ctm_fbi: 'fbihrt', ctm_gendarmerie: 'gendarmerie_male', ctm_diver: 'seal_diver_01', tm_phoenix: 'phoenix', tm_leet: 'leet', tm_balkan: 'balkan', tm_professional: 'professional', tm_jungle_raider: 'jungle_male' };
+export const VOICE_VARIANT = { ctm_diver_varianta: 'seal_fem', ctm_diver_variantb: 'seal_diver_01', ctm_diver_variantc: 'seal_diver_02', ctm_fbi_variantb: 'fbihrt_epic', ctm_gendarmerie_variantc: 'gendarmerie_fem_epic', ctm_st6_varianti: 'seal_epic', ctm_st6_variantk: 'gsg9', ctm_swat_variante: 'swat_epic', ctm_swat_variantf: 'swat_fem', ctm_swat_variantk: 'swat_fem',
+  tm_balkan_varianth: 'balkan_epic', tm_jungle_raider_variantb: 'jungle_male_epic', tm_jungle_raider_variantb2: 'jungle_male_epic', tm_jungle_raider_variante: 'jungle_fem_epic', tm_jungle_raider_variantf: 'jungle_fem', tm_jungle_raider_variantf2: 'jungle_fem', tm_leet_variantf: 'leet_epic', tm_professional_varg: 'professional_fem', tm_professional_varj: 'professional_fem' };
+export const SIDE_VOICE = { ct: 'sas', t: 'phoenix' };
+// An agent's CS2 model ('CS2: agents/models/ctm_sas/ctm_sas (Steam depot)', models.agents[side].from) → its voice, or null.
+export const voiceOfModel = from => { const m = /agents\/models\/([a-z0-9_]+)\/([a-z0-9_]+)/i.exec(String(from || '')); if (!m) return null; const f = m[1].toLowerCase(), v = m[2].toLowerCase(); return VOICE_VARIANT[v] || (/^tm_professional_varf\d*$/.test(v) ? 'professional_epic' : VOICE_OF[f] || null); };
+// The voices worth importing for a computer's agents (models.agents): theirs and the sides' defaults.
+export const roundStartVoices = (agents = {}) => [...new Set([voiceOfModel(agents?.ct?.from), voiceOfModel(agents?.t?.from), SIDE_VOICE.ct, SIDE_VOICE.t].filter(Boolean))];
+export const RADIO_VOICES = [...new Set([...Object.values(VOICE_OF), ...Object.values(VOICE_VARIANT), 'professional_epic'])];
+for (const v of RADIO_VOICES) E(`radio.start.${v}`, null, [], { cat: 'radio', mix: 'radio', pr: 3, talker: v });
+// (CS2's announcer — "Counter-Terrorists win", vo/announcer/cs2_classic ctwin / terwin — is in the install but not one of
+// the round's three music sounds asked for: no event.)
 
 // CS2's reference values for each event above (gd-sounds-ref.js, generated from the local game_sounds_*.vsndevts by
 // tools/import-cs2-sounds.mjs --ref): [volume, distance curve [[HU, gain]…], instance limit per source (0: none),
@@ -107,20 +128,61 @@ export const CULL = .02;
 // rate never reaches a CS2 file — GD-AUD-07); without one, the placeholder with CS2's curve, limit and occlusion. ──
 const MIX_I = {}, CAP = []; for (const [k, n] of Object.entries(MIX)) { MIX_I[k] = CAP.length; CAP.push(n); }
 let OV = {}; const RES = {};
+// The round's music and radio, under CS2's own volume (this game's levels: CS2's files are mastered hot — the stingers and
+// the radio lines measure about −11 LUFS, the radio already band-limited in the file — and the round end must not cover
+// the bomb or the round's UI; the Music slider scales the music on top). Needs a person with headphones to settle.
+export const CAT_LEVEL = { music: .5, radio: .7 };
 function resolve(id) { const e = EVENTS[id], o = OV[id], R = e.cs ? REF[e.cs] : null, cs2 = !!o?.files?.length, pr = e.prate || 1;
-  return { id, e, cs2, files: cs2 ? o.files : e.f, vol: cs2 ? (Number.isFinite(+o.vol) ? +o.vol : 1) : (e.pv ?? 1), curve: (cs2 && o.curve?.length ? o.curve : R?.[1]) || null,
+  return { id, e, cs2, files: cs2 ? o.files : e.f, vol: cs2 ? (Number.isFinite(+o.vol) ? +o.vol : 1) * (CAT_LEVEL[e.cat] ?? 1) : (e.pv ?? 1), curve: (cs2 && o.curve?.length ? o.curve : R?.[1]) || null,
     limit: (cs2 ? o.limit : null) ?? R?.[2] ?? 0, occl: (cs2 ? o.occl : null) ?? R?.[3] ?? .5, plo: cs2 ? (o.pitch?.[0] ?? 1) : pr * .97, phi: cs2 ? (o.pitch?.[1] ?? 1) : pr * 1.03,
-    delay: cs2 ? (+o.delay || 0) : 0, mi: MIX_I[e.mix], pr: e.pr, cat: e.cat, far: e.far || null, with: e.with || null, wet: e.wet || 0 }; }
+    delay: cs2 ? (+o.delay || 0) : 0, mi: MIX_I[e.mix], pr: e.pr, cat: e.cat, flat: e.cat === 'ui' || e.cat === 'music' || e.cat === 'radio', sets: cs2 && Array.isArray(o.sets) ? o.sets : null,
+    far: e.far || null, with: e.with || null, wet: e.wet || 0, dm: e.dm ?? (e.layer && e.mix !== 'step' ? 0 : DMIX[e.mix] ?? .5) }; }
+// CS2's distance_effect_mix (how much of its distance filtering an event takes): a gun's Single 1.0, its SingleDistant 0
+// (the far layer is already the distant sound), BaseGrenade.Explode 0, bounces / clip-outs .5, footsteps 1.0, landings .6.
+const DMIX = { gun: 1, far: 0, step: 1, impact: .5, foley: .5, boom: 0, bomb: .5, loop: 0 };
 function rebuild(ov) { OV = ov || {}; for (const id in EVENTS) RES[id] = resolve(id); }
 rebuild({});
 export const gdEvent = id => RES[id] || null;
 export const setGdOverrides = ov => rebuild(ov);   // (tests; the room's models.gdSounds otherwise)
 let ovLoad = null;
-export const loadGdOverrides = () => ovLoad ??= (typeof fetch === 'function' ? userAssets().catch(() => null) : Promise.resolve(null)).then(ua => { rebuild(ua?.models?.gdSounds || {}); return roomSoundNames().catch(() => null); });
+export const loadGdOverrides = () => ovLoad ??= (typeof fetch === 'function' ? userAssets().catch(() => null) : Promise.resolve(null)).then(ua => { rebuild(ua?.models?.gdSounds || {}); setAgentVoices(ua?.models?.agents); return roomSoundNames().catch(() => null); });
+// The voice each side's radio speaks in: the room's agent for that side (cs2-agents.js draws it), else the side's default.
+const SIDE_NOW = { ...SIDE_VOICE };
+export function setAgentVoices(agents) { for (const s of ['ct', 't']) SIDE_NOW[s] = voiceOfModel(agents?.[s]?.from) || SIDE_VOICE[s]; }
+export const teamVoice = side => SIDE_NOW[side] || null;
 
-// ── The ear: the listener's position read straight from the context (no object made). ──
-let ctx = null; const ear = { x: 0, y: 0, z: 0 };
-const readEar = () => { const L = ctx.listener; if (L.positionX) { ear.x = L.positionX.value; ear.y = L.positionY.value; ear.z = L.positionZ.value; } return ear; };
+// ── The ear: the listener's position read straight from the context (no object made); its forward / up as lab.js set
+// them this frame (spatial-audio listenerFrame). ──
+let ctx = null; const ear = { x: 0, y: 0, z: 0 }, LF = { fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 };
+const readEar = () => { const L = ctx.listener; if (L.positionX) { ear.x = L.positionX.value; ear.y = L.positionY.value; ear.z = L.positionZ.value; } listenerFrame(LF); return ear; };
+
+// ── Where a placed sound seems to be, besides how loud (package U: "a player running in mid sounds next to me, and I can't
+// tell where"). CS2 gives distance, walls and direction more than a level: Steam Audio's HRTF (here the PannerNode's
+// 'HRTF'), its distance filtering (each event's distance_effect_mix), its occlusion (occlusion_intensity over baked
+// occlusion). This game's approximation — one lowpass and one gain per voice, set when the sound starts (a step lasts
+// ~0.3 s), numbers only (no object):
+//  · walls: occ (0 … 1, lab.js: 1 − e^(−Σ density × thickness) over the CS2 sight boxes crossed) × √intensity → up to
+//    −24 dB and a lowpass down to 500 Hz. A footstep (intensity .375) behind one 26 HU concrete wall (occ .65): −9.6 dB,
+//    ~4.3 kHz; before, −1.2 dB and 14 kHz: no wall could be heard. Floors count the same (the line crosses them).
+//  · distance: the highs fade with distance — 20 kHz close, 3 kHz at 2500 HU (a gun's last curve point) — × the event's
+//    distance_effect_mix (footsteps 1.0: ~8.7 kHz at their 1100 HU edge); with the reverb send rising with distance
+//    (gdPlay: CS2's reverb_wet), a far step sounds far, not just quiet.
+//  · behind: equalpower voices (far, low-priority — no front / back of their own) lose their top behind the ear (to
+//    5 kHz straight behind, the lowpass). HRTF voices already carry the head's front / back colour: only a gentle
+//    high-shelf on top (−5 dB over 8 kHz straight behind, × the event's distance_effect_mix ×2, none for an explosion's
+//    0) — a 5 kHz lowpass there made a close open enemy behind you as dull as one behind a wall (review U). Horizontal: a
+//    sound right under or over you is neither in front nor behind (the HRTF's elevation and the floor's occlusion tell
+//    those). The wall / distance / behind amounts (occDb, occHz, airHz, backHz, backDb) are this game's tuning, not CS2
+//    data (CS2 gives the per-event occlusion_intensity and distance_effect_mix they scale) — a headphones check sets them.
+export const CUE = { occDb: 24, occHz: 500, airHz: 3000, airHu: 2500, backHz: 5000, backDb: 5, shelfHz: 8000, open: 16000 };
+export const cue = { gain: 1, hz: 20000, back: 0, shelf: 0 };
+export function placeCue(dx, dy, dz, hu, occ, intensity, dmix, f, out = cue, hrtf = false) {
+  const o = Math.max(0, Math.min(1, +occ || 0)) * Math.sqrt(Math.max(0, +intensity || 0)); out.gain = Math.pow(10, -CUE.occDb * o / 20);
+  let hz = 20000 * Math.pow(CUE.occHz / 20000, o); const a = Math.min(1, hu / CUE.airHu) * (dmix || 0); if (a > 0) hz = Math.min(hz, 20000 * Math.pow(CUE.airHz / 20000, a));
+  // (the way you face, level: forward's level part, plus up's when you look steeply down or up — up then leans the way you face)
+  const hx = f.fx - f.fy * f.ux, hz2 = f.fz - f.fy * f.uz, hl = Math.hypot(hx, hz2), dl = Math.hypot(dx, dz), d = Math.hypot(dx, dy, dz);
+  const b = hl > 1e-6 && dl > 1e-6 ? Math.max(0, -(dx * hx + dz * hz2) / (hl * dl)) * (dl / d) : 0; if (b > 0 && !hrtf) hz = Math.min(hz, 20000 * Math.pow(CUE.backHz / 20000, b));
+  out.shelf = hrtf && b > 0 ? -CUE.backDb * b * Math.min(1, 2 * (dmix || 0)) : 0; out.hz = hz; out.back = b; return out; }
 
 // ── Walls (GD-AUD-03): how blocked a point is (0 … 1, the game's hook: lab.js, a couple of bounded lines through the
 // map's boxes), evaluated once when a sound starts, kept 250 ms for that spot and ear (a burst's shots, a run's steps
@@ -141,7 +203,7 @@ const OCV = new Float64Array(OCC_N);
 // voice, or drops the newcomer when all outrank it (the bomb, a defuse, a close enemy's steps stay heard). ──
 const FADE = .1;
 const SLOTS = Array.from({ length: VOICES }, () => ({ busy: false, end: 0, mi: 0, src: null, id: null, pr: 0, lvl: 0, t0: 0, s: null, g: null }));
-export const voiceStats = { started: 0, stolen: 0, dropped: 0, culled: 0, live: 0, peak: 0, nodes: 0 };
+export const voiceStats = { started: 0, stolen: 0, dropped: 0, culled: 0, live: 0, peak: 0, nodes: 0, music: 0, radio: 0 };   // (music, radio: the round's sounds started — tests)
 function release(v, t, fade) { v.busy = false; const s = v.s, g = v.g; v.s = v.g = null; if (!fade || !s) return; voiceStats.stolen++;
   try { g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + FADE); s.stop(t + FADE + .02); } catch {} }
 const worse = (a, b) => !b || a.pr < b.pr || (a.pr === b.pr && (a.lvl < b.lvl || (a.lvl === b.lvl && a.t0 < b.t0)));
@@ -174,27 +236,31 @@ let nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date
 // files is decoded yet (asked for now: the caller plays its stand-in).
 export function gdPlay(id, o = NO) {
   const r = RES[id]; if (!r) return false; if (o.key && seenKey(o.key, nowMs())) return true;
-  const name = o.name ? (ready(o.name) ? o.name : (want([o.name]), null)) : pick(r); if (!name) return false;
   let c; try { c = ctx ??= audioCtx(); } catch { return false; }
   const at = r.cat === 'world' ? o.at || null : null, t = c.currentTime + (o.delay || 0) + r.delay; readEar();
-  const hu = at ? Math.hypot(at.x - ear.x, at.y - ear.y, at.z - ear.z) / HU : 0;
-  let gain = (o.abs ? 1 : r.vol) * (o.gain ?? 1) * (r.cat === 'ui' ? 1 : curveGain(r.curve, hu));   // (yours: the curve at 0 — CS2 hears your own steps at its first point, .45)
+  const dx = at ? at.x - ear.x : 0, dy = at ? at.y - ear.y : 0, dz = at ? at.z - ear.z : 0, hu = at ? Math.hypot(dx, dy, dz) / HU : 0;
+  let gain = (o.abs ? 1 : r.vol) * (o.gain ?? 1) * (r.flat ? 1 : curveGain(r.curve, hu));   // (yours: the curve at 0 — CS2 hears your own steps at its first point, .45)
+  // (out of earshot: silent on purpose, decided before any file — a far step whose file is still decoding used to return
+  // false here and fall back to the shared bank's Web Audio law, which never reaches silence: heard across the map)
   if (gain < CULL) { voiceStats.culled++; layers(r, o); return true; }
-  const occ = at && r.occl > 0 ? occlusionAt(at.x, at.y, at.z, nowMs()) * r.occl : 0; gain *= 1 - .55 * occ;   // (CS2 scales occlusion by each event's intensity; the −5 dB and the lowpass at full are this game's approximation)
+  const name = o.name ? (ready(o.name) ? o.name : (want([o.name]), null)) : pick(r); if (!name) return false;
+  const occ = at && r.occl > 0 ? occlusionAt(at.x, at.y, at.z, nowMs()) : 0, hrtf = r.pr >= 2 && hu < 1500; let hz = 20000, sh = 0;
+  if (at) { placeCue(dx, dy, dz, hu, occ, r.occl, r.dm, LF, cue, hrtf); gain *= cue.gain; hz = cue.hz; sh = cue.shelf; if (gain < CULL) { voiceStats.culled++; layers(r, o); return true; } }   // (walls, distance, behind: placeCue above)
   const v = acquire(r, o.src ?? (at ? null : 'me'), gain, c.currentTime); if (!v) { layers(r, o); return true; }
   const buf = bufferOf(name); if (!buf) return false;
   try { const s = c.createBufferSource(), g = c.createGain(); s.buffer = buf; s.playbackRate.value = o.rate || (r.plo + Math.random() * (r.phi - r.plo)); g.gain.value = gain; s.connect(g); let head = g, nodes = 2;
-    if (occ > .02) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 18000 - 16500 * occ; head.connect(f); head = f; nodes++; }
-    if (at) { const p = c.createPanner(); p.panningModel = r.pr >= 2 && hu < 1500 ? 'HRTF' : 'equalpower'; p.distanceModel = 'linear'; p.rolloffFactor = 0; p.refDistance = 1; p.maxDistance = 1e5;   // (the distance law is CS2's curve above, not Web Audio's: rolloff 0)
+    if (hz < CUE.open) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = hz; f.Q.value = -3.0103; head.connect(f); head = f; nodes++; }   // (Q −3.01 dB = 1/√2: Butterworth, flat to the cut — Web Audio's lowpass Q is in dB, 0 dB would peak +1.25 dB)
+    if (sh < -.5) { const f = c.createBiquadFilter(); f.type = 'highshelf'; f.frequency.value = CUE.shelfHz; f.gain.value = sh; head.connect(f); head = f; nodes++; }   // (behind, on an HRTF voice: placeCue)
+    if (at) { const p = c.createPanner(); p.panningModel = hrtf ? 'HRTF' : 'equalpower'; p.distanceModel = 'linear'; p.rolloffFactor = 0; p.refDistance = 1; p.maxDistance = 1e5;   // (the distance law is CS2's curve above, not Web Audio's: rolloff 0)
       p.channelCount = 1; p.channelCountMode = 'explicit';   // (a placed sound is a point: a stereo recording folded to mono first — GD-AUD-18)
       if (p.positionX) { p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z; } else p.setPosition?.(at.x, at.y, at.z); head.connect(p); head = p; nodes++; }
-    head.connect(r.cat === 'ui' ? uiBus(c) : o.ring ? ringBus(c) : master(c));
+    head.connect(r.cat === 'ui' || r.cat === 'radio' ? uiBus(c) : r.cat === 'music' ? musicBus(c) : o.ring ? ringBus(c) : master(c));   // (the radio: the Interface bus, as CS2's team radio is never in the world)
     if (r.wet) { const w = c.createGain(); w.gain.value = gain * r.wet * (.12 + .3 * Math.min(1, hu / 1500)); g.connect(w).connect(reverb(c)); nodes++; }   // (more room the further off; the amounts are this game's)
     const dur = buf.duration / s.playbackRate.value; v.busy = true; v.mi = r.mi; v.src = o.src ?? (at ? null : 'me'); v.id = r.id; v.pr = r.pr; v.lvl = gain; v.t0 = t; v.s = s; v.g = g;
     voiceStats.started++; voiceStats.nodes += nodes; let live = 0; for (const x of SLOTS) if (x.busy) live++; voiceStats.live = live; if (live > voiceStats.peak) voiceStats.peak = live;
     if (o.loop) { s.loop = true; v.end = t + o.loop + .1; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + .4); g.gain.setValueAtTime(gain, t + Math.max(.5, o.loop - 1)); g.gain.linearRampToValueAtTime(0, t + o.loop); s.start(t, Math.random() * buf.duration * .5); s.stop(t + o.loop + .05);
       layers(r, o); return { stop() { try { const n = c.currentTime; g.gain.cancelScheduledValues(n); g.gain.setValueAtTime(g.gain.value, n); g.gain.linearRampToValueAtTime(0, n + .35); s.stop(n + .4); v.end = n + .4; } catch {} } }; }
-    v.end = t + dur + .02; s.start(t);
+    v.end = t + dur + .02; s.start(t); if (r.cat === 'music') { musicV = v; voiceStats.music++; } else if (r.cat === 'radio') voiceStats.radio++;
   } catch { return false; }
   layers(r, o); return true; }
 // CS2 starts an event's child events with it: the distant layer (its own curve: silent close by, so never rolled off
@@ -235,6 +301,36 @@ export const ROUTE = {
 const RLO = { at: null, name: null, gain: 1, delay: 0, src: null, abs: true }; const RL = (at, name, gain, delay) => { RLO.at = at; RLO.name = name; RLO.gain = gain; RLO.delay = delay; RLO.src = at ? null : 'me'; return RLO; };
 const STO = { at: null, src: null };
 export function gdStep(surface, at = null, src = null) { STO.at = at; STO.src = src; return gdPlay(RES[`step.${surface}`] ? `step.${surface}` : 'step.concrete', STO); }
+// Someone else's footsteps (multiplayer.js, each remote body each frame — numbers on the body, no object). CS2: a step only
+// over 135 HU/s on the ground — a Shift walk (knife 250 × .52 = 130 HU/s) and a crouch (× .34 = 85) are silent to everyone.
+// Walking or running is judged on the body's own clock — `vs`, its speed over the 0.25 s of snapshots up to the moment
+// drawn (bufSpeed: the sender's timestamps) — not on the per-frame drawn motion, which this computer's interpolation
+// bends (a late packet's catch-up, the adaptive delay easing: ±10 % for a few hundred ms) and frame jitter shakes: the
+// old per-frame test of a 130 HU/s walk against 135 — a 4 % margin — let a Shift-walker through as running (package U).
+// A peek must be heard as it starts (CS2: the step timer is at 0 standing — the first step the moment speed passes
+// 135): `vq`, the snapshot speed over the last 125 ms, starts a run early when clearly past any walk (> 160 HU/s: a 130
+// walk + 23 %, beyond timestamp jitter); the 250 ms `vs` decides the rest (a steady 135–160 run, a walk's silence — no
+// hysteresis below 135: a runner who Shift-walks at 130 must go quiet). The drawn body must be moving too (its per-frame
+// speed smoothed over ~80 ms > 60 HU/s — a stop is heard within ~0.1 s, though the last snapshots before it still say
+// "running"); with no snapshot speed (vs NaN: a body just in, under 100 ms of snapshots) the smoothed drawn speed decides,
+// but only a clear run (> 160: interpolation swings a walk ±12 %). A teleport (> 60 u/s) is not running.
+// Steps every 0.3 s while running, the first on the frame running starts (after a landing 0.1 s on: the landing is its own).
+export const STEP_RUN = 135 * HU, STEP_EVERY = .3, STEP_WIN = .25, STEP_UP = 20 * HU, STEP_MOVING = 60 * HU, STEP_PEEK = 160 * HU, STEP_TAU = .08;   // (STEP_UP: CS2's position_offset — a step is heard 20 HU over the feet)
+export function stepDue(m, dt, x, z, crouched, ground, vs = NaN, vq = NaN) {
+  if (m.swT === undefined) { m.swT = 0; m.swX = x; m.swZ = z; m.swV = 0; m.stepT = STEP_EVERY; }
+  if (dt > 0) { const u = Math.hypot(x - m.swX, z - m.swZ) / dt; m.swX = x; m.swZ = z; if (u > 60) m.swV = 0; else m.swV += (u - m.swV) * (1 - Math.exp(-dt / STEP_TAU)); }
+  const v = Number.isFinite(vs) ? (vs > 60 ? 0 : vs) : m.swV * STEP_RUN / STEP_PEEK, q = Number.isFinite(vq) && vq <= 60 ? vq : 0;
+  if (!ground || crouched || !(m.swV > STEP_MOVING) || !(v > STEP_RUN || q > STEP_PEEK)) { m.stepT = ground ? STEP_EVERY : STEP_EVERY - .1; return false; }
+  m.stepT += dt; if (m.stepT >= STEP_EVERY) { m.stepT = 0; return true; } return false; }
+// A remote body's speed (units/s) on its own clock: its snapshots ({t: the sender's ms, x, z}, oldest first — multiplayer
+// model.buf) over the `win` ms ending at `t` (the moment drawn, m.seen), interpolated at both ends. NaN when they span
+// under 100 ms or 80 % of `win` (a body just in: a short span magnifies a stamp's few ms). A loop over the buffer, no object.
+export function bufSpeed(buf, t, win = 250) { const n = buf?.length || 0; if (n < 2 || !Number.isFinite(t)) return NaN;
+  const t1 = Math.min(buf[n - 1].t, t), t0 = Math.max(buf[0].t, t1 - win); if (t1 - t0 < Math.max(100, .8 * win)) return NaN; let x1 = NaN, z1 = NaN;
+  for (let i = n - 1; i > 0; i--) { const a = buf[i - 1], b = buf[i], s = Math.max(1, b.t - a.t);
+    if (x1 !== x1 && a.t <= t1) { const k = Math.min(1, (t1 - a.t) / s); x1 = a.x + (b.x - a.x) * k; z1 = a.z + (b.z - a.z) * k; }
+    if (a.t <= t0) { const k = Math.min(1, (t0 - a.t) / s); return Math.hypot(x1 - (a.x + (b.x - a.x) * k), z1 - (a.z + (b.z - a.z) * k)) / ((t1 - t0) / 1000); } }
+  return NaN; }
 // A first-person clip's sound (fp-sounds.js: CS2's clip event — its own volume and pitch) as the set's event: placed,
 // limited and curved like the rest. The set → the event whose curve carries it.
 const CLIP_EV = s => RES[`gun.${s}.reload`] ? `gun.${s}.reload` : RES[`nade.${s}.pin`] ? `nade.${s}.pin` : s === 'c4' ? 'c4.key' : 'knife.slash';
@@ -244,11 +340,66 @@ export function gdClip(set, name, vol, rate, at, src = null) { CLO.at = at; CLO.
 // ── On / off (lab.js, every frame: cheap), and decoding ahead (GD-AUD-13): on entering a match the events of grenades,
 // the bomb, steps, impacts, hits and the UI; a gun's own when it is first seen (yours or someone else's). ──
 let on = false; export const gdOn = () => on;
-export function gdAudio(v) { v = !!v; if (v === on) return; on = v; setSoundRoute(on ? ROUTE : null); if (on) { loadGdOverrides().then(() => { if (on) gdPrewarm(); }); } }
-const PREWARM = /^(nade|c4|step|land|impact|item|ui|hurt|player|world|knife|gun\.(dry|scope|casing))/;
-export function gdPrewarm() { const names = []; for (const id in RES) if (PREWARM.test(id)) names.push(...RES[id].files); return want(names); }
+// The shared fallbacks' ranges while a match is on (spatial-audio outAt: a sound GD's bank could not play yet): linear to
+// silence at the family's last CS2 curve point — footsteps (CT_Concrete.StepLeft) 1 at 116.6 → 0 at 1100 HU, handling
+// (Weapon_AK47.Clipout) 50.3 → 1100, a gun's Single 175.7 → 2500, a bounce (HEGrenade.Bounce) 28.3 → 1700, an explosion
+// (BaseGrenade.Explode) 231.4 → 2700 — in game units. [model, ref, rolloff, max] as spatial-audio's RANGE. The bomb's
+// beep / plant / defuse stand-ins keep the game's own reach (spatial-audio RANGE) but linear: silent at its edge, not
+// Web Audio's 'inverse' floor heard everywhere.
+export const GD_RANGE = { step: ['linear', 116.6 * HU, 1, 1100 * HU], handling: ['linear', 50.3 * HU, 1, 1100 * HU], gun: ['linear', 175.7 * HU, 1, 2500 * HU], effect: ['linear', 28.3 * HU, 1, 1700 * HU], explosion: ['linear', 231.4 * HU, 1, 2700 * HU], beep: ['linear', 10, 1, 320], plant: ['linear', 8, 1, 330], defuse: ['linear', 5, 1, 140] };
+export function gdAudio(v) { v = !!v; if (v === on) return; on = v; setSoundRoute(on ? ROUTE : null); setRanges(on ? GD_RANGE : null); if (on) { loadGdOverrides().then(() => { if (on) gdPrewarm(); }); } else { gdStopMusic(.3); roundSounds.reset(); } }   // (leaving the match: its music stops, its round memory goes)
+const PREWARM = /^(nade|c4|step|land|impact|item|ui|hurt|player|world|knife|music|radio|gun\.(dry|scope|casing))/;   // (music, radio: only what this computer imported — a couple of voices)
+export function gdPrewarm() { const names = []; for (const id in RES) if (PREWARM.test(id)) names.push(...RES[id].files); try { reverb(ctx ??= audioCtx()); } catch {} return want(names); }   // (the shared reverb built now, at the match's load: steps send to it from the first one — never its impulse made mid-round)
 const gunsWanted = new Set();
 export function gdWantGun(id) { if (!id || gunsWanted.has(id)) return; gunsWanted.add(id); loadGdOverrides().then(() => { const n = []; for (const k of ['fire', 'far', 'reload', 'action']) if (RES[`gun.${id}.${k}`]) n.push(...RES[`gun.${id}.${k}`].files); want(n); }); }
 // A flash (GD-AUD-10): CS2's ring (or the caller's tone) on the Effects bus after the duck, and the world dulled.
 export function gdFlashed(amount, secs) { duck(amount, secs); return gdPlay('nade.flash.ring', { ring: true, gain: Math.min(1, amount), key: null }); }
 export { sameSource };
+
+// ── The round's sounds: CS2's round start radio and its round-end music (arena-ui.js calls gdRoundSounds with the
+// host's round state and clock on every HUD update — a string compare when nothing changed). ──
+// The round's end (CS2's music kit events, game_sounds_music): the MVP's anthem when the round has an MVP — heard by
+// everyone, both sides (Music.MVPAnthem: priority 5, block_won_lost, stop_music) — else WonRound to the winners and
+// LostRound to the losers (test_mvp_block: skipped under an anthem). Spectators: the anthem only. Every player here
+// has CS2's default kit (valve_cs2_01), so its anthem is the MVP's. The MVP: the host's (arena-defuse.js roundMvp).
+export const roundEndEvent = (winner, team, mvp) => mvp ? 'music.mvp' : team !== 't' && team !== 'ct' ? null : team === winner ? 'music.won' : 'music.lost';
+// A string → a 32-bit seed (FNV-1a): the round and side pick the same radio line on every computer of that team.
+export const seedOf = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+// The line of a voice's round start radio: one of the four concepts (as CS2's FreezePeriodEnd picks one), then one of its
+// lines (sets: the indices per concept, from the import). Concepts with no line (a few of CS2's rules name events its
+// sets lack, e.g. leet_epic's radio.letsgo) are skipped. -1: none.
+export function radioLine(files, sets, seed) { const n = files?.length || 0; if (!n) return -1; let k = 0; if (sets) for (const s of sets) if (s?.length) k++; if (!k) return seed % n;
+  let c = seed % k; for (const s of sets) { if (!s?.length) continue; if (c-- === 0) { const i = s[Math.floor(seed / 4) % s.length]; return i >= 0 && i < n ? i : seed % n; } } return seed % n; }
+// The round-end music sounding (one at a time). Stopped faded over CS2's fade-out (its volume_fade_out_input_max, 1.6 s):
+// at the next freeze (CS2's round start music stops the music), a new match, leaving the match.
+let musicV = null;
+export function gdStopMusic(fade = 1.6) { const v = musicV; musicV = null; if (!v || !v.busy || !v.s || !ctx || !String(v.id).startsWith('music.')) return false; const t = ctx.currentTime;
+  try { v.g.gain.cancelScheduledValues(t); v.g.gain.setValueAtTime(v.g.gain.value, t); v.g.gain.linearRampToValueAtTime(0, t + fade); v.s.stop(t + fade + .02); } catch {} v.end = t + fade + .02; return true; }
+// The round sounds' memory: each round's start radio and end sound once (per computer: its own team's radio), timed by
+// the host's round state (phase changes, its clock: hostNow) — never this computer's prediction, so no second copy.
+// The epoch tag is the round id (match.seq, arena-defuse.js): a late frame of an earlier round or match is refused, and
+// a cue more than `fresh` ms after its moment (a page that stalled, a frame queued behind a reconnect) is not played.
+// Without this computer's import of an event nothing plays (no placeholder of Valve's lines is shipped); the round end
+// falls back to CS2's round-report cue (ui.round.won / lost — the win panel itself plays only its graph sounds) when
+// the music is not imported. One sound per round end, never two.
+export function createRoundSounds({ play = gdPlay, has = id => (RES[id]?.files?.length || 0) > 0, event = gdEvent, stop = gdStopMusic, voice = teamVoice, fresh = 2500 } = {}) {
+  let rid = null, phase = null, match = null, seq = -1, endFor = null, radioFor = null; const past = [], stats = { end: 0, radio: 0, stale: 0, stops: 0, last: null };
+  const first = (a, b, c) => has(a) ? a : b && has(b) ? b : c && has(c) ? c : null;
+  function update(d, team, now) { const r = d?.round; if (!r || typeof r.id !== 'string') return null;
+    if (r.id === rid && r.phase === phase) return null;   // (nothing new: the every-frame case)
+    if (r.id !== rid) { const i = r.id.lastIndexOf('.'), m = i < 0 ? r.id : r.id.slice(0, i), s = i < 0 ? 0 : +r.id.slice(i + 1) || 0;
+      if ((m === match && s < seq) || past.includes(m)) { stats.stale++; return null; }   // (a late frame of an earlier round or match: never heard again)
+      if (m !== match) { if (match !== null) { past.push(match); if (past.length > 4) past.shift(); } match = m; } seq = s; rid = r.id; }
+    phase = r.phase;
+    if (r.phase === 'freeze' || r.phase === 'warmup') { if (stop()) stats.stops++; return null; }
+    if (r.phase === 'live' && radioFor !== r.id && (team === 't' || team === 'ct') && now - (r.freezeUntil ?? now) < fresh) { radioFor = r.id;
+      const ev = first('radio.start.' + voice(team), 'radio.start.' + SIDE_VOICE[team]), R = ev && event(ev), i = R ? radioLine(R.files, R.sets, seedOf(r.id + ':' + team)) : -1; if (i < 0) return null;
+      play(ev, { name: R.files[i], key: 'radio:' + r.id + ':' + team }); stats.radio++; return stats.last = ev; }
+    if (r.phase === 'over' && endFor !== r.id && now - (r.overAt ?? now) < fresh) { endFor = r.id; const mine = team === 't' || team === 'ct', won = mine && team === r.winner;
+      const ev = first(roundEndEvent(r.winner, team, r.mvp), r.mvp && mine ? (won ? 'music.won' : 'music.lost') : null, mine ? (won ? 'ui.round.won' : 'ui.round.lost') : null); if (!ev) return null;
+      play(ev, { key: 'round:' + r.id }); stats.end++; return stats.last = ev; }
+    return null; }
+  return { update, stats, reset() { rid = phase = match = endFor = radioFor = null; seq = -1; past.length = 0; } };
+}
+export const roundSounds = createRoundSounds();
+export const gdRoundSounds = (d, team, now) => roundSounds.update(d, team, now);

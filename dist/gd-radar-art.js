@@ -6,6 +6,8 @@
 import { mapBoxes, walkable } from './arena-maps.js';
 
 const cache = new Map();
+export const radarCacheIds = () => [...new Set([...cache.values()].map(v => v.id))];   // (tests: which maps' pictures are kept)
+export const radarCacheSrcs = () => [...new Set([...cache.values()].map(v => v.src))];   // (tests: …and from which source — built-in or CS2 file)
 // The floor as cells: { cols, rows, cell, cells (0 wall · 1 floor · 2 cover), ox, oz } in map coordinates.
 function cellsOf(m, layer = null) {
   if (m.grid && layer === 'lower' && m.grid.lower) return { ...m.grid, cells: m.grid.lower, heights: null, ox: -m.size[0] / 2, oz: -m.size[1] / 2 };   // Nuke's lower level, on its own
@@ -29,7 +31,11 @@ export function locationOf(m, x, z, feet) { let best = '', bd = 70 * 70; for (co
 
 // The radar picture: { canvas, scale (pixels per unit) }.
 export function radarImage(m, id = m.name, px = 2, layer = null) {
-  const k = id + ':' + px + ':' + (layer || '') + ':' + m.size.join('x') + (m.fromFile ? ':file' : ''); if (cache.has(k)) return cache.get(k);   // (a map file replaces the built-in map of that name: its own picture)
+  const src = id + ':' + m.size.join('x') + (m.fromFile ? ':file' : ''), k = src + ':' + px + ':' + (layer || ''); if (cache.has(k)) return cache.get(k);   // (a map file replaces the built-in map of that name: its own picture)
+  // Only the map being played is kept (all its floors and scales): a picture is 14–19 MB of canvas at 2 px a unit (Nuke's
+  // two floors 32 MB), and a night's map rotation kept every one of them (~139 MB for 8 maps: GDUI-12). By the map's full
+  // identity (src), not its name: the CS2 file arriving under a built-in map's name drops the built-in's pictures too.
+  for (const [ck, v] of cache) if (v.src !== src) cache.delete(ck);
   const [w, d] = m.size, cv = typeof OffscreenCanvas !== 'undefined' && !globalThis.document ? new OffscreenCanvas(1, 1) : document.createElement('canvas'); cv.width = Math.ceil(w * px); cv.height = Math.ceil(d * px);
   const g = cv.getContext('2d'), G = cellsOf(m, layer), X = v => (v + w / 2) * px, Z = v => (v + d / 2) * px, cs = G.cell * px;
   g.fillStyle = '#0b0f12'; g.fillRect(0, 0, cv.width, cv.height);
@@ -61,5 +67,46 @@ export function radarImage(m, id = m.name, px = 2, layer = null) {
   for (const [L, [sx, sz, r]] of Object.entries(m.sites || {})) { if (layer === 'lower' && !onLayer(siteY(L))) continue; const h = r * .7; g.strokeStyle = '#ff8a1e'; g.lineWidth = Math.max(2, px * 1.3); g.fillStyle = 'rgba(255,138,30,.12)'; g.fillRect(X(sx - h), Z(sz - h), 2 * h * px, 2 * h * px); g.strokeRect(X(sx - h), Z(sz - h), 2 * h * px, 2 * h * px); label(L, X(sx), Z(sz), Math.round(22 * px * .9), '#ffd33a'); }
   // Callout names.
   for (const c of calloutsOf(m)) { if (/^(A|B) Site$|^T Spawn$|^CT Spawn$/i.test(c.name) || !onLayer(c.y)) continue; label(c.name.toUpperCase(), X(c.x), Z(c.z), Math.round(7.5 * px)); }
-  const out = { canvas: cv, scale: px }; cache.set(k, out); return out;
+  const out = { canvas: cv, scale: px, id, src }; cache.set(k, out); return out;
 }
+
+// ---- CS2's own radar pictures (v52, package Q) ----------------------------------------------------------------------
+// tools/export-cs2-radar.mjs exports, from the CS2 install on this computer, each map's overview picture
+// (panorama/images/overheadmaps/de_<map>[_lower]_radar_psd) and its overview data (resource/overviews/de_<map>.txt:
+// pos_x / pos_y = the picture's top-left corner in Hammer units, scale = Hammer units per pixel of a 1024-px picture,
+// verticalsections = the lower picture's altitude split) into user-assets/radar/ (radar.json + PNGs: local only, never
+// shipped; the room serves them like the other imports). Only a CS2 map file (m.hammer: its Hammer → game transform,
+// bsp-map.js) can line up with them; built-in maps, and rooms without the export, keep the picture drawn above.
+// overviewFit: the CS2 picture in the radar's own terms — picture px per game unit (scale) and the picture px of the
+// map's corner (ox, oz), so a map point (gx, gz from the map's centre) sits at ((gx + W/2)·scale + ox, (gz + D/2)·scale + oz):
+//   u = (hx − pos_x)·f / s, hx = x0 + (gx + W/2)/U   →   scale = f / (s·U), ox = (x0 − pos_x)·f / s
+//   v = (pos_y − hy)·f / s, hy = y1 − (gz + D/2)/U   →                       oz = (pos_y − y1)·f / s      (f = picture px / 1024)
+// lowerFeet: CS2's split (the default section's AltitudeMin, Hammer z of your feet) as game feet height; null = one floor.
+export function overviewFit(ov, H, res = ov.res || 1024) {
+  const f = res / 1024, s = +ov.scale, split = ov.split !== null && ov.split !== undefined && Number.isFinite(+ov.split) ? +ov.split : null;
+  return { scale: f / (s * H.U), ox: (H.x0 - +ov.pos_x) * f / s, oz: (+ov.pos_y - H.y1) * f / s, res, lowerFeet: split === null ? null : (split - H.zLow) * H.U }; }
+// A world point (Hammer x, y) on the CS2 picture, as CS2 itself places it (fractions of the picture: tests, the export's checks).
+export const overviewUV = (ov, hx, hy) => [(hx - +ov.pos_x) / +ov.scale / 1024, (+ov.pos_y - hy) / +ov.scale / 1024];
+let ovIndex, ovPending = null, ovLoad = null; const pics = new Map();
+// The export's index (radar.json), fetched once per page (not cached by the browser: a re-export shows on the next load).
+// Resolves to { maps: { <game map id>: { pos_x, pos_y, scale, res, split, img, hash, lower: { img, hash } | null } } } or false.
+export function cs2RadarIndex() {
+  if (ovIndex !== undefined) return Promise.resolve(ovIndex); if (ovPending) return ovPending;
+  const web = typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol);
+  ovPending = (!web ? Promise.resolve(false) : fetch(new URL('/user-assets/radar/radar.json', location.href), { cache: 'no-cache' }).then(r => r.ok ? r.json() : false).then(j => j?.maps ? j : false).catch(() => false)).then(j => { ovIndex = j; return j; });
+  return ovPending; }
+// Tests: an index and a picture loader of their own (node has no room to fetch from, no Image).
+export function setCS2RadarIndex(index, loader = null) { ovIndex = index?.maps ? index : false; ovPending = null; ovLoad = loader; pics.clear(); }
+// The CS2 picture of this map file: null (not a CS2 map file, or no export for it), or { state: 'loading' | 'ready', img,
+// imgLow, fit } — { state: 'loading', wait: true } while the index itself is on its way. Decoded off the main thread
+// (img.decode) when the map comes in: the radar shows it only once decoded, never mid-round. Only the current map's kept.
+export function cs2Picture(m, id) {
+  if (!m?.hammer) return null; const src = id + ':' + m.size.join('x') + ':file'; let r = pics.get(src); if (r) return r.state === 'none' ? null : r;
+  if (ovIndex === undefined) { cs2RadarIndex(); return WAIT; }
+  const e = ovIndex && ovIndex.maps[id]; pics.clear();
+  const load = ovLoad || (typeof Image !== 'undefined' && typeof location !== 'undefined' ? f => { const im = new Image(); im.decoding = 'async'; im.alt = ''; im.src = new URL('/user-assets/radar/' + f.img + '?h=' + encodeURIComponent(f.hash || ''), location.href).href; return im.decode().then(() => im); } : null);
+  if (!e || !load || !(+e.scale > 0) || !e.img) { pics.set(src, { state: 'none' }); return null; }
+  r = { state: 'loading', src, id, img: null, imgLow: null, fit: overviewFit(e, m.hammer) }; pics.set(src, r);
+  Promise.all([load(e), e.lower?.img ? load(e.lower) : null]).then(([a, b]) => { r.img = a; r.imgLow = b || null; r.state = 'ready'; }, err => { r.state = 'none'; console.warn('CS2 radar picture', id, err?.message || err); });
+  return r; }
+const WAIT = Object.freeze({ state: 'loading', wait: true });

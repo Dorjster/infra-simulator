@@ -11,7 +11,7 @@
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState, mapMeta } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR, NADE_SLOT, nadeRefusal, nadeSideRefusal } from './weapons-data.js';
-import { cleanSkin, skinTitle, skinKeyOf } from './skins.js';
+import { cleanSkinNote, skinTitle, skinKeyOf, skinKindOf, putSkin, stageSkin, flushSkins, ownerIn, setOwner, catalogHash } from './skins.js';
 import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
 import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, holdNades, clearView, fireCells, warmFire, inFire, smokeBlocks, smokeHides, setSmokeSolids, tossFlight } from './arena-nades.js';
 import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, balanceBots, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS, stillLoading } from './arena-defuse.js';
@@ -42,10 +42,10 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs 
   if (practice) kind = 'dm';
   else if (ARENA_MAPS[map].kind !== kind) throw Error(ARENA_MAPS[map].name + ' is not a ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' map');
   game.mode = 'arena'; game.payday = false;
-  const knives = game.arena?.knives || {}, skins = game.arena?.skins || {};   // (the knives and skins people chose stay theirs from match to match)
+  const knives = game.arena?.knives || {}, skins = game.arena?.skins || {}, skinsNext = game.arena?.skinsNext, srev = game.arena?.srev || 0;   // (the knives and skins people chose stay theirs from match to match; srev keeps rising: a page never takes a new table for an old one)
   const seq = { g: game.combat?.groundSeq || 0, n: game.combat?.nadeSeq || 0, shots: game.mode === 'arena' ? game.combat?.shots : null };   // (ground items and grenades keep counting: an id never names two things on a client; shots: each client's shot numbering, freshMatch)
   game.arena = { kind, map, match: matchId(now), startedAt: now, endsAt: now + DM_MS, loadout: {}, bots: [], botSeq: 0, respawnMs: 2500, over: null, difficulty: DIFFICULTY[difficulty] ? difficulty : 'normal', lobby: lobbyMs > 0 ? { until: now + lobbyMs, started: false, ready: {}, note: '' } : null, freezeMs: clampS(freezeS, TIMER_LIMITS.freeze, 15) * 1000, warmupS: Math.round(lobbyMs / 1000), nextMap: null };
-  game.arena.knives = knives; game.arena.skins = skins;
+  game.arena.knives = knives; game.arena.skins = skins; game.arena.srev = srev + 1; if (skinsNext) game.arena.skinsNext = skinsNext;
   game.arena.rules = cleanRules(rules || {});   // Defuse match rules (host settings), fixed for this match
   if (practice) { game.arena.practice = cleanPractice(practice); game.arena.endsAt = 4e15; }   // no time limit
   game.combat = { match: game.arena.match, hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [], spawnTo: {}, ground: [], groundSeq: seq.g, nades: [], nadeSeq: seq.n, ...(seq.shots ? { shots: seq.shots } : {}) };
@@ -55,7 +55,11 @@ export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs 
 }
 // The LAN protocol this code speaks (lan/room.mjs /api/room and the join reply; multiplayer.js checks it): a page kept open
 // from an older version that reconnects to an updated host is told to reload instead of half-working.
-export const NET_PROTOCOL = 'gd-51';
+// gd-52: the host traces each shot from its record (eye, look, aim punch, inaccuracy) on CS2 body shapes and gates the
+// fire rate on the shooter's clock; a 51 page would be judged by the old centre-line rules beside 52 players (unequal).
+// Also gd-52 (v52 unreleased when it changed, so no 52 page is out there with the old form): skins left the arena frame for
+// their own 'skins' message (srev), every gun takes one, guns carry their owner (loadout own, ground item own).
+export const NET_PROTOCOL = 'gd-52';
 // A new match's id (combat.d.match too): requests and frames carry it, so nothing from an earlier match counts in this one.
 const matchId = now => now.toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0');
 // Built before play, not inside the host's 50 ms tick: the map's boxes for the host's checks, and on Defuse maps the bots'
@@ -138,10 +142,12 @@ const breakPane = (game, id) => { const m = ARENA_MAPS[game.arena.map]?.movers?.
 // A gun keeps its rounds on the ground ([magazine, reserve]); `by` and their team are shown to whoever finds it.
 // fly (optional): tossed from { x, y, z } with { vx, vy, vz } — where it comes to rest is where it lies (tossFlight);
 // the item keeps the toss so every player sees it fly there.
-function dropItem(game, item, x, z, y, by, now, ammo = null, fly = null) {
+// own: the gun's owner (a player key; null: a bot's) — its skin is the owner's wherever it goes (CS2, skins.js skinFor).
+function dropItem(game, item, x, z, y, by, now, ammo = null, fly = null, own = null) {
   const C = game.combat; C.ground ??= []; C.groundSeq = (C.groundSeq || 0) + 1;
   if (fly) { const g = G(game), end = tossFlight(g.boxes, g.bounds, fly); x = end.x; z = end.z; y = end.y; fly = { ...Object.fromEntries(Object.entries(fly).map(([k, v]) => [k, +(+v).toFixed(3)])), ms: end.ms, ...(end.glass?.length ? { glass: end.glass.slice(0, 8) } : {}) }; for (const id of end.glass || []) breakPane(game, id); }   // (fly.glass: the panes it broke — every client's replay slows at them as this toss did, though they are broken there by then) (a pane the gun went through breaks for everyone, as under a grenade — never a hole in the collision alone)
-  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y: Math.max(0, Math.min(250, +y || 0)), yaw: Math.random() * Math.PI * 2, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null, ...(fly ? { fly } : {}) });
+  y = Math.max(0, Math.min(250, +y || 0)); const yaw = +(lieYaw(G(game), item, x, y, z, Math.random() * Math.PI * 2) % (Math.PI * 2)).toFixed(3);
+  C.ground.push({ id: 'g' + C.groundSeq, item, x, z, y, yaw, at: now, by, team: C.d?.teams?.[key(by)] || null, ammo: isFirearm(weaponById(item)) ? (ammo || fullAmmo(item)) : null, ...(fly ? { fly } : {}), ...(own && skinKeyOf(item) ? { own } : {}) });
   while (C.ground.length > GROUND_MAX) { const i = C.ground.findIndex(it => it.item !== 'c4'); C.ground.splice(i < 0 ? 0 : i, 1); }
   return 'g' + C.groundSeq;
 }
@@ -151,15 +157,38 @@ const botFloor = (game, b) => Number.isFinite(b.y) ? b.y : floorAt(ARENA_MAPS[ga
 // This round's purchases per player (for refunds), newest last.
 function bought(game, name, b) { const d = game.combat.d; ((d.bought ??= {})[key(name)] ??= []).push(b); }
 // Take a gun out of a player's hands onto the ground (with its rounds); forgets their ammo for it.
-function dropFrom(game, name, item, x, z, y, now, fly = null) { const k = key(name), a = ammoOf(game, name, item); if (game.combat.ammo?.[k]) delete game.combat.ammo[k][item]; return dropItem(game, item, x, z, y, name, now, a, fly); }
+function dropFrom(game, name, item, x, z, y, now, fly = null) { const k = key(name), a = ammoOf(game, name, item), l = game.arena.loadout[k], own = ownerIn(l, item, name); if (game.combat.ammo?.[k]) delete game.combat.ammo[k][item]; setOwner(l, item, k, name); return dropItem(game, item, x, z, y, name, now, a, fly, own); }   // (its owner goes with it: the slot is the holder's again)
 // A toss (CS2's drop): from the hands, forward where you face at 200 u/s and up at 100, plus your own run.
 const tossOf = (p, run = true) => { const yaw = +p.yaw || 0, f = 200 * HU_, vx = run ? Math.max(-40, Math.min(40, +p.vx || 0)) : 0, vz = run ? Math.max(-40, Math.min(40, +p.vz || 0)) : 0; return { x: p.x - Math.sin(yaw) * 1.2, y: Math.max(1.5, (p.y ?? EYE) - 3), z: p.z - Math.cos(yaw) * 1.2, vx: -Math.sin(yaw) * f + vx, vy: 100 * HU_, vz: -Math.cos(yaw) * f + vz }; };
 const HU_ = 2.54 / 16.5;
 // Can a player at pose reach an item on the ground (close enough, no wall between)?
-function reachable(game, p, it) { if (!p) return true; const g = G(game), d = Math.hypot(p.x - it.x, p.z - it.z); if (d > PICK_R + 4) return 'Too far away'; const eye = p.y ?? EYE; return segmentClear(g.boxes, p.x, eye, p.z, it.x, (it.y || 0) + .6, it.z) || segmentClear(g.boxes, p.x, eye - 6, p.z, it.x, (it.y || 0) + .6, it.z) ? true : 'Behind a wall'; }
+// (no pose known yet — just joined, or stale: never from anywhere; every live GD player posts one)
+function reachable(game, p, it) { if (!p) return 'Too far away'; const g = G(game), d = Math.hypot(p.x - it.x, p.z - it.z); if (d > PICK_R + 4) return 'Too far away'; const eye = p.y ?? EYE; return segmentClear(g.boxes, p.x, eye, p.z, it.x, (it.y || 0) + .6, it.z) || segmentClear(g.boxes, p.x, eye - 6, p.z, it.x, (it.y || 0) + .6, it.z) ? true : 'Behind a wall'; }
 const poseOf = (players, name) => players.find(p => key(p.name) === key(name))?.pose || null;
+// Down where it lies yet? The host knows the landing point the moment it's thrown; every screen replays the flight
+// (it.fly.ms: 0.5–1 s on most floors, up to 3 s), so walking over that point or a bot reaching it waits for the landing
+// (it used to vanish mid-air after 300 ms). An explicit E still catches it in flight, as CS2 lets you.
+const landed = (it, now, min = 300) => now - it.at >= Math.max(min, it.fly?.ms || 0);   // (min: players' short grace after any drop; bots none)
+// A dropped item's lying direction (DROP-5): the host tossed only the grip (a .35 sphere), and a rifle (≈ 4 units
+// ahead of its grip, 2 behind) or the AWP lying at a random yaw beside a wall poked through it. From a random start,
+// turned in eighths until the grip → muzzle and grip → butt lines just over the floor are clear of the map.
+// [muzzle ahead of the grip, butt behind it, widest reach sideways lying on its side (magazine, scope, bipod)] in game
+// units: approximations of the models as they lie (weapon-models groundRest: AK 3.5 / 2.2 / 1.6, AWP 5.2 / 2.3 / 1.0, Negev 4.1 / 2.5 / 1.1).
+const LIE = { pistol: [1.4, .6, .9], smg: [2.9, 1.9, 1.3], rifle: [3.8, 2.3, 1.6], sniper: [5.4, 2.4, 1.1], shotgun: [4.2, 2.3, 1], lmg: [4.4, 2.6, 1.1], knife: [1.7, .9, .3], nade: [.6, .6, .6], bomb: [1.1, 1.1, 1.1] };
+// How badly a model lying at this yaw pokes into the map: the bore line (grip → muzzle, grip → butt) counts 100 each,
+// each of the footprint's 4 corners and 2 sides 1 (sideways reach taken on both sides: which side the magazine ends up
+// on is the drawn model's, not known here).
+const LIE_PTS = [[1, 0, 100], [-1, 0, 100], [1, 1, 1], [1, -1, 1], [-1, 1, 1], [-1, -1, 1], [0, 1, 1], [0, -1, 1]];
+const lieCost = (g, x, h, z, L, yaw) => { const sx = -Math.sin(yaw), sz = -Math.cos(yaw), px = -sz, pz = sx; let c = 0;   // (sx, sz: the muzzle of a model at this yaw, −z turned; px, pz: sideways)
+  for (const [f, s, w] of LIE_PTS) { const a = f > 0 ? L[0] : f < 0 ? -L[1] : 0, b = s * L[2]; if (!segmentClear(g.boxes, x, h, z, x + sx * a + px * b, h, z + sz * a + pz * b)) c += w; } return c; };
+function lieYaw(g, item, x, y, z, yaw0) { const w = weaponById(item), L = LIE[w?.kind] || LIE.nade, h = y + .35; let best = yaw0, bestC = Infinity;
+  for (let k = 0; k < 32; k++) { const yaw = yaw0 + k * Math.PI / 16, c = lieCost(g, x, h, z, L, yaw); if (c < bestC) { best = yaw; bestC = c; if (!c) break; } }   // (11.25° turns: by a wall few yaws fit. Host only, once per drop)
+  return best; }
 // A player's loadout (created with the team's starting pistol).
 export const loadoutOf = (game, name) => game.arena.loadout[key(name)] ??= { primary: null, secondary: teamPistol(game, name), nades: [] };
+// A live Defuse round (fighting, bomb down, round end): a skin chosen now waits for the next freeze (arena.skinsNext) —
+// skin textures load in freeze time, never mid-fight. Freeze, warmup, the lobby and Deathmatch take it at once.
+export const skinsLive = game => { const r = game.combat?.d?.round; return !!r && (r.phase === 'live' || r.phase === 'planted' || r.phase === 'over'); };
 export const ROUND_BOUND = new Set(['buy', 'loadout', 'buy-armor', 'buy-nade', 'buy-kit', 'refund', 'plant', 'defuse']);
 export function arenaApply(game, a, name, players = [], now = Date.now(), perm = { isHost: true }) {
   if (game.mode !== 'arena' || !game.arena) throw Error('Start the arena first');
@@ -174,18 +203,28 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   // rules), Darja's karambit (hers alone), or the default. Any time; it's yours from match to match.
   // Darja may equip any knife on anyone in the room (a.for: their name), the karambit too.
   // A weapon's skin (skins.js: finish, wear, pattern seed, stickers, name tag, StatTrak™): checked here (never trusted),
-  // then everyone's view draws it. { weapon, skin } sets one, { weapon, clear: true } goes back to the default.
+  // then everyone's view draws it. { weapon, skin } sets one, { weapon, clear: true } goes back to the default. Every gun
+  // takes one (CS2), kept per gun; the one knife skin on whichever knife you carry. Grenades and the bomb take none.
   // Darja may give a skin to anyone in the room (a.for: their name), as she equips knives; a StatTrak™ count stays
-  // theirs (earned, never given).
-  if (a.type === 'skin') { const w = weaponById(String(a.weapon || '')), sk = w && skinKeyOf(w.id); if (!sk) throw Error('Skins go on knives');   // (one knife skin, on whichever knife you carry)
-    const darja = /^darja$/.test(key(name)); if (a.for != null && !darja) throw Error('Only Darja gives skins to others');
+  // theirs (earned, never given). In a live Defuse round it waits for the next freeze (skinsLive); the room sends skins
+  // in their own message (lan/room.mjs 'skins'), never in the arena frame.
+  // { type: 'skins', set: { slot: skin | null, … } }: many at once (a page restoring its own after a join: fill only
+  // fills slots the host has none for); { type: 'skins', clearAll: true }: every one back to the default.
+  if (a.type === 'skin' || a.type === 'skins') { const darja = /^darja$/.test(key(name)); if (a.for != null && !darja) throw Error('Only Darja gives skins to others');
     const who = a.for != null ? String(a.for).trim().slice(0, 40) : name; if (key(who) !== key(name) && (!who || /^bot /i.test(who) || (players.length && !players.some(p => !p.bot && key(p.name) === key(who))))) throw Error('No such player in the room');
-    const mine = (A.skins ??= {})[key(who)] ??= {}, on = key(who) !== key(name) ? ' on ' + who : ''; if (a.clear) { delete mine[sk]; return 'Default knife' + on; }
-    const s = cleanSkin(a.skin, 'knife', mine[sk]); mine[sk] = s; return skinTitle('Knife', s) + (on ? ' given to ' + who : ' equipped'); }
+    const k = key(who), on = k !== key(name) ? ' on ' + who : '', live = skinsLive(game), later = live ? ' · applies next round' : '', put = (sk, s) => live ? stageSkin(A, k, sk, s) : putSkin(A, k, sk, s), mine = A.skins?.[k] || {};
+    if (a.type === 'skins') { if (a.clearAll) { const all = [...new Set([...Object.keys(mine), ...(live ? Object.keys(A.skinsNext?.[k] || {}) : [])])]; for (const sk of all) put(sk, null);   /* (a pick staged earlier this round is cancelled too) */ return 'All skins back to default' + on + (all.length ? later : ''); }
+      const set = a.set; if (!set || typeof set !== 'object' || Array.isArray(set)) throw Error('No skins given'); const slots = Object.keys(set); if (slots.length > 40) throw Error('40 skins at most at once'); if (JSON.stringify(set).length > 16384) throw Error('Too much skin data (16 KB at most)');
+      let n = 0, refused = 0; for (const sk of slots) { const kind = skinKindOf(sk); if (!kind) { refused++; continue; } if (a.fill && mine[sk]) continue; try { put(sk, set[sk] === null ? null : cleanSkinNote(set[sk], kind, mine[sk], sk).skin); n++; } catch { refused++; } }
+      return 'Skins: ' + n + ' set' + on + (refused ? ' · ' + refused + ' refused' : '') + (n ? later : ''); }
+    const w = weaponById(String(a.weapon || '')), sk = w && skinKeyOf(w.id); if (!w) throw Error('Unknown weapon'); if (!sk) throw Error('Grenades and the bomb take no skins');
+    const label = sk === 'knife' ? { butterfly: '★ Butterfly Knife', stiletto: '★ Stiletto Knife', m9: '★ M9 Bayonet', karambit: '★ Karambit' }[A.knives?.[k] || (/^darja$/.test(k) ? 'karambit' : '')] || 'Knife' : w.name;   // (the knife they carry)
+    if (a.clear) { put(sk, null); return (sk === 'knife' ? 'Default knife' : label + ' · default finish') + on + later; }
+    const { skin: s, note } = cleanSkinNote(a.skin, skinKindOf(sk), mine[sk], sk); put(sk, s); return skinTitle(label, s) + (on ? ' given to ' + who : ' equipped') + (note ? ' · ' + note : '') + later; }
   if (a.type === 'knife') { const k = String(a.knife || ''), darja = /^darja$/.test(key(name)), who = a.for != null ? String(a.for).trim().slice(0, 40) : name; if (!['default', 'butterfly', 'stiletto', 'm9', 'karambit'].includes(k)) throw Error('Unknown knife');
     if (key(who) !== key(name) && !darja) throw Error('Only Darja gives knives to others');   // (everyone picks their own knife — any of them — and the skin on it)
     if (key(who) !== key(name) && (!who || /^bot /i.test(who) || (players.length && !players.some(p => !p.bot && key(p.name) === key(who))))) throw Error('No such player in the room');
-    const kn = (A.knives ??= {}); kn[key(who)] = k; return { butterfly: 'Butterfly Knife', stiletto: 'Stiletto Knife', m9: 'M9 Bayonet', karambit: 'Karambit | Ruby', default: 'Default knife' }[k] + ' equipped' + (key(who) !== key(name) ? ' on ' + who : ''); }
+    const kn = (A.knives ??= {}); kn[key(who)] = k; return { butterfly: 'Butterfly Knife', stiletto: 'Stiletto Knife', m9: 'M9 Bayonet', karambit: 'Karambit', default: 'Default knife' }[k] + ' equipped' + (key(who) !== key(name) ? ' on ' + who : ''); }
   if (a.type === 'team') return changeTeam(game, name, a.team, players, now);
   // Host administration (the room checks the host): pause, restart the round, move someone to spectator, the next
   // match's map. Disruptive ones are confirmed in the host's menu first.
@@ -214,7 +253,10 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     return 'Map · ' + m.name + ' · ' + (m.kind === 'defuse' ? 'Defuse' : 'Deathmatch'); }
   if (a.type === 'drop') {
     if (isDown(game, name, now)) throw Error('You are dead');
-    if (a.slot === 'bomb') { const k = key(name); if (game.combat.d?.bomb?.carrier !== k) throw Error('You don\u2019t have the bomb'); const p = poseOf(players, name) || { x: +a.x || 0, z: +a.z || 0, yaw: +a.yaw || 0 }; game.combat.d.bomb.carrier = null; dropItem(game, 'c4', p.x - Math.sin(p.yaw || 0) * 6, p.z - Math.cos(p.yaw || 0) * 6, a.y, name, now); return 'Dropped the bomb'; }
+    if (a.slot === 'bomb') { const k = key(name); if (game.combat.d?.bomb?.carrier !== k) throw Error('You don\u2019t have the bomb'); const pp = poseOf(players, name); if (!pp) throw Error('Not in position yet · try again'); game.combat.d.bomb.carrier = null;   // (no host pose yet: refused — never at the place and height the client sent)
+      // As a gun drops (it used to be put 6 units ahead whatever was there — inside a wall, past a window — at the height the client sent): tossed from your hands, where the swept flight on the map stops it (arena-nades tossFlight: a wall in the way stops it on your side).
+      // (fly.q: a quiet landing — a dropped bomb made no sound in v51 and sound is closed; arena-ui flyGround skips it)
+      dropItem(game, 'c4', pp.x, pp.z, Math.max(0, (pp.y ?? EYE) - EYE), name, now, null, { ...tossOf(pp), q: 1 }); return 'Dropped the bomb'; }
     const l = loadoutOf(game, name), slot = a.slot === 'secondary' ? 'secondary' : a.slot === 'nades' ? 'nades' : 'primary', item = slot === 'nades' ? (nadesOf(l).includes(a.kind) ? a.kind : null) : l[slot];
     if (!item) throw Error('Nothing to drop');
     // About 1 m ahead of you (the camera looks along (−sin yaw, −cos yaw)); at your feet if a wall is in the way.
@@ -227,6 +269,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     if (isDown(game, name, now)) throw Error('You are dead');
     const C = game.combat, i = (C.ground || []).findIndex(it => it.id === a.id), it = C.ground?.[i]; if (!it) throw Error('Already taken');
     const p = poseOf(players, name), ok = reachable(game, p, it); if (ok !== true) throw Error(ok);
+    if (a.walk && !landed(it, now)) throw Error('Not landed yet');   // (the walk-over pickup a client sends 6×/s (a.walk) waits for the landing, as the host's own walk-over does — v52 review: it took guns 50 ms into a 1.5 s flight; an E press may still take one out of the air, as CS2's +use does)
     const slot = slotOf(it.item); if (!slot) throw Error('Cannot pick that up');
     if (slot === 'bomb') { if (teamOf(game, name) !== 't') throw Error('Only Terrorists carry the bomb'); C.ground.splice(i, 1); game.combat.d.bomb.carrier = key(name); return 'You have the bomb'; }
     const l = loadoutOf(game, name);
@@ -234,7 +277,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     const old = l[slot]; if (old && !a.swap) throw Error('Slot taken · E to swap');
     // Claimed: off the ground first (a second claim finds it gone), then the old gun drops where you stand.
     C.ground.splice(i, 1); if (old) dropFrom(game, name, old, p ? p.x : it.x, p ? p.z : it.z, p ? Math.max(0, (p.y ?? EYE) - EYE) : it.y, now);
-    l[slot] = it.item; setAmmo(game, name, it.item, it.ammo || fullAmmo(it.item));
+    l[slot] = it.item; setOwner(l, it.item, it.own ?? null, name); setAmmo(game, name, it.item, it.ammo || fullAmmo(it.item));   // (the owner's skin comes with it)
     const am = it.ammo || fullAmmo(it.item); return 'Picked up ' + itemName(it.item) + (am ? ' · ' + am[0] + ' / ' + am[1] : '');
   }
   // Plant / defuse: where the client says it stands (the host's copy of its position is a few frames old and a
@@ -249,7 +292,7 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
     const l = loadoutOf(game, name), C = game.combat, d = C.d;
     if (b.kind === 'gun') { if (l[b.slot] !== b.item) throw Error('You no longer have it'); const am = ammoOf(game, name, b.item), full = fullAmmo(b.item); if (am && full && (am[0] !== full[0] || am[1] !== full[1])) throw Error('Already used');
       if (game.combat.ammo?.[k]) delete game.combat.ammo[k][b.item]; l[b.slot] = null;
-      if (b.prev) { const gi = (C.ground || []).findIndex(it => it.id === b.prev.ground); if (gi >= 0 || !b.prev.ground) { const it = gi >= 0 ? C.ground.splice(gi, 1)[0] : null; l[b.slot] = b.prev.item; setAmmo(game, name, b.prev.item, it?.ammo || b.prev.ammo); } } }
+      if (b.prev) { const gi = (C.ground || []).findIndex(it => it.id === b.prev.ground); if (gi >= 0 || !b.prev.ground) { const it = gi >= 0 ? C.ground.splice(gi, 1)[0] : null; l[b.slot] = b.prev.item; setOwner(l, b.prev.item, it ? it.own ?? null : 'own' in b.prev ? b.prev.own : k, name); setAmmo(game, name, b.prev.item, it?.ammo || b.prev.ammo); } } }   // (back with its owner: a team mate's gun is still theirs)
     else if (b.kind === 'nade') { const list = l.nades || [], j = list.lastIndexOf(b.item); if (j < 0) throw Error('Already thrown'); list.splice(j, 1); }
     else if (b.kind === 'armor') { const arm = C.armor?.[k]; if (!arm || arm.kevlar < 100) throw Error('Already damaged'); arm.kevlar = b.prev.kevlar; arm.helmet = b.prev.helmet; }
     else if (b.kind === 'kit') { if (!d.kits[k]) throw Error('You no longer have it'); delete d.kits[k]; }
@@ -263,10 +306,10 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
       for (const [, it] of buys) { const w = it && weaponById(it); if (w?.team && team && w.team !== team) throw Error(w.name + ' is a ' + (w.team === 't' ? 'Terrorist' : 'Counter-Terrorist') + ' weapon'); cost += it ? PRICE[it] : 0; }
       if ((game.combat.d.money[key(name)] ?? rulesOf(game).start) < cost) throw Error('Not enough money ($' + cost + ')'); for (const [, it] of buys) if (it) pay(game, name, it); }   // all or nothing: never charged without the gun
     const p = poseOf(players, name) || (a.x !== undefined ? { x: +a.x, z: +a.z, y: +a.y } : null);
-    for (const [slot, item] of buys) { const old = l[slot], had = old && ammoOf(game, name, old); let ground = null;
+    for (const [slot, item] of buys) { const old = l[slot], had = old && ammoOf(game, name, old), was = old ? ownerIn(l, old, name) : null; let ground = null;
       if (old && item) { if (p) ground = dropFrom(game, name, old, p.x, p.z, Math.max(0, (p.y ?? EYE) - EYE), now); else if (game.combat.ammo?.[key(name)]) delete game.combat.ammo[key(name)][old]; dropped.push(weaponById(old).name); }
-      l[slot] = item; if (item) setAmmo(game, name, item, fullAmmo(item));
-      if (isDefuse(game) && item) bought(game, name, { kind: 'gun', item, slot, price: PRICE[item] ?? 0, prev: old ? { item: old, ammo: had, ground } : null }); }
+      l[slot] = item; if (item || old) setOwner(l, item || old, key(name), name); if (item) setAmmo(game, name, item, fullAmmo(item));   // (bought: yours, your skin on it)
+      if (isDefuse(game) && item) bought(game, name, { kind: 'gun', item, slot, price: PRICE[item] ?? 0, prev: old ? { item: old, ammo: had, ground, ...(was !== key(name) ? { own: was } : {}) } : null }); }
     return (isDefuse(game) ? 'Bought ' : 'Loadout · ') + [l.primary && weaponById(l.primary).name, l.secondary && weaponById(l.secondary).name].filter(Boolean).join(' + ') + (dropped.length ? ' · dropped your ' + dropped.join(' and ') : '');
   }
   if (a.type === 'buy-armor') {
@@ -364,7 +407,10 @@ export function epochError(game, a) { if (!a || !EPOCH_BOUND.has(a.type) || game
 export const arenaEpochKey = game => { const A = game?.mode === 'arena' && game.arena; if (!A) return ''; return A.map + '|' + A.match + '|' + A.startedAt + '|' + (A.over ? A.over.at : 0) + '|' + (A.lobby ? (A.lobby.started ? 1 : 0) + ':' + A.lobby.until + ':' + A.lobby.note : '') + '|' + A.freezeMs + '|' + A.bots.length + '|' + A.nextMap + '|' + A.difficulty + '|' + (game.combat?.d?.match || ''); };
 // The arena as clients need it: no host-only bot brains (routes, targets, cover) and no host bookkeeping.
 const BOT_VIEW = ['id', 'name', 'weapon', 'x', 'y', 'z', 'yaw', 'dead', 'skill'];
-export function arenaView(game) { const A = game.arena; if (!A) return null; const out = {}; for (const k of Object.keys(A)) if (k !== 'bots' && k !== 'deathDrops' && k !== 'dirty' && k !== 'botAt' && k !== 'restarting') out[k] = A[k];
+// Skins are not in it (skins.js; lan/room.mjs 'skins' message, by srev): every gun's skin for 10 players reached 28–140 KB
+// per frame, past the stream's 128 KB limit. skinCat: the host's CS2 finish catalogue (a page fetches the same one).
+const VIEW_SKIP = new Set(['bots', 'deathDrops', 'dirty', 'botAt', 'restarting', 'skins', 'skinsNext', 'skinsDirty', 'srev']);
+export function arenaView(game) { const A = game.arena; if (!A) return null; const out = {}; for (const k of Object.keys(A)) if (!VIEW_SKIP.has(k)) out[k] = A[k]; const cat = catalogHash(); if (cat) out.skinCat = cat;
   out.bots = A.bots.map(b => { const v = {}; for (const k of BOT_VIEW) if (b[k] !== undefined) v[k] = b[k]; return v; }); return out; }
 // The host's clock jumped ahead with nothing run in between (a laptop asleep, the process stopped): every match timer moves
 // on by that gap, as if the match had been paused (no rounds ended, bombs gone off or respawns all at once on waking).
@@ -430,6 +476,7 @@ function awaySide(m, x, z) { if (m.kind !== 'rotdoor') return 1; const cx = (m.b
   return far(1) >= far(-1) ? 1 : -1; }
 export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK.game = game; TICK.now = now; routesLeft = ROUTES_PER_TICK; if (game.arena) game.arena.botAt = now;   // (the bots' positions are of this moment: botRoster stamps them so)
   if (game.mode !== 'arena' || !game.arena) return false; const A = game.arena, C = game.combat, g = G(game); let changed = false;
+  if (A.skinsNext && !skinsLive(game)) flushSkins(A);   // skins chosen during the last round: on at the freeze (the room sends them; no arena frame needed)
   // Doors and breakables: bots open the doors they reach and smash what blocks their way (they walk the map's paths,
   // which run through doorways and vents); the host's collision follows the state.
   { const movers = ARENA_MAPS[A.map]?.movers; if (movers?.length && A.bots.length) { let st = null;
@@ -455,7 +502,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
     const bot = A.bots.find(b => key(b.name) === k), p = bot ? null : players.find(x => key(x.name) === k), at = bot || p?.pose; if (!at) continue;
     // (a body's gun falls from its hands with a little toss — CS2: it slides off where it lands)
     const fall = (x, y, z) => { const a = Math.random() * Math.PI * 2, v = (50 + Math.random() * 40) * HU_; return { x, y, z, vx: Math.sin(a) * v, vy: 60 * HU_, vz: Math.cos(a) * v }; };
-    if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, botFloor(game, bot), bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve], fall(bot.x, botFloor(game, bot) + 4, bot.z)); bot.weapon = null; changed = true; } continue; }
+    if (bot) { if (bot.weapon && slotOf(bot.weapon)) { dropItem(game, bot.weapon, bot.x, bot.z, botFloor(game, bot), bot.name, now, [bot.ammo, bot.reserve ?? weaponById(bot.weapon).reserve], fall(bot.x, botFloor(game, bot) + 4, bot.z), botOwn(bot)); bot.weapon = null; changed = true; } continue; }
     const l = A.loadout[k] || {}, slot = l.primary ? 'primary' : l.secondary ? 'secondary' : null;
     if (slot) dropFrom(game, p.name, l[slot], at.x, at.z, Math.max(0, (at.y || 0) - EYE), now, fall(at.x, Math.max(1, (at.y || EYE) - 5), at.z));
     // Everything else is gone with them right away (pistol, grenades, armor, kit), so nothing old shows while dead or
@@ -465,11 +512,11 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
   // empty secondary; grenades while there's room; the bomb (Terrorists). An occupied slot is never replaced (E or the
   // B menu swap); your own drop isn't picked straight back up. One claim: it leaves the ground as it's taken.
   if (C.ground?.length) for (const p of players) { if (!p.pose || stillLoading(game, p) || !(p.pose.z < ARENA.maxZ) || isDown(game, p.name, now)) continue; const k = key(p.name), l = loadoutOf(game, p.name), fy = Math.max(0, (p.pose.y ?? EYE) - EYE);
-    for (let i = C.ground.length - 1; i >= 0; i--) { const it = C.ground[i]; if (Math.hypot(it.x - p.pose.x, it.z - p.pose.z) > 3.2 || Math.abs((it.y || 0) - fy) > 4 || now - it.at < 300 || (key(it.by) === k && now - it.at < 1500)) continue;
+    for (let i = C.ground.length - 1; i >= 0; i--) { const it = C.ground[i]; if (Math.hypot(it.x - p.pose.x, it.z - p.pose.z) > 3.2 || Math.abs((it.y || 0) - fy) > 4 || !landed(it, now) || (key(it.by) === k && now - it.at < 1500)) continue;
       const slot = slotOf(it.item); let took = false;
       if (slot === 'bomb') { if (C.d && teamOf(game, p.name) === 't' && !C.d.bomb.carrier) { C.d.bomb.carrier = k; took = true; } }
       else if (slot === 'nades') { if (canCarry(l.nades ??= [], it.item) && !nadeRefusal(l.nades, it.item)) { l.nades.push(it.item); took = true; } }   // (one fire grenade: a CT walking over a T's molotov with an incendiary leaves it)
-      else if (slot === 'primary' ? !l.primary : slot === 'secondary' && l.secondary === null) { l[slot] = it.item; setAmmo(game, p.name, it.item, it.ammo || fullAmmo(it.item)); took = true; }
+      else if (slot === 'primary' ? !l.primary : slot === 'secondary' && l.secondary === null) { l[slot] = it.item; setOwner(l, it.item, it.own ?? null, p.name); setAmmo(game, p.name, it.item, it.ammo || fullAmmo(it.item)); took = true; }
       if (took) { C.ground.splice(i, 1); (C.picked ??= {})[k] = { item: it.item, at: now, ammo: it.ammo || null }; A.dirty = true; changed = true; } } }
   if (C.d?.paused ? holdNades(game, now) : nadesTick(game, present(game, players), dt, now, g, (x, y, z, r, dmg) => { if (blastMovers(game, x - ARENA.cx, y, z - ARENA.cz, r, dmg)) changed = true; }, id => { if (breakPane(game, id)) changed = true; })) changed = true;   // (a grenade through a pane breaks it; a paused match holds every grenade where it is, its times moving on with the pause)
   if (C.ground?.length) { const n = C.ground.length; C.ground = C.ground.filter(it => it.item === 'c4' || now - it.at < GROUND_MS); if (C.ground.length !== n) changed = true; }
@@ -509,8 +556,8 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
     }
     bot.target = null;
     // Bots pick up better guns they walk over (a rifle or the AWP instead of an SMG, shotgun or LMG).
-    if (C.ground?.length && !BOT_UPGRADE.includes(bot.weapon)) { const i = C.ground.findIndex(it => BOT_UPGRADE.includes(it.item) && Math.hypot(it.x - bot.x, it.z - bot.z) < 4);
-      if (i >= 0) { const it = C.ground.splice(i, 1)[0]; if (bot.weapon) dropItem(game, bot.weapon, it.x, it.z, it.y, bot.name, now, [bot.ammo, bot.reserve]); botArm(bot, it.item, it.ammo); changed = true; } }
+    if (C.ground?.length && !BOT_UPGRADE.includes(bot.weapon)) { const bf = botFloor(game, bot), i = C.ground.findIndex(it => BOT_UPGRADE.includes(it.item) && Math.hypot(it.x - bot.x, it.z - bot.z) < 4 && Math.abs((it.y || 0) - bf) <= 4 && landed(it, now, 0));   // (on its own floor — not a rifle on the catwalk over its head — and landed, as for players)
+      if (i >= 0) { const it = C.ground.splice(i, 1)[0]; if (bot.weapon) dropItem(game, bot.weapon, it.x, it.z, it.y, bot.name, now, [bot.ammo, bot.reserve], null, botOwn(bot)); botArm(bot, it.item, it.ammo); bot.own = it.own ? { w: it.item, k: it.own } : null; changed = true; } }   // (a player's gun keeps its owner's skin in a bot's hands too)
     if (C.d) { if (defuseBot(game, bot, team, g, dt, now)) changed = true; continue; }
     // Wander: walk towards a spawn point used as a waypoint; steer round obstacles; pick another when stuck.
     if (bot.wp < 0 || Math.hypot(...wp(g, bot.wp).map((v, i) => v - (i ? bot.z : bot.x))) < 6) bot.wp = Math.floor(Math.random() * g.map.spawns.length);
@@ -538,7 +585,7 @@ function defuseBot(game, bot, team, g, dt, now) {
   if (team === 't' && d.bomb.carrier === k && r.phase === 'live' && !r.plant) { const site = siteAt(game, { x: bot.x, z: bot.z, y: feetOf(g, bot) + EYE }); if (site) { r.plant = { by: k, start: now, x: bot.x, z: bot.z, y: feetOf(g, bot), site }; return true; } }
   if (r.plant?.by === k) return false;   // standing still while planting
   // A Terrorist without the bomb picks it up if it lies near.
-  if (team === 't' && !d.bomb.carrier) { const i = (game.combat.ground || []).findIndex(it => it.item === 'c4' && Math.hypot(it.x - bot.x, it.z - bot.z) < 4); if (i >= 0) { game.combat.ground.splice(i, 1); d.bomb.carrier = k; return true; } }
+  if (team === 't' && !d.bomb.carrier) { const bf = botFloor(game, bot), i = (game.combat.ground || []).findIndex(it => it.item === 'c4' && Math.hypot(it.x - bot.x, it.z - bot.z) < 4 && Math.abs((it.y || 0) - bf) <= 4 && landed(it, now, 0)); if (i >= 0) { game.combat.ground.splice(i, 1); d.bomb.carrier = k; return true; } }   // (landed and on its own floor, as a gun: a dropped bomb flies now — v52 review: a bot took it mid-air from the floor below)
   // Past the last waypoint but not there (it was skipped while stuck): walk a fresh route to it (at most every 2 s).
   if (bot.pi >= bot.path.length) { const end = bot.path[bot.path.length - 1]; if (!m.nav || !end || Math.hypot(end[0] - bot.x, end[1] - bot.z) < 4 || now - (bot.replanAt || 0) <= 2000 || !routeTurn()) return false;
     bot.replanAt = now; const fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz); if (!fresh.length) return false; bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; }
@@ -573,6 +620,8 @@ const wp = (g, i) => { const [x, z] = g.map.spawns[i]; return [ARENA.cx + x, ARE
 // players' poses arrive, and a later stamp on a position that hadn't moved made bots stop and lurch on everyone's screen)
 export function botRoster(game) {
   return (game.mode === 'arena' && game.arena?.bots || []).map((b, i) => ({ id: b.id, name: b.name, role: 'bot', bot: true, color: [0xff879e, 0xe2e779, 0x7ca1ff, 0xc5a27d][i % 4], slot: -1,
-    pose: { t: game.arena.botAt || Date.now(), x: b.x, y: EYE + botFloor(game, b), z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, shot: { n: b.shotN, pitch: 0, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));
+    pose: { t: game.arena.botAt || Date.now(), x: b.x, y: EYE + botFloor(game, b), z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, ...(botOwn(b) ? { own: botOwn(b) } : {}), shot: { n: b.shotN, pitch: 0, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));   // (own: the player whose gun it carries — skins.js skinFor's hint)
 }
+// The player whose gun a bot carries (picked up from the ground), or null: a bot's own guns take no skin.
+const botOwn = b => b.own && b.own.w === b.weapon ? b.own.k : null;
 export const arenaHp = (game, name) => hpOf(game, name) ?? MAX_HP;

@@ -32,6 +32,7 @@ export function parseCs2Map(buf) {
     solidSpans: (head, x, y, z0, z1) => spans(P, x, y, z0, z1),   // (the builder's world part: head 0)
     bulletSpans: B ? (x, y, z0, z1) => { const i = at(B, x, y), out = []; if (i < 0) return out; for (let k = B.offs[i]; k < B.offs[i + 1]; k += 2) { const b = B.vals[k] / 2, t = B.vals[k + 1] / 2; if (t > z0 && b < z1) out.push([Math.max(b, z0), Math.min(t, z1), PENS[PEN[k >> 1]] || 'concrete']); } return out; } : null,
     props: H.props || [],                                          // physics props (pots, cans, stools): pushed about, never in the way
+    modeOff: H.modeOff || null,                                    // another mode's walls and props the look still draws (v52 files; bsp-map.js modeOffOf)
     pointSolid: (x, y, z) => pointIn(N, x, y, z),                  // grenades (older files; newer: nadeMesh)
     nadeMesh,                                                      // grenades: CS2's surfaces as triangles (dist/nade-mesh.js)
     surfaceAt,                                                     // footsteps (map-light.js floorSurface)

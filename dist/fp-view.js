@@ -6,11 +6,13 @@
 // Imported on this computer (user-assets, never shipped): CS2's gloves are worn on every pair of arms, and CS2's own
 // first-person M4A1-S animations (cs2rifle) hold every rifle, sniper and machine gun.
 import * as THREE from './three.module.js';
-import { prepareSkins } from './skin-render.js';
+import { prepareSkins, applySkin, fitSkinned, fpLightTick } from './skin-render.js'; import { loadSkinManifest, skinFileURL } from './skin-textures.js';
 import { gltfLoader } from './gltf-loader.js';
-import { weaponModel, MUZZLE, VARIANTS, modelFromFile } from './weapon-models.js';
+import { weaponModel, MUZZLE, VARIANTS, modelFromFile, registerModel, KNIFE_SKINS } from './weapon-models.js';
 import { weaponById, CS_UNITS_PER_UNIT } from './weapons-data.js';
 import { userAssets, userAssetURL } from './user-assets.js';
+import { anisotropy } from './texture-quality.js';
+import { FP_LIGHT } from './skin-render.js'; import { GRADE_U, GRADE_PARS } from './cs2-render.js'; import { fitImage, textureSize } from './texture-quality.js';   // (V: the CS2 arms lit and graded as the gun, their pictures at Settings' size)
 
 const U = 1 / .165;   // metres → game units
 // Per pack: model scale (the rifle pack is in metres, the others bigger), eye (rig units: height, forward, pitch),
@@ -32,7 +34,7 @@ const PACKS = {
 // out as far as CS2 holds it — it hung huge by the face, the grenade floating beyond), a little lower and right.
 const NADE_VIEW = [.05, -.1, -1.3];
 // Which pack holds which weapon; `own`: the pack's gun is that weapon (else ours is attached).
-export const FP = { knife: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, karambit: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, he: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, flash: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, smoke: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, molotov: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .35, view: NADE_VIEW }, decoy: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, incendiary: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW },   /* (decoy, incendiary: cans like the smoke and flash, held the same way; no CS2 set of their own) */ c4: { pack: 'pistol', onehand: true, view: [-.05, -.1, .12] }, ak: { pack: 'rifle', own: true }, m4: { pack: 'rifle' }, sniper: { pack: 'rifle' }, smg: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol', own: true }, deagle: { pack: 'pistol' }, shotgun: { pack: 'shotgun', own: true }, xm1014: { pack: 'shotgun', own: true } };   /* both shotguns use the shotgun arms' own gun in first person: its reload animation is made for it */
+export const FP = { knife: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, karambit: { pack: 'pistol', onehand: true, fist: true, noLeft: true, view: [0, -.05, .1] }, he: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, flash: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, smoke: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, molotov: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .35, view: NADE_VIEW }, decoy: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW }, incendiary: { pack: 'pistol', onehand: true, noLeft: true, palm: true, fistK: .4, view: NADE_VIEW },   /* (decoy, incendiary: cans like the smoke and flash, held the same way — only without CS2's own sets: user-assets/fp cs2_decoy / cs2_incendiary / cs2_aug, tools/cs2-fp/export_missing.py; fpFor takes a set first) */ c4: { pack: 'pistol', onehand: true, view: [-.05, -.1, .12] }, ak: { pack: 'rifle', own: true }, m4: { pack: 'rifle' }, sniper: { pack: 'rifle' }, smg: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol', own: true }, deagle: { pack: 'pistol' }, shotgun: { pack: 'shotgun', own: true }, xm1014: { pack: 'shotgun', own: true } };   /* both shotguns use the shotgun arms' own gun in first person: its reload animation is made for it */
 // How each pack's arms sit in view for guns, CS2-like (the packs were posed for another camera: the rifle swung in
 // toward the crosshair, the pistol tipped up): a turn [pitch, yaw, roll] about the eye and a shift (game units),
 // arms and gun together, so the grip never changes. Per-weapon view / viewRot (FP) still win.
@@ -125,39 +127,123 @@ let drained = null;
 // card as a match draws them — the C4 used to build its shader on being drawn at the plant, a 70–220 ms frame).
 export const fpSetRoots = () => [...authored.values()].map(s => s.root);
 export function fpSetsReady() { return drained ??= (() => { const p = loadAuthored().then(() => new Promise(res => { const chk = () => (!queue.length && !busy) ? res() : setTimeout(chk, 50); chk(); })).then(() => { p.done = true; }); p.done = false; return p; })(); }
+const sent = new WeakMap();   // texture → its version when sent to the GPU
 function pump() {
   if (busy || !queue.length || !ctx) return; if (held()) { setTimeout(pump, 400); return; } busy = true; const [id, v] = queue.shift();
-  gltfLoader().loadAsync(userAssetURL(ctx.ua, v.file)).then(async g => { const set = buildAuthored(g, ctx.glove), I = globalThis.__infra;
+  gltfLoader().loadAsync(userAssetURL(ctx.ua, v.file)).then(async g => { const set = buildAuthored(g, ctx.glove, id, ctx.arms, await knifeBase(id)), I = globalThis.__infra;
       await I?.gfx?.compileFor(set.root).catch(() => {});   // (its shaders built off the frame, for where a frame draws: graphics.js; in a match's own lights by the arena's warm-up, lab.js)
-      for (const t of set.textures) { while (held()) await new Promise(r => setTimeout(r, 400)); I?.renderer?.initTexture(t); if (!behindCard()) await new Promise(r => setTimeout(r, 16)); }   // (its textures on the GPU, one per frame, between plays)
+      for (const t of set.textures) { if (sent.get(t) === t.version) continue; while (held()) await new Promise(r => setTimeout(r, 400)); I?.renderer?.initTexture(t); if (I?.renderer) sent.set(t, t.version); if (!behindCard()) await new Promise(r => setTimeout(r, 16)); }   // (its textures on the GPU, one per frame, between plays; the shared ones — CS2 arms, glove — once, not a frame's wait per set: V)
       authored.set(id, set); for (const fn of readyFns) fn(id); })   // only now ready: its first showing costs nothing
     .catch(e => console.warn('first-person set', id, e?.message)).finally(() => { busy = false; setTimeout(pump, behindCard() ? 0 : 150); });
 }
 function loadAuthored() {
-  return authoredLoading ??= Promise.all([userAssets(), loadGlove()]).then(([ua, glove]) => { ctx = { ua, glove };
+  return authoredLoading ??= Promise.all([userAssets(), loadGlove(), loadArms()]).then(([ua, glove, arms]) => { ctx = { ua, glove, arms };
     const sets = Object.entries(ua.models.viewmodels || {}).filter(([k]) => /^cs2_/.test(k)).map(([k, v]) => [k.slice(4), v]);
     sets.sort((a, b) => (FIRST.indexOf(a[0]) + 1 || 99) - (FIRST.indexOf(b[0]) + 1 || 99)); queue.push(...sets); pump(); }).catch(() => null);
 }
 // Sets share one glove material (the imported CS2 glove's; a set's own 'cs2_glove' slot carries no textures) and their
 // textures go to the GPU as they load, so a weapon's first appearance costs nothing.
-function buildAuthored(gltf, glove) {
+const FP_GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'shotgun', 'lmg']);
+// Your own gun's reflections (PLAN §5.5): a studio light box made here, once — dark surroundings, a broad soft light
+// above, a tall key to the left, a rim strip behind on the right, a grey floor and a horizon band: the light weapon
+// pictures are shot in, so chrome and anodized finishes show bright and dark bands instead of a flat grey room.
+// Prefiltered once at one size (PMREM 256: a set loading later never makes a program of its own).
+// The star knives' CS2 base pictures (user-assets/skins base.<knife>: colour, and ORM = AO / rough / metal — made on the
+// host by tools/import-cs2-skins.mjs, never shipped), loaded with the knife's set (before its shader is built). null:
+// none (the set's own picture and gloss stay).
+const kbases = new Map();
+function knifeBase(id) {
+  if (!['karambit', 'butterfly', 'm9', 'stiletto'].includes(id) || typeof createImageBitmap !== 'function') return Promise.resolve(null); if (kbases.has(id)) return kbases.get(id);
+  const one = (rel, data) => fetch(skinFileURL(rel)).then(r => r.ok ? r.blob() : Promise.reject(Error(r.status + ' ' + rel))).then(b => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: data ? 'none' : 'default' }))
+    .then(img => { const t = new THREE.Texture(img); t.flipY = false; t.colorSpace = data ? THREE.NoColorSpace : THREE.SRGBColorSpace; t.anisotropy = anisotropy(); t.userData.shared = true; t.needsUpdate = true; return t; });
+  const p = loadSkinManifest().then(man => { const b = man?.base?.[id]; return b?.color && b.orm ? Promise.all([one(b.color, false), one(b.orm, true)]).then(([color, orm]) => ({ color, orm })) : null; }).catch(e => { console.warn('knife base', id, e?.message); return null; });
+  kbases.set(id, p); return p;
+}
+let fpEnvTex;
+export function fpEnv() {
+  if (fpEnvTex !== undefined) return fpEnvTex; const r = globalThis.__infra?.renderer; if (!r) return null;
+  try { const s = new THREE.Scene(), box = (w, h, x, y, z, k, rx = 0, ry = 0) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(k), side: THREE.DoubleSide })); m.position.set(x, y, z); m.rotation.set(rx, ry, 0); s.add(m); };
+    s.background = new THREE.Color(.035, .037, .04); box(9, 9, 0, 6, 0, 2.6, Math.PI / 2); box(3, 7, -6, 1, 1.5, 5, 0, Math.PI / 2); box(1.2, 8, 5.5, 1, -3, 4, 0, -Math.PI / 2.6); box(30, 30, 0, -4, 0, .16, -Math.PI / 2);   // (top softbox, key left, rim right-back, floor)
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 1.6, 48, 1, true), new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(.45), side: THREE.BackSide })); band.position.y = .3; s.add(band);
+    const pm = new THREE.PMREMGenerator(r); fpEnvTex = pm.fromScene(s, .02, .1, 100, { size: 256 }).texture; fpEnvTex.userData.shared = true; pm.dispose(); s.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); }
+  catch (e) { console.warn('first-person reflections', e?.message); fpEnvTex = null; }
+  return fpEnvTex;
+}
+// A star knife for third person, from its first-person set (there are no world models of them here): the knife's mesh
+// skinned to the set's idle pose, laid in the game's knife convention — blade along −z (blade: its finish mask, red
+// vertex colours; a set without that mask gets no third-person model (null) and others see the default knife — all four
+// star knives carry one), the flat of the blade facing ±x, the guard (where the blade starts) at the
+// origin. Its own material copy (the set's is painted with YOUR skin in first person), with the set's mask and pictures.
+export function bakeKnife(sc, mixer, idle, id = '') {
+  let src = null; sc.traverse(o => { if (!src && o.isSkinnedMesh && [].concat(o.material)[0]?.name === 'cs2_weapon') src = o; }); if (!src) return null;
+  const a = idle && mixer.clipAction(idle); if (a) { a.play(); mixer.update(0); } let top = sc; while (top.parent) top = top.parent; top.updateMatrixWorld(true);   // (from the set's root: the view's frame, game units)
+  const G = src.geometry, n = G.attributes.position.count, P = new Float32Array(n * 3), v = new THREE.Vector3(); for (let i = 0; i < n; i++) src.getVertexPosition(i, v).applyMatrix4(src.matrixWorld).toArray(P, i * 3); if (a) a.stop();
+  const col = G.attributes.color, isBlade = i => col ? col.getX(i) > .3 : null, c0 = new THREE.Vector3(), c1 = new THREE.Vector3(); let k0 = 0, k1 = 0;
+  const box = new THREE.Box3(); for (let i = 0; i < n; i++) box.expandByPoint(v.fromArray(P, i * 3)); const sz = box.getSize(new THREE.Vector3()).toArray(), ax = sz.indexOf(Math.max(...sz)), axis = new THREE.Vector3().setComponent(ax, 1);
+  if (col) for (let i = 0; i < n; i++) { v.fromArray(P, i * 3); if (isBlade(i)) { c1.add(v); k1++; } else { c0.add(v); k0++; } }
+  if (!k0 || !k1) return null; c1.multiplyScalar(1 / k1); c0.multiplyScalar(1 / k0); if (c1.clone().sub(c0).dot(axis) < 0) axis.negate();   // (along the length, toward the blade)
+  let guard = Infinity; for (let i = 0; i < n; i++) if (isBlade(i)) guard = Math.min(guard, v.fromArray(P, i * 3).dot(axis));
+  const thin = [0, 1, 2].filter(k => k !== ax).sort((p, q) => sz[p] - sz[q])[0], side = new THREE.Vector3().setComponent(thin, 1), up = new THREE.Vector3().crossVectors(axis, side);   // −z ← axis, +x ← side, +y = −z × x … (right-handed: x × y = z)
+  const m = new THREE.Matrix4().makeBasis(side, up.negate(), axis.clone().negate()).invert(), o = c0.clone().addScaledVector(axis, guard - c0.dot(axis));   // world → knife frame; origin on the guard's plane through the handle's line
+  const geo = new THREE.BufferGeometry(); for (let i = 0; i < n; i++) v.fromArray(P, i * 3).sub(o).applyMatrix4(m).toArray(P, i * 3);
+  geo.setAttribute('position', new THREE.BufferAttribute(P, 3)); for (const name of ['uv', 'color']) if (G.attributes[name]) geo.setAttribute(name, G.attributes[name]); if (G.index) geo.setIndex(G.index); geo.computeVertexNormals(); geo.userData.shared = true;
+  const mat = [].concat(src.material)[0].clone(); mat.userData = { shared: true }; mat.vertexColors = !!col; mat.envMapIntensity = .9; applySkin([mat], null, id === 'karambit');   // (no skin: its own finish as in first person — the karambit's Ruby, the others plain steel with black handles)
+  const mesh = new THREE.Mesh(geo, mat); mesh.castShadow = true; const g = new THREE.Group(); g.add(mesh); return g; }
+// A knife without a finish mask (CS2's default CT / T knives: no vertex colours; the star knives carry one): the blade
+// found from the mesh itself — along its long axis in 24 slices, a slice is blade where the knife is thin (under 40 %
+// of its thickest slice: the guard and grip are fat, the blade a few millimetres) — as vertex colours a skin reads as
+// its mask (skin-render.js skinMask: with no skin on, unused). Once, at load.
+export function bladeMask(o) {
+  const p = o.geometry.attributes.position, n = p.count, bb = (o.geometry.computeBoundingBox(), o.geometry.boundingBox), sz = bb.getSize(new THREE.Vector3()).toArray(), lo = bb.min.toArray();
+  const ax = sz.indexOf(Math.max(...sz)), [a1, a2] = [0, 1, 2].filter(k => k !== ax), N = 24, mn = [], mx = [], slice = i => Math.min(N - 1, Math.floor((p.getComponent(i, ax) - lo[ax]) / (sz[ax] || 1) * N));
+  for (let s = 0; s < N; s++) { mn.push([Infinity, Infinity]); mx.push([-Infinity, -Infinity]); }
+  for (let i = 0; i < n; i++) { const s = slice(i); for (const [j, k] of [[0, a1], [1, a2]]) { const v = p.getComponent(i, k); if (v < mn[s][j]) mn[s][j] = v; if (v > mx[s][j]) mx[s][j] = v; } }
+  const thick = mn.map((m, s) => Number.isFinite(m[0]) ? Math.min(mx[s][0] - m[0], mx[s][1] - m[1]) : 0), top = Math.max(...thick), blade = thick.map(t => t > 0 && t < top * .4);
+  for (let s = 1; s < N - 1; s++) if (!blade[s] && blade[s - 1] && blade[s + 1]) blade[s] = true;   // (a lone fat slice inside the blade — a thumb notch, the spine's swage — is blade)
+  const col = new Float32Array(n * 3); for (let i = 0; i < n; i++) col.fill(blade[slice(i)] ? 1 : 0, i * 3, i * 3 + 3); o.geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  for (const m of [].concat(o.material)) { m.vertexColors = true; m.userData.skinMask = true; m.needsUpdate = true; } return blade; }
+export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {   // (exported for tests/gd-fp-sets.mjs, gd-fp-gloves.mjs)
   const sc = gltf.scene, root = new THREE.Group(), fix = new THREE.Group(); root.add(fix); fix.add(sc); fix.matrixAutoUpdate = false;
   let cam = null, muzzle = null, hand = null; const sleeves = {}, textures = [], weaponMats = [];   // (weaponMats: the gun's or knife's own materials — a skin paints them, skin-render.js)
   sc.traverse(o => { if (o.isCamera && !cam) cam = o; if (o.name === 'muzzle') muzzle = o; if (o.isBone && /^hand_[rR]$/.test(o.name)) hand = o; if (/^sleeve_ctm/.test(o.name)) sleeves.ct = o; if (/^sleeve_tm/.test(o.name)) sleeves.t = o;
-    if (o.isMesh) { o.frustumCulled = false; o.castShadow = o.receiveShadow = false; if (glove && o.material?.name === 'cs2_glove') { o.material.dispose(); o.material = glove.material; } else if (o.material?.name === 'cs2_sleeve') { o.material.dispose(); o.material = shirt(PACKS.cs2rifle.sleeve.from); }   // (the forearms in the black camo sleeve every other first-person view wears)
-      for (const m of [].concat(o.material)) { m.userData.shared = true; if (m !== glove?.material && m !== shirts.get(PACKS.cs2rifle.sleeve.from) && m.map && !/glove|sleeve|arm|hand/i.test(m.name || '') && !weaponMats.includes(m)) weaponMats.push(m); if (m !== glove?.material && m !== shirts.get(PACKS.cs2rifle.sleeve.from)) m.envMapIntensity = .35; for (const t of [m.map, m.normalMap, m.roughnessMap]) if (t && !textures.includes(t)) textures.push(t); } } });
+    if (o.isMesh) { o.frustumCulled = false; o.castShadow = o.receiveShadow = false; if (glove && o.material?.name === 'cs2_glove') { o.material.dispose(); o.material = leftHanded(o.geometry) ? leftGlove(glove.material) : glove.material; } else if (o.material?.name === 'cs2_sleeve') { o.material.dispose(); o.material = shirt(PACKS.cs2rifle.sleeve.from); }   // (the forearms in the black camo sleeve every other first-person view wears)
+      for (const m of [].concat(o.material)) { m.userData.shared = true; if (m !== glove?.material && m !== leftGloveMat && m !== shirts.get(PACKS.cs2rifle.sleeve.from) && m.map && !/glove|sleeve|arm|hand/i.test(m.name || '') && !weaponMats.includes(m)) weaponMats.push(m); if (m !== glove?.material && m !== leftGloveMat && m !== shirts.get(PACKS.cs2rifle.sleeve.from)) m.envMapIntensity = .35; for (const t of [m.map, m.normalMap, m.roughnessMap]) if (t && !textures.includes(t)) textures.push(t); } } });
   // The authoring camera becomes ours: its frame → the view's, inches (metres: sets built from CS2's own data, its
   // view-model offset in the camera's place) → game units; such sets also carry CS2's view-model field of view.
   sc.updateMatrixWorld(true); const u = (cam?.userData?.metres ? 39.3701 : 1) / CS_UNITS_PER_UNIT, vfov = cam?.userData?.vfov || 0;
   fix.matrix.makeScale(u, u, u).multiply(cam ? cam.matrixWorld.clone().invert() : new THREE.Matrix4()); cam?.removeFromParent();
   const mixer = new THREE.AnimationMixer(sc), clip = n => gltf.animations.find(a => a.name === n), now = () => performance.now();
   for (const c of gltf.animations) { const a = mixer.clipAction(c); a.play(); mixer.update(0); a.stop(); }   // (every clip's bindings made now, while loading: a first draw or swing costs nothing)
+  if (id === 'knife' || id === 'knife-t') sc.traverse(o => { if (o.isMesh && [].concat(o.material)[0]?.name === 'cs2_weapon' && !o.geometry.attributes.color) bladeMask(o); });   // (the default knives: a skin on the blade only — SKIN-1)
+  if (KNIFE_SKINS[id] || id === 'karambit') { const k = bakeKnife(sc, mixer, clip('idle'), id); if (k) registerModel(id, k); }   // (the chosen star knife in other players' hands: TP-3)
+  const worn = dressArms(sc, arms, textures);   // (CS2's own arms for each side, on this set's bones: V)
+  { const an = anisotropy(); for (const t of textures) if (t.anisotropy !== an) { t.anisotropy = an; t.needsUpdate = true; } }   // (the shared glove's once)   // (Settings' texture filtering: the gun up close in the view, at a grazing angle, was sampled without it)
+  // The muzzle: no set has a 'muzzle' node (all 37: the gun's bones are weapon, weapon_offset, slide / bolt, clip…), so
+  // flashes and tracers started at the right wrist. For a gun: at load, in the idle pose, the centre of the gun mesh's
+  // front end (its vertices within 1 cm of the one furthest along the view's −z, ≤ 4000 sampled), kept in the 'weapon'
+  // bone's frame so it follows every clip (fire kick, reload, inspect). Knives, grenades and the bomb keep the hand.
+  let tipBone = null; const tip = new THREE.Vector3();
+  if (!muzzle && FP_GUN_KINDS.has(weaponById(id)?.kind)) { const idle = clip('idle'), a = idle && mixer.clipAction(idle); if (a) { a.play(); mixer.update(0); } root.updateMatrixWorld(true);
+    sc.traverse(o => { if (o.isBone && o.name === 'weapon' && !tipBone) tipBone = o; }); const pts = [], v = new THREE.Vector3();
+    sc.traverse(o => { if (!o.isMesh || [].concat(o.material)[0]?.name !== 'cs2_weapon') return; const n = o.geometry.attributes.position.count, step = Math.max(1, Math.ceil(n / 4000)); for (let i = 0; i < n; i += step) pts.push(o.getVertexPosition(i, v).applyMatrix4(o.matrixWorld).clone()); });
+    if (tipBone && pts.length) { let z0 = Infinity; for (const p of pts) z0 = Math.min(z0, p.z); let k = 0; for (const p of pts) if (p.z < z0 + .06) { tip.add(p); k++; } tipBone.worldToLocal(tip.multiplyScalar(1 / k)); } else tipBone = null;
+    if (a) a.stop(); }
+  // Skins (skin-render.js): the gun's or knife's own materials take your skin — CS2's UV0 (imported finishes fit it),
+  // tier 'fp' (1024 pictures, the map's light and grade), the pattern frame fitted in the idle pose — and their own
+  // reflections (PLAN §5.5): a studio light box (fpEnv) at full strength, not the scene's dim room at .35 (which three.js
+  // replaced by scene.environmentIntensity anyway): chrome, Doppler and Fade read as metal. Set now, never in play.
+  { const idle = clip('idle'), a = idle && mixer.clipAction(idle); if (a) { a.play(); mixer.update(0); } root.updateMatrixWorld(true); const env = fpEnv();
+    for (const m of weaponMats) { let best = null; sc.traverse(o => { if (o.isMesh && [].concat(o.material).includes(m) && (!best || o.geometry.attributes.position.count > best.geometry.attributes.position.count)) best = o; });
+      if (kbase && m.name === 'cs2_weapon') { const old = m.map; m.map = kbase.color; m.roughnessMap = m.metalnessMap = m.aoMap = kbase.orm; m.roughness = m.metalness = 1; m.aoMapIntensity = 1; m.needsUpdate = true;   // (a star knife's CS2 base: its steel, rough and metal per texel — the handle matte, not the old pale picture at one gloss)
+        const i = textures.indexOf(old); if (i >= 0) textures.splice(i, 1); textures.push(kbase.color, kbase.orm); }
+      prepareSkins([m], { model: id, uv: 'cs2', tier: 'fp', M: best ? fitSkinned(best, root) : undefined, hasUv: !!best?.geometry.attributes.uv }); if (env) { m.envMap = env; m.envMapIntensity = 1; } }
+    if (a) a.stop(); }
   let cur = null, until = 0, bobT = 0, bobA = 0, breathT = 0; const hm = new THREE.Matrix4();
   const play = (n, { once = false, fade = .12, ms = 0 } = {}) => { const c = clip(n); if (!c) return 0; const a = mixer.clipAction(c); a.reset(); a.enabled = true; a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat); a.clampWhenFinished = once; a.timeScale = ms ? c.duration * 1000 / ms : 1;
     if (cur && cur !== a && fade > 0) a.crossFadeFrom(cur, fade, false); else if (cur && cur !== a) cur.stop(); a.play(); cur = a; return c.duration * 1000 / a.timeScale; };
   return {
-    root, authored: true, vfov, textures, weaponMats: (prepareSkins(weaponMats), weaponMats),
-    hold(id, { draw = true, team = 'ct' } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; until = draw && clip('draw') ? now() + play('draw', { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
+    root, authored: true, vfov, textures, worn, weaponMats: (prepareSkins(weaponMats), weaponMats),
+    hold(id, { draw = true, team = 'ct' } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; wearSide(worn, team); until = draw && clip('draw') ? now() + play('draw', { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
     fire() { if (cur === mixer.existingAction(clip('reload'))) return; until = now() + play('fire', { once: true, fade: .03 }); },
     // Knife swings: the set's own light / heavy clips (else its fire clip).
     swing(kind) { const n = clip(kind) ? kind : 'fire'; until = now() + play(n, { once: true, fade: .05 }); },
@@ -167,17 +253,19 @@ function buildAuthored(gltf, glove) {
     // The bomb: planting.
     plant() { if (clip('plant')) until = now() + play('plant', { once: true, fade: .1 }); },
     reload(ms) { until = now() + play('reload', { once: true, fade: .1, ms }); },
+    // A shotgun's shell-by-shell reload broken off by a shot (CS2): back to idle so the shot's own clip can play.
+    stopReload() { if (cur === mixer.existingAction(clip('reload'))) { until = 0; play('idle', { fade: .08 }); } },
     inspect() { if (now() < until && cur !== mixer.existingAction(clip('fire'))) return 0; const ms = play('inspect', { once: true, fade: .15 }); until = now() + ms; return ms; },
     twirl() {},
     update(dt, speed = 0) {
       if (until && now() >= until) { until = 0; play('idle', { fade: .18 }); }
-      mixer.update(dt);
+      mixer.update(dt); fpLightTick(dt, root);   // (the map's light where you stand on your gun, a few times a second: skin-render.js)
       // Restrained layers on top: a walking bob, and breathing.
       bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); breathT += dt;
       root.position.set(Math.sin(bobT) * .012 * bobA, -Math.abs(Math.cos(bobT)) * .01 * bobA + Math.sin(breathT * 1.6) * .0025, 0); root.updateMatrixWorld(true);
     },
     handIn(space, out) { space.updateMatrixWorld(true); return out.setFromMatrixPosition(hm.copy(space.matrixWorld).invert().multiply((hand || root).matrixWorld)); },
-    muzzle(out) { root.updateMatrixWorld(true); return (muzzle || hand || root).getWorldPosition(out); },
+    muzzle(out) { root.updateMatrixWorld(true); return tipBone ? tipBone.localToWorld(out.copy(tip)) : (muzzle || hand || root).getWorldPosition(out); },
   };
 }
 
@@ -188,14 +276,83 @@ function buildAuthored(gltf, glove) {
 // both rest poses: the bone's start on the rig bone's start, along it to the next joint, turned about it by the way
 // the palm faces, stretched to the rig bone's length (across: by the hands' size). Done once, on load: nothing per frame.
 let gloveLoading = null;
+// The left hand's glove (FP-2): CS2's gloves texture one hand; the other's UVs run 0 → −1 and the picture is read
+// mirrored (MirroredRepeat), but three.js takes the normal map's sideways axis from the raw UVs' direction — on the
+// left hand it ran the other way, so its stitching and folds were lit inside out. Its own copy of the glove material
+// with the normal map's x turned round (shared by every set; the pictures are the same ones).
+let leftGloveMat = null;
+const leftGlove = m => { if (!leftGloveMat) { leftGloveMat = m.clone(); leftGloveMat.normalScale = m.normalScale.clone().multiply(new THREE.Vector2(-1, 1)); leftGloveMat.userData.shared = true; } return leftGloveMat; };
+// A glove primitive textured on the mirrored half (u < 0 on average): the left hand.
+export function leftHanded(geo) { const uv = geo.attributes.uv, ix = geo.index; if (!uv) return false; let s = 0; const n = ix ? ix.count : uv.count; for (let i = 0; i < n; i++) s += uv.getX(ix ? ix.getX(i) : i); return s / n < 0; }   // (the sets' primitives share one vertex list: the hand's own triangles decide)
 function loadGlove() {
   return gloveLoading ??= userAssets().then(ua => { const v = ua.models.viewmodels?.glove; if (!v) return null;
     // (CS2's gloves are textured one hand; the other's UVs run from 0 to −1 — mirrored: both hands read the picture the
     // same way; with plain repeat one hand read the picture's empty half — the Sport Gloves' right hand plain grey)
     return gltfLoader().loadAsync(userAssetURL(ua, v.file)).then(g => { let m = null; g.scene.traverse(o => { if (!m && o.isSkinnedMesh) m = o; }); g.scene.updateMatrixWorld(true);
-      for (const t of [m?.material?.map, m?.material?.normalMap]) if (t) { t.wrapS = THREE.MirroredRepeatWrapping; t.needsUpdate = true; } return m; }); }).catch(e => { console.warn('gloves', e?.message); return null; });
+      for (const t of [m?.material?.map, m?.material?.normalMap]) if (t) { t.wrapS = THREE.MirroredRepeatWrapping; t.needsUpdate = true; } return fitTextures([m?.material?.map, m?.material?.normalMap]).then(() => m); }); }).catch(e => { console.warn('gloves', e?.message); return null; });   // (at Settings' texture size, as the CS2 arms: 2 × 2048² uploaded with every set)
 }
-const FINGERS = ['index', 'middle', 'ring', 'pinky'];
+// CS2's own first-person arms for each side (V; user-assets/fp-gloves/arms-*.glb from tools/export-fp-gloves.py, made
+// on this computer from the CS2 install, never shipped): what CS2 draws for an agent without glove skins — CT (SAS) the
+// black Hardknuckle gloves and SAS sleeves, T (Phoenix) the Full-finger gloves on bare forearms with rolled sleeves.
+// The glove above (glove.glb) was a downloaded picture on the Driver Gloves mesh (CS2's own Driver Gloves are a composite
+// material: their colour texture is a 4×4 placeholder) and the forearms the FPS pack's camo shirt, the same on both
+// sides, with no AO or roughness map. These carry every CS2 map at CS2's resolution, laid out for glTF — base colour
+// (sRGB), normal (+Y: Source 2's export, checked against the AO), ORM (AO · roughness = the normal map's alpha with the
+// vmat's roughness adjust · metalness) — so GLTFLoader gives each its colour space. Same 52 arm bones at the same bind
+// pose as the glove mesh in every set: each set binds them to its own skeleton (one bone texture, as before), the
+// geometry and materials shared by all 37 sets (loaded once with the sets, uploaded with the first one, before any
+// round). Every arm material has the same maps, so the T side's shader is the CT side's (no compile at a side swap).
+// Outside Global Defensive (no side) the sets keep the glove above.
+// Lit as the gun in the same view is (skin-render.js tier 'fp'): the gun's own reflections (fpEnv, S's studio box — set
+// on these materials, else three.js swaps envMapIntensity for scene.environmentIntensity and ignores ARM_LOOK.env),
+// the map's light where you stand (FP_LIGHT: .35 in a tunnel … 1.1 in sun; the arms stayed sunlit while the gun beside
+// them went dark) and the map's colour grade (the gun graded, the gloves not: the black Hardknuckles read light grey).
+// Per part: env = its share of that light box on leather, cloth and skin; albedo = the base colour's factor (skin:
+// CS2 shades it with a diffuse warp and subsurface scattering and tone-maps with a roll-off — a sunlit forearm stays
+// tan; here Lambert under linear tone mapping, bare_arm_133's light albedo clipped pale in Dust II's sun).
+export const ARM_LOOK = { glove: { env: .5, albedo: 1 }, sleeve: { env: .4, albedo: 1 }, skin: { env: .45, albedo: .78 } };
+const ARM_LIGHT = '#include <aomap_fragment>\n\treflectedLight.directDiffuse *= uArmLight; reflectedLight.directSpecular *= uArmLight; reflectedLight.indirectDiffuse *= uArmLight; reflectedLight.indirectSpecular *= uArmLight;';
+const ARM_GRADE = '\tif (uGrade > 0.5) gl_FragColor.rgb = cs2Grade(gl_FragColor.rgb);\n#include <tonemapping_fragment>';
+export function armsShader(sh) { Object.assign(sh.uniforms, { uArmLight: FP_LIGHT }, GRADE_U);   // (one function for every arm material: one program for CT and T; the uniforms are the shared objects — no per-frame upkeep)
+  sh.fragmentShader = sh.fragmentShader.replace('void main() {', GRADE_PARS + 'uniform float uArmLight;\nvoid main() {').replace('#include <aomap_fragment>', ARM_LIGHT).replace('#include <tonemapping_fragment>', ARM_GRADE); }
+const armsKey = () => 'cs2arms1';
+function armsEnv(arms) { if (!arms || arms.env) return; const e = fpEnv(); if (!e) return; arms.env = e; for (const m of arms.materials) { m.envMap = e; m.needsUpdate = true; } }   // (before the first set's compile: a set's warm-up builds it with its reflections)
+// Pictures at Settings → Texture quality (low 512, medium 1024, high 2048 — CS2's 2048² gloves were 148 MB with mips at
+// any setting): made smaller once as they load, before any upload; data maps kept as they are (no premultiply, no colour conversion).
+async function fitTextures(ts, size = textureSize()) {
+  if (typeof createImageBitmap !== 'function') return; const done = new Map();
+  for (const t of ts) { const img = t?.image, w = img?.width || 0, h = img?.height || 0; if (!w || !h || Math.max(w, h) <= size) continue;
+    if (!done.has(img)) { const k = size / Math.max(w, h); try { done.set(img, await createImageBitmap(img, { resizeWidth: Math.max(1, Math.round(w * k)), resizeHeight: Math.max(1, Math.round(h * k)), resizeQuality: 'high', premultiplyAlpha: 'none', colorSpaceConversion: 'none' })); } catch { done.set(img, img); } }
+    const s = done.get(img); if (s !== img) { t.image = s; t.needsUpdate = true; } }
+  for (const [img, s] of done) if (s !== img) img.close?.();
+}
+let armsLoading = null;
+function loadArms() {
+  return armsLoading ??= userAssets().then(ua => { const v = ua.models.fpGloves; if (!v) return null; return gltfLoader().loadAsync(userAssetURL(ua, v.file)).then(armsFrom).then(a => a && fitTextures(a.textures).then(() => a)); })
+    .catch(e => { console.warn('first-person arms (CS2)', e?.message); return null; });
+}
+export function armsFrom(gltf) {   // (exported for tests/gd-fp-gloves.mjs)
+  const out = { ct: [], t: [], bones: null, inverses: null, textures: [], materials: [] }, an = anisotropy();
+  gltf.scene.traverse(o => { if (!o.isSkinnedMesh) return; let q = o; while (q && !/^(arms|sleeves)_(ct|t)$/.test(q.name)) q = q.parent; if (!q) return; const side = q.name.split('_')[1];
+    if (!out.bones) { out.bones = o.skeleton.bones.map(b => b.name); out.inverses = o.skeleton.boneInverses; }
+    o.name = q.name + '/' + (o.material.name || ''); o.geometry.userData.shared = true; out[side].push(o);
+    const m = o.material; if (!out.materials.includes(m)) { out.materials.push(m); m.userData.shared = true; const L = ARM_LOOK[m.userData.part] || ARM_LOOK.glove; m.envMapIntensity = L.env; m.color.multiplyScalar(L.albedo); m.metalness = m.roughness = 1; m.onBeforeCompile = armsShader; m.customProgramCacheKey = armsKey;
+      for (const t of [m.map, m.normalMap, m.aoMap, m.roughnessMap, m.metalnessMap]) if (t && !out.textures.includes(t)) { out.textures.push(t); t.anisotropy = an; } } });
+  if (!(out.bones && out.ct.length && out.t.length)) return null; armsEnv(out); return out;
+}
+// The arms on a set: one skinned mesh per part and side on the set's own glove skeleton (the same bones in the same
+// order: that skeleton itself), beside its glove; the set's glove and camo sleeves are kept for outside GD.
+function dressArms(sc, arms, textures) {
+  if (!arms) return null; armsEnv(arms); const legacy = []; sc.traverse(o => { if (o.isSkinnedMesh && o.skeleton?.getBoneByName('finger_thumb_0_L')) legacy.push(o); }); const ref = legacy[0]; if (!ref) return null;
+  const sk = arms.bones.length === ref.skeleton.bones.length && arms.bones.every((n, i) => ref.skeleton.bones[i].name === n) ? ref.skeleton : new THREE.Skeleton(arms.bones.map(n => ref.skeleton.getBoneByName(n) || ref.skeleton.bones[0]), arms.inverses), worn = { legacy };
+  for (const side of ['ct', 't']) { const g = worn[side] = new THREE.Group(); g.name = 'cs2_arms_' + side; g.visible = side === 'ct'; g.position.copy(ref.position); g.quaternion.copy(ref.quaternion); g.scale.copy(ref.scale); ref.parent.add(g);
+    for (const tpl of arms[side]) { const m = new THREE.SkinnedMesh(tpl.geometry, tpl.material); m.name = tpl.name; m.frustumCulled = false; m.castShadow = m.receiveShadow = false; m.bind(sk, ref.bindMatrix); g.add(m); } }
+  for (const t of arms.textures) if (!textures.includes(t)) textures.push(t);
+  return worn;
+}
+// A side shown (hold): GD's 'ct' / 't' wear their CS2 arms; no side (other modes) the set's own glove.
+function wearSide(worn, team) { if (!worn) return; const s = team === 'ct' || team === 't' ? team : null; for (const o of worn.legacy) o.visible = !s; worn.ct.visible = s === 'ct'; worn.t.visible = s === 't'; }
+const FINGERS =['index', 'middle', 'ring', 'pinky'];
 // CS2's own hand, measured in Blender on the CS2 arms rig imported on this computer (CS2_MultiRig: Valve's arms and
 // gloves on one rig, the same proportions as CS:GO's karambit arms): each finger's knuckle → last joint over the hand's
 // size (wrist → middle knuckle), and the hand's size over the forearm (elbow → wrist).
@@ -508,6 +665,8 @@ function build(name, gltf, glove) {
     fire() { if (!A.fire || reloadPlan) return; to('fire', .04, { once: true }); oneShotUntil = performance.now() + Math.min(A.fire.duration * 1000, 450); },
     // Reload over `ms` (the shotgun: into reload, shells, out of reload).
     reload(ms) { const now = performance.now(); if (A.toReload && A.fromReload) { const i = ms * .25, o = ms * .2; reloadPlan = [[now, 'toReload', i], [now + i, 'reload', ms - i - o], [now + ms - o, 'fromReload', o]]; } else reloadPlan = [[now, 'reload', ms]]; reloadPlan.end = now + ms; },
+    // A shotgun's shell-by-shell reload broken off by a shot (CS2): the plan ends, the arms go back to idle and fire.
+    stopReload() { reloadPlan = null; },
     // speed: the player's horizontal speed (game units / s) for idle / walk / run.
     update(dt, speed = 0) {
       const now = performance.now();

@@ -41,8 +41,25 @@ export function defuseDamage(game, shooter, target, wpn, dmg) {
   const d = game.combat?.d; if (!d) return dmg; const a = d.teams[key(shooter)], b = d.teams[key(target)];
   return a && a === b && key(shooter) !== key(target) && wpn.id !== 'c4' ? (d.rules?.ff === false ? 0 : Math.round(dmg * (['he', 'molotov', 'incendiary', 'decoy'].includes(wpn.id) ? .85 : .33))) : dmg;   // friendly fire off: no damage to team mates
 }
+// This round's tallies for its MVP (roundMvp): enemy kills (not the bomb's) and the damage each player did to the one who
+// died (combat-logic's per-life tally, C.dmg, goes with the victim: kept here first). On the round (sent with it: small).
+function roundTally(game, d, k, tk, wpn) { const r = d.round, vt = d.teams[tk]; if (!r || r.phase === 'warmup' || !vt) return;
+  for (const [x, n] of Object.entries(game.combat.dmg?.[tk] || {})) if (d.teams[x] && d.teams[x] !== vt) (r.rd ??= {})[x] = (r.rd[x] || 0) + n;
+  if (k !== tk && d.teams[k] && d.teams[k] !== vt && wpn?.id !== 'c4') (r.rk ??= {})[k] = (r.rk[k] || 0) + 1; }
+// The round's MVP (CS2's win panel: the star, and the MVP's music kit anthem for everyone — gd-sounds.js): the defuser when
+// the bomb is defused (CS2's MVP reason 3, "bombdefuse"), the planter when it explodes (2, "bombplant"), else the winning
+// side's player with the most kills this round, a tie going to the most damage this round (1, "kills" — CS:GO's
+// CalculateEndOfRoundMVP, which CS2 keeps); nobody on the winning side with a kill or damage: no MVP (a quiet time-out).
+// The reasons and their order are CS2's win panel's (panorama hudwinpanel); the kills-then-damage rule is CS:GO's source as
+// published — CS2's own server code is not public. → { k, why: 'defuse' | 'plant' | 'kills', kills } or null.
+export function roundMvp(game, winner, reason) { const C = game.combat, d = C?.d, r = d?.round; if (!r) return null;
+  if (reason === 'defuse' && r.defuse?.by && d.teams[r.defuse.by] === winner) return { k: r.defuse.by, why: 'defuse', kills: r.rk?.[r.defuse.by] || 0 };
+  if (reason === 'bomb' && r.planted?.by && d.teams[r.planted.by] === winner) return { k: r.planted.by, why: 'plant', kills: r.rk?.[r.planted.by] || 0 };
+  const dmg = { ...(r.rd || {}) }; for (const [v, by] of Object.entries(C.dmg || {})) if (d.teams[v] && d.teams[v] !== winner) for (const [x, n] of Object.entries(by || {})) if (d.teams[x] === winner) dmg[x] = (dmg[x] || 0) + n;   // (and the damage to those still standing)
+  let best = null, bk = 0, bd = 0; for (const [k, t] of Object.entries(d.teams)) { if (t !== winner) continue; const n = r.rk?.[k] || 0, m = dmg[k] || 0; if (n > bk || (n === bk && m > bd)) { best = k; bk = n; bd = m; } }
+  return best ? { k: best, why: 'kills', kills: bk } : null; }
 export function defuseKill(game, shooter, target, wpn) {
-  const d = game.combat?.d; if (!d) return; const k = key(shooter), a = d.teams[k], b = d.teams[key(target)]; if (!a || k === key(target)) return;
+  const d = game.combat?.d; if (!d) return; roundTally(game, d, key(shooter), key(target), wpn); const k = key(shooter), a = d.teams[k], b = d.teams[key(target)]; if (!a || k === key(target)) return;
   if (a === b && d.rules?.ff === false) return; gain(d, k, a === b ? -300 : ({ he: 300, molotov: 300, incendiary: 300, decoy: 300, c4: 0 })[wpn.id] ?? weaponById(wpn.id)?.reward ?? 300);
 }
 
@@ -198,7 +215,7 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   return changed;
 }
 function end(game, winner, reason, now) {
-  const C = game.combat, d = C.d, r = d.round; r.phase = 'over'; r.winner = winner; r.reason = reason; r.overAt = now; r.plant = null; r.defuse = null;
+  const C = game.combat, d = C.d, r = d.round; r.mvp = roundMvp(game, winner, reason); r.phase = 'over'; r.winner = winner; r.reason = reason; r.overAt = now; r.plant = null; r.defuse = null;   // (mvp: before the defuse is cleared)
   d.score[winner]++; const loser = other(winner); (d.history ??= []).push({ n: d.n, winner, reason, at: now, score: { ...d.score } }); if (d.history.length > 40) d.history.shift();
   for (const [k, t] of Object.entries(d.teams)) { if (t === winner) gain(d, k, WIN[reason]); else gain(d, k, LOSS[Math.min(4, d.loss[loser])] + (loser === 't' && r.planted ? 800 : 0)); }
   d.loss[loser]++; d.loss[winner] = Math.max(0, d.loss[winner] - 1);

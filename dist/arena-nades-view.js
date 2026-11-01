@@ -2,10 +2,15 @@
 // the flashbang white-out (how much depends on your own view: arena-nades.js flashBlind), the smoke cloud and the
 // molotov fire, each with 3D sound. Materials are made once and shared (the graphics warm-up compiles them).
 import * as THREE from './three.module.js';
-import { weaponModel } from './weapon-models.js';
+import { weaponModel, groundRest } from './weapon-models.js';
 import { NADES, stepNade, throwStart, launch, flashBlind, stackFlash, flashWhite, decoyShots, decoyShotAt, DECOY, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeRadius, smokeHoleCells, HOLE_IN, HOLE_OUT, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
-import { smokeHoleBytes, smokeLocalCut, smokeCutsNow, SMOKE_CUTS, TUNNEL as CUT_RULES, BILLOW } from './arena-nades.js';
+import { smokeHoleBytes, smokeLocalCut, smokeCutsNow, SMOKE_CUTS, TUNNEL as CUT_RULES, BILLOW, R as NADE_R } from './arena-nades.js';
 import { createSmokePass } from './arena-smoke-pass.js';
+import { flightFrame, frameClock } from './phys-smooth.js';
+// A flight's correction (the host's word on where your copy of it flies) eased out with this time constant (s): ~95 %
+// gone in 150 ms and never faster than the grenade flies (v51's 25 ms pulled a 2-unit correction back at 80 units/s:
+// a grenade flying 100 units/s all but stopped). A resting grenade settles into its lying pose over REST_BLEND s.
+const CORR_TAU = .05, REST_BLEND = .15, FC = { t: undefined };
 import { audioCtx, outAt, reverb, listenerAt } from './spatial-audio.js';
 import { fx as rec, shotSound } from './sound-bank.js';
 
@@ -105,7 +110,8 @@ function createFxSystem(group, quality) {
 }
 // One of each effect, for the warm-up.
 // (the smoke's own pass warms itself: createNadeView().warm)
-export const nadeWarmObjects = () => [new THREE.Sprite(MAT.smoke), new THREE.Sprite(MAT.fire), new THREE.Mesh(BALL, MAT.boom), new THREE.Mesh(DISC, MAT.scorch), new THREE.Mesh(CORE, MAT.core), new THREE.InstancedMesh(SPARK, MAT.spark, 1), new THREE.Mesh(RING, MAT.wave), (() => { const m = new THREE.InstancedMesh(FLAME, MAT.flame, 1); m.setColorAt(0, new THREE.Color(1, .6, .2)); return m; })(), (() => { const m = new THREE.InstancedMesh(CELL, MAT.glow, 1); m.userData.gd = true; return m; })(), new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), MAT.path)];
+export const nadeWarmObjects = () => { for (const k in NADES) try { groundRest(k); } catch {} return nadeWarm(); };   // (each grenade's resting pose measured now, not when the first one lands mid-round: restNade)
+const nadeWarm = () => [new THREE.Sprite(MAT.smoke), new THREE.Sprite(MAT.fire), new THREE.Mesh(BALL, MAT.boom), new THREE.Mesh(DISC, MAT.scorch), new THREE.Mesh(CORE, MAT.core), new THREE.InstancedMesh(SPARK, MAT.spark, 1), new THREE.Mesh(RING, MAT.wave), (() => { const m = new THREE.InstancedMesh(FLAME, MAT.flame, 1); m.setColorAt(0, new THREE.Color(1, .6, .2)); return m; })(), (() => { const m = new THREE.InstancedMesh(CELL, MAT.glow, 1); m.userData.gd = true; return m; })(), new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), MAT.path)];
 
 // Sounds: recorded explosions, flash bang, glass, burn and bounces (sound-bank fx), layered with synthesized body,
 // flashbang ringing, smoke hiss, fire crackle and the throw whoosh.
@@ -123,6 +129,17 @@ function burst(at, { len = 1.2, decay = 2.5, freq = 900, vol = 1, type = 'lowpas
 function ring(secs) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 3200; g.gain.setValueAtTime(.08, t); g.gain.linearRampToValueAtTime(0, t + secs); o.connect(g).connect(c.destination); o.start(t); o.stop(t + secs); } catch {} }
 const away = at => { const me = listenerAt(); return at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0; }, dull = at => Math.max(900, 18000 * Math.exp(-away(at) / 140));
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
+// A grenade come to rest (a decoy at work, a smoke smoking, a fire burning): lying on the floor as CS2's do — on its
+// largest face (weapon-models groundRest: a can on its side), its lowest point on the floor — not frozen mid-tumble
+// half in the ground. The floor: a smoke's or a fire's g.y (arena-nades.js puts it on the surface it lies on), else
+// under the sphere it flew as (a decoy: centre g.y, radius R). Its yaw from its id ('n<seq>', arena-nades.js: the same
+// on every client; +g.id was NaN → 0, every grenade lay the same way). Once per grenade, never per frame.
+// Which grenades stay drawn once they go off (liesAfter): a decoy at work and a smoke smoking lie there; an incendiary
+// or a molotov is gone into its fire, as an HE or a flash into its blast — CS2 removes the projectile when it detonates
+// (v52 M: the can lay intact in its own flames).
+export const liesAfter = phase => phase === 'decoy' || phase === 'smoke';
+export function restNade(model, kind, g) { const r = groundRest(kind), s = model.scale.x || 1, id = parseInt(String(g.id).replace(/\D/g, ''), 10) || 0, floor = g.phase === 'smoke' || g.phase === 'fire' ? g.y : g.y - NADE_R;
+  model.rotation.set(r.x, (id * 2.39996) % (2 * Math.PI), r.z, 'YXZ'); model.position.set(g.x, floor + r.lift * s, g.z); return model; }
 
 export function createNadeView({ scene, camera, world, boxes = () => [], bounds = () => null, quality = () => 'Medium', hostNow = () => Date.now() }) {
   const group = new THREE.Group(); group.name = 'nades'; group.userData.gd = true; scene.add(group);
@@ -143,6 +160,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
   const dropMine = i => { mine[i].model.removeFromParent(); mine.splice(i, 1); };
   if (typeof addEventListener === 'function') { addEventListener('gd-throw-start', onThrow); addEventListener('gd-throw-refused', e => { const i = mine.findIndex(c => c.seq === e?.detail?.seq); if (i >= 0) dropMine(i); }); }
   // (the host's new grenade: yours of this kind thrown here and still waiting — the oldest — or none)
+  const flyStep = (S, d) => stepNade(S, boxes(), bounds(), d);   // (one closure: no allocation per frame)
   const adopt = g => { const by = nameKey(g.by), i = mine.findIndex(c => c.kind === g.kind && c.by === by); if (i < 0) return null; const c = mine[i]; mine.splice(i, 1); return c; };
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-flash" style="position:fixed;inset:0;z-index:39;background:#fff;opacity:0;pointer-events:none"></div>');
   const white = document.getElementById('gd-flash') || { style: {} };
@@ -184,6 +202,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
     drawn: id => live.get(id)?.model.position || null,   // (tests: where a grenade is drawn)
     update(dt) {
       const G = world.operations.game, list = G.mode === 'arena' ? G.combat?.nades || NO_HOLES : NO_HOLES, now = performance.now(), seen = SEEN; seen.clear();   // (NO_HOLES: an empty list; nothing made per frame)
+      const fhn = list.length ? frameClock(FC, dt, hostNow()) : (FC.t = undefined);   // (the host's time for this frame: flights caught up to it — phys-smooth.js frameClock)
       FXP.update(dt);
       if (pass) { const hn = hostNow(); pass.frame((hn / 1000) % BILLOW.period, SMOKE_CUTS, list.length ? smokeCutsNow(G, hn) : 0); }   // (the clouds pushed below; the billows on the host's clock, the tunnels the rules subtract)
       for (let i = mine.length - 1; i >= 0; i--) { const c = mine[i]; c.age += dt; if (c.age * 1000 > MINE_MS) { dropMine(i); continue; }   // your throws waiting for the host's word
@@ -191,26 +210,29 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
       for (const g of list) {
         seen.add(g.id); let v = live.get(g.id);
         if (!v) { const c = g.phase === 'air' && mine.length ? adopt(g) : null;   // (yours, already flying here: it carries on from where it is drawn)
-          v = c ? { model: c.model, fx: null, sim: c.sim } : { model: weaponModel(g.kind, 1.4), fx: null }; if (!c) { v.model.position.set(g.x, g.y, g.z); group.add(v.model); } live.set(g.id, v); }
-        if (g.phase === 'air' && (g.x !== v.hx || g.y !== v.hy || g.z !== v.hz)) { // a new host position: a sharp turn in its path is a bounce
+          v = c ? { model: c.model, fx: null, sim: c.sim, ox: 0, oy: 0, oz: 0, fresh: true, slow: .45 } : { model: weaponModel(g.kind, 1.4), fx: null, ox: 0, oy: 0, oz: 0, fresh: false, slow: 0 }; if (!c) { v.model.position.set(g.x, g.y, g.z); group.add(v.model); } live.set(g.id, v); }   // (fresh: its copy already flown this frame — the loop above)
+        if (g.phase === 'air') { const isNew = g.x !== v.hx || g.y !== v.hy || g.z !== v.hz; if (isNew) { // a new host position: a sharp turn in its path is a bounce
           if (v.hx !== undefined) { const vx = g.x - v.hx, vy = g.y - v.hy, vz = g.z - v.hz, m = Math.hypot(vx, vy, vz), pm = Math.hypot(v.vx, v.vy, v.vz);
             if (m > .05 && pm > .05 && (vx * v.vx + vy * v.vy + vz * v.vz) / (m * pm) < .55 && now - (v.bounced || 0) > 120) { v.bounced = now; rec('bounce', { at: { x: g.x, y: g.y, z: g.z }, volume: Math.min(.8, .25 + pm * .15), rate: g.kind === 'molotov' ? .8 : .95 + Math.random() * .15, kind: 'step' }); }
             v.vx = vx; v.vy = vy; v.vz = vz; } else v.vx = v.vy = v.vz = 0;
-          v.hx = g.x; v.hy = g.y; v.hz = g.z;
+          v.hx = g.x; v.hy = g.y; v.hz = g.z; }
           // The flight flown here too, as the host flies it (the same physics on the same map: arena-nades.js stepNade),
           // from the host's latest state caught up to now on the host's clock — smooth every frame between the host's
           // updates, and exact at bounces, instead of trailing the updates (an older host without velocities: smoothed).
-          if (Number.isFinite(g.vx)) { const first = !v.sim, S = v.sim ??= { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, still: 0, rest: false, grav: undefined, bt: undefined, void: false, bad: false, view: true, pastGlass: null }, was = v.model.position;
-            S.x = g.x; S.y = g.y; S.z = g.z; S.vx = g.vx; S.vy = g.vy; S.vz = g.vz; S.still = g.still || 0; S.rest = !!g.rest; S.grav = g.grav; S.bt = g.bt; S.void = S.bad = false;   // (bt: the host's time since its last bounce — the same bounce rule here)
-            const late = Math.min(.25, Math.max(0, (hostNow() - (G.combat?.clock ?? hostNow())) / 1000)); if (late > 0 && !G.combat?.d?.paused) stepNade(S, boxes(), bounds(), late);   // (paused: the host holds it where it is)
-            // Drawn where it flies here, a correction (the host's word on where it is) eased out over ~80 ms, never a jump.
-            if (first) { v.ox = v.oy = v.oz = 0; } else { v.ox = was.x - S.x; v.oy = was.y - S.y; v.oz = was.z - S.z; } } }
-        else if (g.phase === 'air' && v.sim && !v.sim.void && !G.combat?.d?.paused) stepNade(v.sim, boxes(), bounds(), dt);
-        if (g.phase === 'air') { if (v.sim) { const k = Math.exp(-dt * 40); v.ox *= k; v.oy *= k; v.oz *= k; v.model.position.set(v.sim.x + v.ox, v.sim.y + v.oy, v.sim.z + v.oz); }
+          // The host's word compared with where the copy is to be drawn THIS frame (phys-smooth.js flightFrame): v51 took
+          // last frame's drawn spot, so every host update — 20 a second — counted this frame's own motion as a correction:
+          // the grenade all but stood still for a frame, then raced (132 / 117 / 57 units/s on a 102 units/s flight, every
+          // 50 ms — the "laggy" flight). The difference left (a bounce met a tick apart, your own throw's head start of half
+          // a round trip) is eased out with time constant CORR_TAU, never a jump. (paused: the host holds it where it is)
+          flightFrame(v, g, isNew, isNew ? Math.max(0, (fhn - (G.combat?.clock ?? fhn)) / 1000) : 0, dt, flyStep, !!G.combat?.d?.paused, CORR_TAU);
+          if (v.sim) v.model.position.set(v.sim.x + v.ox, v.sim.y + v.oy, v.sim.z + v.oz);
           else { const k = 1 - Math.exp(-dt * 18); v.model.position.x += (g.x - v.model.position.x) * k; v.model.position.y += (g.y - v.model.position.y) * k; v.model.position.z += (g.z - v.model.position.z) * k; }
-          v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; continue; }
+          if (!v.sim?.rest) { v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; } continue; }   // (lying still, waiting to go off: no longer tumbling)
         if (v.fx && v.fx.phase !== g.phase) { disposeFx(v.fx, pass); v.fx = null; }   // fire → out
-        if (!v.fx) { v.fx = effect(g); if (g.phase === 'decoy') v.model.position.set(g.x, g.y, g.z); else if (g.phase !== 'fire' && g.phase !== 'smoke') v.model.visible = false; else v.model.position.set(g.x, g.y + .3, g.z); }
+        if (!v.fx) { v.fx = effect(g); if (liesAfter(g.phase)) { const fly = v.hx !== undefined && v.model.visible && !v.rb;   // (seen flying here: it settles into the lying pose — it jumped there in one frame, up to 0.9 units for a molotov)
+            if (fly) { v.rb = { p0: v.model.position.clone(), q0: v.model.quaternion.clone(), p1: new THREE.Vector3(), q1: new THREE.Quaternion(), s: 0 }; } restNade(v.model, g.kind, g);
+            if (fly) { v.rb.p1.copy(v.model.position); v.rb.q1.copy(v.model.quaternion); v.model.position.copy(v.rb.p0); v.model.quaternion.copy(v.rb.q0); } } else v.model.visible = false; }   // (once per grenade: its two poses)
+        if (v.rb && v.rb.s < 1) { const b = v.rb; b.s = Math.min(1, b.s + dt / REST_BLEND); const e = b.s * b.s * (3 - 2 * b.s); v.model.position.lerpVectors(b.p0, b.p1, e); v.model.quaternion.slerpQuaternions(b.q0, b.q1, e); }
         // A decoy at work: its thrower's gun, shot by shot (arena-nades.js decoyShots: the host's schedule, the same here),
         // heard where it lies; after a hitch only the latest shot plays (never a burst all at once).
         if (g.phase === 'decoy') { const i = decoyShotAt(g, hostNow()); if (v.shot === undefined) v.shot = i; else if (i > v.shot) { v.shot = i; shotSound(g.gun, { at: v.model.position, volume: .8 }); } }

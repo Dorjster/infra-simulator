@@ -7,10 +7,12 @@
 //   node tools/maps/import-cs2-map.mjs <id> <export dir> [out dir]   (export dir: world_physics_physics.glb, ents.txt, ent_bounds.json;
 //   out dir: user-maps by default)
 //   NADE_MESH_ONLY=1 …: only (re)write the grenades' triangle mesh into the map file already there (its grids kept).
+//   HEADER_ONLY=1 …: only bring the header of the map file already there up to v52 (its spawns' enabled / priority /
+//   name, modeOff) — everything else kept byte for byte; the file before goes to ~/CS2-extract/backup/<id>-before-v52.bsp.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'; import path from 'node:path'; import os from 'node:os'; import { fileURLToPath } from 'node:url';
 import { meshSolids } from '../../dist/mesh-solids.js';
 import { surfaceOf, SURFACES } from '../../dist/map-light.js';
-import { radarMask } from './radar-mask.mjs'; import { buildNadeMesh, cs2mBodyEnd } from './nade-mesh.mjs';
+import { radarMask } from './radar-mask.mjs'; import { buildNadeMesh, cs2mBodyEnd } from './nade-mesh.mjs'; import { modeProps } from './mode-props.mjs';
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..'), [id, dir, outDir = path.join(repo, 'user-maps')] = process.argv.slice(2);
 if (!id || !dir) { console.log('usage: node tools/maps/import-cs2-map.mjs <id> <export dir> [out dir]'); process.exit(1); }
 // GLB → { meshes: [{ name, pos: Float32Array (Hammer x y z), idx: Uint32Array }] }
@@ -103,6 +105,14 @@ function nadeMeshSoup() { const f = path.join(dir, 'nade_mesh.bin'); if (!exists
       if (inPane(world[b], world[b + 1], world[b + 2]) && inPane(world[b + 3], world[b + 4], world[b + 5]) && inPane(world[b + 6], world[b + 7], world[b + 8])) continue; soup.copyWithin(w * 9, b, b + 9); sight[w] = k < ws ? 1 : 0; w++; } console.log(`  grenade mesh: ${wt - w} pane triangles out`); o = w * 9; t = w; }
   for (const m of ents) { const see = /npcclip|passbullets|grenadeclip|navclip|window_glass|_glass\b|^physics_group_glass/.test(m.name) ? 0 : 1; for (let k = 0; k < m.idx.length; k++) { const v = m.idx[k] * 3; soup[o++] = m.pos[v]; soup[o++] = m.pos[v + 1]; soup[o++] = m.pos[v + 2]; } sight.fill(see, t, t + m.idx.length / 3); t += m.idx.length / 3; }
   return { soup: soup.subarray(0, o), sight: sight.subarray(0, t) }; }
+if (process.env.HEADER_ONLY) { const target = path.join(outDir, id + '.bsp'); if (!existsSync(target)) { console.log('needs ' + target); process.exit(1); }
+  const file = readFileSync(target), hl = file.readUInt32LE(8), p4 = n => n + (4 - n % 4) % 4, header = JSON.parse(file.subarray(12, 12 + hl).toString()); let keyed = 0;
+  for (const s of header.entities) { if (!/^info_player_(terrorist|counterterrorist)$/.test(s.classname)) continue; const o = vec3(s.origin), e = ents.find(e => e.classname === s.classname && (q => Math.hypot(q[0] - o[0], q[1] - o[1], q[2] - o[2]) < 1)(vec3(e.origin))); if (!e) continue;
+    for (const k of ['enabled', 'priority', 'targetname']) if (e[k] !== undefined && e[k] !== '') s[k] = e[k]; keyed++; }
+  header.modeOff = modeProps(dir); const bk = path.join(os.homedir(), 'CS2-extract', 'backup', id + '-before-v52.bsp'); if (!existsSync(bk) && path.resolve(outDir) === path.join(repo, 'user-maps')) { mkdirSync(path.dirname(bk), { recursive: true }); copyFileSync(target, bk); }
+  const hb = Buffer.from(JSON.stringify(header)), u4 = v => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
+  writeFileSync(target, Buffer.concat([Buffer.from('CS2M'), u4(1), u4(hb.length), hb, Buffer.alloc((4 - hb.length % 4) % 4), file.subarray(12 + p4(hl))]));
+  console.log(`→ ${target}: ${keyed} spawns keyed, ${header.modeOff.length} mode-only entities listed`); process.exit(0); }
 if (process.env.NADE_MESH_ONLY) { const soup = nadeMeshSoup(), target = path.join(outDir, id + '.bsp'); if (!soup || !existsSync(target)) { console.log('needs ' + path.join(dir, 'nade_mesh.bin') + ' and ' + target); process.exit(1); }
   const file = readFileSync(target), { header, end } = cs2mBodyEnd(file), hl = file.readUInt32LE(8), p4 = n => n + (4 - n % 4) % 4, M = buildNadeMesh(soup.soup, soup.sight); header.nadeMesh = M.info;
   const bk = path.join(os.homedir(), 'CS2-extract', 'backup', id + '-before-nademesh.bsp'); if (!existsSync(bk)) { mkdirSync(path.dirname(bk), { recursive: true }); copyFileSync(target, bk); }
@@ -121,7 +131,9 @@ console.log('physics:', meshes.map(m => `${m.name} ${m.idx.length / 3}`).join(' 
 // Brush-like entities (models '*N' with their bounds, as a map file's): buy zones, bomb sites, places.
 const models = [null], out = [];
 for (const e of ents) { const c = e.classname, res = /resource_name:"?([^"]+?)"?$/.exec(e.model || '')?.[1], key = res && path.basename(res).replace(/\.vmdl$/, ''), o = vec3(e.origin);
-  if (/^info_player_(terrorist|counterterrorist)$/.test(c)) { const a = vec3(e.angles); out.push({ classname: c, origin: o.join(' '), angles: (a.length ? a : [0, 0, 0]).join(' ') }); continue; }
+  // (with what decides CS2's competitive spawns — bsp-map.js cs2Spawns: `enabled` (Wingman's 2v2 spawns are false), the
+  // name (spawnpoints.standard / .2v2) and `priority` (lower first: the five of a 5v5))
+  if (/^info_player_(terrorist|counterterrorist)$/.test(c)) { const a = vec3(e.angles); out.push({ classname: c, origin: o.join(' '), angles: (a.length ? a : [0, 0, 0]).join(' '), ...(e.enabled !== undefined ? { enabled: e.enabled } : {}), ...(e.priority !== undefined ? { priority: e.priority } : {}), ...(e.targetname ? { targetname: e.targetname } : {}) }); continue; }
   if (/^(func_buyzone|func_bomb_target|env_cs_place)$/.test(c) && key && bounds[key]) { const [lo, hi] = bounds[key]; models.push({ mins: lo.map((v, i) => v + (o[i] || 0)), maxs: hi.map((v, i) => v + (o[i] || 0)) });
     out.push({ classname: c, model: '*' + (models.length - 1), origin: '0 0 0', TeamNum: e.TeamNum || e.teamnum || '', place_name: e.place_name || '' }); } }
 // Doors (prop_door_rotating: the hinge is its origin; it swings `distance`°) and breakables (grates, panes): their box
@@ -312,7 +324,7 @@ const P = grid(players, true), N = grid(nades), B = grid(bullets, false, true), 
 // The file: "CS2M", version, header length, header JSON, then the grids (each: offsets Uint32 × (cols·rows+1), values Int16),
 // then a byte per player stretch: what its top is made of (a footstep surface: header.surfaces; 255: unknown).
 const header = Buffer.from(JSON.stringify({ id, source: 'Counter-Strike 2 (' + path.basename(dir) + ')', grid: { x0: X0, y0: Y0, step: 8, cols, rows, z0: Z0, z1: Z1 }, models, entities: out, ladderBoxes,
-  sizes: { players: [P.offs.length, P.vals.length], nades: [N.offs.length, N.vals.length], surfaces: P.surf.length, bullets: [B.offs.length, B.vals.length, B.surf.length] }, surfaces: SURFACES, pens: PENS, props, ...(NM ? { nadeMesh: NM.info } : {}) }));
+  sizes: { players: [P.offs.length, P.vals.length], nades: [N.offs.length, N.vals.length], surfaces: P.surf.length, bullets: [B.offs.length, B.vals.length, B.surf.length] }, surfaces: SURFACES, pens: PENS, props, modeOff: modeProps(dir), ...(NM ? { nadeMesh: NM.info } : {}) }));   // (modeOff: another mode's walls and props the exported look still draws — mode-props.mjs, bsp-map.js)
 const pad = b => Buffer.concat([b, Buffer.alloc((4 - b.length % 4) % 4)]), u32 = v => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
 const file = Buffer.concat([Buffer.from('CS2M'), u32(1), u32(header.length), pad(header), ...[P, N].flatMap(g => [Buffer.from(g.offs.buffer), pad(Buffer.from(g.vals.buffer))]), pad(Buffer.from(P.surf.buffer)), Buffer.from(B.offs.buffer), pad(Buffer.from(B.vals.buffer)), pad(Buffer.from(B.surf.buffer)), ...(NM ? [NM.buf] : [])]);   // (then the bullets' layer and what each of its stretches is made of: header.pens)   // (then each player stretch's surface: an index into the header's `surfaces`)
 const target = path.join(outDir, id + '.bsp'); mkdirSync(path.dirname(target), { recursive: true });

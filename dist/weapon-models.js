@@ -7,6 +7,7 @@ import { OBJLoader } from './post/OBJLoader.js';
 import { MTLLoader } from './post/MTLLoader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { decodeJpeg, anisotropy } from './texture-quality.js';
+import { prepareModel, prepareLike } from './skin-render.js';
 
 // Surface textures, drawn once at start (256 px, a few KB of GPU memory each): brushed steel, blued metal with
 // wear on the edges, stippled polymer, walnut grain. Each also drives roughness, so light catches the grain.
@@ -175,7 +176,7 @@ const RUBY = surface(g => {
 const G10 = surface(g => { noise(g, '#3a3e43', .14, 14000, 2, 2); for (let i = 0; i < 256; i += 4) { g.fillStyle = 'rgba(0,0,0,.08)'; g.fillRect(0, i, 256, 1); g.fillRect(i, 0, 1, 256); } }, .82);
 const SATIN = surface(g => { noise(g, '#9aa1a8', .06, 1500); for (let x = 0; x < 256; x++) { g.fillStyle = `rgba(255,255,255,${rnd() * .09})`; g.fillRect(x, 0, 1, 256); } }, .3);
 const GRIP = surface(g => { noise(g, '#1d1f22', .1, 6000); for (let y = 0; y < 256; y += 8) for (let x = (y / 8 % 2) * 4; x < 256; x += 8) { g.fillStyle = 'rgba(255,255,255,.07)'; g.fillRect(x, y, 4, 4); } }, .86);
-const knifeMat = (opts, tex, fallback) => { const m = new THREE.MeshStandardMaterial({ color: 0xffffff, envMap: ENV, ...opts, ...tex }); if (!tex.map) m.color.setHex(fallback); m.userData.shared = true; return m; };
+const knifeMat = (opts, tex, fallback) => { const m = new THREE.MeshStandardMaterial({ color: 0xffffff, envMap: ENV, ...opts, ...tex }); if (!tex.map) m.color.setHex(fallback); m.userData.shared = true; for (const t of Object.values(tex)) if (t?.isTexture) t.userData.shared = true; return m; };   // (textures too: a skin copy carries the same maps, and per-player dispose code skips shared ones)
 const KM = {
   ruby: knifeMat({ metalness: .85, roughness: .12, envMapIntensity: 1.5, emissive: 0xffffff, emissiveMap: RUBY.map || null, emissiveIntensity: RUBY.map ? .18 : 0 }, RUBY, 0xc0123a),
   rubyBevel: knifeMat({ metalness: .85, roughness: .1, envMapIntensity: 1.4, color: 0xffd0dc, emissive: 0xffffff, emissiveMap: RUBY.map || null, emissiveIntensity: RUBY.map ? .26 : 0 }, RUBY, 0xff4f7a),
@@ -269,6 +270,10 @@ async function loadReal(id, src = { file: n => REAL_DIR + n, fit: REAL_FIT[id] |
     const [map, normalMap, orm] = await Promise.all([tex(pt.name, 'base', true), tex(pt.name, 'normal'), tex(pt.name, 'orm')]);
     const glass = id === 'molotov' && pt.name === 'bottle', mat = new THREE.MeshStandardMaterial({ map, normalMap, roughnessMap: orm, metalnessMap: orm, metalness: orm ? 1 : 0, roughness: 1, transparent: glass, opacity: glass ? .55 : 1, envMapIntensity: .9 });
     mat.userData.shared = true; geo.userData.shared = true; const m = new THREE.Mesh(geo, mat); m.castShadow = true; inner.add(m);
+    // The default knives' blade mask (CS2's star knives carry theirs in vertex colours; these files none, so a skin
+    // painted their handles wherever the texture was grey — 29 % of the CT's, 54 % of the T's): the files stand blade
+    // up, so the blade is everything 1 cm past the guard (fit.at). Read only by a skin (skin-render.js skinMask).
+    if (id === 'knife' || id === 'knife-t') { const p = geo.attributes.position, col = new Float32Array(p.count * 3); for (let i = 0; i < p.count; i++) col.fill(p.getY(i) > fit.at[1] + 1 ? 1 : 0, i * 3, i * 3 + 3); geo.setAttribute('color', new THREE.BufferAttribute(col, 3)); mat.userData.skinMask = true; mat.vertexColors = true; }   // (vertex colours on from load, unused with no skin: a skin appearing compiles nothing — skin-render.js)
   }
   // centimetres → game units; muzzle along −z; trigger / grip at the origin.
   inner.position.set(-fit.at[0], -fit.at[1], -fit.at[2]); g.scale.setScalar(CM * (fit.scale || 1)); if (fit.flip) g.rotation.y = Math.PI; if (fit.rot) g.rotation.set(...fit.rot);
@@ -326,6 +331,13 @@ export const CS2_FIT = {
   ak: { at: [0, 1.6, -3.4], gun: true }, m4: { at: [0, 25.3, -38.5], gun: true }, m4s: { at: [0, 6.2, .8], gun: true }, sniper: { at: [0, 17.6, -4.9], gun: true }, usps: { at: [0, 5.1, -11.4], gun: true }, deagle: { at: [0, 4.8, -2.2], gun: true },
   famas: { at: [0, -1.5, -13], gun: true }, mp7: { at: [0, -2.7, 7], gun: true }, mp9: { at: [0, 6, -14.6], gun: true },
   pistol: { at: [0, 1.9, 1.4], gun: true }, p250: { at: [0, 6, -5], gun: true }, fiveseven: { at: [0, 14.6, -2], gun: true }, cz75: { at: [0, 8.6, -6.1], gun: true }, tec9: { at: [0, -3.9, 9.5], gun: true }, bizon: { at: [0, .4, 4.7], gun: true }, negev: { at: [0, 3, 2], gun: true },   // (the hand ~9 cm above the grip's base, as on the Deagle and USP-S; the Bizon as the AK)
+  // CS2's own AUG, decoy and incendiary (tools/cs2-fp/export_missing.py, from the CS2 install): the AUG held as the FAMAS
+  // (the other bullpup: 1 cm above, 2.4 cm ahead of CS2's ag1_hand_r, which sits at the file's origin); the grenades by
+  // their origin — CS2's hand point, the can's middle (they stand upright in their files, as the built-in cans).
+  aug: { at: [0, 1, -2.7], gun: true }, decoy: { at: [0, 0, 0] }, incendiary: { at: [0, 0, 0] },
+  // CS2's molotov (export_missing.py molotov: the bottle, rag and liquid hull on the bottle's texture, no lighter, no flame
+  // card — it was the CC0 bottle): by its origin, CS2's hand point round the bottle's middle, neck up as in its file.
+  molotov: { at: [0, 0, 0] },
   knife: { at: [0, 4.1, 0], rot: [-Math.PI / 2, Math.PI / 2, 0] }, 'knife-t': { at: [0, 3.4, 0], rot: [-Math.PI / 2, Math.PI / 2, 0] }, karambit: { at: [0, 0, 0] }, c4: { at: [0, -2.5, 0] }, kit: { at: [0, 0, 0] },
 };
 const fromFile = new Set();
@@ -339,7 +351,7 @@ export const KNIFE_SKINS = { butterfly: '★ Butterfly Knife', stiletto: '★ St
 export const knifeFor = (id, team, skin = null, fp = false) => id === 'knife' && skin && KNIFE_SKINS[skin] && (fp || real.has(skin)) ? skin : id === 'knife' && team === 't' && real.has('knife-t') ? 'knife-t' : id;
 export function loadRealWeapons() {
   if (typeof fetch !== 'function' || typeof document === 'undefined') return Promise.resolve(0);
-  const one = (id, f, fallback) => f(id).then(m => { real.set(id, m); cache.delete(id); if (m.userData.muzzle) MUZZLE[id] = m.userData.muzzle; }, e => { console.warn('model', id, e?.message); fromFile.delete(id); return fallback && one(id, fallback); });
+  const one = (id, f, fallback) => f(id).then(m => { real.set(id, skinReady(id, m)); cache.delete(id); RESTS.delete(id); for (const k in VARIANTS) if (VARIANTS[k].base === id) RESTS.delete(k); /* (a variant rests as its base; the other poses measured stay) */ if (m.userData.muzzle) MUZZLE[id] = m.userData.muzzle; }, e => { console.warn('model', id, e?.message); fromFile.delete(id); return fallback && one(id, fallback); });
   return realLoading ??= userAssets().then(ua => {
     const own = ua.models.weapons || {}, file = id => ({ file: n => userAssetURL(ua, 'weapons/' + n), fit: { ...(CS2_FIT[id] || { at: [0, 0, 0], gun: true }), maps: { main: own[id].maps || [] } } });
     for (const id of Object.keys(own)) fromFile.add(id);
@@ -348,6 +360,28 @@ export function loadRealWeapons() {
   }).then(() => real.size);
 }
 export const hasReal = id => real.has(id);
+// A model made elsewhere (fp-view.js: a CS2 star knife's own mesh baked out of its first-person set, so other players
+// see the knife you chose — same mesh, UVs and finish mask as in your hands). Same convention: blade along −z, the
+// guard at the origin, game units. Listeners (onModelRegistered: cs2-agents.js re-measures its hold — warmHolds — at once,
+// not at the first equip mid-round) hear of each one.
+const registered = []; export const onModelRegistered = fn => { registered.push(fn); };
+export function registerModel(id, g) { prepareModel(g, { model: id, uv: 'cs2', tier: 'tp' }); g.traverse(o => { for (const m of [].concat(o.material || [])) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) if (m[k]?.isTexture) m[k].userData.shared = true; }); real.set(id, g); cache.delete(id); RESTS.delete(id); for (const k in VARIANTS) if (VARIANTS[k].base === id) RESTS.delete(k); for (const f of registered) f(id); }   // (its maps belong to the first-person set: never freed with one player's model. Only its own resting pose forgotten — the knives bake while the first-person sets load, after nadeWarmObjects measured the grenades': clear() wiped those, so the first one landing measured mid-round, ~5 ms)
+// A dropped item at rest (arena-ui.js): on its largest face, as a thing dropped settles — guns, knives and grenade cans
+// on their side (a quarter roll about the barrel), the bomb and the kit flat (one roll for all stood the C4 on its edge
+// 7 cm into the floor) — and lifted by the model's own lowest point in that pose (its exact bounds, measured once per
+// model: the fixed .35 sank the Negev 5.7 cm and floated pistols 4 cm). { x, z: the pose's turns (radians, before the
+// yaw: rotation.set(x, yaw, z, 'YXZ') — the yaw last, about the vertical, so the lift holds at any yaw), lift: game units over the floor }.
+// Skins (skin-render.js): every gun's and knife's materials made skinnable as the model loads (the skin's shader in
+// its program from the start — a skin appearing in play compiles nothing), its pattern fitted along it. CS2's own
+// world models of these guns carry CS2's HD UV0 (V flipped at import), so imported CS2 finishes fit them (measured,
+// uv-fit world_vs_hd: IoU ≥ 0.99); the others (Glock, Tec-9 …) draw the finish's built-in stand-in.
+const CS2_UV = new Set(['ak', 'm4', 'm4s', 'sniper', 'deagle', 'usps', 'famas', 'mp7', 'mp9', 'bizon', 'cz75', 'fiveseven', 'p250', 'negev']), NO_SKIN = new Set(['he', 'flash', 'smoke', 'molotov', 'decoy', 'incendiary', 'c4', 'kit']);
+const skinReady = (id, m) => NO_SKIN.has(id) ? m : prepareModel(m, { model: id, uv: fromFile.has(id) && CS2_UV.has(id) ? 'cs2flip' : null, tier: 'tp', paintAll: id === 'karambit' && !fromFile.has(id) });   // (the CC0 karambit's blade picture is red — the Ruby — so "paint only the grey steel" left it bare: painted all over)
+const RESTS = new Map(), restBox = new THREE.Box3(), REST_TRIES = [[0, Math.PI / 2], [0, 0], [Math.PI / 2, 0]];   // (on its side first: a tie keeps the barrel level)
+export function groundRest(id) { let r = RESTS.get(id); if (r) return r; const m = weaponModel(id, 1);
+  for (const [x, z] of REST_TRIES) { m.rotation.set(x, 0, z); m.updateMatrixWorld(true); restBox.setFromObject(m, true); if (!Number.isFinite(restBox.min.y)) continue; const h = restBox.max.y - restBox.min.y;
+    if (!r || h < r.h * .8) r = { x, z, lift: -restBox.min.y, h }; }
+  r ??= { x: 0, z: Math.PI / 2, lift: .35, h: 0 }; RESTS.set(id, r); return r; }
 const cache = new Map();
 // Guns without a model of their own: a real model of the same family, made recognisable (and different from the
 // base gun) by parts — suppressor, scope, box magazine — size and finish. All original geometry; CC0 base models.
@@ -362,11 +396,12 @@ export const VARIANTS = {
   negev: { base: 'lmg', scale: .97, tint: 0x3f413a },
   // Grenades without a model of their own (original looks on the CC0 cans; band: [height 0–1 up the can, band height
   // as a share of it, colour] rings round it): the decoy a shorter khaki can with a dark speaker band; the incendiary a
-  // slimmer grey can with a red band and an orange one (fire).
+  // slimmer grey can with a red band and an orange one (fire). Only without CS2's own (user-assets/weapons decoy.bin,
+  // incendiary.bin, aug.bin: a real model always wins — weaponModel), e.g. on a computer without the CS2 install.
   decoy: { base: 'smoke', scale: .82, tint: 0xc2ad74, band: [[.45, .22, 0x26282a]] }, incendiary: { base: 'smoke', scale: .94, tint: 0x9ea5aa, band: [[.66, .1, 0xb8321e], [.54, .05, 0xff8a1a]] },
 };
-const MUZZLE_SET = new Set(), variantMats = new Map(), bandParts = new Map(), decoMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: .45, metalness: .8 }); decoMat.userData.shared = true;
-function tintMaterial(m, hex, chrome) { const k = m.uuid + ':' + hex + (chrome ? 'c' : ''); if (!variantMats.has(k)) { const c = m.clone(); c.color = new THREE.Color(hex); if (chrome) { c.metalness = 1; c.roughness = .25; c.metalnessMap = null; c.roughnessMap = null; } c.userData.shared = true; variantMats.set(k, c); } return variantMats.get(k); }
+const MUZZLE_SET = new Set(), variantMats = new Map(), bandParts = new Map(), decoMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: .45, metalness: .8 }); decoMat.userData.shared = true; decoMat.userData.noSkin = true;   // (shared by every variant's parts: never painted)
+function tintMaterial(m, hex, chrome) { const k = m.uuid + ':' + hex + (chrome ? 'c' : ''); if (!variantMats.has(k)) { const c = m.clone(); c.color = new THREE.Color(hex); if (chrome) { c.metalness = 1; c.roughness = .25; c.metalnessMap = null; c.roughnessMap = null; } c.userData.shared = true; prepareLike(c, m); variantMats.set(k, c); } return variantMats.get(k); }
 // A can's cross-section from its vertices between two heights (the model's own frame; the lower half: a can's side has
 // vertices only at its rims, and the lever and pin on top would widen it): its axis (x, z) and radius, so a grenade
 // band hugs the body. Once per look.
@@ -396,7 +431,7 @@ export function weaponModel(id, scale = 1) {
   if (VARIANTS[id] && real.has(VARIANTS[id].base)) { const v = variantModel(id, scale); if (v) { if (!MUZZLE_SET.has(id)) { MUZZLE[id] = v.userData.muzzle; MUZZLE_SET.add(id); } return v; } }
   if (['he', 'flash', 'smoke', 'decoy', 'molotov', 'incendiary'].includes(id)) { if (!cache.has(id)) { const t = new THREE.Group(); t.add(new THREE.Mesh(new THREE.SphereGeometry(.28, 12, 10), M.black)); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, t); } const g = cache.get(id).clone(); g.scale.setScalar(scale); return g; }   // until the real grenade models are in
   if (id === 'cannon' || !['pistol', 'deagle', 'smg', 'shotgun', 'ak', 'm4', 'sniper', 'lmg', 'knife', 'karambit'].includes(id)) return pistolModel(scale);
-  if (!cache.has(id)) { const t = id === 'karambit' ? karambit() : id === 'knife' ? knife() : build(id); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, t); }
+  if (!cache.has(id)) { const t = id === 'karambit' ? karambit() : id === 'knife' ? knife() : build(id); t.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; }); cache.set(id, skinReady(id, t)); }
   const g = cache.get(id).clone(); g.scale.setScalar(scale); return g;
 }
 // Where the muzzle is in model space (for flashes and tracers), per weapon.

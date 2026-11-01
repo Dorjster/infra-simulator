@@ -10,6 +10,17 @@ import { BAKED } from './cs2-render.js';
 
 export const CASTER = 7;   // the layer of what casts (cs2-agents.js: agents and their guns; arena-scene.js: the map's casters, doors, props)
 const SIZE = 2048, SPAN = 96, DEPTH = 700;   // texels; half the square covered (game units: ≈ 620 Hammer units each way); its depth
+// A skeleton the frame's own pass has posed since the last shadows is not posed again here: three.js redoes every skinned
+// mesh's bone matrices (and re-sends its bone texture) once per render() call, and this pass walks no matrices (update(),
+// below) — the bones' world matrices are the ones that pose was made from: the same numbers, worked out twice (9 players
+// in the sun's square: 9 skeletons × ~80 bones and 9 texture uploads every other frame; 3 % of the main thread at CPU ×4
+// was posing). One not drawn on screen since (behind you, its shadow in front) is still posed here, as before. The same
+// numbers hold while nothing walks the bones' world matrices between that pass and this one — true of CS2's clip path
+// (cs2-agents.js animator: local transforms only, walked by the next render); code that walks them itself in the frame's
+// update (the posed-here fallback body: g.updateMatrixWorld, IK) calls bonesMoved() so this pass poses it from the new ones.
+let sunPass = false, sunGen = 0; const poseBones = THREE.Skeleton.prototype.update;
+THREE.Skeleton.prototype.update = function () { if (sunPass) { if (this.__posedAt === sunGen - 1) return; } else this.__posedAt = sunGen; return poseBones.call(this); };
+export function bonesMoved(skeleton) { skeleton.__posedAt = -1; }   // (its bones' world matrices are newer than its last pose: the next shadow pass poses it)
 export function createSunShadows(renderer) {
   const rt = new THREE.WebGLRenderTarget(SIZE, SIZE, { depthBuffer: true, stencilBuffer: false, samples: 0 }); rt.depthTexture = new THREE.DepthTexture(SIZE, SIZE); rt.depthTexture.type = THREE.UnsignedIntType;
   rt.texture.generateMipmaps = false; const cam = new THREE.OrthographicCamera(-SPAN, SPAN, SPAN, -SPAN, 1, DEPTH); cam.layers.set(CASTER);
@@ -56,7 +67,7 @@ export function createSunShadows(renderer) {
       const was = renderer.getRenderTarget(), ac = renderer.autoClear; renderer.autoClear = true;
       const only = scene.userData.renderOnly, all = scene.children, mwa = scene.matrixWorldAutoUpdate; if (only) { KEEP.length = 0; for (let i = 0; i < all.length; i++) if (only(all[i])) KEEP.push(all[i]); scene.children = KEEP; }
       scene.matrixWorldAutoUpdate = false; draw = renderer.renderBufferDirect; renderer.renderBufferDirect = viaStandIn;
-      try { renderer.setRenderTarget(rt); renderer.render(scene, cam); } finally { renderer.renderBufferDirect = draw; scene.children = all; scene.matrixWorldAutoUpdate = mwa; renderer.setRenderTarget(was); renderer.autoClear = ac; }
+      sunGen++; sunPass = true; try { renderer.setRenderTarget(rt); renderer.render(scene, cam); } finally { sunPass = false; renderer.renderBufferDirect = draw; scene.children = all; scene.matrixWorldAutoUpdate = mwa; renderer.setRenderTarget(was); renderer.autoClear = ac; }
       BAKED.uPShMat.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); BAKED.uPShOn.value = 1; drawn = true; },
     off() { BAKED.uPShOn.value = 0; drawn = false; },
     dispose() { BAKED.uPShOn.value = 0; BAKED.uPSh.value = null; rt.dispose(); rt.depthTexture.dispose(); for (const d of STAND.values()) d.dispose(); STAND.clear(); for (const c of CUT.values()) for (const d of c.values()) d.dispose(); CUT.clear(); },

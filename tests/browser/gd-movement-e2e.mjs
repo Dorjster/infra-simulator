@@ -2,7 +2,8 @@
 // computer has one): the fixed 128 Hz movement clock runs and the view is drawn from it (arena-move.js moveTicks), you
 // run at the gun's own CS2 speed (m_flMaxSpeed), a tap of Space jumps once — 57 HU high, one landing — and holding it
 // never jumps again (CS2's sv_autobunnyhopping 0), crouching puts the eye at CS2's 46 HU (back to standing on release),
-// a crouch key held through a teleport still crouches, and the pose the room keeps carries the true feet (fy) with the
+// a crouch key held through a teleport still crouches, a crouch-jump (Space, then C) gets onto a 62 HU block a plain jump
+// can't, a crouch let go under a 62 HU ceiling stays down until you walk out, and the pose the room keeps carries the true feet (fy) with the
 // eye over them (ey). No page errors.
 //   node tests/browser/gd-movement-e2e.mjs <repo-root> <out-dir>
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { mkdtempSync, mkdirSync } from 'node:fs'; import os from 'node:os'; import path from 'node:path';
@@ -64,6 +65,40 @@ if (spot) {
   check('a crouch key held through a respawn (a teleport) still crouches', e.ducked === true && e.tp > tp0, JSON.stringify({ ...e, tp0 }));
   await p.keyboard.up('KeyC'); await p.waitForTimeout(450); e = await p.evaluate(() => { const m = __infra.lab.move; return { eye: __infra.camera.position.y - m.clk.y, ducked: m.am.ducked }; });
   check('…let go: standing, the eye back at 9.7 units (63 HU)', !e.ducked && Math.abs(e.eye - 9.7) < .02, e.eye.toFixed(3));
+  // CS2's crouch-jump in the game (keys as a player presses them): a 62 HU block 14 units ahead, head-on along a map axis
+  // with room (a test box added to the map's own collision, taken out after). Running at it, Space a stride before it:
+  // a plain jump stays below (57 HU apex); Space then the crouch key (C, 50 ms later — the duck in the air tucks the feet
+  // up) gets on top. (Head-on: run at a face at an angle and, as in Source, the clip leaves no speed into it once there.)
+  const addBoxes = L => p.evaluate(async L => { const { indexBoxes } = await import('/box-grid.js'), B = __infra.lab.arenaScene.boxes; for (const b of L) B.push(b); if (B.grid) indexBoxes(B); }, L);
+  const dropBoxes = k => p.evaluate(async k => { const { indexBoxes } = await import('/box-grid.js'), B = __infra.lab.arenaScene.boxes; B.splice(B.length - k, k); if (B.grid) indexBoxes(B); }, k);
+  const lane = await p.evaluate(async s => { const { blocked, groundAt } = await import('/arena-move.js'), boxes = __infra.lab.arenaScene.boxes, sx = Math.sign(s.dx) || 1, sz = Math.sign(s.dz) || 1;
+    for (const [dx, dz] of [[sx, 0], [0, sz], [-sx, 0], [0, -sz]]) { let clear = true; for (let d = -6; d <= 40 && clear; d += .5) { const x = s.x + dx * d, z = s.z + dz * d; if (blocked(boxes, null, x, z, s.y) || Math.abs(groundAt(boxes, x, z, s.y + 2) - s.y) > 1e-6) clear = false; } if (clear) return { ...s, dx, dz }; } return null; }, spot);
+  const block = lane && (() => { const cx = lane.x + lane.dx * 22, cz = lane.z + lane.dz * 22, hw = 8; return { minX: cx - hw, maxX: cx + hw, minZ: cz - hw, maxZ: cz + hw, y0: lane.y - .5, y1: lane.y + 62 * lane.HU }; })();
+  const cjTry = async crouch => { if (!lane) return { lane: 'no axis lane 40 units clear' }; await p.evaluate(s => { __infra.lab.look(s.x, s.z, s.x + s.dx * 10, s.y + 9.7, s.z + s.dz * 10, s.y + 9.7); }, lane); await p.waitForTimeout(500);
+    await p.evaluate(({ s, crouch }) => { const R = Number.isFinite(__infra.lab.arenaScene.boxes.bodyRadius) ? __infra.lab.arenaScene.boxes.bodyRadius : 1.3, face = 14;
+      let st = 0, n = 0; window.__cjPeak = -Infinity; window.__cjAt = NaN; const f = () => { const a = __infra.lab.move.am, d = (a.x - s.x) * s.dx + (a.z - s.z) * s.dz; if (a.y > window.__cjPeak) { window.__cjPeak = a.y; window.__cjAt = d; }
+        if (st === 0 && d > face - R - 10 * s.HU) { dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ' })); st = 1; n = performance.now(); }
+        else if (st === 1 && performance.now() - n > 30) { dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', key: ' ' })); st = 2; }
+        else if (st === 2 && crouch && performance.now() - n > 50) { dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'c' })); st = 3; }
+        if (n && performance.now() - n > 1300) return; requestAnimationFrame(f); }; requestAnimationFrame(f); }, { s: lane, crouch });
+    await p.keyboard.down('KeyW'); await p.waitForTimeout(1900); await p.keyboard.up('KeyW'); if (crouch) { await p.keyboard.down('KeyC'); await p.keyboard.up('KeyC'); } await p.waitForTimeout(400);
+    return p.evaluate(s => { const a = __infra.lab.move.am, R = Number.isFinite(__infra.lab.arenaScene.boxes.bodyRadius) ? __infra.lab.arenaScene.boxes.bodyRadius : 1.3; return { h: +((a.y - s.y) / s.HU).toFixed(2), g: a.onGround, peak: +((window.__cjPeak - s.y) / s.HU).toFixed(2), gap: +((14 - R - window.__cjAt) / s.HU).toFixed(2) }; }, lane); };   // (peak: the jump's top, HU; gap: HU between the body and the block's face at that top)
+  if (block) await addBoxes([block]);
+  const plainTry = await cjTry(false), crouchTry = await cjTry(true);
+  check('a plain jump at a 62 HU block falls short (CS2: 57 HU apex — it did jump, ~57 HU)', plainTry.g && Math.abs(plainTry.h) < .1 && Math.abs(plainTry.peak - 57) < 1.5, JSON.stringify(plainTry));   // (gap: reported, not judged — W held on, the body later slides round the block)
+  check('…Space then the crouch key (a crouch-jump): on top of it, 62 HU up', crouchTry.g && Math.abs(crouchTry.h - 62) < .1, JSON.stringify(crouchTry));
+  if (block) await dropBoxes(1); await p.waitForTimeout(400);
+  // Under a low ceiling: crouched at the spot, a slab 62 HU over the floor put over you — let go of the crouch key and you
+  // stay down (no room to stand); walk out from under it (W) and you stand up.
+  await place(); await p.waitForTimeout(400); await p.keyboard.down('KeyC'); await p.waitForTimeout(400);
+  const slab = { minX: spot.x - 7, maxX: spot.x + 7, minZ: spot.z - 7, maxZ: spot.z + 7, y0: spot.y + 62 * spot.HU, y1: spot.y + 80 * spot.HU };
+  await addBoxes([slab]); await p.keyboard.up('KeyC'); await p.waitForTimeout(700);
+  e = await p.evaluate(() => { const m = __infra.lab.move; return { ducked: m.am.ducked, eye: +((__infra.camera.position.y - m.clk.y) / (2.54 / 16.5)).toFixed(2) }; });
+  check('under a 62 HU ceiling, letting go of crouch keeps you down (eye at 46 HU) — no standing up into it', e.ducked === true && Math.abs(e.eye - 46) < .5, JSON.stringify(e));
+  await p.keyboard.down('KeyW'); await p.waitForTimeout(1500); await p.keyboard.up('KeyW'); await p.waitForTimeout(400);
+  e = await p.evaluate(s => { const a = __infra.lab.move.am; return { ducked: a.ducked, out: Math.max(Math.abs(a.x - s.x), Math.abs(a.z - s.z)) }; }, spot);
+  check('…walked out from under it: standing again', e.ducked === false && e.out > 7, JSON.stringify(e));
+  await dropBoxes(1); await place(); await p.waitForTimeout(400);
   // The pose the room keeps: the true feet and the eye over them.
   await p.keyboard.down('KeyA'); await p.waitForTimeout(150); await p.keyboard.up('KeyA'); await p.waitForTimeout(900);
   const pose = await p.evaluate(() => { const L = __infra.lab.lan, me = L.players?.find(q => q.id === L.selfID); return { fy: me?.pose?.fy, ey: me?.pose?.ey, feet: __infra.lab.move.am.y, crouched: me?.pose?.crouched }; });

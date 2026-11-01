@@ -8,8 +8,8 @@
 // shot.n, and every hit carries its shot number); the host takes one round per new shot number, in order, whichever
 // arrives first. A hit for a shot fired with an empty magazine is refused. A reload (pose shot.r) only moves rounds
 // from the reserve into the magazine. Clients show their own count and take the host's whenever they are in sync.
-import { skinKeyOf } from './skins.js';
-import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H, NADE_ORDER, BODY_R } from './weapons-data.js';
+import { skinKeyOf, skinOwner, touchSkin } from './skins.js';
+import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H, NADE_ORDER, BODY_R, accOf, shotBase, shotOffsets, offsetDir, rayBody, pelletDamage, HU, JUMP_IMPULSE, FLINCH } from './weapons-data.js';
 import { defuseDamage, defuseKill } from './arena-defuse.js';
 import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath, BulletPath } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
@@ -47,27 +47,38 @@ export function refillAll(game, name) { const C = state(game), k = key(name), ow
 // warmup or the lobby). One hit is counted once, damage only up to the HP the victim had (CS2's ADR rule).
 export const recording = game => !!game.combat?.d && !(game.arena?.lobby && !game.arena.lobby.started) && game.combat.d.round?.phase !== 'warmup';
 export const statOf = (game, name) => ((game.combat.stats ??= {})[key(name)] ??= { shots: 0, hits: 0, hsHits: 0, hsKills: 0, dmg: 0, util: 0, flashed: 0, blindMs: 0, plants: 0, defuses: 0 });
-export function takeShots(game, name, n, id) {
-  if (game.combat?.safe) delete game.combat.safe[key(name)];   // firing ends your spawn protection
+// fromHit: a hit's own number — never the resync below (a forged jump would skip the ammo): the caller refuses it.
+const SESSION_N = 1e6;   // (weapons.js numbers shots from 1e6 + a random start: lower ones are test rigs and old callers)
+// Freeze time (Defuse): nobody can fire, so new numbers are shots from the round before arriving late — counted, not
+// charged to the new round's fresh magazine (SHOOT-15).
+// fromPose: the pose stream's numbers — only a new shot in them ends the spawn protection (every pose used to: the
+// first pose after a deathmatch spawn took the 2 s of protection away before anyone had fired).
+export function takeShots(game, name, n, id, fromHit = false, fromPose = false) {
   const C = state(game), k = key(name), s = (C.shots ??= {})[k] ??= { n: null, r: null, dry: [] }; n = Math.floor(+n);
-  if (!Number.isFinite(n)) return s; if (s.n === null || n < s.n - 1e6 || n > s.n + 500) { s.n = n; return s; }   // first contact (or a client restart): sync, take nothing
-  const w = weaponById(id); if (!isFirearm(w)) { s.n = Math.max(s.n, n); return s; }
+  if (game.combat?.safe && (!fromPose || (s.n !== null && n > s.n && n <= s.n + 500))) delete game.combat.safe[k];   // firing ends your spawn protection
+  if (!Number.isFinite(n)) return s; if (fromHit && s.n >= SESSION_N && n > s.n + 500) return s;
+  if (s.n === null || n < s.n - 1e6 || n > s.n + 500) { s.n = n; return s; }   // first contact (or a client restart): sync, take nothing
+  const w = weaponById(id); if (!isFirearm(w) || game.combat?.d?.round?.phase === 'freeze') { s.n = Math.max(s.n, n); return s; }
   while (s.n < n) { s.n++; const a = ammoOf(game, name, id); if (a[0] > 0) { a[0]--; setAmmo(game, name, id, a); if (recording(game)) statOf(game, name).shots++; } else { s.dry.push(s.n); if (s.dry.length > 24) s.dry.shift(); } }
   return s;
 }
-// A reload numbered by the client (pose shot.r): moves rounds from the reserve to the magazine, once per number.
+// A reload numbered by the client (pose shot.r): moves rounds from the reserve to the magazine, once per number — a
+// magazine fills it; a shotgun (shell by shell, CS2) takes one shell per number.
 export function takeReload(game, name, r, id) {
   const C = state(game), k = key(name), s = (C.shots ??= {})[k] ??= { n: null, r: null, dry: [] }; r = Math.floor(+r);
   if (!Number.isFinite(r)) return false; if (s.r === null || r < s.r || r > s.r + 50) { s.r = r; return false; }
-  if (r === s.r) return false; s.r = r; const w = weaponById(id); if (!isFirearm(w)) return false;
-  const a = ammoOf(game, name, id), move = Math.min(w.mag - a[0], a[1]); if (move <= 0) return false; a[0] += move; if (!game.arena?.practice?.ammo) a[1] -= move; setAmmo(game, name, id, a); return true;   // practice: the reserve never runs down
+  if (r === s.r) return false; const steps = r - s.r; s.r = r; const w = weaponById(id); if (!isFirearm(w)) return false;
+  const a = ammoOf(game, name, id), move = Math.min(w.shellMs ? steps : Infinity, w.mag - a[0], a[1]); if (move <= 0) return false; a[0] += move; if (!game.arena?.practice?.ammo) a[1] -= move; setAmmo(game, name, id, a); return true;   // practice: the reserve never runs down
 }
-// The pose stream (room.mjs): shots and reloads since the last pose, for the gun in hand. Returns true on change.
+// The pose stream (room.mjs): shots and reloads since the last pose. They are charged to the gun that fired (shot.w)
+// and the one that reloaded (shot.rw) when the pose names them (a quick switch before the next pose no longer refunds
+// an AWP round or charges an AK's to the pistol: SHOOT-13), else to the gun in hand. Returns true on change.
 export function poseAmmo(game, name, shot, weapon) {
-  if (game?.mode !== 'arena' || !shot || isDown(game, name)) return false; if (!ownedWeapons(game, name).includes(weapon)) return false;
-  const C = state(game), k = key(name), before = JSON.stringify([C.ammo?.[k]?.[weapon], C.shots?.[k]?.n, C.shots?.[k]?.r]);
-  takeShots(game, name, shot.n, weapon); takeReload(game, name, shot.r, weapon);
-  return before !== JSON.stringify([C.ammo?.[k]?.[weapon], C.shots?.[k]?.n, C.shots?.[k]?.r]);
+  if (game?.mode !== 'arena' || !shot || isDown(game, name)) return false; const own = ownedWeapons(game, name);
+  const sw = own.includes(shot.w) ? shot.w : weapon, rw = own.includes(shot.rw) ? shot.rw : weapon; if (!own.includes(sw) && !own.includes(rw)) return false;
+  const C = state(game), k = key(name), snap = () => JSON.stringify([C.ammo?.[k]?.[sw], C.ammo?.[k]?.[rw], C.shots?.[k]?.n, C.shots?.[k]?.r]), before = snap();
+  if (own.includes(sw)) takeShots(game, name, shot.n, sw, false, true); if (own.includes(rw)) takeReload(game, name, shot.r, rw);
+  return before !== snap();
 }
 
 // ── Damage ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -92,7 +103,7 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + shown + ' HP', dmg: shown, hp, zone, head: zone === 'head' };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name, wid: wpn.id, head: zone === 'head', at: now };
   const teamKill = c.d && c.d.teams[me] && c.d.teams[me] === c.d.teams[tk];
-  if (me !== tk && !teamKill) { c.kills[me] = (c.kills[me] || 0) + 1; const sk = skinKeyOf(wpn.id) && game.arena?.skins?.[me]?.[skinKeyOf(wpn.id)]; if (sk?.st) sk.kills = (sk.kills | 0) + 1; }   /* (StatTrak™: the weapon counts its own kills) */ c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
+  if (me !== tk && !teamKill) { c.kills[me] = (c.kills[me] || 0) + 1; const sk = game.arena && skinOwner(game.arena, me, wpn.id) === me && game.arena.skins?.[me]?.[skinKeyOf(wpn.id)]; if (sk?.st) { sk.kills = (sk.kills | 0) + 1; touchSkin(game.arena, me, skinKeyOf(wpn.id)); } }   /* (StatTrak™: the weapon counts its own kills — only in its owner's hands, CS2's "does not belong to you"; the room sends the new count) */ c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
   let assist = null; for (const [a, n] of Object.entries(c.dmg?.[tk] || {})) if (a !== me && a !== tk && n >= 41 && !(c.d && c.d.teams[a] === c.d.teams[tk])) { (c.assists ??= {})[a] = (c.assists[a] || 0) + 1; assist = c.names?.[a] || a; }
   if (c.dmg) delete c.dmg[tk];
   c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head', assist, ...(how ? { how } : {}) }); c.feed.length = Math.min(c.feed.length, 6);
@@ -161,19 +172,99 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
     return applyHit(game, name, target.name, wpn, a.zone === 'head' ? 'head' : 'chest', 0, 1, now, base);
   }
   if (!isFirearm(wpn)) throw Error('Not a gun');
-  // The round for this shot: take any shots not yet counted (the hit may arrive before the pose that numbers it).
-  const shotN = Math.floor(+a.n); if (Number.isFinite(shotN)) { const s = takeShots(game, name, shotN, wpn.id); if (s.dry.includes(shotN)) throw Error('Out of ammo'); }
-  const lk = me + ':' + wpn.id, minGap = wpn.rateMs * .6; if (!a.sameShot && now - (c.last[lk] || 0) < minGap && c.lastShot?.[me] !== shotN) throw Error('Too fast for the ' + wpn.name);
-  if (from && to && Math.hypot(from.x - to.x, from.z - to.z) > wpn.range * 1.15 + 4) throw Error('Out of range');
-  const zone = HIT_GROUPS[a.zone] ? a.zone : a.head ? 'head' : 'chest';
-  const through = from && to ? lineOfFire(game, from, to, zone, wpn.pen || 0) : 1; if (!through) throw Error('Blocked by a wall');
-  c.last[lk] = now; (c.lastShot ??= {})[me] = shotN;
-  const pellets = wpn.pellets ? Math.max(1, Math.min(wpn.pellets, Math.floor(Number(a.pellets) || 1))) : 1;
-  const dist = from && to ? Math.hypot(from.x - to.x, from.y - to.y, from.z - to.z) : 0;
+  // Once per shot and body: the same shot number on the same target again (a resent, replayed or duplicated request)
+  // never adds damage (SHOOT-12; the room refuses it before this too). A number far past the last one of a numbering
+  // session (game clients number from 1e6 up, weapons.js) is no resync here (a forged jump would skip the ammo): refused.
+  // (Poses still resync — a reloaded page starts a new numbering — so this is defence in depth, not a lock.)
+  const shotN = Math.floor(+a.n), sd = sideOf(c), hk = shotN + ':' + tk;
+  if (Number.isFinite(shotN)) { if ((sd.seen[me] ||= []).includes(hk)) throw Error('Already counted'); const s0 = c.shots?.[me]; if (s0 && s0.n >= SESSION_N && shotN > s0.n + 500) throw Error('Unknown shot');
+    // The round for this shot: take any shots not yet counted (the hit may arrive before the pose that numbers it).
+    const s = takeShots(game, name, shotN, wpn.id, true); if (s.dry.includes(shotN)) throw Error('Out of ammo'); }
+  // Fire rate (SHOOT-02): by shot numbers on the shooter's own clock (ft: when its trigger fired), never the arrival
+  // times — a LAN that bunches two requests together no longer throws a real hit away. n shots apart must be at least
+  // n cycles apart (less 20 % and 25 ms for the clock's grain). The same number (a second body) is the same shot.
+  // A hit with no number (older callers): the arrival-time gate as before. The last shot only counts from the same
+  // numbering session on the same clock: a reloaded page or a rejoin starts a new random numbering and a fresh page
+  // clock (weapons.js) — measured against the old one, every hit was 'Too fast' (or never gated) for the rest of the match.
+  const ft = Number.isFinite(+a.ft) && a.ft !== null ? +a.ft : null, p0 = sd.last[me], prev = p0 && Math.abs(shotN - p0.n) <= 500 && !(ft !== null && p0.ft !== null && ft < p0.ft - 5000) ? p0 : null;
+  if (Number.isFinite(shotN)) { if (prev && prev.wid === wpn.id && shotN > prev.n) { const gap = ft !== null && prev.ft !== null ? ft - prev.ft : now - prev.at, need = (shotN - prev.n) * wpn.rateMs * (ft !== null && prev.ft !== null ? .8 : .5) - 25; if (gap < need) throw Error('Too fast for the ' + wpn.name); } }
+  else { const lk = me + ':' + wpn.id; if (now - (c.last[lk] || 0) < wpn.rateMs * .6) throw Error('Too fast for the ' + wpn.name); c.last[lk] = now; }
+  // Range: a shot with its record, CS2's m_flRange (reach: 8192 HU for rifles); a hit without one keeps the old rules.
+  const reach = Array.isArray(a.eye) ? wpn.reach ?? wpn.range : wpn.range;
+  if (from && to && Math.hypot(from.x - to.x, from.z - to.z) > reach * 1.15 + 4) throw Error('Out of range');
+  // The shot itself (SHOOT-07): with its record (eye, raw look, aim punch, inaccuracy) the host traces the very bullets
+  // the shooter fired — the same seeded spread — against the target where the shooter saw it (lag-comp.js), through the
+  // walls (bulletPath: the wallbang factor along the real line), each pellet in its own hit group: the client's zone and
+  // pellet count are only hints. Without a record (older callers, tests): the centre-line check and the zone claimed.
+  let res, dist, through = 1;
+  if (Array.isArray(a.eye) && Array.isArray(a.look)) {
+    const T = traceShot(game, wpn, a, shotN, from, to); dist = T.dist;
+    res = pelletDamage(wpn, T.hits, dist, armorOf(game, target.name)); through = T.factor;
+  } else {
+    const zone = HIT_GROUPS[a.zone] ? a.zone : a.head ? 'head' : 'chest';
+    through = from && to ? lineOfFire(game, from, to, zone, wpn.pen || 0) : 1; if (!through) throw Error('Blocked by a wall');
+    dist = from && to ? Math.hypot(from.x - to.x, from.y - to.y, from.z - to.z) : 0;
+    // Shotgun pellets each in their own group (SHOOT-04: one head pellet no longer makes every pellet a head shot).
+    const zs = wpn.pellets && a.zones && typeof a.zones === 'object' ? a.zones : { [zone]: wpn.pellets ? Math.floor(Number(a.pellets) || 1) : 1 }, hits = [];
+    for (const z of ['head', 'chest', 'stomach', 'legs']) for (let i = Math.max(0, Math.floor(+zs[z] || 0)); i > 0 && hits.length < (wpn.pellets || 1); i--) hits.push({ zone: z, f: through });
+    if (!hits.length) hits.push({ zone, f: through }); res = pelletDamage(wpn, hits, dist, armorOf(game, target.name));
+  }
+  if (Number.isFinite(shotN)) { const seen = sd.seen[me]; seen.push(hk); if (seen.length > 96) seen.shift(); if (!prev || shotN > prev.n) sd.last[me] = { n: shotN, ft, at: now, wid: wpn.id }; }
   // Damage is computed here from the real distance and what the bullet went through, never trusted from the shooter.
   // Kill-feed marks: wallbang and through smoke are the host's own findings; no-scope, airborne and blind come from the shooter.
   const eyeA = from ? (from.y ?? 9.7) : 0, eyeB = to ? (to.y ?? 9.7) - 1.5 : 0, how = { wallbang: through < 1, smoke: !!(from && to && smokeBlocks(game, from.x, eyeA, from.z, to.x, eyeB, to.z, now)), noscope: !!a.noscope && !!wpn.zoom, air: !!a.air, blind: !!a.blind, far: Math.round(dist * .165) };
-  return applyHit(game, name, target.name, wpn, zone, dist, pellets, now, through < 1 ? Math.max(1, Math.round(damageFor(wpn, zone, dist, pellets) * through)) : null, how);
+  const arm = c.armor?.[tk]; if (arm && res.armor) { arm.kevlar = Math.max(0, arm.kevlar - res.armor); if (!arm.kevlar) arm.helmet = false; }
+  return hurt(game, name, target.name, wpn, res.hp, res.zone, now, false, how);
+}
+// Host-side records per combat state (never sent to anyone): the shot numbers and bodies already counted, and each
+// shooter's newest shot (number, trigger clock, arrival, gun) for the fire-rate gate.
+const SIDE = new WeakMap(), sideOf = c => { let s = SIDE.get(c); if (!s) SIDE.set(c, s = { seen: {}, last: {} }); return s; };
+// How far a shot's record may stray from the shooter's pose at its moment (lag-comp.js: poses 33 ms apart at best, ~100
+// on a slow LAN, interpolated): the eye (units: a run at full speed covers ~4 in 100 ms), the look's yaw (rad: a flick
+// turns 20+ rad/s, and the pose's yaw also carries the camera's view punch — this only stops a shot sent sideways or
+// back), the target's body (pad, units: where the shooter drew it against where the host has it then). Our tolerances.
+// A hit usually beats its own moment's pose to the host (sent at the trigger; poses go at 30 Hz, later on Wi-Fi or a slow
+// laptop): for the time past the newest pose (lead, ms, credited up to `lead`) the eye may have moved `run` units/ms
+// (~390 HU/s: CS2's 250 run plus air gain), and the look is not judged at all until a pose at or after the moment has
+// arrived (as the speed floor: a flick-and-fire — turn onto someone and click at once — was refused as 'Not where you
+// looked' whenever the hit beat the pose that showed the turn); between two poses it is judged against either one's
+// facing (a flick between them faces anywhere along the turn). Approximations, ours.
+export const SHOT_TOL = { eye: 4, look: 1.2, pad: .35, run: .06, lead: 200 };
+// The biggest aim punch a gun's spray reaches (°), plus the flinch's.
+const PUNCH = new Map(), punchMax = w => { let m = PUNCH.get(w.id); if (!m) { m = { p: 0, y: 0 }; for (const [p, y] of w.pattern || []) { m.p = Math.max(m.p, p); m.y = Math.max(m.y, Math.abs(y)); } PUNCH.set(w.id, m); } return m; };
+// The least inaccuracy the host is sure of: the gun's lower floor (standing or crouched: the pose's crouch may lag), and —
+// only when its poses show it clearly — running (over 85 % of the gun's speed) or a fast rise / fall (over 300 HU/s,
+// faster than stairs), each counted at 30 % (poses are coarse). The speed is lag-comp vel(): the slower of the windows
+// before and after the trigger, unknown until a pose after it has arrived — so a counter-strafe (fast before, still
+// after) is never caught, and a hit that beats its pose to the host gets the floor only.
+function minInaccuracy(wpn, acc, from, sc) {
+  let lo = Math.min(acc.stand, acc.crouch) * .999; const v = from?.vel; if (!v) return lo;
+  const max = (sc && wpn.scopedSpeed ? wpn.scopedSpeed : wpn.speed || 250) * HU; if (v.h > max * .85) lo += .3 * Math.min(1, (v.h - max * .34) / (max * .61)) * acc.move;
+  const vv = Math.abs(v.v) / HU; if (vv > 300) { const sj = Math.sqrt(JUMP_IMPULSE); lo += .3 * acc.jump * Math.min(2, (Math.sqrt(vv) - sj * .25) / (sj * .75)); }
+  return lo;
+}
+const SB = [0, 0, 0], SD = [0, 0, 0], SO = new Float64Array(32), SZ = { zone: null }, SP = new BulletPath();
+const wrapA = x => Math.atan2(Math.sin(x), Math.cos(x));
+// The host's own trace of a shot on one body. Returns { hits: [{ zone, f }], dist, factor (the weakest pellet's wall
+// factor: < 1 a wallbang) }; throws when the record is out of bounds or no bullet reaches the body.
+export function traceShot(game, wpn, a, n, from, to) {
+  const eye = a.eye.map(Number), look = a.look.map(Number), pu = Array.isArray(a.pu) ? a.pu.map(Number) : [0, 0], sc = !!a.sc && !!wpn.accZ, acc = accOf(wpn, sc);
+  if (eye.length !== 3 || look.length !== 2 || pu.length !== 2 || ![...eye, ...look, ...pu].every(Number.isFinite) || !Number.isFinite(n)) throw Error('Bad shot');
+  const lead = from && Number.isFinite(from.lead) ? Math.min(SHOT_TOL.lead, Math.max(0, from.lead)) : 0;
+  if (from && Math.hypot(eye[0] - from.x, eye[1] - (from.y ?? EYE), eye[2] - from.z) > SHOT_TOL.eye + lead * SHOT_TOL.run) throw Error('Not where you stood');
+  if (from && Number.isFinite(from.yaw) && !(from.lead > 0)) { let dv = Math.abs(wrapA(look[1] - from.yaw)); if (Number.isFinite(from.ya)) dv = Math.min(dv, Math.abs(wrapA(look[1] - from.ya))); if (Number.isFinite(from.yb)) dv = Math.min(dv, Math.abs(wrapA(look[1] - from.yb)));
+    if (dv > SHOT_TOL.look) throw Error('Not where you looked'); }
+  const pm = punchMax(wpn), fl = 2 * FLINCH.max + 1; if (pu[0] < -fl || pu[0] > pm.p + fl + 1 || Math.abs(pu[1]) > pm.y + fl + 1) throw Error('Recoil out of bounds');
+  const ia = Math.min(1, Math.max(minInaccuracy(wpn, acc, from, sc), Number.isFinite(+a.ia) ? +a.ia : 0)), reach = wpn.reach ?? wpn.range, boxes = to ? boxesOf(game) : [];
+  if (!to) return { hits: [{ zone: HIT_GROUPS[a.zone] ? a.zone : 'chest', f: 1 }], dist: 0, factor: 1 };   // (no pose for the target: nothing to trace against)
+  const fx = to.x, fy = poseFeet(to), fz = to.z, cr = !!to.crouched, hits = []; let dist = Infinity, factor = 1;
+  shotBase(look[0], look[1], pu[0], pu[1], SB); const k = shotOffsets(wpn, n, ia, acc.spread, SO);
+  for (let i = 0; i < k; i++) { offsetDir(SB, SO[2 * i], SO[2 * i + 1], SD); const t = rayBody(eye[0], eye[1], eye[2], SD[0], SD[1], SD[2], fx, fy, fz, cr, SHOT_TOL.pad, SZ); if (t < 0 || t > reach) continue;
+    if (SD[1] < -1e-6 && -eye[1] / SD[1] < t) continue;   // (the floor plane first: as the shooter's own trace)
+    const f = boxes.length ? bulletPath(boxes, eye[0], eye[1], eye[2], SD[0], SD[1], SD[2], t + .01, wpn.pen || 0, SP).factor(t) : 1; if (!(f > 0)) continue;
+    hits.push({ zone: SZ.zone, f }); dist = Math.min(dist, t); factor = Math.min(factor, f); }
+  if (!hits.length) throw Error('Missed');
+  return { hits, dist, factor };
 }
 // Respawn knocked-out players (deathmatch) with full HP and full ammo. Returns true when something changed.
 export function combatTick(game, now = Date.now()) {

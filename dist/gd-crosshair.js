@@ -1,5 +1,6 @@
 // Global Defensive crosshair: the player's own look (saved on this computer, never sent over LAN), always drawn at
-// the exact screen centre. Purely visual: it never changes where shots go (they leave along the screen centre).
+// the exact screen centre. Purely visual: it never changes where shots go (they leave along your aim, with the gun's
+// recoil and CS2 inaccuracy; Dynamic opens the gap with that inaccuracy).
 // Settings → Crosshair edits it with a live preview.
 const KEY = 'gd-crosshair';
 export const CROSSHAIR_DEFAULT = { style: 'classic', size: 7, thickness: 2, gap: 4, outline: true, outlineWidth: 1, color: '#7dff8e', opacity: 1, dot: true, dynamic: true };
@@ -25,5 +26,5 @@ export function crosshairEditorHTML(c) {
     <label>Colour<input data-xh="color" type="color" value="${c.color}"></label>${rng('opacity', 'Opacity', .2, 1, .05)}${rng('outlineWidth', 'Outline width', 1, 3)}
     <label class="chk"><input type="checkbox" data-xh="outline" ${c.outline ? 'checked' : ''}> Outline</label><label class="chk"><input type="checkbox" data-xh="dot" ${c.dot ? 'checked' : ''}> Centre dot</label><label class="chk"><input type="checkbox" data-xh="dynamic" ${c.dynamic ? 'checked' : ''}> Dynamic (opens when moving)</label></div>
     <div class="xh-preview" style="position:relative;height:120px;border-radius:8px;margin:8px 0;background:linear-gradient(135deg,#7a8c9c,#c9b48a 60%,#3d4a33)">${crosshairHTML(c)}</div>
-    <div class="cp-row"><button data-xh-reset>Reset crosshair</button></div><p class="cp-muted">Saved on this computer for you only; other LAN players keep their own. It only changes the look: every shot goes exactly through the screen centre.</p></div>`;
+    <div class="cp-row"><button data-xh-reset>Reset crosshair</button></div><p class="cp-muted">Saved on this computer for you only; other LAN players keep their own. It only changes the look: shots go where you aim, with the gun's recoil and inaccuracy (Dynamic shows it).</p></div>`;
 }

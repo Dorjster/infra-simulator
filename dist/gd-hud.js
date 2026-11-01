@@ -1,11 +1,12 @@
 // Global Defensive HUD (compact, CS2-like): health + armor (bottom left), weapon · magazine / reserve · fire mode ·
 // reload · grenades · bomb / kit (bottom right), the dynamic crosshair (moves to where the next bullet goes and opens
 // up with movement inaccuracy) and the scope overlay. DOM is touched only when a value changes.
-import { skinTitle, skinKeyOf } from './skins.js';
+import { skinTitle, skinFor, catalogHash } from './skins.js';
 import { weaponById, moveInaccuracy, MAX_HP, isFirearm, NADE_ORDER } from './weapons-data.js';
 import { hpOf, armorOf } from './combat-logic.js';
 import { loadCrosshair, crosshairHTML } from './gd-crosshair.js';
 import { bindingOf, keyLabel } from './input.js';
+import { gdView } from './gd-display.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const MODE = { auto: 'AUTO', semi: 'SEMI', pump: 'PUMP', bolt: 'BOLT' };
@@ -13,14 +14,15 @@ const MODE = { auto: 'AUTO', semi: 'SEMI', pump: 'PUMP', bolt: 'BOLT' };
 export const NADE_ICON = { he: '●', flash: '◆', smoke: '■', decoy: '◎', molotov: '▲', incendiary: '✹' };
 const NADE_KEY = { he: 'a-he', flash: 'a-flash', smoke: 'a-smoke', decoy: 'a-decoy', molotov: 'a-molotov', incendiary: 'a-molotov' }, NONE = [];
 export function createGdHud({ world, name, weapons, recoil, fov, move, active }) {
-  let tW = null, tS = null, tK = -1, tTitle = '';   // (the weapon title, made again only when the weapon or its skin changes)
+  let tW = null, tS = null, tK = -1, tC = '', tTitle = '';   // (the weapon title, made again only when the weapon, its skin or the host's CS2 catalogue — the finish names — changes)
   const css = document.createElement('style'); css.textContent = `
 #gd-hud{position:fixed;inset:0;z-index:36;pointer-events:none;font:700 14px system-ui;color:#fff;text-shadow:0 1px 3px #000c}#gd-hud[hidden]{display:none}
+#gd-hp,#gd-wp{isolation:isolate;font-variant-numeric:tabular-nums}#gd-hp::before,#gd-wp::before{content:'';position:absolute;z-index:-1;inset:-18px -40px -14px -30px;background:radial-gradient(ellipse at 35% 72%,#0009 0%,#0005 45%,#0000 72%);pointer-events:none}#gd-wp::before{inset:-18px -30px -12px -40px;background:radial-gradient(ellipse at 65% 72%,#0009 0%,#0005 45%,#0000 72%)}
 #gd-hp{position:absolute;left:22px;bottom:22px;display:flex;align-items:flex-end;gap:18px}#gd-hp .v{display:flex;align-items:baseline;gap:6px}#gd-hp b{font:800 40px ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.02em}#gd-hp small{font:700 11px system-ui;letter-spacing:.12em;opacity:.75}#gd-hp .ico{font:900 22px system-ui;opacity:.9}#gd-hp .low b,#gd-hp .low .ico{color:#ff4d4d}#gd-hp .arm.none{opacity:.35}
 #gd-hpbar{position:absolute;left:22px;bottom:12px;width:150px;height:4px;background:#ffffff26;border-radius:2px;overflow:hidden}#gd-hpbar i{display:block;height:100%;background:#e8eef2;transition:width .15s}
 #gd-wp{position:absolute;right:22px;bottom:18px;text-align:right}#gd-wp .name{font:800 13px system-ui;letter-spacing:.08em;color:#ffd36b}#gd-wp .ammo{font:800 40px ui-monospace,Menlo,Consolas,monospace}#gd-wp .ammo small{font:700 20px ui-monospace,Menlo,monospace;opacity:.7}#gd-wp .ammo.low{color:#ff6b6b}#gd-wp .meta{font:700 11px system-ui;letter-spacing:.12em;opacity:.8}#gd-wp .rl{height:4px;background:#ffffff26;border-radius:2px;margin-top:4px;overflow:hidden}#gd-wp .rl i{display:block;height:100%;background:#9fd8ff}#gd-wp .util{margin-top:6px;font:900 16px system-ui;letter-spacing:.3em;opacity:.9}#gd-wp .util span.on{color:#ffd36b}#gd-wp .util span[data-n]{margin-left:.15em}#gd-wp .util i{font:700 9px system-ui;font-style:normal;letter-spacing:0;opacity:.65;vertical-align:super;margin-right:1px}#gd-wp .util b{font:800 11px system-ui;letter-spacing:0;margin-left:1px}
 #gd-x{position:absolute;inset:0}#gd-x i{position:absolute;background:#7dff8e;box-shadow:0 0 1px #000,0 0 2px #000}#gd-x .t,#gd-x .b{width:2px;height:7px;left:-1px}#gd-x .l,#gd-x .r{height:2px;width:7px;top:-1px}#gd-x .c{width:2px;height:2px;left:-1px;top:-1px}#gd-x[hidden]{display:none}
-#gd-scope{position:absolute;inset:0;display:none}#gd-scope.on{display:block}#gd-scope .ring{position:absolute;left:50%;top:50%;width:min(92vh,92vw);height:min(92vh,92vw);transform:translate(-50%,-50%);border-radius:50%;box-shadow:0 0 0 200vmax #000;border:2px solid #000}#gd-scope .h,#gd-scope .v{position:absolute;background:#000}#gd-scope .h{left:0;right:0;top:50%;height:1px}#gd-scope .v{top:0;bottom:0;left:50%;width:1px}#gd-scope.dot .ring{width:min(60vh,60vw);height:min(60vh,60vw);box-shadow:0 0 0 200vmax #000c}#gd-scope.dot .h,#gd-scope.dot .v{display:none}#gd-scope.dot:after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:#ff3030;box-shadow:0 0 4px #f00}`;
+#gd-scope{position:absolute;inset:0;display:none}#gd-scope.on{display:block}#gd-scope .ring{position:absolute;left:50%;top:50%;width:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.92);height:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.92);transform:translate(-50%,-50%);border-radius:50%;box-shadow:0 0 0 200vmax #000;border:2px solid #000}#gd-scope .h,#gd-scope .v{position:absolute;background:#000}#gd-scope .h{left:0;right:0;top:50%;height:1px}#gd-scope .v{top:0;bottom:0;left:50%;width:1px}#gd-scope.dot .ring{width:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.6);height:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.6);box-shadow:0 0 0 200vmax #000c}#gd-scope.dot .h,#gd-scope.dot .v{display:none}#gd-scope.dot:after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:#ff3030;box-shadow:0 0 4px #f00}`;
   (document.head || document.body).append?.(css);
   document.body.insertAdjacentHTML('beforeend', `<div id="gd-hud" hidden><div id="gd-scope"><div class="ring"></div><div class="h"></div><div class="v"></div></div><div id="gd-x"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="c"></i></div>
     <div id="gd-hp"><div class="v hp"><span class="ico">✚</span><b>100</b><small>HP</small></div><div class="v arm none"><span class="ico">⛨</span><b>0</b><small>ARMOR</small></div></div><div id="gd-hpbar"><i style="width:100%"></i></div>
@@ -32,7 +34,7 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
   let utSig = -1, keyVer = 0; addEventListener('infra-bindings', () => { keyVer++; });   // (grenade keys rebound: their labels change)
   const keyOf = id => { const c = bindingOf('arena', NADE_KEY[id])[0]; return c ? keyLabel(c).replace(/[<&>"]/g, '') : ''; };
   const countOf = (list, id) => { let c = 0; for (let i = 0; i < list.length; i++) if (list[i] === id) c++; return c; };
-  const px = (rad, f) => Math.tan(rad) / Math.tan(f * Math.PI / 360) * innerHeight / 2;
+  const px = (rad, f) => Math.tan(rad) / Math.tan(f * Math.PI / 360) * (gdView.h || innerHeight) / 2;   // (the picture's height: black bars leave less than the window — gd-display.js)
   return {
     update() {
       const g = world.operations.game, on = g.mode === 'arena' && active(); if (root.hidden === on) root.hidden = !on; if (!on) return;
@@ -40,7 +42,7 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
       set('hp', els.hp, 'text', String(hp)); set('hpc', els.hpBox, 'class', 'v hp' + (hp <= 25 ? ' low' : '')); set('bar', els.bar, 'width', Math.max(0, hp) / MAX_HP * 100 + '%');
       set('arm', els.arm, 'text', String(arm.kevlar || 0)); set('armc', els.armBox, 'class', 'v arm' + (arm.kevlar ? '' : ' none')); set('armi', els.armIco, 'text', arm.helmet ? '⛑' : '⛨');
       if (w) {
-        { const sk = (skinKeyOf(w.id) && g.arena?.skins?.[key(me)]?.[skinKeyOf(w.id)]) || null, kills = sk?.kills | 0; if (w !== tW || sk !== tS || kills !== tK) { tW = w; tS = sk; tK = kills; tTitle = (sk ? skinTitle(w.name, sk) + (sk.st ? ' · ' + kills + ' kills' : '') : w.name).toUpperCase(); } set('wn', els.name, 'text', tTitle); }   // (its skin's name: StatTrak™ count, name tag — skins.js)
+        { const sk = skinFor(g.arena, me, w.id), kills = sk?.kills | 0;   /* (the gun's owner's skin: a picked-up gun shows its buyer's, CS2) */ if (w !== tW || sk !== tS || kills !== tK || catalogHash() !== tC) { tW = w; tS = sk; tK = kills; tC = catalogHash(); tTitle = (sk ? skinTitle(w.name, sk) + (sk.st ? ' · ' + kills + ' kills' : '') : w.name).toUpperCase(); } set('wn', els.name, 'text', tTitle); }   // (its skin's name: StatTrak™ count, name tag — skins.js)
         if (isFirearm(w)) { const m = weapons.ammo, r = weapons.reserve; set('wa', els.ammo, 'html', `${m}<small> / ${r}</small>`); set('wac', els.ammo, 'class', 'ammo' + (m <= Math.ceil(w.mag * .2) ? ' low' : '')); set('wm', els.meta, 'text', MODE[w.mode] + (w.suppressed ? ' · SUPPRESSED' : '') + (weapons.reloading ? ' · RELOADING' : m === 0 && r > 0 ? ' · R TO RELOAD' : m === 0 ? ' · EMPTY' : '')); }
         else { set('wa', els.ammo, 'html', ''); set('wm', els.meta, 'text', w.kind === 'knife' ? 'LEFT SLASH · RIGHT STAB' : w.kind === 'nade' ? (weapons.nade?.state === 'priming' ? 'PULLING THE PIN…' : weapons.nade?.state === 'held' ? '▲ ' + ({ long: 'LONG THROW', medium: 'MEDIUM THROW', short: 'SHORT UNDERHAND' })[weapons.nade.strength] + ' · RELEASE TO THROW' : 'HOLD LEFT: LONG · RIGHT: SHORT · BOTH: MEDIUM') : w.kind === 'bomb' ? 'HOLD LEFT ON A SITE TO PLANT' : ''); }
         set('rl', els.rl, 'width', weapons.reloading ? (1 - weapons.reloadLeft) * 100 + '%' : '0');
@@ -58,9 +60,9 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
       const sc = weapons.scope, f = fov(), sniper = w?.kind === 'sniper';
       set('sc', els.scope, 'class', sc ? (sniper ? 'on' : 'on dot') : '');
       // The crosshair: the player's own look, fixed at the screen centre (never moved by recoil); none for a sniper
-      // rifle unless scoped (then the scope's reticle), as in CS2. Dynamic: the gap opens with movement inaccuracy.
+      // rifle unless scoped (then the scope's reticle), as in CS2. Dynamic: the gap opens with the inaccuracy.
       const showX = !!w && !sniper; if (els.x.hidden === showX) els.x.hidden = !showX; if (!showX) return;
-      const inacc = moveInaccuracy(w, { ...move(), scoped: sc > 0 }), gap = Math.round(Math.min(40, px(inacc, f) + Math.min(10, (weapons.spray || 0) * 1.1))),   /* dynamic: opens while moving and while spraying */ xk = gap + '|' + xhVer;
+      const inacc = weapons.inaccuracy ?? moveInaccuracy(w, { ...move(), scoped: sc > 0 }), gap = Math.round(Math.min(40, px(inacc, f))),   /* dynamic, CS2's: the gun's whole inaccuracy now (weapons.js — its floor, the shots' fire penalty, running, jumping), as the cone the next bullet can land in */ xk = gap + '|' + xhVer;
       if (last.xk !== xk) { last.xk = xk; els.x.innerHTML = crosshairHTML(xh, gap); }
     },
   };

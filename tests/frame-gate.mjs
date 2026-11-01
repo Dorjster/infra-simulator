@@ -2,7 +2,7 @@
 // old "1000/cap − 2 ms since the last drawn frame" test gave 48 on 144 Hz, 37.5 on 75 Hz, 50 on 100 Hz, 55 on 165 Hz —
 // a display at most 1.25× the cap is not limited (75 Hz draws 75), stalls never cause a burst of catch-up frames, and the
 // dynamic resolution's late / slow thresholds don't read the schedule's 2-3-2-3 refresh gaps on 144 Hz as overload.
-import { createFrameGate, frameThresholds, createScaler, stepFor } from '../dist/frame-gate.js';
+import { createFrameGate, frameThresholds, createScaler, stepFor, gdPresetFromBench } from '../dist/frame-gate.js';
 let ok = 0, n = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (d !== '' ? ' · ' + d : '')); };
 // rAF ticks on a display of `hz` (timestamps with ±0.05 ms noise), `secs` long; returns drawn frame times
 function run(hz, cap, secs = 10, gate = createFrameGate(), jitter = .05, stallAt = -1, auto = true) {
@@ -70,21 +70,37 @@ for (const [hz, cap, ms, auto] of [[144, 60, 5, true], [144, 60, 12, true], [144
 // weak Windows laptops. A frame takes max(main-thread ms, GPU ms) (they overlap), rounded up to the 60 Hz refresh; the GPU's
 // cost goes with the pixels (ratio²); freeze time 10 s (quiet: 80 % of the fight's GPU load, no smokes), fights 40 s (hold).
 // Checks every 0.5 s on the last 40 frames, as app.js. `w: false` = the scaler before package W (the reference).
-function match({ cpu, gpu1, timer = false, rounds = 8, w = true, ceiling = 1, floor = .5 }) {
+// `real`: the game's own round (arena-defuse.js DEFUSE: freeze 15 s, round over 6 s, both quiet) with the main thread per
+// phase — freeze `cpuFreeze` (no gunfire, smokes or moving bots: lighter), round over halfway between it and the fight.
+// `jitter`: the machine's load swings from one 0.5 s check to the next (other programs, a laptop's boost clock): the main
+// thread's cost that check × 1 ± jitter (`sd` picks the run).
+function match({ cpu, gpu1, timer = false, rounds = 8, w = true, ceiling = 1, floor = .5, real = false, cpuFreeze = cpu, jitter = 0, sd = 5 }) {
   const sc = createScaler({ w }), steps = [1, .85, .72, .6, .5].map(k => Math.max(floor, Math.round(ceiling * k * 20) / 20)), V = 1000 / 60, th = frameThresholds(V, V, undefined, 60);
-  let r = ceiling, t = 7000, seed = 5; const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647, ev = [], tail = [], fr = new Array(40);
-  for (let k = 0; k < rounds; k++) for (const [phase, secs] of [['freeze', 10], ['live', 40]]) for (let s = 0; s < secs * 2; s++, t += 500) {
-    const load = phase === 'live' ? 1 : .8; for (let f = 0; f < 40; f++) { const g = gpu1 * load * r * r * (1 + (rnd() - .5) * .1), c = cpu * (1 + (rnd() - .5) * .1); fr[f] = V * Math.max(1, Math.ceil(Math.max(c, g) / V - .02)); }
+  let r = ceiling, t = 7000, seed = sd; const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647, ev = [], tail = [], fr = new Array(40);
+  const phases = real ? [['freeze', 15], ['live', 40], ['over', 6]] : [['freeze', 10], ['live', 40]];
+  for (let k = 0; k < rounds; k++) for (const [phase, secs] of phases) for (let s = 0; s < secs * 2; s++, t += 500) {
+    const load = phase === 'live' ? 1 : .8, cp = (phase === 'live' ? cpu : phase === 'over' ? (cpu + cpuFreeze) / 2 : cpuFreeze) * (jitter ? 1 + (rnd() - .5) * 2 * jitter : 1); for (let f = 0; f < 40; f++) { const g = gpu1 * load * r * r * (1 + (rnd() - .5) * .1), c = cp * (1 + (rnd() - .5) * .1); fr[f] = V * Math.max(1, Math.ceil(Math.max(c, g) / V - .02)); }
     const so = [...fr].sort((a, b) => a - b), median = so[20], mean = fr.reduce((a, b) => a + b) / 40, late = fr.filter(x => x > th.late).length;
-    const next = sc.decide({ now: t, gd: true, median, mean, late, th, interval: V, gpu: timer ? gpu1 * load * r * r : null, budget: 14, cap: 60, current: r, ceiling, steps, hold: phase === 'live', cpu });
+    const next = sc.decide({ now: t, gd: true, median, mean, late, th, interval: V, gpu: timer ? gpu1 * load * r * r : null, budget: 14, cap: 60, current: r, ceiling, steps, hold: phase === 'live', cpu: cp });
     if (Math.abs(next - r) > .01) { ev.push({ round: k, phase, from: r, to: next }); r = next; sc.applied(t); }
     if (phase === 'live' && k >= rounds - 3) tail.push(...fr);
   }
   return { ev, r, changes: ev.length, midFight: ev.filter(e => e.phase === 'live').length, late: ev.filter(e => e.round >= 3).length, fps: 1000 / (tail.reduce((a, b) => a + b) / tail.length), show: ev.map(e => e.round + e.phase[0] + ':' + e.from + '→' + e.to).join(' ') };
 }
-{ // a CPU-bound laptop (i5 main thread ≈ 22 ms a frame in the fight, the GPU fine): a smaller picture can't help — no step at all
+{ // a CPU-bound laptop (i5 main thread ≈ 22 ms a frame, the GPU fine): a smaller picture can't help — never a step mid-fight;
+  // one try at a quiet moment, undone back to full resolution when it didn't help, then nothing (no cycle)
   const a = match({ cpu: 22, gpu1: 6 }), b = match({ cpu: 22, gpu1: 6, w: false });
-  check('CPU-bound fight (22 ms main thread, no GPU timer): no resolution change in 8 rounds (each one is a 50–130 ms hitch and blur)', a.changes === 0 && a.r === 1, `now ${a.changes} changes; before ${b.changes} (${b.midFight} mid-fight): ${b.show}`); }
+  check('CPU-bound (22 ms main thread, no GPU timer): no change mid-fight, one try undone at quiet moments, back at full resolution, none after round 2', a.midFight === 0 && a.changes <= 2 && a.r === 1 && !a.ev.some(e => e.round > 2), `now ${a.changes}: ${a.show}; before ${b.changes} (${b.midFight} mid-fight): ${b.show}`); }
+// …and the same laptop in the game's real round (freeze 15 s + round over 6 s) where freeze time is lighter on the processor
+// (12 ms): the "did it help" verdict taken in freeze time read every step as helping and walked the resolution down to .5
+// in 2–3 rounds with no fps gained (review W-windows; v51 never stepped here) — judged fight against fight, it's one try, undone
+for (const cl of [18, 20, 22]) {
+  const a = match({ cpu: cl, cpuFreeze: 12, gpu1: 6, real: true, rounds: 10 });
+  check(`CPU-bound in real rounds (fight ${cl} ms, freeze 12 ms, no GPU timer): back at full resolution, ≤ 2 changes, none mid-fight, none after round 2`, a.r === 1 && a.changes <= 2 && a.midFight === 0 && !a.ev.some(e => e.round > 2), a.show || 'no change'); }
+{ // the GPU-bound laptops in the same real rounds still settle (the step a fight asked for helps the next fight: kept)
+  const a = match({ cpu: 8, cpuFreeze: 6, gpu1: 26, real: true, rounds: 10 }), f = match({ cpu: 10, cpuFreeze: 7, gpu1: 20, real: true, rounds: 10 });
+  check('weak GPU in real rounds (26 ms fight GPU, frame times only): settles below full resolution, 60 fps, nothing after round 3', a.r < 1 && a.fps > 58 && a.late === 0, a.show + ` (${a.fps.toFixed(1)} fps)`);
+  check('fight-only GPU overload in real rounds (20 ms in fights, 16 at freeze): the fight\'s step is kept, 60 fps, nothing after round 3', f.r < 1 && f.fps > 58 && f.late === 0, f.show + ` (${f.fps.toFixed(1)} fps)`); }
 for (const timer of [false, true]) { // a weak GPU (Iris Xe ≈ 0.5× the M3: 26 ms at the ceiling in a fight, 8 ms of main thread): settles fast, then holds
   const a = match({ cpu: 8, gpu1: 26, timer }), b = match({ cpu: 8, gpu1: 26, timer, w: false });
   check(`weak GPU (${timer ? 'GPU timer: one change' : 'frame times only: ≤ 3 changes (one probe up, taken back once)'}), 60 fps after, no change after round 3`, a.changes <= (timer ? 1 : 3) && a.fps > 58 && a.late === 0 && a.changes < b.changes, `now ${a.show} (${a.fps.toFixed(1)} fps); before ${b.changes} changes: ${b.show} (${b.fps.toFixed(1)} fps)`); }
@@ -92,8 +108,31 @@ for (const timer of [false, true]) { // a weak GPU (Iris Xe ≈ 0.5× the M3: 26
   const a = match({ cpu: 7, gpu1: 18, rounds: 12 }), b = match({ cpu: 7, gpu1: 18, rounds: 12, w: false });
   check('fight-only overload (frame times only): at most 4 changes in 12 rounds, none in the last 6, 60 fps', a.changes <= 4 && !a.ev.some(e => e.round >= 6) && a.fps > 58, `now ${a.changes}: ${a.show} (${a.fps.toFixed(1)} fps); before ${b.changes}: ${b.show}`);
   check('…where the scaler before package W kept cycling (the reference really oscillates)', b.ev.filter(e => e.round >= 6).length >= 2, b.show); }
+{ // a weak GPU whose main thread LOOKS busy (15 ms: Chrome's GL calls wait on a GPU that is behind): the CPU-bound hint only
+  // moves the step to the quiet moment — it is still taken, it helps, it stays (60 fps after). Its slow freeze frames alone
+  // (CPU-bound-looking) ask for nothing: the first fight asks, so it settles a round later than a plain weak GPU (round index ≤ 3)
+  const a = match({ cpu: 15, gpu1: 26 }); check('GPU-bound with a busy-looking main thread: no step mid-fight, settled at a quiet moment after the first fight, 60 fps, no change after the 4th round', a.midFight === 0 && a.changes >= 1 && a.changes <= 3 && a.fps > 58 && !a.ev.some(e => e.round > 3), a.show + ` (${a.fps.toFixed(1)} fps)`); }
+{ // a CPU-bound laptop whose processor is the limit in EVERY phase (freeze as heavy as the fight: CPU ×4, render ≈ 10 of the
+  // 14 ms anywhere) while the machine's load swings from check to check: quiet frames slow while CPU-bound take no step of
+  // their own (as v51) — a step judged on such frames read "helped" by chance and stayed for the match in 20–32 % of runs
+  // (review W-windows, scratchpad review-W-windows/scaler-noise.mjs); only a fight asks, judged fight against fight
+  let below = 0, mid = 0, runs = 0, worst = ''; const cfgs = [{ cpu: 17 }, { cpu: 18, cpuFreeze: 15 }, { cpu: 16.5, jitter: .35 }, { cpu: 20, cpuFreeze: 14, jitter: .3 }];
+  for (const c of cfgs) for (let s = 1; s <= 40; s++, runs++) { const a = match({ gpu1: 4, real: true, rounds: 10, jitter: .25, ...c, sd: s * 7919 }); if (a.r < 1) { below++; worst = worst || JSON.stringify(c) + ' ' + a.show; } mid += a.midFight; }
+  check(`CPU-bound in every phase with load swings (${runs} matches): at most 1 ends below full resolution, none mid-fight`, below <= 1 && mid === 0, `${below} below, ${mid} mid-fight changes${worst ? '; e.g. ' + worst : ''}`); }
 { // light load: nothing changes (no regression on a strong laptop)
   const a = match({ cpu: 6, gpu1: 9 }); check('strong laptop (6 ms CPU, 9 ms GPU): no change', a.changes === 0, a.show); }
 { // stepFor: the pixels go with the ratio² — 2× over budget wants the ratio / √2.2 (≤ .674: .6), 1.2× wants ≤ .87 (.85); capped at max steps
   const st = [1, .85, .72, .6, .5]; check('stepFor: load 2 → .6 (3 steps; .72 with at most 2), load 1.2 → .85, the last step stays', st[stepFor(st, 0, 2, 3)] === .6 && st[stepFor(st, 0, 2, 2)] === .72 && st[stepFor(st, 0, 1.2, 3)] === .85 && stepFor(st, 4, 9, 3) === 4); }
+{ // the first-run preset (package W, wave 2): the readPixels waits the M3 MacBook read at freeze time (no timer queries on
+  // Apple's Metal; 9.8–13.4 ms at 1×, 2× and 4× the pixels alike: the display's refresh, not GPU work — perf/W2 A4-auto-g*)
+  // stay Medium (v51's 12 ms and the unreviewed 7 ms made a MacBook "Low"); a GPU that can't finish a quiet frame in a
+  // refresh and a third is Low; with timer queries the GPU's own time decides at 10 ms
+  const m3 = [9.8, 11, 12.2, 12.8, 13.4], picks = m3.map(ms => gdPresetFromBench(ms, false));
+  check('first-run preset: the M3\'s readPixels waits (9.8–13.4 ms, no timer) → Medium every time', picks.every(p => p === 'Medium'), picks.join(' '));
+  check('first-run preset: a wait past a refresh and a third (30 ms) → Low; GPU timer 6 ms → Medium', gdPresetFromBench(30, false) === 'Low' && gdPresetFromBench(6, true) === 'Medium');
+  // with timer queries (Chrome's Direct3D 11 path, the Windows laptops): the package's own emulation at freeze time (≈ 80 %
+  // of the fight) — Iris Xe 15.4–17.3 ms in the fight → 12–14 at freeze must stay Medium (docs §9: Balanced; the 10 ms rule
+  // set it to Performance); Intel UHD ≈ half of Iris Xe → 24–28 at freeze → Low
+  const iris = [12, 13, 14].map(ms => gdPresetFromBench(ms, true)), uhd = [24, 26, 28].map(ms => gdPresetFromBench(ms, true));
+  check('first-run preset, GPU timer: emulated Iris Xe at freeze (12–14 ms) → Medium, emulated Intel UHD (24–28 ms) → Low', iris.every(p => p === 'Medium') && uhd.every(p => p === 'Low'), 'Iris ' + iris.join(' ') + ' · UHD ' + uhd.join(' ')); }
 console.log(ok + '/' + n); process.exit(ok === n ? 0 : 1);

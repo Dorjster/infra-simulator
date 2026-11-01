@@ -214,7 +214,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       // Otherwise this draw is exactly as without it.
       const sm = scene.userData.gdSmoke, smoke = !!sm?.active(); if (composer && sm?.armed) sm.wire(composer);   // (armed: in a match — its buffers' depth textures made at the start, not at the first smoke)
       if (composer) {
-        const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
+        const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); const z = renderer.getSize(new THREE.Vector2()); composer.setSize(z.x, z.y); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
         smokeHook.enabled = smoke; if (smoke) sm.begin(composer); try { composer.render(); } finally { if (smoke) sm.end(); }
       } else if (smoke) sm.renderDirect(); else renderer.render(scene, camera);
   }

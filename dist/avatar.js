@@ -206,8 +206,11 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
   // Darja's pistol in the right hand (LAN pose `gun`): muzzle along the forearm, grip down.
   // Payday guns swap in by id (LAN pose `weapon`); long guns sit further up the forearm.
   let pistol = null, gunId = null, skinNow = null;
-  function setWeapon(id = 'cannon') { if (id === gunId) return; const vis = pistol?.visible || false; if (pistol) { unskinObject(pistol); elbows.R.remove(pistol); } gunId = id; const long = !['cannon', 'pistol', 'deagle'].includes(id);
-    pistol = weaponModel(id, long ? 1 : 1.15); pistol.rotation.set(Math.PI / 2, Math.PI, 0); pistol.position.set(0, long ? -1.1 : -1.5, .12); pistol.visible = vis; elbows.R.add(pistol); if (skinNow) skinObject(pistol, skinNow); }
+  // hold (Global Defensive's soldiers, gd-soldiers.js — CS2's convention as far as this rig allows): { short: held like a
+  // pistol, up the hand; pitch: the item turned up about its own crosswise axis (radians: CS2's knife idles carry the blade
+  // tipped up) }. Without it, as always.
+  function setWeapon(id = 'cannon', hold = null) { const key = id + (hold ? ':' + (hold.short ? 's' : '') + (hold.pitch || 0) : ''); if (key === gunId) return; const vis = pistol?.visible || false; if (pistol) { unskinObject(pistol); elbows.R.remove(pistol); } gunId = key; const long = hold?.short ? false : !['cannon', 'pistol', 'deagle'].includes(id);
+    pistol = weaponModel(id, long ? 1 : 1.15); pistol.rotation.set(Math.PI / 2, Math.PI, 0); if (hold?.pitch) pistol.rotateX(hold.pitch); pistol.userData.held = true; pistol.position.set(0, long ? -1.1 : -1.5, .12); pistol.visible = vis; elbows.R.add(pistol); if (skinNow) skinObject(pistol, skinNow); }
   // Their skin on the gun in their hand (skins.js, skin-render.js), set as the room's state changes.
   function setSkin(sk) { sk = sk || null; if (sameSkin(sk, skinNow)) return; skinNow = sk; if (pistol) skinObject(pistol, skinNow); }
   setWeapon('cannon');
@@ -282,7 +285,7 @@ export function createAvatar({ color = 0x6bd9ff, name = '', labelColor, face = '
     fall.rotation.x = -Math.PI / 2 * cur.fall; fall.position.y = 1.45 * cur.fall;
     if (label) label.position.y = (12.1 - s.crouch * 2.2) * (1 - cur.fall) + 5 * cur.fall;
   }
-  function dispose() { g.removeFromParent(); g.traverse(o => { if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose(); for (const m of [].concat(o.material || [])) { if (!m || m === bodyMaterial || m.userData?.shared || typeof m.dispose !== 'function') continue; if (typeof m.map?.dispose === 'function' && !m.map.userData?.shared) m.map.dispose(); m.dispose(); } }); }   /* multi-materials too; never a shared texture */
+  function dispose() { g.removeFromParent(); if (pistol) unskinObject(pistol); /* unskin first: the skin copy shares the weapon's map and only the copy is ours to free (else every knife of that model re-uploads its texture) */ g.traverse(o => { if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose(); for (const m of [].concat(o.material || [])) { if (!m || m === bodyMaterial || m.userData?.shared || typeof m.dispose !== 'function') continue; if (typeof m.map?.dispose === 'function' && !m.map.userData?.shared) m.map.dispose(); m.dispose(); } }); }   /* multi-materials too; never a shared texture */
   return { g, label, update, play, dispose, setName, setWeapon, setSkin, get name() { return shownName; }, skin: SKINS[skin] ? skin : 'yellow', hat, outfit, setStyle(f) { if (FACES.some(x => x.id === f)) { style = f; s.face = ''; } }, get style() { return style; }, get emote() { return s.emote?.id || null; }, get emoteProgress() { return s.emote ? s.emoteT / s.emote.duration : 0; }, parts: { head, face: faceMesh, arms, elbows, legs, laptop, bubble, torso, carton, coil, pistol } };
 }
 function mix(a, b, w) { return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w]; }

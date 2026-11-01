@@ -1,4 +1,4 @@
-// Global Defensive weapons in a real browser (solo deathmatch, no bots): the first shot's bullet hole is exactly at
+// Global Defensive weapons in a real browser (solo deathmatch, no bots): the first shot's bullet hole is at
 // the crosshair (projected to the screen), shots take rounds (HUD 29 / 90), reload moves rounds from the reserve,
 // health + armor shown, B opens and closes the buy menu (Escape too), buying a second rifle drops the first with its
 // rounds, scope on right click (AWP: two levels, left click fires scoped), knife light / heavy, grenade held until release.
@@ -34,8 +34,9 @@ const aimAt = await p.evaluate(() => { const S = __infra.lab.arenaScene, c = __i
 for (const [label, dist] of [['far', null], ['close', 6]]) {
   await p.evaluate(({ t, dist }) => { const c = __infra.camera.position; let px = c.x, pz = c.z; if (dist) { const dx = c.x - t.x, dz = c.z - t.z, L = Math.hypot(dx, dz); /* step back to `dist` units from the box face */ } __infra.lab.look(px, pz, t.x, t.y, t.z); }, { t: aimAt, dist });
   await p.waitForTimeout(700);
-  const r = await p.evaluate(() => { const P = __infra.lab.pistol; P.button(0, true); P.button(0, false); const s = P.lastShot, e = s?.ends?.at(-1)?.point; if (!e) return null; const v = e.clone().project(__infra.camera); return { x: v.x * innerWidth / 2, y: v.y * innerHeight / 2, cone: s.cone, dist: e.distanceTo(s.origin) }; });
-  check('first shot (' + label + ') lands exactly at the crosshair', r && Math.abs(r.x) < 1.5 && Math.abs(r.y) < 1.5 && r.cone === 0, JSON.stringify(r));
+  const r = await p.evaluate(() => { const P = __infra.lab.pistol; P.button(0, true); P.button(0, false); const s = P.lastShot, e = s?.ends?.at(-1)?.point; if (!e) return null; const v = e.clone().project(__infra.camera); return { x: v.x * innerWidth / 2, y: v.y * innerHeight / 2, cone: s.cone, dist: e.distanceTo(s.origin), allow: (s.cone + .0006) / Math.tan(__infra.camera.fov * Math.PI / 360) * innerHeight / 2 + 1.5 }; });
+  // CS2: a still, rested first shot has only the AK's standing inaccuracy (m_flInaccuracyStand 0.00641 + spread 0.0006): within that cone of the crosshair.
+  check('first shot (' + label + ') lands at the crosshair, within CS2\'s standing cone', r && Math.abs(r.cone - .00641) < 1e-4 && Math.hypot(r.x, r.y) <= r.allow, JSON.stringify(r));
   await p.waitForTimeout(400);
 }
 check('one round per shot: 28 / 90', await p.evaluate(() => __infra.lab.pistol.ammo === 28 && __infra.lab.pistol.reserve === 90), await p.evaluate(() => [__infra.lab.pistol.ammo, __infra.lab.pistol.reserve]));
@@ -66,7 +67,7 @@ const sc = await p.evaluate(async () => { const P = __infra.lab.pistol, S = __in
   S.autoRescope = false; P.button(0, true); P.button(0, false); await wait(1700); s.manualWait = P.scope; P.button(2, true); P.button(2, false); await wait(50); s.manual = P.scope;
   P.button(2, true); P.button(2, false); s.second = P.scope; P.button(2, true); P.button(2, false); s.out = P.scope; S.autoRescope = true; return s; });
 check('AWP: no crosshair unscoped; scope in; the shot unscopes (overlay gone, bolt); auto re-scope on; off = right click; second zoom; out',
-  sc.unscopedNoCrosshair && sc.in[0] === 1 && sc.in[1] === 40 && sc.shot[0] === 0 && sc.shot[1] === 4 && !/on/.test(sc.shot[2]) && sc.shot[3] && sc.auto === 1 && sc.manualWait === 0 && sc.manual === 1 && sc.second === 2 && sc.out === 0, JSON.stringify(sc));
+  sc.unscopedNoCrosshair && sc.in[0] === 1 && sc.in[1] === 31 /* CS2's 40° across 4:3 = 30.5° vertical */ && sc.shot[0] === 0 && sc.shot[1] === 4 && !/on/.test(sc.shot[2]) && sc.shot[3] && sc.auto === 1 && sc.manualWait === 0 && sc.manual === 1 && sc.second === 2 && sc.out === 0, JSON.stringify(sc));
 // Knife: light and heavy.
 await p.keyboard.press('Digit3'); await p.waitForTimeout(700);
 const kn = await p.evaluate(async () => { const P = __infra.lab.pistol, r = []; P.button(0, true); P.button(0, false); r.push(P.knife?.kind); await new Promise(x => setTimeout(x, 500)); P.button(2, true); P.button(2, false); r.push(P.knife?.kind); return r; });

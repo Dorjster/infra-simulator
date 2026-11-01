@@ -4,11 +4,16 @@
 // its own and only for the eye — never in a player's or a bullet's way (CS2 pushes its physics props aside and shoots
 // through them). Per frame: no allocation (fixed arrays, scratch vectors).
 import * as THREE from './three.module.js';
+import { fixedSteps } from './phys-smooth.js';
 
 const U = 2.54 / 16.5;                       // game units per Hammer unit
 const GRAVITY = 800 * U, BODY_R = 16 * U;     // CS2: 800 HU/s²; a player's half width, 16 HU
 const FRICTION = 4.2, REST = .04, BOUNCE = .3, SPIN_DAMP = 2.5, TIP_SPEED = 3;   // (per second; units/s; of the speed; …)
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _ax = new THREE.Vector3(), NEAR = [];
+// Stepped at a fixed 128 Hz (like the movement) and drawn between the last two steps (phys-smooth.js fixedSteps): the
+// same slide, bounce and tip at 30 or 240 fps (the per-frame dt, capped at 50 ms, flew a 30 fps prop differently and a
+// stall slowed it), every frame drawn where it is at that moment — never held for a frame or stepped ahead.
+const STEP = 1 / 128, MAX_STEPS = 16;
 
 // props: [{ i, model, mass, breaks, x, z, y, h, rx, rz }] (game units, relative to the map's centre cx, cz);
 // pivots: Map(i → THREE.Group at the prop's foot, its look attached); floorAt(x, z, nearY) → the floor's height (game);
@@ -17,38 +22,27 @@ const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _ax = new THREE
 export function createPhysProps(props, pivots, { cx = 0, cz = 0, floorAt = () => 0, blocked = () => false, onBreak = () => {}, wake = () => {} } = {}) {
   const n = props.length, S = new Float32Array(n * 12);   // per prop: x z y vx vz vy spin yaw tip tipDir tipping broken
   const R = new Float32Array(n), H = new Float32Array(n), M = new Float32Array(n), awake = new Uint8Array(n);
-  const P = [], home = new Float32Array(n * 3);
+  const P = [], home = new Float32Array(n * 3), PV = new Float32Array(n * 5), moved = new Uint8Array(n), clock = { acc: 0, a: 0 };   // PV: x z y yaw tip a step ago (drawn between it and now); moved: stepped since it was last drawn at rest
   props.forEach((p, k) => { const o = k * 12; S[o] = cx + p.x; S[o + 1] = cz + p.z; S[o + 2] = p.y; home[k * 3] = S[o]; home[k * 3 + 1] = S[o + 1]; home[k * 3 + 2] = S[o + 2];
     R[k] = Math.max(.35, Math.min(4, Math.max(p.rx, p.rz))); H[k] = Math.max(.3, p.h); M[k] = Math.max(.2, Math.min(4, p.mass || 1)) * (/cinder|block|bucket|crate/i.test(p.model) ? 3 : 1); P.push(pivots.get(p.i) || null); });
   // A knock: velocity (units/s) added at the prop, a spin, and a tall thin one tips over away from it when hard enough.
   function knock(k, vx, vz, vy, hard) { const o = k * 12, m = M[k]; if (!awake[k]) wake(k); S[o + 3] += vx / m; S[o + 4] += vz / m; S[o + 5] = Math.max(S[o + 5], vy / m); S[o + 6] += (Math.random() - .5) * 14 * hard / m; awake[k] = 1;
     if (S[o + 10] === 0 && H[k] > R[k] * 1.4 && hard > .6) { S[o + 10] = 1; S[o + 9] = Math.atan2(vx, vz); } }
-  function place(k) { const g = P[k]; if (!g) return; const o = k * 12; g.position.set(S[o], S[o + 2], S[o + 1]);
-    _q.setFromAxisAngle(_ax.set(0, 1, 0), S[o + 7]);
-    if (S[o + 8] > 0) { const d = S[o + 9]; _q2.setFromAxisAngle(_ax.set(Math.cos(d), 0, -Math.sin(d)), S[o + 8]); _q.premultiply(_q2); }
+  // Drawn a (0…1) of the way from a step ago (PV) to now.
+  function place(k, a = 1) { const g = P[k]; if (!g) return; const o = k * 12, v = k * 5, b = 1 - a; g.position.set(PV[v] * b + S[o] * a, PV[v + 2] * b + S[o + 2] * a, PV[v + 1] * b + S[o + 1] * a);
+    _q.setFromAxisAngle(_ax.set(0, 1, 0), PV[v + 3] * b + S[o + 7] * a); const tip = PV[v + 4] * b + S[o + 8] * a;
+    if (tip > 0) { const d = S[o + 9]; _q2.setFromAxisAngle(_ax.set(Math.cos(d), 0, -Math.sin(d)), tip); _q.premultiply(_q2); }
     g.quaternion.copy(_q); g.updateMatrixWorld(true); }
+  const keep = k => { const o = k * 12, v = k * 5; PV[v] = S[o]; PV[v + 1] = S[o + 1]; PV[v + 2] = S[o + 2]; PV[v + 3] = S[o + 7]; PV[v + 4] = S[o + 8]; };
+  for (let k = 0; k < n; k++) keep(k);
   return {
     count: n,
     // Bodies (players, bots): xyz feet triplets in `pos` (count of them): a prop they stand in is pushed out of the way.
-    update(dt, pos, count) { if (!n) return; dt = Math.min(dt, .05);
-      for (let b = 0; b < count; b++) { const bx = pos[b * 3], by = pos[b * 3 + 1], bz = pos[b * 3 + 2];
-        for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const dx = S[o] - bx, dz = S[o + 1] - bz, r = R[k] + BODY_R; if (dx > r || dx < -r || dz > r || dz < -r) continue;
-          if (S[o + 2] > by + 72 * U || S[o + 2] + H[k] < by - .3) continue; const d = Math.hypot(dx, dz); if (d >= r) continue;
-          const ux = d > 1e-4 ? dx / d : Math.random() - .5, uz = d > 1e-4 ? dz / d : Math.random() - .5, push = (r - d) / dt * .6;
-          knock(k, ux * push * M[k] * dt * 6, uz * push * M[k] * dt * 6, 0, push / 40); S[o] += ux * (r - d) * .5; S[o + 1] += uz * (r - d) * .5; } }
-      for (let k = 0; k < n; k++) { if (!awake[k]) continue; const o = k * 12;
-        let vx = S[o + 3], vz = S[o + 4], vy = S[o + 5]; const fl = floorAt(S[o] - cx, S[o + 1] - cz, S[o + 2] + 2), floor = Number.isFinite(fl) ? fl : S[o + 2];
-        const nx = S[o] + vx * dt, nz = S[o + 1] + vz * dt;
-        if (blocked(nx, nz, S[o + 2], H[k], R[k])) { if (!blocked(nx, S[o + 1], S[o + 2], H[k], R[k])) { S[o] = nx; vz = -vz * BOUNCE; } else if (!blocked(S[o], nz, S[o + 2], H[k], R[k])) { S[o + 1] = nz; vx = -vx * BOUNCE; } else { vx = -vx * BOUNCE; vz = -vz * BOUNCE; } }
-        else { S[o] = nx; S[o + 1] = nz; }
-        const air = S[o + 2] > floor + .02 || vy > 0;
-        if (air) { vy -= GRAVITY * dt; S[o + 2] += vy * dt; if (S[o + 2] <= floor) { S[o + 2] = floor; vy = vy < -2 ? -vy * BOUNCE * .5 : 0; vx *= .7; vz *= .7; } }
-        else { S[o + 2] = floor; vy = 0; const f = Math.exp(-FRICTION * dt); vx *= f; vz *= f; }
-        S[o + 7] += S[o + 6] * dt; S[o + 6] *= Math.exp(-SPIN_DAMP * dt);
-        if (S[o + 10] === 1) { S[o + 8] = Math.min(Math.PI / 2, S[o + 8] + TIP_SPEED * dt); if (S[o + 8] >= Math.PI / 2) S[o + 10] = 2; }   // tipping over: down on its side
-        S[o + 3] = vx; S[o + 4] = vz; S[o + 5] = vy;
-        if (!air && Math.abs(vx) + Math.abs(vz) < REST && Math.abs(S[o + 6]) < .05 && S[o + 10] !== 1) awake[k] = 0;
-        place(k); } },
+    // Fixed 128 Hz steps (the rest of the frame carried to the next), then every prop that moved drawn between its last
+    // two steps.
+    update(dt, pos, count) { if (!n) return; const steps = fixedSteps(clock, dt, STEP, MAX_STEPS);
+      for (let s = 0; s < steps; s++) { for (let k = 0; k < n; k++) if (awake[k] || moved[k]) keep(k); step(STEP, pos, count); }
+      for (let k = 0; k < n; k++) { if (!moved[k]) continue; if (!awake[k] && steps) { keep(k); moved[k] = 0; place(k, 1); continue; } place(k, clock.a); } },
     // A shot along the ray (origin o, unit direction d) up to `far`: the first prop it passes through is knocked along it
     // (and shattered when it is pottery or glass). Returns that prop's index or −1.
     shot(ox, oy, oz, dx, dy, dz, far = 300, power = 1) { let best = -1, bt = far;
@@ -63,8 +57,27 @@ export function createPhysProps(props, pivots, { cx = 0, cz = 0, floorAt = () =>
         const f = 1 - d / r; if (props[k].breaks && f > .45) { wake(k); S[o + 11] = 1; if (P[k]) P[k].visible = false; onBreak(k, S[o], S[o + 2] + H[k] / 2, S[o + 1], R[k]); continue; }
         const u = d > 1e-3 ? 1 / d : 0; knock(k, dx * u * 90 * f, dz * u * 90 * f, 20 * f, 1); } },
     // A new round: every prop back where the map put it, whole.
-    reset() { for (let k = 0; k < n; k++) { const o = k * 12; S[o] = home[k * 3]; S[o + 1] = home[k * 3 + 1]; S[o + 2] = home[k * 3 + 2]; for (let j = 3; j < 12; j++) S[o + j] = 0; awake[k] = 0; if (P[k]) { P[k].visible = true; place(k); } } },
-    // Is prop k moving (tests)? Its spot.
-    awake: k => !!awake[k], at: k => [S[k * 12], S[k * 12 + 2], S[k * 12 + 1]], broken: k => !!S[k * 12 + 11],
+    reset() { for (let k = 0; k < n; k++) { const o = k * 12; S[o] = home[k * 3]; S[o + 1] = home[k * 3 + 1]; S[o + 2] = home[k * 3 + 2]; for (let j = 3; j < 12; j++) S[o + j] = 0; awake[k] = 0; moved[k] = 0; keep(k); if (P[k]) { P[k].visible = true; place(k); } } clock.acc = 0; },
+    // Is prop k moving (tests)? Its spot (simulated, and drawn: the pivot).
+    awake: k => !!awake[k], at: k => [S[k * 12], S[k * 12 + 2], S[k * 12 + 1]], broken: k => !!S[k * 12 + 11], drawn: k => P[k]?.position || null,
   };
+  // One fixed step of every prop: pushed out of the bodies standing in it, then flown / slid / spun / tipped.
+  function step(dt, pos, count) {
+      for (let b = 0; b < count; b++) { const bx = pos[b * 3], by = pos[b * 3 + 1], bz = pos[b * 3 + 2];
+        for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const dx = S[o] - bx, dz = S[o + 1] - bz, r = R[k] + BODY_R; if (dx > r || dx < -r || dz > r || dz < -r) continue;
+          if (S[o + 2] > by + 72 * U || S[o + 2] + H[k] < by - .3) continue; const d = Math.hypot(dx, dz); if (d >= r) continue;
+          const ux = d > 1e-4 ? dx / d : Math.random() - .5, uz = d > 1e-4 ? dz / d : Math.random() - .5, push = (r - d) / dt * .6;
+          knock(k, ux * push * M[k] * dt * 6, uz * push * M[k] * dt * 6, 0, push / 40); S[o] += ux * (r - d) * .5; S[o + 1] += uz * (r - d) * .5; moved[k] = 1; } }
+      for (let k = 0; k < n; k++) { if (!awake[k]) continue; const o = k * 12; moved[k] = 1;
+        let vx = S[o + 3], vz = S[o + 4], vy = S[o + 5]; const fl = floorAt(S[o] - cx, S[o + 1] - cz, S[o + 2] + 2), floor = Number.isFinite(fl) ? fl : S[o + 2];
+        const nx = S[o] + vx * dt, nz = S[o + 1] + vz * dt;
+        if (blocked(nx, nz, S[o + 2], H[k], R[k])) { if (!blocked(nx, S[o + 1], S[o + 2], H[k], R[k])) { S[o] = nx; vz = -vz * BOUNCE; } else if (!blocked(S[o], nz, S[o + 2], H[k], R[k])) { S[o + 1] = nz; vx = -vx * BOUNCE; } else { vx = -vx * BOUNCE; vz = -vz * BOUNCE; } }
+        else { S[o] = nx; S[o + 1] = nz; }
+        const air = S[o + 2] > floor + .02 || vy > 0;
+        if (air) { vy -= GRAVITY * dt; S[o + 2] += vy * dt; if (S[o + 2] <= floor) { S[o + 2] = floor; vy = vy < -2 ? -vy * BOUNCE * .5 : 0; vx *= .7; vz *= .7; } }
+        else { S[o + 2] = floor; vy = 0; const f = Math.exp(-FRICTION * dt); vx *= f; vz *= f; }
+        S[o + 7] += S[o + 6] * dt; S[o + 6] *= Math.exp(-SPIN_DAMP * dt);
+        if (S[o + 10] === 1) { S[o + 8] = Math.min(Math.PI / 2, S[o + 8] + TIP_SPEED * dt); if (S[o + 8] >= Math.PI / 2) S[o + 10] = 2; }   // tipping over: down on its side
+        S[o + 3] = vx; S[o + 4] = vz; S[o + 5] = vy;
+        if (!air && Math.abs(vx) + Math.abs(vz) < REST && Math.abs(S[o + 6]) < .05 && S[o + 10] !== 1) awake[k] = 0; } }
 }

@@ -72,7 +72,7 @@ await guest.keyboard.press('Escape');
 // A death clears the victim's loadout on their own screen at once (no old guns / grenades until the next round).
 { const tm = await host.evaluate(() => __infra.lab.world.operations.game.combat.d.teams); if (tm.host !== tm.guest) {
     await act(host, { type: 'settings', bots: 0 }); await host.waitForTimeout(300);   // just the two of us: the host is the one who shoots
-    await guest.evaluate(() => { const s = __infra.lab.world.operations.game.combat.spawnTo.guest; __infra.lab.look(s.x, s.z, s.x, 9, s.z - 30); }); await guest.waitForTimeout(600);
+    await guest.evaluate(() => { const s = __infra.lab.world.operations.game.combat.spawnTo.guest; __infra.lab.look(s.x, s.z, s.x, 9, s.z - 30, (s.y ?? 0) + 9.7); }); await guest.waitForTimeout(600);   // at the spawn's own floor: v52's CS2 spawn order puts Dust II's first CT spot under an overhang (a floor at 43 above it)
     const bn = await act(guest, { type: 'buy-nade', kind: 'flash' }); await guest.waitForTimeout(500); const had = await guest.evaluate(() => (__infra.lab.world.operations.game.arena.loadout.guest?.nades || []).length);
     await host.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 30000 }).catch(() => {});
     const hw = await host.evaluate(() => __infra.lab.world.operations.game.arena.loadout.host?.secondary || (__infra.lab.world.operations.game.combat.d.teams.host === 'ct' ? 'usps' : 'pistol'));

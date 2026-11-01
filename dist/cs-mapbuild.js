@@ -142,12 +142,13 @@ function makeNav(G, { W, D, zLow }) {
     // Standing on a ledge's edge the column under the body's middle may have no floor at the feet: start from the
     // nearest column that has (else a replan would begin on a floor above or below and lead nowhere).
     // avoidPts: [x, z] spots this bot failed to get past (a route round them is preferred: 40 per column within one).
-    route(x, zz, y, tx, tz, avoidPts = null) { const f = toH(y), at = i => { if (i < 0 || !n[i]) return false; for (let k = 0; k < n[i]; k++) if (Math.abs(z[i * MAXF + k] - f) <= STEP) return true; return false; };
+    // ty (optional): the floor (game y) to end on where the goal column is stacked (Nuke's B under A).
+    route(x, zz, y, tx, tz, avoidPts = null, ty = null) { const f = toH(y), at = i => { if (i < 0 || !n[i]) return false; for (let k = 0; k < n[i]; k++) if (Math.abs(z[i * MAXF + k] - f) <= STEP) return true; return false; };
       let a = cellOf(x, zz); if (a >= 0 && !at(a)) { const c0 = a % G.cols, r0 = (a / G.cols) | 0; let best = -1, bd = Infinity;
         for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) { const c = c0 + dc, r = r0 + dr; if (c < 0 || r < 0 || c >= G.cols || r >= G.rows) continue; const j = r * G.cols + c; if (at(j) && dc * dc + dr * dr < bd) { bd = dc * dc + dr * dr; best = j; } }
         if (best >= 0) a = best; }
       let avoid = null; if (avoidPts?.length) { const bad = new Set(); for (const [ax, az] of avoidPts) { const ci = cellOf(ax, az); if (ci < 0) continue; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) bad.add(ci + dr * G.cols + dc); } avoid = v => bad.has((v / MAXF) | 0) ? 40 : 0; }
-      return pathBetween(G, a, cellOf(tx, tz), W, D, f, null, avoid, toY); },
+      return pathBetween(G, a, cellOf(tx, tz), W, D, f, Number.isFinite(ty) ? toH(ty) : null, avoid, toY); },
     cellOf, toY, toH, G,
     // Bot routes (lazily, on the host): walks over the columns from a spawn to each site / mid, as [x, z] points.
     // Bot routes. Terrorists heading for one site keep out of the other (on Nuke the shortest walk to B crosses A, past its

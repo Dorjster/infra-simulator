@@ -47,4 +47,11 @@ assert.throws(() => shot(hist(800), {}), /wall/); n++;   // no moment given: jud
 const r = shot(hist(800), { seen: 760, ct: 50900 }); ok('ran behind the wall just after the shot: hit where it was seen', r && r.dmg > 0, JSON.stringify(r));
 assert.throws(() => shot(hist(300), { seen: 100 }), /wall/); n++;   // behind the wall for 700 ms: a moment older than the limit (400) buys nothing
 assert.throws(() => shot(hist(-1), { seen: 900 }), /wall/); n++;    // behind the wall all along
-console.log('PASS: lag compensation · ' + n + ' checks (history, limit, clock restart; in a match: hit where seen, too old and always hidden refused)');
+// ── The shot's own moment and body state (package F): ey (crouched then, not now), the shooter's speed, ft ──
+{ const H = createPoseHistory(); for (let s = 0; s <= 600; s += 30) { H.record('b', s, { x: 0, y: s < 300 ? 7.08 : 9.7, z: 0, yaw: 0, crouched: s < 300, ey: s < 300 ? 7.08 : 9.7 }); H.record('a', 9000 + s, { x: s / 10, y: 9.7, z: 0, yaw: 0 }); }
+  const R = [{ id: 'a', pose: { x: 60, y: 9.7, z: 0, yaw: 0 } }, { id: 'b', pose: { x: 0, y: 9.7, z: 0, yaw: 0, crouched: false, ey: 9.7 } }];
+  const rw = rewound(H, R, { type: 'hit', target: 'b', seen: 240, ct: 9590, ft: 9420 }, 'a');
+  ok('a target crouched when seen: rewound with its crouched eye height (ey), not today\'s standing one', rw[1].pose.crouched && rw[1].pose.ey === 7.08, JSON.stringify(rw[1].pose));
+  ok('the shooter at its trigger moment (ft), not when the hit was sent (ct)', Math.abs(rw[0].pose.x - 42) < 1e-9, rw[0].pose.x);
+  ok('…with how fast it moved then (100 units/s across: 1 unit per 10 ms)', Math.abs(rw[0].pose.vel.h - 100) < 1e-6 && Math.abs(rw[0].pose.vel.v) < 1e-9, JSON.stringify(rw[0].pose.vel)); }
+console.log('PASS: lag compensation · ' + n + ' checks (history, limit, clock restart; in a match: hit where seen, too old and always hidden refused; the crouch then, the trigger moment, the shooter\'s speed)');

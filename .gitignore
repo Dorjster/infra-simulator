@@ -3,7 +3,11 @@ node_modules/
 .env*
 lan/campaign-save*.json
 lan/*.room
+lan/gd-skins*.json
 
 # Map files imported on this computer (Counter-Strike 1.6 .bsp): never committed
 user-maps/
 user-assets/
+
+# Python bytecode (tools/cs2-skins run by Blender's Python)
+__pycache__/

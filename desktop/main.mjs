@@ -163,6 +163,16 @@ ipcMain.handle('desktop:host', async (_e, opts = {}) => {
 });
 ipcMain.handle('desktop:stop-hosting', async () => { stopBeacon(); if (hosting) { await room.rebind('127.0.0.1', room.port); hosting = false; } keepAwake(); return { hosting }; });
 ipcMain.handle('desktop:in-match', (_e, on) => { inMatch = !!on; keepAwake(); return inMatch; });
+// Global Defensive's Display Mode (Settings → Global Defensive → Video, dist/gd-display.js), CS2's three as far as Electron goes:
+// fullscreen (macOS: its own Space), fullscreen windowed (macOS: simple fullscreen — a borderless window over the screen, no Space
+// switch; Windows / Linux: Electron's fullscreen, already a borderless window — no exclusive mode exists), windowed.
+ipcMain.handle('desktop:display-mode', (_e, mode) => {
+  if (!win || win.isDestroyed()) return null; const mac = process.platform === 'darwin', simple = () => mac && win.isSimpleFullScreen();
+  if (mode === 'windowed') { if (simple()) win.setSimpleFullScreen(false); if (win.isFullScreen()) win.setFullScreen(false); }
+  else if (mode === 'fullscreen') { if (simple()) win.setSimpleFullScreen(false); if (!win.isFullScreen()) win.setFullScreen(true); }
+  else if (mode === 'borderless') { if (!mac) { if (!win.isFullScreen()) win.setFullScreen(true); } else if (!simple()) { if (win.isFullScreen()) { win.once('leave-full-screen', () => { if (!win.isDestroyed()) win.setSimpleFullScreen(true); }); win.setFullScreen(false); } else win.setSimpleFullScreen(true); } }
+  return { fullscreen: win.isFullScreen(), simple: simple() };
+});
 // While this computer hosts friends or plays a match, the system may not suspend the app (macOS App Nap slows a background
 // app's timers — the room's 50 ms tick ran late for every player — and idle sleep would stop the room). A shut laptop lid
 // still sleeps: the room then resumes the match where it stood (lan/room.mjs: the host stood still).

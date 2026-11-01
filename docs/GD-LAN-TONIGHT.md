@@ -158,3 +158,45 @@ below 60 fps:
 
 Line 3 also shows the render size and the **ratio** (for example `1632×918 (ratio 1.28, DPR 1.50)`). If the ratio sits at
 its lowest and the overlay still says *limit: GPU*, choose Performance.
+
+## 9. Windows laptops after v51: quick settings card and what changed
+
+**Quick card for an i5 11th gen laptop with no graphics card.** First check the chip name: **Ctrl+Shift+Esc** →
+**Performance** → **GPU 0**.
+
+| | Intel Iris Xe Graphics | Intel UHD Graphics |
+| --- | --- | --- |
+| Graphics mode | **Balanced** | **Performance** |
+| Resolution scale | 100 % (85 % if the overlay says *limit: GPU*) | 100 % (85 % if the overlay says *limit: GPU*) |
+| Frame rate limit | Auto · 60 | Auto · 60 |
+| Power | Plugged in, **Best performance** | Plugged in, **Best performance** |
+| Expect (emulated on the Mac, not measured on Windows) | 60 fps in quiet moments; mid-50s in the busiest 10-player fights, held back by the processor | the same, with the picture at about 60–85 % resolution in fights |
+
+**What changed for slow processors.** These changes affect only Global Defensive:
+
+- During a match the game no longer updates the server hall in the background. Before, that work came twice a second
+  and made a slow laptop miss a frame each time (a 15–20 ms hitch on the emulated i5). The hall catches up when the match
+  ends.
+- The map's walls and floors, the live sun shadows and the fog cost the processor less on each frame. The picture is
+  the same.
+- **The first-run automatic choice is now careful.** On a laptop with no saved graphics setting, the game times the
+  graphics chip during freeze time of the first match. It picks **Performance** only when the chip clearly cannot keep
+  up, and **Balanced** otherwise. Before, a MacBook could be set to Performance by mistake. On an Intel UHD laptop,
+  set **Performance** yourself (card above) if the game chose Balanced.
+- **Automatic resolution on a slow processor (corrects section 7).** Section 7 says the resolution never changes because
+  the processor is too slow. One exception: when a fight runs slow and the game cannot tell whether the processor or the
+  graphics chip is behind, it may try one step lower at the next freeze time. If the next fight is not smoother, it goes
+  back to full resolution and does not try again for 15 minutes. A slow freeze time on its own never lowers it, and it
+  never changes in the middle of a fight because of the processor.
+
+**What the overlay tells you (F9), in one line each:**
+
+- *limit: GPU*, **CPU** ms well under 14: the graphics chip is the limit. Lower the resolution scale, then use Performance.
+- *limit: CPU*, **CPU** ms at 14 or more: the processor is the limit. Plug in, set Best performance and close other apps.
+  Lower graphics settings help little here.
+- Smooth frames, but RTT, snapshot or interp are high: the network is the limit (section 8).
+
+**The Infra Simulator app on Windows.** The app keeps the match at full speed when its window is behind another window.
+It keeps Windows from sleeping while you host or play. It also uses the graphics chip even with an old Intel driver. If
+the overlay's line 4 says *SOFTWARE* or *SwiftShader*, update the Intel graphics driver from Windows Update or Intel's
+website. The game is very slow without the graphics chip.
