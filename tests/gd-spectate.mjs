@@ -87,7 +87,10 @@ delete mate.iyaw; delete mate.ipitch; delete mate.iey; players[0].pose.yaw = 1.1
 check('no interpolated look yet: his pose\'s yaw, live pitch and eye', Math.abs(Math.atan2(-fw3.x, -fw3.z) - 1.1) < 1e-9 && Math.abs(Math.asin(fw3.y) - .25) < 1e-9 && Math.abs(camera.position.y - 10) < 1e-9);
 mate.iyaw = .5; mate.ipitch = .3; mate.iey = 9.7;
 // allocations: 20 000 frames, heap flat
-{ for (let i = 0; i < 2000; i++) sp.update(1 / 144); gc(); gc(); const h0 = process.memoryUsage().heapUsed; for (let i = 0; i < 20000; i++) { mate.ipitch = .3 + (i % 7) * .01; sp.update(1 / 144); sp.follow(); } gc(); gc(); const dh = process.memoryUsage().heapUsed - h0;
+{ const frames = n => { for (let i = 0; i < n; i++) { mate.ipitch = .3 + (i % 7) * .01; sp.update(1 / 144); sp.follow(); } };
+  // warm up first (the JIT tiers up and its feedback grows the heap a little on Node 22), then the least of 3 rounds:
+  // a real per-frame object would add >= 16 bytes x 20 000 frames to every round
+  frames(20000); const round = () => { gc(); gc(); const h0 = process.memoryUsage().heapUsed; frames(20000); gc(); gc(); return process.memoryUsage().heapUsed - h0; }; const dh = Math.min(round(), round(), round());
   check('update() + follow() make nothing per frame (heap growth over 20 000 frames < 64 KB)', dh < 65536, dh + ' bytes'); }
 // in a smoke: still watched (smokeHid), body still hidden
 mate.g.visible = false; mate.smokeHid = true; sp.update(1 / 60); check('he walks into a smoke (his body hidden by it): still watched', sp.watched?.name === 'Mate'); mate.g.visible = true; mate.smokeHid = false;
