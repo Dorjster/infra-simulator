@@ -97,7 +97,7 @@ export function mapBoxes(map, cx, cz) {
   const list = map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk, mover: null, role: null, off: false }; });
   // Doors and breakables (map files: bsp-map.js movers): a shut / intact box, and the open ones, off until opened.
   for (const [id, m] of (map.movers || []).entries()) { const flipMs = DOOR_SWING[m.kind] ? 500 / DOOR_SWING[m.kind] : 0, add = (bx, role) => list.push({ minX: cx + bx[0], maxX: cx + bx[1], minZ: cz + bx[2], maxZ: cz + bx[3], y0: bx[4], y1: bx[5], mat: m.glass ? 'glass' : m.kind === 'break' ? 'crate' : 'door', prop: null, walk: false, mover: id, role, off: role !== 'shut', flipMs });
-    add(m.box, 'shut'); for (const [role, bx] of Object.entries(m.open || {})) add(bx, role); }
+    for (const bx of m.rects || [m.box]) add(bx, 'shut'); for (const [role, bx] of Object.entries(m.open || {})) add(bx, role); }   // (rects: a pane's glass as boxes — Cache's Long A doorway)
   const boxes = indexBoxes(list); boxes.movers = list.filter(b => b.mover !== null);
   // CS2 maps: what bullets (and sight, knives, smoke) meet — its own boxes, without player clips and the fences bullets
   // pass, each made of what CS2 says (wallbangs: PEN_COST); the doors and breakables the same objects as above.

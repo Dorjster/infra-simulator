@@ -120,6 +120,29 @@ export const poseFeet = q => Math.max(0, (q.y ?? EYE) - (Number.isFinite(q.ey) ?
 // Line of fire: shooter's eye to the target point is clear of the map's walls and crates (3D). Lenient: refused only
 // when the head, chest and the zone hit are all hidden (positions are a few frames old on the host).
 const ZONE_Y = { head: 10.2, chest: 7.9, stomach: 5.8, legs: 2.7 };   // (the middle of each zone: weapons-data.js zoneAt)
+// Blood (gd-blood.js): each bullet or knife hit the host applies leaves a small record on the combat state, combat.bl —
+// the last BLEED_MS of hits, 12 at most: { i (rising: max(last + 1, host ms)), at (host ms), v (the victim's key), z
+// (zone), d (damage taken), k (1: it killed), kn (1: a knife), p (where it met the body, units, 2 decimals), r (its
+// direction, 3 decimals) }. Every computer draws the same blood from it (seeded by i); clients only draw. A page
+// without gd-blood.js ignores the field (gd-52 unchanged: nothing it sends or checks moved).
+export const BLEED_MS = 1500;
+const r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
+export function bleed(game, victim, res, px, py, pz, dx, dy, dz, now = Date.now(), knife = false) {
+  if (!res || typeof res !== 'object' || !(res.dmg > 0) || !combatOn(game) || ![px, py, pz, dx, dy, dz].every(Number.isFinite)) return null;
+  const c = state(game), L = c.bl ??= [], len = Math.hypot(dx, dy, dz); if (!(len > 1e-6)) return null;
+  while (L.length && (now - L[0].at > BLEED_MS || L.length >= 12)) L.shift();
+  const rec = { i: c.blI = Math.max((c.blI || 0) + 1, now), at: now, v: key(victim), z: res.zone || 'chest', d: Math.round(res.dmg), p: [r2(px), r2(py), r2(pz)], r: [r3(dx / len), r3(dy / len), r3(dz / len)] };
+  if (res.down) rec.k = 1; if (knife) rec.kn = 1; L.push(rec); return rec;
+}
+// From a shooter's eye to a body (its pose: x, z, feet — poseFeet — or fy, crouched / cr) at the hit's zone: the point on
+// the body's near side, along that line (bots' shots, knives, hits without a shot record).
+export function bleedFrom(game, victim, res, ex, ey, ez, to, now = Date.now(), knife = false) {
+  if (!res || typeof res !== 'object' || !(res.dmg > 0) || !to) return null;
+  const cr = !!(to.crouched ?? to.cr), feet = Number.isFinite(to.fy) ? to.fy : poseFeet(to), ty = feet + (ZONE_Y[res.zone] ?? ZONE_Y.chest) * (cr ? CROUCH_H : 1);
+  let dx = to.x - ex, dy = ty - ey, dz = to.z - ez; const L = Math.hypot(dx, dy, dz) || 1, h = Math.hypot(dx, dz) || 1; dx /= L; dy /= L; dz /= L;
+  const back = BODY_R * Math.min(1, h / L * 1.2);   // (the body's near side, along the line)
+  return bleed(game, victim, res, to.x - dx * back, ty - dy * back, to.z - dz * back, dx, dy, dz, now, knife);
+}
 // (Kept per map object, not its name: a map file loaded for a map in play replaces the built-in one of the same name.)
 let boxCache = { map: null, boxes: [] };
 const boxesOf = game => { const m = game.arena?.map, M = m ? ARENA_MAPS[m] : null; if (!M) return []; if (boxCache.map !== M) boxCache = { map: M, boxes: mapBoxes(M, ARENA.cx, ARENA.cz) }; return boxCache.boxes; };
@@ -169,7 +192,9 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
     // or the host sees it from its own hits — within chainMs of the last attack's end.
     const prev = c.last[me + ':knife'] || 0, chain = attack === 'light' && (a.chain === true || (prev > 0 && now < prev + (c.last[me + ':knifeMs'] || 0) + KNIFE.chainMs));
     c.last[lk] = now; c.last[me + ':knife'] = now; c.last[me + ':knifeMs'] = K.rateMs; const base = chk.back ? K.back : chain ? K.chain : K.front;
-    return applyHit(game, name, target.name, wpn, a.zone === 'head' ? 'head' : 'chest', 0, 1, now, base);
+    const out = applyHit(game, name, target.name, wpn, a.zone === 'head' ? 'head' : 'chest', 0, 1, now, base);
+    if (from && to) bleedFrom(game, target.name, out, from.x, from.y ?? EYE, from.z, to, now, true);
+    return out;
   }
   if (!isFirearm(wpn)) throw Error('Not a gun');
   // Once per shot and body: the same shot number on the same target again (a resent, replayed or duplicated request)
@@ -196,9 +221,9 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
   // the shooter fired — the same seeded spread — against the target where the shooter saw it (lag-comp.js), through the
   // walls (bulletPath: the wallbang factor along the real line), each pellet in its own hit group: the client's zone and
   // pellet count are only hints. Without a record (older callers, tests): the centre-line check and the zone claimed.
-  let res, dist, through = 1;
+  let res, dist, through = 1, wound = null;
   if (Array.isArray(a.eye) && Array.isArray(a.look)) {
-    const T = traceShot(game, wpn, a, shotN, from, to); dist = T.dist;
+    const T = traceShot(game, wpn, a, shotN, from, to); dist = T.dist; if (T.at) wound = T;
     res = pelletDamage(wpn, T.hits, dist, armorOf(game, target.name)); through = T.factor;
   } else {
     const zone = HIT_GROUPS[a.zone] ? a.zone : a.head ? 'head' : 'chest';
@@ -214,7 +239,10 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
   // Kill-feed marks: wallbang and through smoke are the host's own findings; no-scope, airborne and blind come from the shooter.
   const eyeA = from ? (from.y ?? 9.7) : 0, eyeB = to ? (to.y ?? 9.7) - 1.5 : 0, how = { wallbang: through < 1, smoke: !!(from && to && smokeBlocks(game, from.x, eyeA, from.z, to.x, eyeB, to.z, now)), noscope: !!a.noscope && !!wpn.zoom, air: !!a.air, blind: !!a.blind, far: Math.round(dist * .165) };
   const arm = c.armor?.[tk]; if (arm && res.armor) { arm.kevlar = Math.max(0, arm.kevlar - res.armor); if (!arm.kevlar) arm.helmet = false; }
-  return hurt(game, name, target.name, wpn, res.hp, res.zone, now, false, how);
+  const out = hurt(game, name, target.name, wpn, res.hp, res.zone, now, false, how);
+  if (wound) bleed(game, target.name, out, wound.at[0], wound.at[1], wound.at[2], wound.dir[0], wound.dir[1], wound.dir[2], now);
+  else if (from && to) bleedFrom(game, target.name, out, from.x, from.y ?? EYE, from.z, to, now);
+  return out;
 }
 // Host-side records per combat state (never sent to anyone): the shot numbers and bodies already counted, and each
 // shooter's newest shot (number, trigger clock, arrival, gun) for the fire-rate gate.
@@ -257,14 +285,14 @@ export function traceShot(game, wpn, a, n, from, to) {
   const pm = punchMax(wpn), fl = 2 * FLINCH.max + 1; if (pu[0] < -fl || pu[0] > pm.p + fl + 1 || Math.abs(pu[1]) > pm.y + fl + 1) throw Error('Recoil out of bounds');
   const ia = Math.min(1, Math.max(minInaccuracy(wpn, acc, from, sc), Number.isFinite(+a.ia) ? +a.ia : 0)), reach = wpn.reach ?? wpn.range, boxes = to ? boxesOf(game) : [];
   if (!to) return { hits: [{ zone: HIT_GROUPS[a.zone] ? a.zone : 'chest', f: 1 }], dist: 0, factor: 1 };   // (no pose for the target: nothing to trace against)
-  const fx = to.x, fy = poseFeet(to), fz = to.z, cr = !!to.crouched, hits = []; let dist = Infinity, factor = 1;
+  const fx = to.x, fy = poseFeet(to), fz = to.z, cr = !!to.crouched, hits = [], dir = [0, 0, 0]; let dist = Infinity, factor = 1;
   shotBase(look[0], look[1], pu[0], pu[1], SB); const k = shotOffsets(wpn, n, ia, acc.spread, SO);
   for (let i = 0; i < k; i++) { offsetDir(SB, SO[2 * i], SO[2 * i + 1], SD); const t = rayBody(eye[0], eye[1], eye[2], SD[0], SD[1], SD[2], fx, fy, fz, cr, SHOT_TOL.pad, SZ); if (t < 0 || t > reach) continue;
     if (SD[1] < -1e-6 && -eye[1] / SD[1] < t) continue;   // (the floor plane first: as the shooter's own trace)
     const f = boxes.length ? bulletPath(boxes, eye[0], eye[1], eye[2], SD[0], SD[1], SD[2], t + .01, wpn.pen || 0, SP).factor(t) : 1; if (!(f > 0)) continue;
-    hits.push({ zone: SZ.zone, f }); dist = Math.min(dist, t); factor = Math.min(factor, f); }
+    hits.push({ zone: SZ.zone, f }); if (t < dist) { dist = t; dir[0] = SD[0]; dir[1] = SD[1]; dir[2] = SD[2]; } factor = Math.min(factor, f); }
   if (!hits.length) throw Error('Missed');
-  return { hits, dist, factor };
+  return { hits, dist, factor, at: [eye[0] + dir[0] * dist, eye[1] + dir[1] * dist, eye[2] + dir[2] * dist], dir };   // (at, dir: the nearest bullet's entry on the body — the blood, bleed)
 }
 // Respawn knocked-out players (deathmatch) with full HP and full ammo. Returns true when something changed.
 export function combatTick(game, now = Date.now()) {

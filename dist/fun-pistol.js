@@ -57,7 +57,8 @@ const flashTexture = (() => { try { const c = document.createElement('canvas'); 
 
 // scene effects shared by the local player and remote players' shots.
 // onShot(origin, dir): each shot's ray (another player's, replayed here: a smoke's bullet tunnels).
-export function createPistolEffects(scene, { pickables = () => [], onShot = null } = {}) {
+// fleshBits(): false → a body hit throws none of the little red bits (Global Defensive draws CS2's blood: gd-blood.js).
+export function createPistolEffects(scene, { pickables = () => [], onShot = null, fleshBits = () => true } = {}) {
   const pellets = [], sparks = [], marks = [], flashes = [], ray = new THREE.Raycaster(), floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), tmp = new THREE.Vector3();
   const pelletGeo = new THREE.CylinderGeometry(.02, .02, .9, 5).rotateX(Math.PI / 2), pelletMat = new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: .95 });
   const sparkGeo = new THREE.BoxGeometry(.05, .05, .05), sparkMat = new THREE.MeshBasicMaterial({ color: 0xffc35a }), markGeo = new THREE.CircleGeometry(.09, 10), markMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: .8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
@@ -103,7 +104,7 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
   let heardAt = 0; const heard = () => { const n = performance.now(); if (n - heardAt < 35) return false; heardAt = n; return true; };   // one impact sound per 35 ms (shotgun pellets)
   function impact({ point, normal, flesh, mat = null }) {
     if (heard()) rec(flesh ? 'flesh' : 'wall', { at: { x: point.x, y: point.y, z: point.z }, volume: flesh ? .55 : .35, rate: .9 + Math.random() * .25, kind: 'step', mat });   // (mat: what it hit — Global Defensive plays CS2's impact for that material)
-    if (flesh) { for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(sparkGeo, fleshMat); m.position.copy(point); m.userData.gd = true; scene.add(m); sparks.push({ m, v: new THREE.Vector3((Math.random() - .5) * 8, Math.random() * 6, (Math.random() - .5) * 8), t: 0 }); } return; }
+    if (flesh) { if (!fleshBits()) return; for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(sparkGeo, fleshMat); m.position.copy(point); m.userData.gd = true; scene.add(m); sparks.push({ m, v: new THREE.Vector3((Math.random() - .5) * 8, Math.random() * 6, (Math.random() - .5) * 8), t: 0 }); } return; }
     if (!normal) return;
     for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(sparkGeo, sparkMat); m.position.copy(point); m.userData.gd = true; scene.add(m); sparks.push({ m, v: normal.clone().multiplyScalar(4 + Math.random() * 4).add(new THREE.Vector3((Math.random() - .5) * 6, Math.random() * 4, (Math.random() - .5) * 6)), t: 0 }); }
     const mark = markPool[markAt++ % markPool.length]; marks.splice(marks.findIndex(k => k.m === mark) >>> 0, marks.some(k => k.m === mark) ? 1 : 0); mark.material.opacity = .8; mark.visible = true; if (!mark.parent) { mark.userData.gd = true; scene.add(mark); } mark.position.copy(point).addScaledVector(normal, .012); mark.lookAt(point.clone().add(normal)); marks.push({ m: mark, t: 0 });

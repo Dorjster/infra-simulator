@@ -30,7 +30,7 @@ const {arenaTick,botRoster,epochError,arenaEpochKey,arenaView,shiftClock,skinsLi
 // the freeze), never skipped. The CS2 finishes this computer imported (user-assets/skins/skins.json) are the catalogue a
 // pick is checked against. Everyone's picks are saved next to the room's save (gd-skins.json) — at most every 5 s, never
 // in a live round — and read back (checked again) at start.
-const {setSkinCatalog,takeSkinDelta,fullSkins,skinSave,cleanSkinSave}=await import(pathToFileURL(path.join(root,'skins.js')));
+const {setSkinCatalog,setGloveCatalog,takeSkinDelta,fullSkins,skinSave,cleanSkinSave}=await import(pathToFileURL(path.join(root,'skins.js')));
 const {poseGate,fallCheck}=await import(pathToFileURL(path.join(root,'arena-move.js')));const {hurt:hurtBody}=await import(pathToFileURL(path.join(root,'combat-logic.js')));/* Global Defensive poses: the movement check and fall damage (arena-move.js; the host never runs the movement itself) */
 // Global Defensive state frames ('combat'): the combat state, plus — when they changed — the arena (arenaView: map, match,
 // lobby, settings, loadouts) and the loadouts, each with its own rising revision (arev, lrev) so a client applies the
@@ -52,19 +52,26 @@ const assetsDir=path.resolve(options.assetsDir||process.env.GD_ASSETS_DIR||path.
 const ASSET_MIME={'.bin':'application/octet-stream','.jpg':'image/jpeg','.png':'image/png','.glb':'model/gltf-binary','.json':'application/json','.ogg':'audio/ogg','.svg':'image/svg+xml','.webp':'image/webp'};   // (.ogg, .svg: CS2's sounds and icons, imported)
 // An asset pack (one .zip made by tools/import-cs2-models.mjs: infra-pack.json, assets/…, maps/<id>.bsp) installed in
 // one step on any computer: models into assetsDir, maps into mapsDir (each checked and loaded), every player told.
+// CS2 gloves ride the same way under gloves-pack/ (import-cs2-models --with-gloves; tools/cs2-gloves/manifest.mjs installGloves:
+// gloves/ kept as gloves.bak-…, two backups kept), never through assets/gloves/.
 // CS2 finishes ride under skins-pack/ (import-cs2-models --with-skins): unpacked to a temporary folder and installed as the
 // import tool installs them (tools/cs2-skins/manifest.mjs installSkins: checked, never written over file by file, the old
 // skins/ kept as skins.bak-…, two backups kept); never through assets/skins/ (that would overwrite the installed set).
-async function installPack(buf){const entries=readZip(buf);if(!entries.some(e=>e.name==='infra-pack.json'))throw new Error('no infra-pack.json in it (asset packs are made by tools/import-cs2-models.mjs)');let files=0,maps=0,skins=0,tmp=null;
+async function installPack(buf){const entries=readZip(buf);if(!entries.some(e=>e.name==='infra-pack.json'))throw new Error('no infra-pack.json in it (asset packs are made by tools/import-cs2-models.mjs)');let files=0,maps=0,skins=0,gloves=0,tmp=null,gtmp=null;
   try{for(const {name,data} of entries){let m;
-    if((m=/^assets\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!/^skins(\/|\.)/i.test(m[1])&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){const f=path.resolve(assetsDir,m[1]);if(!f.startsWith(assetsDir+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);files++;}
+    if((m=/^assets\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!/^(skins|gloves)(\/|\.)/i.test(m[1])&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){const f=path.resolve(assetsDir,m[1]);if(!f.startsWith(assetsDir+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);files++;}
     else if((m=/^skins-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){tmp??=await mkdtemp(path.join(os.tmpdir(),'gd-skins-pack-'));const f=path.resolve(tmp,m[1]);if(!f.startsWith(tmp+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);skins++;}
+    else if((m=/^gloves-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){gtmp??=await mkdtemp(path.join(os.tmpdir(),'gd-gloves-pack-'));const f=path.resolve(gtmp,m[1]);if(!f.startsWith(gtmp+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);gloves++;}
     else if((m=/^maps\/([a-z0-9]+)\.bsp$/.exec(name))&&FILE_MAP_IDS.includes(m[1])){await loadMapFile(m[1],data);await mkdir(mapsDir,{recursive:true});await writeFile(path.join(mapsDir,m[1]+'.bsp'),data);maps++;}}
   let skinsNote=null;if(tmp){await mkdir(assetsDir,{recursive:true});const {installSkins}=await import(pathToFileURL(path.join(project,'tools','cs2-skins','manifest.mjs')));const r=installSkins({assets:assetsDir,from:tmp,log});skinsNote=r.unchanged?'unchanged':'installed';await loadSkinCatalog();}
-  return {ok:true,files,maps,skins,...(skinsNote?{skinsNote}:{})};}finally{if(tmp)await rm(tmp,{recursive:true,force:true}).catch(()=>{});}}
+  let glovesNote=null;if(gtmp){await mkdir(assetsDir,{recursive:true});const {installGloves}=await import(pathToFileURL(path.join(project,'tools','cs2-gloves','manifest.mjs')));const r=installGloves({assets:assetsDir,from:gtmp,log});glovesNote=r.unchanged?'unchanged':'installed';await loadGloveCatalog();}
+  return {ok:true,files,maps,skins,gloves,...(skinsNote?{skinsNote}:{}),...(glovesNote?{glovesNote}:{})};}finally{if(tmp)await rm(tmp,{recursive:true,force:true}).catch(()=>{});if(gtmp)await rm(gtmp,{recursive:true,force:true}).catch(()=>{});}}
 // The CS2 finish catalogue (skins.js setSkinCatalog): read at start and after a pack; none → built-in finishes only.
 async function loadSkinCatalog(){const m=await readFile(path.join(assetsDir,'skins','skins.json'),'utf8').then(JSON.parse).catch(()=>null);setSkinCatalog(m);if(m)log('CS2 finishes: '+Object.keys(m.weapons||{}).length+' guns, '+Object.keys(m.knives||{}).length+' knife finishes');}
 await loadSkinCatalog();
+// The CS2 glove catalogue (skins.js setGloveCatalog: a 'gloves' pick is checked against it): read at start and after a pack.
+async function loadGloveCatalog(){const m=await readFile(path.join(assetsDir,'gloves','gloves.json'),'utf8').then(JSON.parse).catch(()=>null);setGloveCatalog(m);if(m)log('CS2 gloves: '+Object.keys(m.types||{}).length+' types, '+Object.keys(m.finishes||{}).length+' finishes');}
+await loadGloveCatalog();
 
 const {hostActionError,EMOTE_IDS,FACE_IDS,SKIN_IDS,HAT_IDS,OUTFIT_IDS,CARRY_IDS,cleanName}=await import(pathToFileURL(path.join(root,'play-rules.js')));
 // Every player's name is their own in the room: a match keys teams, money, loadouts and spawns by name, so two players
@@ -139,7 +146,7 @@ const handler=async(req,res)=>{try{
  if(url.pathname==='/api/user-maps'&&req.method==='GET'){json(res,200,{maps:[...userMaps.values()]});return;}
  if(url.pathname==='/api/user-assets/pack'&&req.method==='POST'){const p=players.get(req.headers['x-player-token']);if(!(p?.isHost||(!p&&loopback(req)))){json(res,403,{error:'Only the host adds models and maps'});return;}
    const chunks=[];let n=0;for await(const c of req){n+=c.length;if(n>3584*1048576){json(res,413,{error:'Asset pack too large (3.5 GB at most)'});return;}chunks.push(c);}/* (a zip addresses 4 GB; the CS2 maps' grenade collision made the pack about 2 GB) */
-   try{const r=await installPack(Buffer.concat(chunks));broadcast('user-maps',{maps:[...userMaps.values()]});broadcast('user-assets',{});log('Asset pack installed: '+r.files+' model files, '+r.maps+' maps'+(r.skinsNote?', CS2 finishes '+r.skinsNote:''));json(res,200,r);}catch(e){json(res,400,{error:'Not a usable asset pack: '+e.message});}return;}
+   try{const r=await installPack(Buffer.concat(chunks));broadcast('user-maps',{maps:[...userMaps.values()]});broadcast('user-assets',{});log('Asset pack installed: '+r.files+' model files, '+r.maps+' maps'+(r.skinsNote?', CS2 finishes '+r.skinsNote:'')+(r.glovesNote?', CS2 gloves '+r.glovesNote:''));json(res,200,r);}catch(e){json(res,400,{error:'Not a usable asset pack: '+e.message});}return;}
  if(url.pathname==='/api/user-assets'&&req.method==='GET'){json(res,200,await readFile(path.join(assetsDir,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({models:{}})));return;}
  if(url.pathname.startsWith('/user-assets/')&&req.method==='GET'){const rel=decodeURIComponent(url.pathname.slice(13)),file=path.resolve(assetsDir,rel),mime=ASSET_MIME[path.extname(file)];
    if(!/^[a-z0-9][a-z0-9_.\-\/]*$/i.test(rel)||rel.split('/').some(x=>!x||x.startsWith('.'))||!file.startsWith(assetsDir+path.sep)||!mime){res.writeHead(403);res.end();return;}

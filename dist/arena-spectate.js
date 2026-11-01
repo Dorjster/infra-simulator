@@ -64,7 +64,7 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [], vi
   const watched = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, name: '', key: '' }; let watching = false;
   const body = createBodyHider();
   // What the first-person view needs from them this frame (spectate-view.js), refilled.
-  const VR = { key: null, weapon: null, team: null, knife: null, skin: null, shotN: 0, shotW: null, reloadN: 0, reloadW: null, speed: 0, act: null, actUntil: 0 };
+  const VR = { key: null, weapon: null, team: null, knife: null, skin: null, gloves: null, shotN: 0, shotW: null, reloadN: 0, reloadW: null, speed: 0, act: null, actUntil: 0 };
   const g = () => world.operations.game;
   // Everyone you can watch: reused records in a reused list (asked every frame while dead: nothing made per frame).
   const list = [], pool = [];
@@ -109,7 +109,7 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [], vi
         body.hide(t.m);
         if (view) { const pose = t.p?.pose, sh = pose?.shot, dd = G.combat?.d, k = watched.key;
           VR.key = t.id; VR.weapon = t.weapon; VR.team = dd?.teams?.[k] || null; VR.knife = G.arena?.knives?.[k] || null;
-          VR.skin = t.weapon ? skinFor(G.arena, t.name, t.weapon, t.p?.bot ? pose?.own : undefined) : null;
+          VR.skin = t.weapon ? skinFor(G.arena, t.name, t.weapon, t.p?.bot ? pose?.own : undefined) : null; VR.gloves = t.p?.bot ? null : G.arena?.skins?.[k]?.gloves || null;   // (their CS2 gloves: the room's skins record — a bot wears its agent's own)
           VR.shotN = sh?.n ?? 0; VR.shotW = sh?.w || null; VR.reloadN = sh?.r ?? 0; VR.reloadW = sh?.rw || null; VR.speed = t.m.speed || 0;
           VR.act = performance.now() < (t.m.actUntil || 0) ? t.m.act : null; VR.actUntil = t.m.actUntil || 0; view.show(VR, dt); }
       } else { cur = null; if (watching) release(); }   // (nobody left: the frozen death view — the last eye you watched from)

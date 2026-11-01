@@ -21,7 +21,7 @@ import * as THREE from './three.module.js';
 import { audioCtx, outAt } from './spatial-audio.js';
 import { weaponById, EYE, BODY_R, BODY_H, HEAD_Y, CROUCH_H, zoneAt, HIT_GROUPS, isFirearm, pelletPattern, KNIFE, fullAmmo, THROW, RECOIL, accOf, accFloor, createAim, accuracyDecay, inaccuracyOf, nextFireAt, recoilShot, recoilRest, flinchRest, restAfterMs, viewKick, shotOffsets, shotBase, offsetDir, rayBody, zoomVfov, zoomSens, flinchPunch } from './weapons-data.js';
 import { loadSounds, reloadSound, fx as rec } from './sound-bank.js';
-import { loadFP, fpFor, onFPReady, wantFP, hasFP } from './fp-view.js';
+import { loadFP, fpFor, onFPReady, wantFP, hasFP } from './fp-view.js'; import { gloveVersion } from './glove-assets.js';
 import { createClipChannel } from './fp-sounds.js';
 import { synthWhoosh } from './gd-sounds.js';
 import { applySkin, skinObject, unskinObject } from './skin-render.js';
@@ -90,7 +90,7 @@ export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kin
 const PIVOT = new THREE.Vector3(), pivR = new THREE.Quaternion(), pivE = new THREE.Euler(), pivA = new THREE.Vector3(), pivB = new THREE.Vector3();
 // Viewmodel lag: k (radians of lag per radian a second of turn), max (radians), K / D (the spring: stiffness, damping — critical).
 const SWAY = { k: .012, max: .035, K: 90, D: 2 * Math.sqrt(90) };
-export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, onShot = () => {}, skinOf = () => null, blind = () => 0, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true, planting = () => false, practiceAmmo = () => false, team = () => null, knifeSkin = () => null, skinRev = () => 0 }) {
+export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, onShot = () => {}, skinOf = () => null, blind = () => 0, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true, planting = () => false, practiceAmmo = () => false, team = () => null, knifeSkin = () => null, skinRev = () => 0, glovesOf = () => null }) {
   let current = null, view = null, lastShot = 0, kick = 0, heldLeft = false, reloadUntil = 0, reloadId = null, lastDry = 0;
   // Shot and reload numbers start somewhere random each session, so a host that saw an older session re-syncs.
   let shots = 1e6 + Math.floor(Math.random() * 4e8), reloads = 1000 + Math.floor(Math.random() * 1e6);
@@ -143,7 +143,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // With no skin on every knife is its plain CS2 steel, the karambit too (v52: its vertex colours are the blade mask —
   // shown as colour they drew a flat red blade; a Ruby is the Doppler Ruby finish in the skins menu).
   const ownTint = () => false;
-  let plainM = null, skinRevSeen = -1;   // (the plain view's model, skinned as other players' guns are: no CS2 set — CI, a host without assets)
+  let plainM = null, skinRevSeen = -1, glovesSeen = null, gloveVSeen = -1;   // (glovesSeen: your CS2 gloves as last worn — skins record 'gloves'; gloveVSeen: glove-assets' version then)   // (the plain view's model, skinned as other players' guns are: no CS2 set — CI, a host without assets)
   function setView(id, draw = false) {
     if (view) { view.removeFromParent(); view = null; } if (plainM) { unskinObject(plainM); plainM = null; }
     if (draw && id) { drawAt = now(); drawMs = DRAW_MS[id]; }
@@ -151,7 +151,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     const want = knifeFor(id, team(), knifeSkin(), true); wantFP(want); const kf = want !== id && want !== knifeFor(id, team()) && !hasFP(want) ? knifeFor(id, team()) : want, f = fpFor(id, kf);
     fpSet = kf; if (draw && !clipStart('draw', DRAW_MS[id])) sounds.draw(null, id);   // (CS2's draw: its own sounds at its own moments)
     skinRevSeen = skinRev(); skinAt = now(); if (f?.weaponMats) { skinSeen = skinOf(id); applySkin(f.weaponMats, skinSeen, ownTint(kf)); }   /* (your skin on it: skins.js, skin-render.js) */
-    /* (a chosen knife: the side's default until its own CS2 set is in) */ if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); f.hold(id, { draw, drawMs: DRAW_MS[id], model: kf, team: team() }); onTop(view); sideView(view); if (!camera.parent) scene.add(camera); return; }
+    /* (a chosen knife: the side's default until its own CS2 set is in) */ if (f) { fp = f; view = new THREE.Group(); view.userData.base = [0, 0, 0]; view.add(f.root); glovesSeen = glovesOf(); gloveVSeen = gloveVersion(); f.hold(id, { draw, drawMs: DRAW_MS[id], model: kf, team: team(), gloves: glovesSeen }); onTop(view); sideView(view); if (!camera.parent) scene.add(camera); return; }
     const [x, y, z, sc] = VIEW[id] || VIEW.pistol; const m = weaponModel(knifeFor(id, team()), sc); for (const [ax, r] of VIEW_ROT[id] || VIEW_ROT[weaponById(id)?.model] || []) m.rotateOnWorldAxis(AXES[ax], r);
     skinSeen = skinOf(id); plainM = m; if (skinSeen) skinObject(m, skinSeen);   // (your skin on the plain view too: shared painted copies, released when it goes)
     view = new THREE.Group(); view.add(m); view.position.set(x, y, z); view.rotation.y = .04; view.userData.base = [x, y, z]; onTop(view); sideView(view);
@@ -320,6 +320,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     update(dt) { if (current?.id === 'knife') { const k = knifeSkin(); if (k !== knifeSeen) { knifeSeen = k; setView('knife'); } }
       { const k = Math.exp(-dt * RECOIL.kickBack); shake.pitch *= k; shake.yaw *= k; }
       clipSnd.step(now()); if (chanKind === 'inspect' && !inspecting) { clipSnd.stop(); chanKind = ''; }
+      if (fp?.setGloves && fp.root.parent === view) { const gl = glovesOf(), gv = gloveVersion(); if (gl !== glovesSeen || gv !== gloveVSeen) { glovesSeen = gl; gloveVSeen = gv; fp.setGloves(gl, team()); } }   // (your gloves: a pick (the record's identity changes only then) or glove files arriving — two comparisons a frame otherwise)
       if (current && (fp?.weaponMats || plainM)) { const r = skinRev(); if (r !== skinRevSeen || now() - skinAt > 1000) { skinRevSeen = r; skinAt = now(); const sk = skinOf(current.id); if (sk !== skinSeen) { skinSeen = sk; if (fp?.weaponMats) applySkin(fp.weaponMats, sk, ownTint(fpSet)); else skinObject(plainM, sk); } } }   // (the room's skins changed (srev): re-applied at once; else a 1 s look — records keep their identity between changes)   // (an inspect broken off by any action: quiet)
       if (!current) { punch.pitch = punch.yaw = 0; A.t = now(); return; }
       if (reloadId && current.id !== reloadId) stopReload();   // switched away: before the magazine is seated nothing changed

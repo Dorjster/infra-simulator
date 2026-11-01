@@ -20,6 +20,8 @@ const stats = { uploads: 0, fetches: 0, failed: 0, evicted: 0 };
 // fetched (a guest on Wi-Fi fetches nothing mid-round: the room's stream keeps the link); the renderer.
 export function setSkinGate(fn, fetchFn = null) { gate = fn || (() => true); fetchGate = fetchFn; kick(); }
 export const setSkinRenderer = r => { renderer = r; };
+// The same gates for the CS2 gloves' pictures (glove-assets.js): one rule for every picture of a skin.
+export const skinGateOpen = () => gate(), skinFetchOpen = () => (fetchGate || gate)(), skinRenderer = () => renderer || globalThis.__infra?.renderer || null;
 export const onSkinReady = fn => { readyFn = fn; };   // (skin-render.js: binds a pair to the materials waiting for it)
 export const onSkinManifest = fn => { manifestFns.add(fn); return () => manifestFns.delete(fn); };
 // Tests: a loader without a browser (fetchImage(url, { size, data }) → image-like { width, height }).

@@ -16,7 +16,8 @@ import { weaponById } from './weapons-data.js';
 import { addRim, rimFor } from './rim-light.js';
 import { live } from './live-settings.js';
 import { fitImage, anisotropy } from './texture-quality.js';
-import { deathFall, DEATH_FALL_S } from './phys-smooth.js';   // (the death fall's curve: package P)
+import { deathFall, DEATH_FALL_S } from './phys-smooth.js';
+import { gloveLook, gloveMaterial, gloveVersion } from './glove-assets.js';   // (the death fall's curve: package P)
 
 const templates = {}; let loading = null;
 // Load the imported agents (once): resolves to the sides that have one.
@@ -120,6 +121,30 @@ function ik(upper, lower, end, [l1, l2], target, poleDir, s) {
 // lightAt(x, y, z) (world, feet): the map's baked light there (map-light.js, 1 ≈ sunlit floor) — the agent is
 // tinted by it (its own copies of the materials; the pictures stay shared), never below 30 %: dark in a tunnel,
 // bright in the sun, never invisible — and outlined by a rim of light that grows as it gets darker (rim-light.js).
+// ── CS2 gloves on other players' agents (their pick: skins record 'gloves', glove-assets.js) ──
+// CS2 draws a chosen glove on a third-person agent with the glove model's world LOD (world_L / world_R) in place of the
+// agent's own thirdperson_default_gloves mesh. Those 52 bones exist by name in both CS2 agents' skins with the same
+// inverse binds (tools/cs2-gloves/tp-check.mjs: CT 0, T 1.5e-5), so the world meshes join the agent's own skeleton: their
+// bone indices are re-numbered once per (glove type, side) into the default glove mesh's skeleton (a geometry sharing
+// every other attribute with the glove's; the tangents dropped, as the agents' own meshes have none) — no new skeleton,
+// no retarget. Material: a copy of the agent's own glove material (the same maps, rim hook and program as the body's:
+// no shader is built for a glove) with the finish's 512 colour and normal (or its 1×1 fallback set while they load); per
+// agent when it is shaded by the map's light (its own copies, as the body's), else one per finish and side. A type whose
+// meshes are not in: the agent's own gloves tinted with the finish's fallback colour. Bones or binds that do not match
+// (an agent of another rig): the agent's own gloves.
+export const isDefaultGloves = o => o.isSkinnedMesh && /thirdperson_default_gloves$/i.test(o.name);
+const worldGeo = new Map();
+export function worldGloveGeos(T, side, tpl) {   // (exported for tests) → { world_L, world_R } geometries on tpl's skeleton, or null
+  const key = T.type + '|' + side + '|' + tpl.uuid; if (worldGeo.has(key)) return worldGeo.get(key);
+  const sk = tpl.skeleton, at = new Map(sk.bones.map((b, i) => [b.name, i])); let ok = !!T.bones?.length, worst = 0;
+  const map = (T.bones || []).map((n, i) => { const j = at.get(n); if (j === undefined) { ok = false; return 0; } const a = T.inverses[i].elements, b = sk.boneInverses[j].elements; for (let k = 0; k < 16; k++) worst = Math.max(worst, Math.abs(a[k] - b[k])); return j; });
+  let out = null; if (ok && worst < 1e-3) { out = { worst };
+    for (const n of ['world_L', 'world_R']) { const src = T.meshes[n]?.geometry; if (!src?.attributes.skinIndex) continue; const g = new THREE.BufferGeometry(); g.setIndex(src.index);
+      for (const a of ['position', 'normal', 'uv', 'skinWeight']) if (src.attributes[a]) g.setAttribute(a, src.attributes[a]);
+      const si = src.attributes.skinIndex, arr = new Uint16Array(si.count * 4); for (let i = 0; i < si.count; i++) for (let c = 0; c < 4; c++) arr[i * 4 + c] = map[si.getComponent(i, c)] ?? 0;
+      g.setAttribute('skinIndex', new THREE.BufferAttribute(arr, 4)); g.name = 'cs2g_world_' + T.type + '_' + n; g.userData.shared = true; out[n] = g; } }
+  worldGeo.set(key, out); return out;
+}
 export function makeAgent(p, team, { lightAt = null } = {}) {
   const T = templates[team]; if (!T) return null;
   const g = new THREE.Group(), fallG = new THREE.Group(), face = new THREE.Group(), model = new THREE.Group(), body = cloneSkinned(T.scene);
@@ -128,6 +153,10 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   const B = {}; body.traverse(o => { const n = o.name.toLowerCase(); if (o.isBone && POSED.includes(n) && !B[n]) B[n] = o; });
   const own = [], rim = { value: rimFor(1) }; if (lightAt) body.traverse(o => { if (o.isMesh) { o.material = [].concat(o.material).map(m => { const c = addRim(m.clone()); c.userData = { rim }; own.push(c); return c; }); if (o.material.length === 1) o.material = o.material[0]; } });
   let shade = 1, shadeAt = 0; const feetW = new THREE.Vector3();
+  // (CS2 gloves: see setGloves below)
+  let glRec = null, glV = -1, glMat = null, glSrc = null, glTint = false; const glTintC = new THREE.Color(), glMeshes = new Map();
+  const dgMesh = (() => { let d = null; body.traverse(o => { if (!d && isDefaultGloves(o)) d = o; }); return d; })(), dgTpl = (() => { let d = null; T.scene.traverse(o => { if (!d && isDefaultGloves(o)) d = o; }); return d; })();
+  const dgOrig = dgMesh?.material || null;
   const rest = POSED.filter(n => B[n]).map(n => [B[n], B[n].position.clone(), B[n].quaternion.clone()]), fingers = FINGERS.filter(n => B[n]).map(n => [B[n], /thumb/.test(n), +n.split('_')[2], n.endsWith('_l')]), curlAx = new THREE.Vector3(), curlQ = new THREE.Quaternion(), ankleRest = { l: new THREE.Quaternion(), r: new THREE.Quaternion() };
   g.updateMatrixWorld(true); for (const s of ['l', 'r']) { B['ankle_' + s].getWorldQuaternion(ankleRest[s]); model.getWorldQuaternion(q1); ankleRest[s].premultiply(q1.invert()); }   // feet flat: their rotation in model space
   const holder = new THREE.Group(); holder.scale.setScalar(1 / T.k); holder.rotation.y = Math.PI; model.add(holder);   // the gun, in game units, muzzle → +z
@@ -155,7 +184,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   }
   let deadT = 0, fallNew = true;   // (the death fall: seconds since this body died; first update not yet run)
   function update(dt, s = {}) {
-    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(.3, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); rim.value = live.rim ? rimFor(shade) : 0; } }
+    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(.3, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); if (glTint && dgMesh) dgMesh.material.color.multiply(glTintC); rim.value = live.rim ? rimFor(shade) : 0; } }
     const k = Math.min(1, dt * 10); st.speed += ((s.speed || 0) - st.speed) * Math.min(1, dt * 8); st.crouch += ((s.crouch ? 1 : 0) - st.crouch) * k; st.gun += ((s.aim && !s.dead ? 1 : 0) - st.gun) * k;
     st.reload += ((s.act === 'reload' ? 1 : 0) - st.reload) * Math.min(1, dt * 9); st.throwA += ((s.act === 'throw' ? 1 : 0) - st.throwA) * Math.min(1, dt * 14);
     // Death: toppled about the feet as a body falls (phys-smooth.js deathFall: slow to start, fastest as it lands, ~0.5 s,
@@ -221,7 +250,27 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   function dispose() { g.removeFromParent(); if (gun) { unskinObject(gun); gun.removeFromParent(); } A?.mixer.stopAllAction(); A?.mixer.uncacheRoot(body); for (const m of own) m.dispose(); const sk = new Set(); body.traverse(o => { if (o.isSkinnedMesh) sk.add(o.skeleton); }); for (const s of sk) s.dispose(); }   // (its skin's material copy, the clips' bindings and its own skeletons' bone textures: nothing left per agent across side changes and rematches)
   // Their skin on the gun in their hands (skins.js): set as the room's state changes; drawn by skin-render.js.
   let skinNow = null; function setSkin(sk) { sk = sk || null; if (sameSkin(sk, skinNow)) return; skinNow = sk; if (gun) skinObject(gun, skinNow); }
-  return { g, team, update, setWeapon, setSkin, dispose };
+  // Their CS2 gloves (the room's skins record 'gloves'): called with every dress; a pick (the record's identity) or glove
+  // files arriving (gloveVersion) re-wear them — two comparisons otherwise, nothing allocated.
+  function setGloves(rec) { rec = rec || null; const v = gloveVersion(); if (rec === glRec && v === glV) return; glRec = rec; glV = v; wearGloves(); }
+  function wearGloves() {
+    if (!dgMesh || !dgTpl) return 'none'; const L = glRec ? gloveLook(glRec, 'tp') : null, geos = L?.type?.state === 'ready' ? worldGloveGeos(L.type, team, dgTpl) : null;
+    let shown = null; if (geos) { shown = glMeshes.get(L.type.type);
+      if (!shown) { shown = []; for (const n of ['world_L', 'world_R']) { if (!geos[n]) continue; const m = new THREE.SkinnedMesh(geos[n], dgMesh.material); m.name = 'cs2_gloves/' + n; m.castShadow = true; m.receiveShadow = false; m.frustumCulled = false; m.layers.mask = dgMesh.layers.mask;
+          m.position.copy(dgMesh.position); m.quaternion.copy(dgMesh.quaternion); m.scale.copy(dgMesh.scale); m.bind(dgMesh.skeleton, dgMesh.bindMatrix); dgMesh.parent.add(m); shown.push(m); } glMeshes.set(L.type.type, shown); }
+      const src = L.tex.state === 'ready' ? L.tex : L.fb, make = tx => { const m = dgOrig.clone(); m.map = tx.color; m.normalMap = tx.normal; m.roughness = L.f.roughMean ?? .75; m.metalness = L.f.metalMean ?? 0; m.name = 'cs2g_tp_' + L.kit; m.userData = { shared: true, kit: L.kit }; return m; };
+      let mat; if (lightAt) { if (glSrc !== src || !glMat) { if (glMat) { own.splice(own.indexOf(glMat), 1); glMat.dispose(); } glMat = addRim(make(src.tex)); glMat.userData = { rim }; glMat.color.setScalar(shade); own.push(glMat); glSrc = src; } mat = glMat; }
+      else mat = gloveMaterial(src, 'tp:' + team, tx => { const m = make(tx); m.onBeforeCompile = dgOrig.onBeforeCompile; m.customProgramCacheKey = dgOrig.customProgramCacheKey; return m; });
+      for (const m of shown) m.material = mat; }
+    for (const list of glMeshes.values()) for (const m of list) m.visible = list === shown;
+    dgMesh.visible = !shown;
+    // No meshes for that type (yet): the agent's own gloves in the finish's fallback colour.
+    glTint = !!(L && !shown); if (glTint) glTintC.set(L.fb.color); const dm = dgMesh.material;
+    if (lightAt) { dm.color.setScalar(shade); if (glTint) dm.color.multiply(glTintC); }   // (its own shaded copy: the tint rides the shade, update())
+    else dgMesh.material = glTint ? gloveMaterial(L.fb, 'tptint:' + team, () => { const m = dgOrig.clone(); m.color.set(L.fb.color); m.onBeforeCompile = dgOrig.onBeforeCompile; m.customProgramCacheKey = dgOrig.customProgramCacheKey; m.userData = { shared: true }; return m; }) : dgOrig;
+    return shown ? (L.tex.state === 'ready' ? 'glove' : 'fallback') : glTint ? 'tint' : 'agent';
+  }
+  return { g, team, update, setWeapon, setSkin, setGloves, wearGloves, get gloveMeshes() { return glMeshes; }, dispose };
 }
 // The animated agent (CS2's clips; see CLIPS): legs from the walking / running / crouching clips of the gun's class
 // (rifle, pistol, knife), blended by the speed and the direction moved relative to the facing (CS2's eight

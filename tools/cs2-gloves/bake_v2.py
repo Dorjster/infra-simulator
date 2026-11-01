@@ -1,5 +1,5 @@
 # The newer CS2 glove shader (csgo_customglove_preview.vfx, the "volatile" finishes) rebuilt for tools/cs2-gloves/bake.py:
-# g_tLayerId RGB = weights of 4 textile layers; g_tTintId (8-bit) = id 1..8 (which eighth of 0..1) -> g_vId<id>Color
+# g_tLayerId RGB = weights of layers 1-3, layer 4 where RGB is 0 (not v1's order: checked against CS2's icons, layers()); g_tTintId (8-bit) = id 1..8 (which eighth of 0..1) -> g_vId<id>Color
 # (A = how much it multiplies in); per layer a tiled textile g_tSurface<i> (colour + normal) with brightness / contrast
 # / saturation and tint (tint alpha set: the tint's hue at the textile's brightness); g_tPattern on the ids with
 # g_bId<id>Pattern (F_PATTERN: printed into the textile, F_PATTERN_PAINT: painted on it; A = coverage; a translucency
@@ -8,12 +8,19 @@
 import numpy as np
 import tex as T
 from imglib import srgb2lin
-from bake import P, vec, weights, default_tex, sample, xform, hemi, detail_blend, lum, sat
+from bake import P, vec, default_tex, sample, xform, hemi, detail_blend, lum, sat
+
+
+def layers(m):
+    # v2's layer ids: R, G, B = layers 1, 2, 3, layer 4 where all are 0. (v1's mask is the other way round, bake.weights:
+    # with v1's order the driver gloves lose their brocade / argyle / embroidery and Violet Beadwork its beads.)
+    w = np.stack([m[..., 0], m[..., 1], m[..., 2], np.clip(1 - m[..., 0] - m[..., 1] - m[..., 2], 0, 1)], -1)
+    return w / np.maximum(w.sum(-1, keepdims=True), 1e-4)
 
 
 def bake_v2(C, f):
     t = f['tex']; R = C.R
-    W = weights(C.uvmap(t['g_tLayerId']))
+    W = layers(C.uvmap(t['g_tLayerId']))
     if t.get('g_tTintId'):
         a = T.load(C.V, t['g_tTintId'])[..., 0]; h, w = a.shape   # nearest texel: ids must not blend
         tid = a[np.minimum((C.v * h).astype(np.int64), h - 1), np.minimum((C.u * w).astype(np.int64), w - 1)]

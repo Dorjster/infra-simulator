@@ -43,13 +43,13 @@ four output modes into the glove's `g_tColor`, `g_tNormal`, `g_tMetalness` and `
 wear amount (`g_flWearAmount` → `g_fWearProgress`) baked in. The shaders are not in the install, so
 `tools/cs2-gloves/bake.py` rebuilds both generations from the paint material's parameters and textures:
 
-* **v1 `csgo_customglove`** (72 finishes): `g_tLayerMask` RGB = weights of 4 textile layers (the 4th where RGB is 0),
+* **v1 `csgo_customglove`** (72 finishes): `g_tLayerMask`: textile layer 1 where RGB is 0 (most of the glove's body), R/G/B = layers 2/3/4 painted over it,
   A = colour id 1..8 (stored as (id−0.5)/8) → `g_vColorTint<id>`; per layer a tiled detail texture (R shade, G
   roughness, `g_fDetailScale`, black point, roughness brightness/contrast, metalness) and detail normal; `g_tPattern`
   replaces colour id `g_nPatternReplaceIndex` (mode 0: palette chain `g_vPatternPaletteIndices` by the pattern's R, G,
   B; mode 2: the pattern's own colours, e.g. Fade) with the composite's instance rotation/offset; `g_tSurface` G =
   ambient occlusion, B = edges.
-* **v2 `csgo_customglove_preview`** (22 newer finishes): `g_tLayerId` RGB = layer weights; `g_tTintId` (an 8-bit
+* **v2 `csgo_customglove_preview`** (22 newer finishes): `g_tLayerId` RGB = layers 1-3, layer 4 where RGB is 0 (the opposite of v1's order, checked against the icons); `g_tTintId` (an 8-bit
   texture format, VTexFormat 33, that `tools/cs2-gloves/tex.py` adds) = id = which eighth of 0..1 → `g_vId<id>Color`
   (A = how much it multiplies in); per layer a tiled textile (`g_tSurface<i>` colour + normal) with brightness,
   contrast, saturation and tint (tint alpha set: the tint's hue at the textile's brightness); `g_tPattern` is a paint
@@ -142,3 +142,50 @@ Images: row 0 = v 0 (glTF; three.js `flipY = false`). PNGs carry no colour chunk
 * `tools/cs2-gloves/render.py` (Blender): `studio` renders every finish on its glove (both hands, studio light);
   `fit` renders a glove on a first-person set's clip with the agent's sleeves, from the set's camera.
   `tools/cs2-gloves/sheet.mjs` assembles the labelled import sheet (`~/Desktop/GD-gloves-import*.jpg`).
+
+## In the game (v52.0.1): gloves as skins
+
+* **Picker** — M → LOADOUT & SKINS → **Gloves** (shown only when the host's `gloves.json` is there): left the types
+  (Default (agent gloves), then Sport Gloves and the rest in CS2's order), middle that type's finishes (CS2's econ
+  icon, name, rarity in its colour, a search), right the pair with a wear slider limited to the finish's `wearRange`,
+  Equip / Default gloves and Darja's give. Everyone picks any pair (as knives). `dist/arena-ui.js`.
+* **LAN** — one more slot in a player's skins record: `gloves: { finish: "cs2g:<kit>", wear }` (about 40 bytes), sent
+  in the room's `skins` message with the rest (never in the arena frame; the arena frame only names the catalogue's
+  hash, `gloveCat`, so a page fetches `gloves.json` again when the host installs a new one). The host checks the kit
+  against its own `gloves.json` (`dist/skins.js cleanGloveNote`: unknown kit or no catalogue → refused, wear clamped);
+  a pick in a live round applies at the next freeze; kept across rematch, a new match, a host restart
+  (`gd-skins.json`) and a reconnect. `NET_PROTOCOL` stays `gd-52`.
+* **Files** — `dist/glove-assets.js`: the catalogue, each type's glb (once), and per (kit, wear step of 0.02, tier) one
+  texture set: `fp` (your gloves and your side's, 1024, colour + normal + ORM) and `tp` (others' agents, 512, colour +
+  normal). Wear is baked into the colour as the set loads (`_wear.png` thresholds, `wearLook`). Fetched and uploaded
+  under the gun skins' gates (`skin-textures.js`: never in a live round), one picture a frame, freed LRU over 160 MB.
+  A type's glb parsed while a round is live is shown to the views only when the gate opens (the freeze), like a
+  picture: no glove meshes are built and no agent re-wears mid-round. Types wanted at 'fp' (yours and your team
+  mates', for spectating) are built, hidden, on every first-person set then, so a first spectate builds nothing.
+  Until the pictures are in: the finish's 1×1 fallback set (the same maps: the same shader); a type whose glb is
+  missing: the agent's own gloves tinted with `fallback`.
+* **First person** — `dist/fp-view.js` `set.setGloves(rec, team)` / `hold(…, { gloves })`: in the side's
+  `cs2_arms_<side>` the `arms_<side>` glove and bare-wrist meshes are hidden; the type's `glove_L` + `glove_R` + `skin`
+  are bound to the set's own skeleton (same 52 bones, same order: that skeleton), the `skin` piece with the arms'
+  `bare_arm_133` material; every `sleeves_<side>` mesh is kept. The glove material is a copy of the CS2 arms' glove
+  material (same maps, `armsShader`, program key `cs2arms1`, reflections), one per finish and wear step, shared by
+  every set: no shader is built for a glove. Your own view (`weapons.js`), spectating (`spectate-view.js`: the
+  watched player's record) and other modes (no side: the set's own glove) all go through it.
+* **Third person** (feasible, done) — `dist/cs2-agents.js` `setGloves(rec)`: the type's `world_L` / `world_R` with
+  their bone indices re-numbered once per (type, side) into the agent's `thirdperson_default_gloves` skeleton (all 52
+  bones there by name, inverse binds equal to 1.5e-5), sharing every other attribute with the glove's geometry (no
+  tangents, as the agents' meshes); the default gloves hidden. Material: a copy of the agent's own glove material
+  (same maps and rim hook: its program) with the finish's `tp` pictures — the agent's own shaded copy when it is lit by
+  the map, else one per finish and side. Bots wear their agent's own gloves. GD's older non-CS2 agents: none.
+* **Other computers** — `node tools/import-cs2-models.mjs --with-gloves` puts `user-assets/gloves/` into the asset
+  pack as `gloves-pack/…` and into the desktop app's copy (installed there by `installGloves`, the back-up rule);
+  without it `gloves/` is left out of the manifest hash, the app copy and the pack (282 MB). A room's
+  Import asset pack installs `gloves-pack/` the same way (`gloves.bak-…`, two kept) and reads the catalogue again;
+  `assets/gloves/…` in a pack is never written over the installed set.
+* **Tests** — `tests/gd-gloves.mjs` (synthetic, CI: data, host checks, LAN merge and sizes, save, page catalogue,
+  wear bake, what loads for whom, gloves-pack install), `tests/gd-gloves-view.mjs` (this computer's import: every
+  type on the arms' skeleton, the swap on all first-person sets CT and T, the hands through idle and inspect, the
+  fallback and tint, third person on both agents, no per-frame allocation),
+  `tests/browser/gd-gloves-skins-e2e.mjs` (the picker at 1280×720, every type in game CT and T with a rifle and the
+  knife inspect, pictures on the GPU first, no program built by a swap, left-handed, spectating; writes
+  `GD-v52-gloves-in-game.jpg`).

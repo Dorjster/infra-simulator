@@ -16,7 +16,7 @@ const GUN_IDS = new Set(WEAPONS.map(w => w.id));
 export const skinKeyOf = id => id === 'knife' || id === 'karambit' ? 'knife' : GUN_IDS.has(id) ? id : null;
 export const SKIN_SLOTS = ['knife', ...GUN_IDS];
 // The kind cleanSkin checks a slot by (sticker slots): the knife, or the gun's own kind.
-export const skinKindOf = sk => sk === 'knife' ? 'knife' : GUN_IDS.has(sk) ? weaponById(sk).kind : null;
+export const skinKindOf = sk => sk === 'knife' ? 'knife' : sk === 'gloves' ? 'gloves' : GUN_IDS.has(sk) ? weaponById(sk).kind : null;   // ('gloves': the one glove slot — cleanGloveNote)
 export const FINISHES = {
   none: { name: 'Default', pattern: 'none', colors: [] },
   fade: { name: 'Fade', pattern: 'fade', colors: ['#f6d24a', '#e2459a', '#5b4bd8'], rarity: 'Covert', wear: [0, .08] },
@@ -84,6 +84,7 @@ export const KNIFE_ALIAS = { fade: 'aa_fade', marble: 'am_marble_fade', doppler:
 // kept as its built-in look (fb) with a note, never silently dropped. Wear is clamped into the finish's range (a Fade
 // goes to 0.08 at most, as CS2's).
 export function cleanSkinNote(raw, kind, prev = null, id = kind === 'knife' ? 'knife' : null) {
+  if (kind === 'gloves') return cleanGloveNote(raw);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('No skin given');
   const knife = kind === 'knife'; let finish = String(raw.finish ?? 'none'), fb = null, range = null, note = '';
   if (knife && CAT && !raw.builtin && Object.hasOwn(KNIFE_ALIAS, finish) && CAT.knives && Object.hasOwn(CAT.knives, KNIFE_ALIAS[finish])) { fb = finish; finish = 'cs2k:' + KNIFE_ALIAS[finish]; }   // (raw.builtin: the built-in one asked for by name)
@@ -103,8 +104,31 @@ export function cleanSkinNote(raw, kind, prev = null, id = kind === 'knife' ? 'k
   return { skin: { finish, fb, wear: +wear.toFixed(6), seed, stickers, name, st, kills }, note };
 }
 export const cleanSkin = (raw, kind, prev = null, id) => cleanSkinNote(raw, kind, prev, id).skin;
+// ── Gloves (CS2's glove finishes, imported on the host: tools/import-cs2-gloves.mjs → user-assets/gloves/gloves.json) ──
+// One more slot in a player's skins record, beside the knife and the guns: 'gloves' = { finish: 'cs2g:<kit>', wear }
+// (the glove type is the kit's: gloves.json finishes[kit].type). About 30 bytes a player, in the room's 'skins' message
+// with the rest (never the arena frame). Everyone picks any pair (as knives). The host checks the kit against its own
+// gloves.json (setGloveCatalog: the room at start and after a pack; a page that fetched it, for names); a kit it has not
+// imported is refused (no gloves: the agent's own). Wear is clamped into the finish's range (CS2's wearRange).
+let GCAT = null, GCAT_HASH = '';
+export const GLOVE_TYPE_ORDER = ['sporty', 'slick', 'handwrap', 'motorcycle', 'specialist', 'bloodhound', 'hydra', 'brokenfang'];   // (Sport Gloves first: CS2's order)
+export function setGloveCatalog(m) { GCAT = m && typeof m === 'object' && m.version === 1 && m.finishes && m.types && typeof m.finishes === 'object' ? m : null; GCAT_HASH = GCAT ? hash12(JSON.stringify({ t: Object.keys(GCAT.types), f: Object.keys(GCAT.finishes), made: GCAT.made || '' })) : ''; return GCAT_HASH; }
+export const hasGloveCatalog = () => !!GCAT;
+export const gloveCatalogHash = () => GCAT_HASH;
+export const gloveKit = g => typeof g?.finish === 'string' && g.finish.startsWith('cs2g:') ? g.finish.slice(5) : null;
+// The catalogue's entry for a glove record or kit (finishes[kit], with its type), or null.
+export function gloveEntry(g) { const kit = typeof g === 'string' ? (g.startsWith('cs2g:') ? g.slice(5) : g) : gloveKit(g); if (!GCAT || !kit || !KIT_RE.test(kit) || !Object.hasOwn(GCAT.finishes, kit)) return null; const f = GCAT.finishes[kit]; return f && Object.hasOwn(GCAT.types, f.type) ? f : null; }
+export const gloveTypeName = type => GCAT?.types?.[type]?.name || 'Gloves';
+export function cleanGloveNote(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('No gloves given');
+  const finish = String(raw.finish ?? ''); if (!finish.startsWith('cs2g:') || !KIT_RE.test(finish.slice(5))) throw Error('Unknown gloves');
+  if (!GCAT) throw Error('Gloves are not imported on the host'); const e = gloveEntry(finish); if (!e) throw Error('Those gloves are not imported on the host');
+  let wear = num(raw.wear ?? e.wearRange?.[0] ?? .06, 0, 1, 'Wear'); const r = e.wearRange; if (Array.isArray(r) && Number.isFinite(+r[0]) && Number.isFinite(+r[1])) wear = Math.max(Math.max(0, +r[0]), Math.min(Math.min(1, +r[1]), wear));
+  return { skin: { finish, wear: +wear.toFixed(6) }, note: '' };
+}
+export const gloveTitle = g => { const e = gloveEntry(g); return e ? `★ ${gloveTypeName(e.type)} | ${e.name} (${wearName(g.wear ?? 0)})` : 'Default gloves'; };
 // A finish's name: the catalogue's for a CS2 finish (else its built-in look's), the built-in's own.
-export const finishName = s => KIT_NAMES.get(s?.finish) || FINISHES[s?.finish]?.name || FINISHES[s?.fb]?.name || 'Finish';
+export const finishName = s => (gloveEntry(s)?.name) || KIT_NAMES.get(s?.finish) || FINISHES[s?.finish]?.name || FINISHES[s?.fb]?.name || 'Finish';
 // A skin's full name as CS2 shows it: "StatTrak™ AK-47 | Fade (Factory New)" (or its name tag in quotes).
 export const skinTitle = (gunName, s) => !s || s.finish === 'none' && !s.name && !s.st ? gunName : (s.name ? `“${s.name}”` : `${s.st ? 'StatTrak™ ' : ''}${gunName}${s.finish !== 'none' ? ' | ' + finishName(s) : ''}${s.finish !== 'none' ? ' (' + wearName(s.wear) + ')' : ''}`);
 // What a renderer re-paints for (no kills: a StatTrak count changes mid-round, the look does not). Called on srev change only.

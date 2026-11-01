@@ -3,12 +3,12 @@
 # paint .vmat with the glove shader in "output modes" 0-3 into the glove's g_tColor / g_tNormal / g_tMetalness /
 # g_tAmbientOcclusion at 2048², wear (g_flWearAmount -> g_fWearProgress) included. The shaders are not in the install,
 # so both generations are rebuilt here from the paint material's parameters and textures:
-#   v1  csgo_customglove.vfx (72 finishes): g_tLayerMask RGB = weights of 4 textile layers (the 4th where RGB is 0),
+#   v1  csgo_customglove.vfx (72 finishes): g_tLayerMask: layer 1 where RGB is 0 (the glove's body), R/G/B = layers 2/3/4,
 #       A = colour id 1..8 ((id-0.5)/8) -> g_vColorTint<id>; per layer a tiled detail texture (R shade, G roughness),
 #       detail normal, roughness brightness/contrast, metalness; g_tPattern replaces colour id g_nPatternReplaceIndex
 #       (mode 0: palette chain g_vPatternPaletteIndices by pattern R, G, B; mode 2: the pattern's own colour);
 #       g_tSurface G = ambient occlusion, B = edges (curvature, where wear starts).
-#   v2  csgo_customglove_preview.vfx (22 newer finishes; bake_v2.py): g_tLayerId RGB = layer weights, g_tTintId (8-bit) = id 1..8
+#   v2  csgo_customglove_preview.vfx (22 newer finishes; bake_v2.py): g_tLayerId RGB = layers 1-3 (4 where RGB is 0: v1's order is not v2's), g_tTintId (8-bit) = id 1..8
 #       -> g_vId<id>Color (A = how much of it), per layer a tiled textile (g_tSurface<i>: colour, normal, properties)
 #       with brightness / contrast / saturation / tint; g_tPattern = a paint in the glove's UV (A = coverage, where
 #       g_bId<id>Pattern), g_tPatternProperties G = its roughness; g_tObjectProperties R = ambient occlusion.
@@ -97,7 +97,10 @@ def vec(f, k, d=(1, 1, 1, 0)):
 
 
 def weights(m):
-    w = np.stack([m[..., 0], m[..., 1], m[..., 2], np.clip(1 - m[..., 0] - m[..., 1] - m[..., 2], 0, 1)], -1)
+    # layer 1 is the base (where the mask is black: most of the glove's body), R, G, B paint layers 2, 3, 4 over it.
+    # (Proof: Bronzed / Jade / Case Hardened set g_fDetailMetalness1 = 1 and CS2 draws their bodies as metal, Charred sets
+    # it to 0 and its body is leather; Arid's and Mangrove's layer-1 detail is their perforated mesh, on the body in CS2.)
+    w = np.stack([np.clip(1 - m[..., 0] - m[..., 1] - m[..., 2], 0, 1), m[..., 0], m[..., 1], m[..., 2]], -1)
     return w / np.maximum(w.sum(-1, keepdims=True), 1e-4)
 
 

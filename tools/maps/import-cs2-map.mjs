@@ -270,7 +270,8 @@ const LOOK = lookFloors(path.join(dir, 'world2', 'world.glb'));
 // A stretch's footstep surface (SURFACES index): its look's floor material; where the look has none, the collision's group
 // (clips and sound blockers say nothing: their floors take their neighbours' in the game).
 const surfClass = (x, y, top, g) => { const nm = LOOK?.(x, y, top); if (nm) return surfaceOf(nm); const pg = SURF[g]; return g === 255 || !pg || /clip|block|pass|sky|default|unknown/.test(pg) ? 255 : surfaceOf(pg); };   // (no face of the look there — collision only, under or outside the play space: the collision's group)
-const DEEP = 60; let deepN = 0, voidN = 0, outN = 0, dryN = 0, realN = 0, landN = 0;
+const underFlatPane = (x, y, z) => { for (const i of paneGrid.get(Math.floor(x / 64) + ',' + Math.floor(y / 64)) || []) { const g = glassPanes[i]; if (g.maxs[2] - g.mins[2] <= 2 && x >= g.mins[0] - 2 && x <= g.maxs[0] + 2 && y >= g.mins[1] - 2 && y <= g.maxs[1] + 2 && z >= g.mins[2] - 12 && z <= g.maxs[2] + 2) return true; } return false; };   // (a floor at most 12 under a flat window, or just over it)
+const DEEP = 60; let deepN = 0, voidN = 0, outN = 0, dryN = 0, realN = 0, landN = 0, glassN = 0;
 // By a ladder's top (within 64 units of it, a floor from a body's height under its top to a step over it): its landing.
 const ladderTopNear = (x, y, z) => ladderBoxes.some(L => x > L.mins[0] - 64 && x < L.maxs[0] + 64 && y > L.mins[1] - 64 && y < L.maxs[1] + 64 && z > L.maxs[2] - 76 && z < L.maxs[2] + 14);
 // The play space: CS2's radar of the map (radar-mask.mjs; export/radar, extracted from the game), 128 units round its
@@ -310,6 +311,9 @@ function grid(soup, ladderCut = false, pens = false) { const F = openFlags(soup)
         const pg = SURF[sp[k][2]]; if (pg && !/clip|default|unknown|block|sky|nodraw|invisible/.test(pg)) { realN++; continue; }
         // (nor the landing at a ladder's top: CS2 often makes it a clip over the ladder's cage — Nuke's roof ladders)
         if (ladderTopNear(x, y, tp)) { landN++; continue; }
+        // (nor a floor under a window lying flat — Nuke's B site: a clip slab under its floor windows; the look's glass is
+        // not counted as drawn, so it read as a floor over nothing and filled solid up to B's ceiling, pillars all over B)
+        if (underFlatPane(x, y, tp)) { glassN++; continue; }
         if (!LOOK.drawnIn(x, y, tp - 200, tp + 12)) { sp[k] = [sp[k][0], k + 1 < sp.length ? sp[k + 1][1] : Z1, k + 1 < sp.length ? sp[k + 1][2] : 255]; if (k + 1 < sp.length) sp.splice(k + 1, 1); k--; voidN++; } }
       // (the floor you step onto at the ladder's top — a top within a body's height under it with room to stand over it —
       // stays, its top 16 units: cleared, Nuke's vent shaft, roofs and Heaven had nothing to step off onto)
@@ -317,7 +321,7 @@ function grid(soup, ladderCut = false, pens = false) { const F = openFlags(soup)
       for (const k of cuts) if (!k.fill && x >= k.x0 && x <= k.x1 && y >= k.y0 && y <= k.y1) sp = sp.flatMap(([b, tp, g], j) => tp <= k.z0 || b >= k.z1 ? [[b, tp, g]] : [...(b < k.z0 ? [[b, k.z0, 255]] : []), ...(tp > k.z1 ? [[k.z1, tp, g]] : tp >= k.top - 64 && (sp[j + 1]?.[0] ?? Z1) - tp >= 54 ? [[Math.max(b, k.z0, tp - 16), tp, g]] : [])]);
       for (const [b, tp, g] of sp) { vals.push(Math.max(-32768, Math.round(b * 2)), Math.min(32767, Math.round(tp * 2))); surf.push(ladderCut ? surfClass(x, y, tp, g ?? 255) : pens ? Math.max(0, penOf(g ?? 255)) : 255); } offs[r * cols + c + 1] = vals.length; }
     if (Date.now() - t > 5000) { t = Date.now(); console.log(`  ${Math.round(100 * r / rows)}%`); } }
-  if (ladderCut && deepN) console.log(`  deep water: ${deepN} lines walled off`); if (ladderCut && dryN) console.log(`  dry land over water kept open: ${dryN} lines`); if (ladderCut && voidN) console.log(`  floors over nothing filled: ${voidN}`); if (ladderCut && realN) console.log(`  floors of a real surface kept: ${realN}`); if (ladderCut && landN) console.log(`  ladders' landings kept: ${landN}`); if (ladderCut && outN) console.log(`  off the radar: ${outN} lines solid`);
+  if (ladderCut && deepN) console.log(`  deep water: ${deepN} lines walled off`); if (ladderCut && dryN) console.log(`  dry land over water kept open: ${dryN} lines`); if (ladderCut && voidN) console.log(`  floors over nothing filled: ${voidN}`); if (ladderCut && realN) console.log(`  floors of a real surface kept: ${realN}`); if (ladderCut && landN) console.log(`  ladders' landings kept: ${landN}`); if (ladderCut && glassN) console.log(`  floors under flat windows kept: ${glassN}`); if (ladderCut && outN) console.log(`  off the radar: ${outN} lines solid`);
   return { offs, vals: Int16Array.from(vals), surf: Uint8Array.from(surf) }; }
 console.log(`grid ${cols} × ${rows} (8 units) over x ${X0}…${X0 + cols * 8}, y ${Y0}…${Y0 + rows * 8}, z ${Z0.toFixed(0)}…${Z1.toFixed(0)}`);
 const P = grid(players, true), N = grid(nades), B = grid(bullets, false, true), NM = (s => s && buildNadeMesh(s.soup, s.sight))(nadeMeshSoup());

@@ -19,6 +19,7 @@ const warmCam = new THREE.PerspectiveCamera(70, 1.6, .1, 5000);
 let mapTextures = null;   // a Source map's texture cache (all of it is freed when the map goes, used by a mesh or not)
 import { buildProps, propWarmMeshes } from './arena-props.js';
 import { anisotropy } from './texture-quality.js';
+import { paneShaped } from './look-cuts.js';
 
 function tex(draw, size = 256) {
   try { const c = document.createElement('canvas'); c.width = c.height = size; const g = c.getContext('2d'); if (typeof g?.fillRect !== 'function') return null; draw(g, size);
@@ -159,7 +160,10 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     if (builtLook && map.hammer) { placeRender(builtLook, map.hammer, cx, cz); group.add(builtLook);
       // Its doors and breakables: each moved onto a pivot at its hinge (game units), so it swings, slides or goes as the
       // file maps' movers do (mapState); on leaving they go back into the look (it is kept for the next time).
-      (map.movers || []).forEach((m, id) => { const G = builtLook.userData.movers?.get(m.e); if (!G) return; const pv = new THREE.Group(); pv.userData.cs2Mover = true; pv.userData.home = builtLook;
+      // A pane-shaped window the look has nothing for (Dust II's door windows, Mirage's van, Cache's glass round Long A's
+      // doorway: their glass is another material) still breaks from a shot or a knife: an empty group stands for it
+      // (glass collision round a tree trunk or a lamp — thick, not pane-shaped — doesn't).
+      (map.movers || []).forEach((m, id) => { let G = builtLook.userData.movers?.get(m.e); if (!G && paneShaped(m, map.hammer.U) && builtLook.userData.movers) { G = new THREE.Group(); G.name = 'mover_e' + m.e; builtLook.add(G); builtLook.userData.movers.set(m.e, G); } if (!G) return; const pv = new THREE.Group(); pv.userData.cs2Mover = true; pv.userData.home = builtLook;
         if (m.kind === 'rotdoor') pv.position.set(cx + m.hinge[0], m.hinge[1], cz + m.hinge[2]); pv.userData.base0 = pv.position.clone(); group.add(pv); pv.updateMatrixWorld(true); pv.attach(G); G.userData.setBroken?.(false); movers.push({ id, m, g: pv, base: pv.position.clone(), at: 0, broken: false, hook: G.userData.setBroken || null }); });   // (hook: a window pane folds its triangles in the look — cs2-render.js)
       // Its physics props (pots, cans, stools): each on a pivot at its foot, pushed, knocked and tipped over in play
       // (arena-physprops.js); on leaving they go back into the look where they stood, as the doors do.

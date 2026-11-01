@@ -6,7 +6,7 @@
 // Imported on this computer (user-assets, never shipped): CS2's gloves are worn on every pair of arms, and CS2's own
 // first-person M4A1-S animations (cs2rifle) hold every rifle, sniper and machine gun.
 import * as THREE from './three.module.js';
-import { prepareSkins, applySkin, fitSkinned, fpLightTick } from './skin-render.js'; import { loadSkinManifest, skinFileURL } from './skin-textures.js';
+import { prepareSkins, applySkin, fitSkinned, fpLightTick } from './skin-render.js'; import { gloveLook, gloveType, gloveMaterial, onGloves, gloveFpTypes } from './glove-assets.js'; import { loadSkinManifest, skinFileURL } from './skin-textures.js';
 import { gltfLoader } from './gltf-loader.js';
 import { weaponModel, MUZZLE, VARIANTS, modelFromFile, registerModel, KNIFE_SKINS } from './weapon-models.js';
 import { weaponById, CS_UNITS_PER_UNIT } from './weapons-data.js';
@@ -213,6 +213,7 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
   sc.updateMatrixWorld(true); const u = (cam?.userData?.metres ? 39.3701 : 1) / CS_UNITS_PER_UNIT, vfov = cam?.userData?.vfov || 0;
   fix.matrix.makeScale(u, u, u).multiply(cam ? cam.matrixWorld.clone().invert() : new THREE.Matrix4()); cam?.removeFromParent();
   const mixer = new THREE.AnimationMixer(sc), clip = n => gltf.animations.find(a => a.name === n), now = () => performance.now();
+  const twists = forearmTwists(sc);   // (KNIFE-diag: CS2's forearm twist bones, driven from the hand every update — forearmTwists below)
   for (const c of gltf.animations) { const a = mixer.clipAction(c); a.play(); mixer.update(0); a.stop(); }   // (every clip's bindings made now, while loading: a first draw or swing costs nothing)
   if (id === 'knife' || id === 'knife-t') sc.traverse(o => { if (o.isMesh && [].concat(o.material)[0]?.name === 'cs2_weapon' && !o.geometry.attributes.color) bladeMask(o); });   // (the default knives: a skin on the blade only — SKIN-1)
   if (KNIFE_SKINS[id] || id === 'karambit') { const k = bakeKnife(sc, mixer, clip('idle'), id); if (k) registerModel(id, k); }   // (the chosen star knife in other players' hands: TP-3)
@@ -243,7 +244,9 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     if (cur && cur !== a && fade > 0) a.crossFadeFrom(cur, fade, false); else if (cur && cur !== a) cur.stop(); a.play(); cur = a; return c.duration * 1000 / a.timeScale; };
   return {
     root, authored: true, vfov, textures, worn, weaponMats: (prepareSkins(weaponMats), weaponMats),
-    hold(id, { draw = true, team = 'ct' } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; wearSide(worn, team); until = draw && clip('draw') ? now() + play('draw', { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
+    // gloves: the holder's CS2 gloves (skins record 'gloves') or null — the agent's own; setGloves: a pick or files arriving.
+    setGloves(gloves, team = 'ct') { return wearSide(worn, team, gloves || null); },
+    hold(id, { draw = true, team = 'ct', gloves = null } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; wearSide(worn, team, gloves); until = draw && clip('draw') ? now() + play('draw', { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
     fire() { if (cur === mixer.existingAction(clip('reload'))) return; until = now() + play('fire', { once: true, fade: .03 }); },
     // Knife swings: the set's own light / heavy clips (else its fire clip).
     swing(kind) { const n = clip(kind) ? kind : 'fire'; until = now() + play(n, { once: true, fade: .05 }); },
@@ -259,7 +262,7 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     twirl() {},
     update(dt, speed = 0) {
       if (until && now() >= until) { until = 0; play('idle', { fade: .18 }); }
-      mixer.update(dt); fpLightTick(dt, root);   // (the map's light where you stand on your gun, a few times a second: skin-render.js)
+      mixer.update(dt); if (twists.length) forearmTwist(twists); fpLightTick(dt, root);   // (the map's light where you stand on your gun, a few times a second: skin-render.js) (forearmTwist: KNIFE-diag)
       // Restrained layers on top: a walking bob, and breathing.
       bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); breathT += dt;
       root.position.set(Math.sin(bobT) * .012 * bobA, -Math.abs(Math.cos(bobT)) * .01 * bobA + Math.sin(breathT * 1.6) * .0025, 0); root.updateMatrixWorld(true);
@@ -348,10 +351,70 @@ function dressArms(sc, arms, textures) {
   for (const side of ['ct', 't']) { const g = worn[side] = new THREE.Group(); g.name = 'cs2_arms_' + side; g.visible = side === 'ct'; g.position.copy(ref.position); g.quaternion.copy(ref.quaternion); g.scale.copy(ref.scale); ref.parent.add(g);
     for (const tpl of arms[side]) { const m = new THREE.SkinnedMesh(tpl.geometry, tpl.material); m.name = tpl.name; m.frustumCulled = false; m.castShadow = m.receiveShadow = false; m.bind(sk, ref.bindMatrix); g.add(m); } }
   for (const t of arms.textures) if (!textures.includes(t)) textures.push(t);
+  // CS2 gloves (glove-assets.js): the parts a chosen glove replaces — each side's own gloves and bare wrists in arms_<side>
+  // (sleeves_<side> stays: the agent's sleeves, the T's rolled-up forearm) — and the glove types worn on this set so far.
+  worn.ref = ref; worn.sk = sk; worn.arms = arms; worn.types = new Map(); worn.parts = { ct: [], t: [] }; worn.orig = new Map();
+  for (const side of ['ct', 't']) for (const o of worn[side].children) if (/^arms_/.test(o.name) && /^(glove|skin)$/.test(o.material.userData.part)) { worn.parts[side].push(o); worn.orig.set(o, o.material); }
+  dressGloveTypes(worn);
   return worn;
 }
+// ── CS2 gloves on the first-person arms (the player's pick: skins record 'gloves', glove-assets.js) ──
+// Only the glove part of CS2's arms is swapped: the chosen type's glove_L + glove_R + its bare wrist ('skin', drawn with the
+// arms' own bare_arm_133 material) on the set's own skeleton (the same 52 bones in the same order: that skeleton itself, as
+// the arms), the agent's sleeves kept. One material per finish (and wear step), a copy of the CS2 arms' glove material —
+// the same maps, the same shader hook and program key (armsShader, 'cs2arms1'), the same reflections: no shader is built
+// for a glove, before or during a round. Its pictures arrive under the skin gates (never mid-round); until they do, the
+// finish's 1×1 fallback set (the same maps: the same shader). A type whose meshes are not in yet: the agent's own gloves
+// tinted with the finish's fallback colour (a copy of that material: the same shader).
+const fpGloveTypes = new Set();   // (types some view asked for: sets loading later are dressed with them at build)
+// Every type worn so far or wanted at 'fp' (glove-assets prefetch: yours and your team mates'), built on a set (hidden).
+function dressGloveTypes(worn) { for (const S of [fpGloveTypes, gloveFpTypes()]) for (const ty of S) { const T = gloveType(ty); if (T?.state === 'ready') gloveGroup(worn, T); } }
+function gloveGroup(worn, T) {
+  let g = worn.types.get(T.type); if (g) return g; const ref = worn.ref, hook = worn.ct.children[0];
+  const sk = T.bones.length === worn.sk.bones.length && T.bones.every((n, i) => worn.sk.bones[i].name === n) ? worn.sk : new THREE.Skeleton(T.bones.map(n => ref.skeleton.getBoneByName(n) || ref.skeleton.bones[0]), T.inverses);
+  g = new THREE.Group(); g.name = 'cs2_gloves_' + T.type; g.visible = false; g.position.copy(ref.position); g.quaternion.copy(ref.quaternion); g.scale.copy(ref.scale); ref.parent.add(g);
+  const skinMat = worn.arms.materials.find(m => m.userData.part === 'skin') || worn.arms.materials[0];
+  for (const n of ['glove_L', 'glove_R', 'skin']) { const tpl = T.meshes[n]; if (!tpl) continue; const m = new THREE.SkinnedMesh(tpl.geometry, n === 'skin' ? skinMat : worn.orig.values().next().value); m.name = 'cs2_gloves/' + n; m.userData.glovePart = n === 'skin' ? 'skin' : 'glove';
+    m.frustumCulled = false; m.castShadow = m.receiveShadow = false; if (hook?.onBeforeRender) { m.onBeforeRender = hook.onBeforeRender; m.onAfterRender = hook.onAfterRender; } m.bind(sk, ref.bindMatrix); g.add(m); }   // (on top of the world as the arms are: weapons.js onTop)
+  worn.types.set(T.type, g); return g;
+}
+// The first-person glove material of a finish (its real pictures, or the 1×1 fallback set while they load).
+const armsGloveMat = arms => arms.materials.find(m => m.userData.part === 'glove') || arms.materials[0];
+export function fpGloveMat(arms, L) {
+  const src = L.tex?.state === 'ready' && L.tex.tex?.orm ? L.tex : L.fb; if (!src) return null;
+  return gloveMaterial(src, 'fp', tx => { const m = armsGloveMat(arms).clone(); m.name = 'cs2g_' + L.kit; m.map = tx.color; m.normalMap = tx.normal; m.aoMap = m.roughnessMap = m.metalnessMap = tx.orm; m.color.setScalar(ARM_LOOK.glove.albedo); m.roughness = m.metalness = 1; m.envMapIntensity = ARM_LOOK.glove.env;
+    m.onBeforeCompile = armsShader; m.customProgramCacheKey = armsKey; m.userData = { shared: true, part: 'glove', kit: L.kit }; m.needsUpdate = true; return m; });
+}
+const tintMat = (orig, L) => gloveMaterial(L.fb, 'tint:' + orig.uuid, () => { const m = orig.clone(); m.color.set(L.fb.color); m.onBeforeCompile = orig.onBeforeCompile; m.customProgramCacheKey = orig.customProgramCacheKey; m.userData = { shared: true, part: 'glove', tint: L.kit }; return m; });
 // A side shown (hold): GD's 'ct' / 't' wear their CS2 arms; no side (other modes) the set's own glove.
-function wearSide(worn, team) { if (!worn) return; const s = team === 'ct' || team === 't' ? team : null; for (const o of worn.legacy) o.visible = !s; worn.ct.visible = s === 'ct'; worn.t.visible = s === 't'; }
+// gl: the player's gloves (skins record 'gloves': { finish: 'cs2g:<kit>', wear }) or null — the agent's own. Run on a hold,
+// a pick and when glove files arrive (gloveVersion): never per frame. → what is shown: 'agent' | 'glove' | 'fallback' | 'tint' | 'legacy'.
+function wearSide(worn, team, gl = null) { if (!worn) return 'none'; const s = team === 'ct' || team === 't' ? team : null; for (const o of worn.legacy) o.visible = !s; worn.ct.visible = s === 'ct'; worn.t.visible = s === 't';
+  if (!worn.parts) return s ? 'agent' : 'legacy'; const L = s && gl ? gloveLook(gl, 'fp') : null; if (L) fpGloveTypes.add(L.f.type);
+  const grp = L && L.type?.state === 'ready' ? gloveGroup(worn, L.type) : null, mat = grp ? fpGloveMat(worn.arms, L) : null;
+  for (const g of worn.types.values()) g.visible = g === grp && !!mat;
+  if (grp && mat) for (const o of grp.children) if (o.userData.glovePart === 'glove') o.material = mat;
+  for (const side of ['ct', 't']) for (const o of worn.parts[side]) { const on = side === s, orig = worn.orig.get(o); o.visible = !(on && grp && mat); o.material = on && L && !grp && orig.userData.part === 'glove' ? tintMat(orig, L) : orig; }
+  worn.shows = !s ? 'legacy' : !L ? 'agent' : grp && mat ? (mat.userData.kit && L.tex?.state === 'ready' ? 'glove' : 'fallback') : 'tint'; return worn.shows; }
+// Sets loaded before a type's meshes arrived: dressed when they do (off the frame: glove-assets' load, under its gates).
+onGloves(() => { for (const set of authored.values()) if (set.worn?.types) dressGloveTypes(set.worn); });
+// ── CS2's forearm twist (KNIFE-diag; user report: the arms looked broken in a knife's slash and stab) ──
+// CS2 does not animate the forearm's twist bones: its arms model (glove_slick.vmdl_c, BoneConstraintList, read with
+// Source 2 Viewer) drives them with tilt-twist constraints — arm_lower_<s>_TWIST1 takes all of the hand's twist about
+// its x axis, arm_lower_<s>_TWIST half, the hand's rotation measured from m_qOffset (the same on both sides). The
+// exported clips hold them at the bind pose, so a hand turned over (a knife's swing: up to ~110°; a gun's idle ~15°)
+// wrung the forearm at the wrist (CS2's arms and sleeves are weighted almost all to TWIST1): a pinched, twisted wrist.
+// Checked on the bind pose: these rules give the bones' bind twist exactly (TWIST1 1.40°, TWIST 0.70°). (The upper
+// arm's twist bones carry almost no weight here: left to the clips.) Every set's own skeleton, so the CS2 arms, the
+// legacy glove and the glove picks all follow. Per update, after the mixer; no allocation.
+export const CS2_HAND_TWIST_OFFSET = Object.freeze([0.684638, -0.0025270376, 0.03596654, 0.72799087]);
+const handOffInv = new THREE.Quaternion(...CS2_HAND_TWIST_OFFSET).invert(), twQ = new THREE.Quaternion();
+// → [hand, TWIST, TWIST1, …] per side whose three bones share arm_lower as parent (CS2-data sets; [] for the packs).
+export function forearmTwists(sc) { const out = [], by = {}; sc.traverse(o => { if (o.isBone && /^(hand|arm_lower)_[LR](_TWIST1?)?$/.test(o.name)) by[o.name] ??= o; });
+  for (const s of ['L', 'R']) { const h = by['hand_' + s], a = by['arm_lower_' + s + '_TWIST'], b = by['arm_lower_' + s + '_TWIST1']; if (h && a && b && h.parent === a.parent && a.parent === b.parent) out.push(h, a, b); } return out; }
+export function forearmTwist(tw) { for (let i = 0; i < tw.length; i += 3) { twQ.copy(handOffInv).multiply(tw[i].quaternion); let x = twQ.x, w = twQ.w; const n = Math.hypot(x, w);
+  if (n < 1e-6) { x = 0; w = 1; } else { x /= n; w /= n; if (w < 0) { x = -x; w = -w; } }   // (the twist about x, the short way round)
+  tw[i + 2].quaternion.set(x, 0, 0, w); const h = Math.sqrt(.5 * (1 + w)); tw[i + 1].quaternion.set(x / (2 * h), 0, 0, h); } }   // (TWIST1 all of it, TWIST half: cos θ/4 = √((1 + cos θ/2) / 2))
 const FINGERS =['index', 'middle', 'ring', 'pinky'];
 // CS2's own hand, measured in Blender on the CS2 arms rig imported on this computer (CS2_MultiRig: Valve's arms and
 // gloves on one rig, the same proportions as CS:GO's karambit arms): each finger's knuckle → last joint over the hand's

@@ -11,8 +11,8 @@
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState, mapMeta } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR, NADE_SLOT, nadeRefusal, nadeSideRefusal } from './weapons-data.js';
-import { cleanSkinNote, skinTitle, skinKeyOf, skinKindOf, putSkin, stageSkin, flushSkins, ownerIn, setOwner, catalogHash } from './skins.js';
-import { applyHit, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
+import { cleanSkinNote, skinTitle, skinKeyOf, skinKindOf, putSkin, stageSkin, flushSkins, ownerIn, setOwner, catalogHash, gloveTitle, gloveCatalogHash } from './skins.js';
+import { applyHit, bleedFrom, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
 import { NADES, NADE_IDS, canCarry, nadesOf, throwNade, nadesTick, holdNades, clearView, fireCells, warmFire, inFire, smokeBlocks, smokeHides, setSmokeSolids, tossFlight } from './arena-nades.js';
 import { isDefuse, startDefuse, defuseTick, defuseApply, buyError, pay, charge, teamOf, siteAt, assignTeam, balanceBots, DEFUSE, PRICE, newRound, freeSpot, rulesOf, cleanRules, MATCH_PRESETS, stillLoading } from './arena-defuse.js';
 import { hurt, poseFeet } from './combat-logic.js';
@@ -217,6 +217,9 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
       const set = a.set; if (!set || typeof set !== 'object' || Array.isArray(set)) throw Error('No skins given'); const slots = Object.keys(set); if (slots.length > 40) throw Error('40 skins at most at once'); if (JSON.stringify(set).length > 16384) throw Error('Too much skin data (16 KB at most)');
       let n = 0, refused = 0; for (const sk of slots) { const kind = skinKindOf(sk); if (!kind) { refused++; continue; } if (a.fill && mine[sk]) continue; try { put(sk, set[sk] === null ? null : cleanSkinNote(set[sk], kind, mine[sk], sk).skin); n++; } catch { refused++; } }
       return 'Skins: ' + n + ' set' + on + (refused ? ' · ' + refused + ' refused' : '') + (n ? later : ''); }
+    if (a.weapon === 'gloves') {   // (CS2 gloves: the one 'gloves' slot, the kit checked against the host's gloves.json — skins.js cleanGloveNote)
+      if (a.clear) { put('gloves', null); return 'Default gloves' + on + later; }
+      const { skin: s } = cleanSkinNote(a.skin, 'gloves', mine.gloves, 'gloves'); put('gloves', s); return gloveTitle(s) + (on ? ' given to ' + who : ' equipped') + later; }
     const w = weaponById(String(a.weapon || '')), sk = w && skinKeyOf(w.id); if (!w) throw Error('Unknown weapon'); if (!sk) throw Error('Grenades and the bomb take no skins');
     const label = sk === 'knife' ? { butterfly: '★ Butterfly Knife', stiletto: '★ Stiletto Knife', m9: '★ M9 Bayonet', karambit: '★ Karambit' }[A.knives?.[k] || (/^darja$/.test(k) ? 'karambit' : '')] || 'Knife' : w.name;   // (the knife they carry)
     if (a.clear) { put(sk, null); return (sk === 'knife' ? 'Default knife' : label + ' · default finish') + on + later; }
@@ -410,7 +413,7 @@ const BOT_VIEW = ['id', 'name', 'weapon', 'x', 'y', 'z', 'yaw', 'dead', 'skill']
 // Skins are not in it (skins.js; lan/room.mjs 'skins' message, by srev): every gun's skin for 10 players reached 28–140 KB
 // per frame, past the stream's 128 KB limit. skinCat: the host's CS2 finish catalogue (a page fetches the same one).
 const VIEW_SKIP = new Set(['bots', 'deathDrops', 'dirty', 'botAt', 'restarting', 'skins', 'skinsNext', 'skinsDirty', 'srev']);
-export function arenaView(game) { const A = game.arena; if (!A) return null; const out = {}; for (const k of Object.keys(A)) if (!VIEW_SKIP.has(k)) out[k] = A[k]; const cat = catalogHash(); if (cat) out.skinCat = cat;
+export function arenaView(game) { const A = game.arena; if (!A) return null; const out = {}; for (const k of Object.keys(A)) if (!VIEW_SKIP.has(k)) out[k] = A[k]; const cat = catalogHash(); if (cat) out.skinCat = cat; const gc = gloveCatalogHash(); if (gc) out.gloveCat = gc;   /* (gloveCat: the host's CS2 glove catalogue — a page fetches gloves.json again when it changes; gloves themselves ride the 'skins' message) */
   out.bots = A.bots.map(b => { const v = {}; for (const k of BOT_VIEW) if (b[k] !== undefined) v[k] = b[k]; return v; }); return out; }
 // The host's clock jumped ahead with nothing run in between (a laptop asleep, the process stopped): every match timer moves
 // on by that gap, as if the match had been paused (no rounds ended, bombs gone off or respawns all at once on waking).
@@ -550,7 +553,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
         bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true; if (C.safe) delete C.safe[key(bot.name)];   // firing ends spawn protection
         // Difficulty: accuracy, head-shot share and reaction time (easy · normal · hard, host setting).
         const pHit = Math.max(.05, Math.min(.9, bot.skill * DF.aim * (1 - td / (wpn.range * 1.3)) * (wpn.kind === 'shotgun' && td > 40 ? .3 : 1)));
-        if (Math.random() < pHit) { const r = Math.random(), zone = r < DF.head ? 'head' : r < .55 ? 'chest' : r < .8 ? 'stomach' : 'legs'; applyHit(game, bot.name, tgt.name, wpn, zone, td, wpn.pellets ? 1 + Math.floor(Math.random() * wpn.pellets * .6) : 1, now); }
+        if (Math.random() < pHit) { const r = Math.random(), zone = r < DF.head ? 'head' : r < .55 ? 'chest' : r < .8 ? 'stomach' : 'legs'; bleedFrom(game, tgt.name, applyHit(game, bot.name, tgt.name, wpn, zone, td, wpn.pellets ? 1 + Math.floor(Math.random() * wpn.pellets * .6) : 1, now), bot.x, feetOf(g, bot) + EYE, bot.z, tgt, now); }   /* (blood: combat-logic.js bleedFrom — gd-blood.js draws it) */
       }
       continue;
     }
@@ -579,16 +582,16 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
 function defuseBot(game, bot, team, g, dt, now) {
   const d = game.combat.d, r = d.round, m = g.map, k = key(bot.name), cx = ARENA.cx, cz = ARENA.cz;
   if (!bot.path) { const routes = m.routes[team], site = team === 't' ? r.tSite : parseInt(bot.id.slice(4)) % 2 ? 'A' : 'B'; bot.site = site; bot.path = routes[site].map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; }
-  if (r.phase === 'planted' && team === 'ct' && !bot.retake) { bot.retake = true; bot.path = [...bot.path.slice(bot.pi), [r.planted.x, r.planted.z]]; bot.pi = 0; }
+  if (r.phase === 'planted' && team === 'ct' && !bot.retake) { bot.retake = true; bot.path = [...bot.path.slice(bot.pi), [r.planted.x, r.planted.z, r.planted.y]]; bot.pi = 0; }   // (on the bomb's own floor: Nuke's B lies under A — a CT on A over the bomb re-plans down to it, never to A's floor over it)
   // At the bomb: defuse. At the site with the bomb: plant.
-  if (team === 'ct' && r.phase === 'planted' && Math.hypot(bot.x - r.planted.x, bot.z - r.planted.z) < 5) { if (!r.defuse) { r.defuse = { by: k, start: now, ms: d.kits[k] ? DEFUSE.kitMs : DEFUSE.defuseMs, x: bot.x, z: bot.z }; return true; } return false; }
+  if (team === 'ct' && r.phase === 'planted' && Math.hypot(bot.x - r.planted.x, bot.z - r.planted.z) < 5 && !(Number.isFinite(r.planted.y) && Math.abs(feetOf(g, bot) - r.planted.y) > 6)) {   /* (at it: on its floor, not over it on A) */ if (!r.defuse) { r.defuse = { by: k, start: now, ms: d.kits[k] ? DEFUSE.kitMs : DEFUSE.defuseMs, x: bot.x, z: bot.z }; return true; } return false; }
   if (team === 't' && d.bomb.carrier === k && r.phase === 'live' && !r.plant) { const site = siteAt(game, { x: bot.x, z: bot.z, y: feetOf(g, bot) + EYE }); if (site) { r.plant = { by: k, start: now, x: bot.x, z: bot.z, y: feetOf(g, bot), site }; return true; } }
   if (r.plant?.by === k) return false;   // standing still while planting
   // A Terrorist without the bomb picks it up if it lies near.
   if (team === 't' && !d.bomb.carrier) { const bf = botFloor(game, bot), i = (game.combat.ground || []).findIndex(it => it.item === 'c4' && Math.hypot(it.x - bot.x, it.z - bot.z) < 4 && Math.abs((it.y || 0) - bf) <= 4 && landed(it, now, 0)); if (i >= 0) { game.combat.ground.splice(i, 1); d.bomb.carrier = k; return true; } }   // (landed and on its own floor, as a gun: a dropped bomb flies now — v52 review: a bot took it mid-air from the floor below)
   // Past the last waypoint but not there (it was skipped while stuck): walk a fresh route to it (at most every 2 s).
-  if (bot.pi >= bot.path.length) { const end = bot.path[bot.path.length - 1]; if (!m.nav || !end || Math.hypot(end[0] - bot.x, end[1] - bot.z) < 4 || now - (bot.replanAt || 0) <= 2000 || !routeTurn()) return false;
-    bot.replanAt = now; const fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz); if (!fresh.length) return false; bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; }
+  if (bot.pi >= bot.path.length) { const end = bot.path[bot.path.length - 1]; if (!m.nav || !end || (Math.hypot(end[0] - bot.x, end[1] - bot.z) < 4 && !(Number.isFinite(end[2]) && Math.abs(feetOf(g, bot) - end[2]) > 6)) || now - (bot.replanAt || 0) <= 2000 || !routeTurn()) return false;
+    bot.replanAt = now; const fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz, null, end[2]); if (!fresh.length) return false; bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; }
   // Reached when close: on the classic maps within 1.5 units (a tick's step), so a bot never cuts a corner off the walk the
   // route checked (4 units let bots shortcut round ledges and wedge there).
   // A waypoint is reached on its own floor (classic maps: a point below a ledge is not reached from the ledge above
@@ -601,7 +604,7 @@ function defuseBot(game, bot, team, g, dt, now) {
     if (bot.wpI !== bot.pi || bot.wpPath !== bot.path) { bot.wpI = bot.pi; bot.wpPath = bot.path; bot.wpBest = prog; bot.wpAt = now; }
     else if (prog < bot.wpBest - 1) { bot.wpBest = prog; bot.wpAt = now; }
     else if (m.nav && now - bot.wpAt > 3000 && routeTurn()) { bot.wpAt = now; (bot.avoid ??= []).push([wx - cx, wz - cz]); if (bot.avoid.length > 8) bot.avoid.shift();
-      const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz, bot.avoid);
+      const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz, bot.avoid, end[2]);
       if (fresh.length) { bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; } } }
   let tx = wx, tz = wz; if (above && dw < 4) { const [px, pz] = bot.pi > 0 ? bot.path[bot.pi - 1] : [bot.x - (wx - bot.x), bot.z - (wz - bot.z)], L = Math.hypot(wx - px, wz - pz) || 1; tx = wx + (wx - px) / L * 3; tz = wz + (wz - pz) / L * 3; }
   const head0 = Math.atan2(tx - bot.x, tz - bot.z), step = 26 * dt;
@@ -610,7 +613,7 @@ function defuseBot(game, bot, team, g, dt, now) {
   const stuckFor = now - (bot.stillSince ?? now), head = stuckFor > 1000 && stuckFor % 1500 < 500 ? head0 + (Math.floor(stuckFor / 1500) % 2 ? 2.2 : -2.2) : head0;
   for (const turn of [0, .6, -.6, 1.2, -1.2]) { const h = head + turn, nx = bot.x + Math.sin(h) * step, nz = bot.z + Math.cos(h) * step; if (tryMove(g, bot, nx, nz)) { bot.yaw = h + Math.PI; return true; } }
   // Stuck: on classic maps walk a fresh route from here to where this one ends (at most every 2 s); else skip the waypoint.
-  if (m.nav && now - (bot.replanAt || 0) > 2000) { if (!routeTurn()) return false;   /* (another bot re-planned this tick: wait for the next one) */ bot.replanAt = now; const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz);
+  if (m.nav && now - (bot.replanAt || 0) > 2000) { if (!routeTurn()) return false;   /* (another bot re-planned this tick: wait for the next one) */ bot.replanAt = now; const end = bot.path[bot.path.length - 1], fresh = m.nav.route(bot.x - cx, bot.z - cz, feetOf(g, bot), end[0] - cx, end[1] - cz, null, end[2]);
     if (fresh.length) { bot.path = fresh.map(([x, z, y]) => [cx + x, cz + z, y]); bot.pi = 0; return true; } }
   bot.pi++; return true;   // stuck: skip this waypoint
 }

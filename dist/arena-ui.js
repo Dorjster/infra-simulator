@@ -19,6 +19,8 @@ import { replay } from './phys-smooth.js';   // (a dropped gun's toss drawn betw
 import { FINISHES, STICKERS, STICKER_IDS, stickerSlots, wearName, skinTitle, SKIN_SLOTS, groundSkin, hasCatalog, isCs2 } from './skins.js';
 import { finishSwatch, skinObject, unskinObject } from './skin-render.js';
 import { skinManifest, skinIconURL, finishFiles } from './skin-textures.js';
+import { gloveManifest, loadGloveManifest, gloveTypeList, gloveFinishes, gloveFinish, gloveIconURL, RARITY_COLOR, onGloves } from './glove-assets.js';
+import { gloveKit } from './skins.js';
 import { explosion, beep, defuseClick } from './arena-nades-view.js';
 import { PRICE, DEFUSE, DEFAULT_RULES } from './arena-defuse.js';
 
@@ -300,17 +302,54 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
       ${d.stickers.map((x, i) => `<div class="row sticker"><b>${esc(STICKERS[x.id]?.name || x.id)}</b>${[['x', 'Across', 0, 1, .01], ['y', 'Along', 0, 1, .01], ['scale', 'Size', .4, 2.5, .05], ['rot', 'Turn', -180, 180, 5], ['wear', 'Wear', 0, 1, .05]].map(([k, t, lo, hi, st]) => `<label>${t} <input data-sk-st="${i}" data-k="${k}" type="range" min="${lo}" max="${hi}" step="${st}" value="${x[k]}"></label>`).join('')}<button data-sk-del="${i}">✕</button></div>`).join('')}</details>` : ''}
       <div class="row"><button data-sk-apply class="primary">Equip</button><button data-sk-reset>Clear</button><button data-sk-clearall>Clear all</button></div>${skLive() ? '<p class="note">A round is on: a change applies next round.</p>' : ''}
       ${others.length ? `<h3>DARJA · GIVE THIS SKIN</h3><div class="row"><select id="sk-for">${others.map(x => `<option>${esc(x)}</option>`).join('')}</select><button data-sk-give class="primary">Give ▸</button><button data-sk-give-reset>Give default</button></div>` : ''}`; }
-  const skInner = () => { skSrev = g().arena?.srev ?? 0; return `<div class="sk-left"><div class="sk-cats">${SK_CATS.map(([c, t]) => `<button data-sk-cat="${c}"${skCat === c ? ' class="on"' : ''}>${t}</button>`).join('')}</div><div id="sk-list" class="sk-list">${skList()}</div></div><div class="sk-mid" id="sk-mid">${skMid()}</div><div class="sk-detail" id="sk-detail">${skDetail()}</div>`; };
-  function skinsSection() { if (!skinDraft) skinDraft = draftFor('knife'); return `<div id="sk-root" class="sk">${skInner()}</div>`; }
+  // ── Gloves (CS2's glove finishes imported on the host: glove-assets.js, user-assets/gloves/gloves.json) ──
+  // A "Gloves" tab beside the knives (only when the host's gloves.json is there): left the types — Default (agent gloves),
+  // then Sport Gloves first and the rest in CS2's order — middle that type's finishes (CS2's econ icon, name, rarity in
+  // its colour, a search), right the chosen pair: its icon, title, wear in the finish's range, Equip / Default (and
+  // Darja's give). Everyone picks any pair, as knives; the host checks it (skins.js cleanGloveNote); a change in a live
+  // round applies at the next freeze. Stored as the skins record's 'gloves' slot: { finish: 'cs2g:<kit>', wear }.
+  let glType = 'sporty';
+  const skCats = () => gloveManifest() ? [SK_CATS[0], ['gloves', 'Gloves'], ...SK_CATS.slice(1)] : SK_CATS;
+  const glMine = () => g().arena?.skins?.[me()]?.gloves || null;
+  const glTitle = d => { const f = gloveFinish(gloveKit(d)); return f ? `★ ${gloveManifest()?.types?.[f.type]?.name || 'Gloves'} | ${f.name} (${wearName(d.wear ?? 0)})` : 'Default (agent gloves)'; };
+  function glDraft() { const cur = glMine(), f = gloveFinish(gloveKit(cur)); if (f) glType = f.type; else if (!gloveManifest()?.types?.[glType]) glType = gloveTypeList()[0]?.id || 'sporty';
+    return { weapon: 'gloves', finish: f ? cur.finish : '', wear: cur?.wear ?? (f?.wearRange?.[0] ?? .06) }; }
+  const glImg = (kit, cls = '') => { const u = gloveIconURL(kit); return u ? `<img${cls ? ` class="${cls}"` : ''} src="${esc(u)}" alt="" loading="lazy" draggable="false">` : `<i class="sk-none${cls ? ' ' + cls : ''}" style="background:${esc(gloveFinish(kit)?.fallback || '#151d24')}"></i>`; };
+  const glRC = f => RARITY_COLOR[f?.rarity] || SK_RC[f?.rarityName] || '#eb4b4b';
+  function glList() { const mine = gloveKit(glMine()), mt = gloveFinish(mine)?.type;
+    return `<button data-gl-type=""${glType === '' ? ' class="on"' : ''}><i class="sk-none"></i><span>Default (agent gloves)</span>${!mine ? '<b class="ok">✓</b>' : ''}</button>` + gloveTypeList().map(t => `<button data-gl-type="${esc(t.id)}"${glType === t.id ? ' class="on"' : ''}>${glImg(mt === t.id ? mine : gloveFinishes(t.id)[0]?.kit)}<span>★ ${esc(t.name)} <small class="rar">${t.count}</small></span>${mt === t.id ? '<b class="ok">✓</b>' : ''}</button>`).join(''); }
+  function glGrid() { const d = skinDraft, q = skQ.trim().toLowerCase(), all = glType ? gloveFinishes(glType).filter(f => !q || f.name.toLowerCase().includes(q)) : [];
+    const def = `<button data-gl-finish=""${!d.finish ? ' class="on"' : ''} style="border-bottom:3px solid #3d5566" title="The agent's own gloves (CT: SAS Hardknuckle, T: Phoenix Full-finger)"><i class="sk-none" style="width:100%;height:auto;aspect-ratio:16/10"></i><small>Default (agent gloves)</small><span class="rar">CT and T: the agent's own</span></button>`;
+    return `<div class="sk-grid">${def}${all.map(f => `<button data-gl-finish="cs2g:${esc(f.kit)}"${d.finish === 'cs2g:' + f.kit ? ' class="on"' : ''} style="border-bottom:3px solid ${glRC(f)}" title="${esc(f.name)} · ${esc(f.rarityName || '')}">${glImg(f.kit)}<small>${esc(f.name)}</small><span class="rar" style="color:${glRC(f)}">${esc(f.rarityName || '')}</span></button>`).join('')}</div>`; }
+  const glMid = () => `<div class="row sk-tools"><b>${esc(glType ? gloveManifest()?.types?.[glType]?.name || '' : 'Default (agent gloves)')}</b><input id="sk-q" type="search" placeholder="Search" value="${esc(skQ)}" autocomplete="off"></div><div id="sk-grid">${glGrid()}</div>`;
+  function glDetail() { const d = skinDraft, f = gloveFinish(gloveKit(d)), have = glMine(), [lo, hi] = f?.wearRange || [0, 1], others = /^darja$/.test(me()) ? names().filter(x => key(x) !== me() && !/^BOT /.test(x)) : [];
+    return `${f ? glImg(gloveKit(d), 'big') : '<i class="sk-none big" style="display:block;width:100%;height:auto;aspect-ratio:2/1"></i>'}<div class="sk-title" id="sk-title" style="color:${f ? glRC(f) : 'inherit'}">${esc(glTitle(d))}</div>
+      <small class="note" id="sk-cur">Equipped: ${esc(glTitle(have))}</small>${f ? `<small class="note rar" style="color:${glRC(f)}">${esc(f.rarityName || '')}${f.shader === 'v2' ? ' · colours approximate (CS2\'s newer glove shader)' : ''}</small>` : ''}
+      ${f ? `<label class="sk-l">Wear <b id="sk-wear-t">${(+d.wear).toFixed(3)} · ${wearName(d.wear)}</b><input id="gl-wear" type="range" min="${lo}" max="${hi}" step="0.001" value="${d.wear}"></label><small class="note">This finish: ${wearName(lo)} to ${wearName(hi)} (${lo}–${hi}).</small>` : '<small class="note">Default: CT wear the SAS Hardknuckle gloves, T the Phoenix Full-finger gloves.</small>'}
+      <div class="row"><button data-gl-apply class="primary">Equip</button><button data-gl-reset>Default gloves</button></div>${skLive() ? '<p class="note">A round is on: a change applies next round.</p>' : ''}
+      ${others.length ? `<h3>DARJA · GIVE THESE GLOVES</h3><div class="row"><select id="sk-for">${others.map(x => `<option>${esc(x)}</option>`).join('')}</select><button data-gl-give class="primary">Give ▸</button><button data-gl-give-reset>Give default</button></div>` : ''}`; }
+  const glOn = () => skCat === 'gloves' && !!gloveManifest();
+  const skInner = () => { skSrev = g().arena?.srev ?? 0; if (skCat === 'gloves' && !gloveManifest()) { skCat = 'knives'; skinDraft = draftFor('knife'); } if (glOn() && skinDraft?.weapon !== 'gloves') skinDraft = glDraft();
+    return `<div class="sk-left"><div class="sk-cats">${skCats().map(([c, t]) => `<button data-sk-cat="${c}"${skCat === c ? ' class="on"' : ''}>${t}</button>`).join('')}</div><div id="sk-list" class="sk-list">${glOn() ? glList() : skList()}</div></div><div class="sk-mid" id="sk-mid">${glOn() ? glMid() : skMid()}</div><div class="sk-detail" id="sk-detail">${glOn() ? glDetail() : skDetail()}</div>`; };
+  let glHad = null; onGloves(() => { const has = !!gloveManifest(); if (has === glHad) return; glHad = has; if (teamOpen && teamTab === 'skins' && $('sk-root')) skPart('sk-root', skInner()); });   // (the host's gloves.json arrived or went: the tab shown or hidden)
+  function skinsSection() { loadGloveManifest(); if (!skinDraft) skinDraft = draftFor('knife'); return `<div id="sk-root" class="sk">${skInner()}</div>`; }
   const skPaint = el => el?.querySelectorAll('canvas[data-sk-swatch]').forEach(c => { const sw = finishSwatch(c.dataset.skSwatch, +c.dataset.seed || 1, c.width, c.height); if (sw) c.getContext('2d').drawImage(sw, 0, 0); });
   const skPart = (id, html) => { const el = $(id); if (!el) return; const sc = el.scrollTop; el.innerHTML = html; el.scrollTop = sc; skPaint(el); };
-  const skMidRedraw = () => { const q = document.activeElement?.id === 'sk-q'; skPart('sk-mid', skMid()); if (q) { const i = $('sk-q'); i?.focus(); i?.setSelectionRange?.(i.value.length, i.value.length); } };
+  const skMidRedraw = () => { const q = document.activeElement?.id === 'sk-q'; skPart('sk-mid', glOn() ? glMid() : skMid()); if (q) { const i = $('sk-q'); i?.focus(); i?.setSelectionRange?.(i.value.length, i.value.length); } };
   // The room's skins changed while the menu is open (srev): only the list's ✓ and the equipped line (no focus or scroll taken).
-  function skinsFresh() { if (!teamOpen || teamTab !== 'skins' || !$('sk-root')) return; const r = g().arena?.srev ?? 0; if (r === skSrev) return; skSrev = r; skPart('sk-list', skList()); const c = $('sk-cur'), have = skMine(skinDraft.weapon); if (c) c.textContent = have ? 'Equipped: ' + skinTitle(skName(skinDraft.weapon), have) + (have.st ? ' · ' + (have.kills | 0) + ' kills' : '') : 'Equipped: default look'; }
+  function skinsFresh() { if (!teamOpen || teamTab !== 'skins' || !$('sk-root')) return; const r = g().arena?.srev ?? 0; if (r === skSrev) return; skSrev = r;
+    if (glOn()) { skPart('sk-list', glList()); const c = $('sk-cur'); if (c) c.textContent = 'Equipped: ' + glTitle(glMine()); return; }
+    skPart('sk-list', skList()); const c = $('sk-cur'), have = skMine(skinDraft.weapon); if (c) c.textContent = have ? 'Equipped: ' + skinTitle(skName(skinDraft.weapon), have) + (have.st ? ' · ' + (have.kills | 0) + ' kills' : '') : 'Equipped: default look'; }
   function skinsWire(R) { const root = R.querySelector('#sk-root'); if (!root || !skinDraft) return; skPaint(root); const d = () => skinDraft;
     const act = async (a, after) => { const r = await send(a); if (r?.error) notify(r.error); else notify(typeof r === 'string' ? r : r?.message || 'Done'); after?.(r); if (teamOpen && teamTab === 'skins') { skSrev = -1; skinsFresh(); } };
     const title = () => { const t = $('sk-title'); if (t) t.textContent = skinTitle(skName(d().weapon), d().finish === 'none' && !d().st && !d().name ? null : skRec(d())); };
     root.addEventListener('click', e => { const b = e.target.closest('button'); if (!b || !root.contains(b)) return; const ds = b.dataset;
+      if (ds.skCat === 'gloves') { skCat = 'gloves'; skQ = ''; skinDraft = glDraft(); skPart('sk-root', skInner()); return; }
+      if (ds.glType !== undefined) { glType = ds.glType; skQ = ''; skPart('sk-list', glList()); skMidRedraw(); return; }
+      if (ds.glFinish !== undefined) { const f = gloveFinish(gloveKit({ finish: ds.glFinish })); d().finish = f ? ds.glFinish : ''; if (f) { const [lo, hi] = f.wearRange || [0, 1]; d().wear = Math.min(hi, Math.max(lo, +d().wear || lo)); } skPart('sk-grid', glGrid()); skPart('sk-detail', glDetail()); return; }
+      if ('glApply' in ds) { act(d().finish ? { type: 'skin', weapon: 'gloves', skin: { finish: d().finish, wear: +d().wear } } : { type: 'skin', weapon: 'gloves', clear: true }); return; }
+      if ('glReset' in ds) { act({ type: 'skin', weapon: 'gloves', clear: true }, () => { skinDraft = glDraft(); skPart('sk-detail', glDetail()); skPart('sk-grid', glGrid()); }); return; }
+      if ('glGive' in ds || 'glGiveReset' in ds) { const who = root.querySelector('#sk-for')?.value; if (who) act('glGive' in ds && d().finish ? { type: 'skin', weapon: 'gloves', for: who, skin: { finish: d().finish, wear: +d().wear } } : { type: 'skin', weapon: 'gloves', for: who, clear: true }); return; }
       if (ds.skCat) { skCat = ds.skCat; skinDraft = draftFor(skCat === 'knives' ? 'knife' : SKIN_SLOTS.find(id => id !== 'knife' && skCatOf(id) === skCat) || 'knife'); skPart('sk-root', skInner()); return; }
       if (ds.skW) { skinDraft = draftFor(ds.skW); skPart('sk-list', skList()); skMidRedraw(); skPart('sk-detail', skDetail()); return; }
       if (ds.skSrc) { skSrc = ds.skSrc; skPage = 0; skRar = ''; skMidRedraw(); return; }
@@ -320,12 +359,13 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
       if (ds.skDel !== undefined) { d().stickers.splice(+ds.skDel, 1); skPart('sk-detail', skDetail()); return; }
       if ('skApply' in ds) { act({ type: 'skin', weapon: d().weapon, skin: skRec(d()) }); return; }
       if ('skReset' in ds) { const w = d().weapon; act({ type: 'skin', weapon: w, clear: true }, () => { skinDraft = draftFor(w); skPart('sk-detail', skDetail()); skMidRedraw(); }); return; }
-      if ('skClearall' in ds) { if (confirm('Take the skins off all your weapons and your knife?')) act({ type: 'skins', clearAll: true }, () => { skinDraft = draftFor(d().weapon); skPart('sk-detail', skDetail()); }); return; }
+      if ('skClearall' in ds) { if (confirm('Take the skins off all your weapons, your knife and your gloves?')) act({ type: 'skins', clearAll: true }, () => { skinDraft = draftFor(d().weapon); skPart('sk-detail', skDetail()); }); return; }
       const who = root.querySelector('#sk-for')?.value;   // (Darja: the skin drafted here, on the chosen player's same weapon — the room checks she is Darja)
       if ('skGive' in ds && who) act({ type: 'skin', weapon: d().weapon, for: who, skin: skRec(d()) });
       if ('skGiveReset' in ds && who) act({ type: 'skin', weapon: d().weapon, for: who, clear: true }); });
     root.addEventListener('input', e => { const t = e.target;
-      if (t.id === 'sk-q') { skQ = t.value; skPage = 0; skPart('sk-grid', skGrid()); }
+      if (t.id === 'sk-q') { skQ = t.value; skPage = 0; skPart('sk-grid', glOn() ? glGrid() : skGrid()); }
+      else if (t.id === 'gl-wear') { d().wear = +t.value; const w = $('sk-wear-t'); if (w) w.textContent = d().wear.toFixed(3) + ' · ' + wearName(d().wear); const ti = $('sk-title'); if (ti) ti.textContent = glTitle(d()); }
       else if (t.id === 'sk-wear') { d().wear = +t.value; const w = $('sk-wear-t'); if (w) w.textContent = d().wear.toFixed(3) + ' · ' + wearName(d().wear); title(); }
       else if (t.id === 'sk-name') { d().name = t.value; title(); }
       else if (t.dataset.skSt !== undefined) { const x = d().stickers[+t.dataset.skSt]; if (x) x[t.dataset.k] = +t.value; } });
