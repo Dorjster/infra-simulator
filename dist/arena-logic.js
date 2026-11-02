@@ -9,7 +9,7 @@
 //  · Bots: added and removed by any player; they walk between spawn points, need real line of sight (map walls),
 //    react after a short delay, miss more at range and reload. They hit through the same damage rules as players.
 import { ARENA } from './facility-layout.js';
-import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState, mapMeta } from './arena-maps.js';
+import { ARENA_MAPS, mapBoxes, walkable, lineOfSight, segmentClear, spawnSlots, floorAt, applyMapState, mapMeta, bulletPath, BulletPath } from './arena-maps.js';
 import { WEAPONS, weaponById, MAX_HP, EYE, isFirearm, fullAmmo, defaultPistol, ARMOR, NADE_SLOT, nadeRefusal, nadeSideRefusal } from './weapons-data.js';
 import { cleanSkinNote, skinTitle, skinKeyOf, skinKindOf, putSkin, stageSkin, flushSkins, ownerIn, setOwner, catalogHash, gloveTitle, gloveCatalogHash } from './skins.js';
 import { applyHit, bleedFrom, isDown, hpOf, ammoOf, setAmmo, refillAll, teamPistol, SPAWN_SAFE_MS } from './combat-logic.js';
@@ -138,6 +138,17 @@ function alive(game, players, but) {
 
 // A pane a grenade or a tossed gun went through (its id: map movers): broken in the map state for everyone, once.
 const breakPane = (game, id) => { const m = ARENA_MAPS[game.arena.map]?.movers?.[id], st = mapStateOf(game); if (m?.kind !== 'break' || st.broken[id]) return false; st.broken[id] = 1; st.v++; syncMapState(game); return true; };
+// A shot through glass (a bot's — its bullets fly on the host only: weapons.js sends a player's): every pane on the line
+// from the eye (ex, ey, ez) toward (tx, ty, tz) before what stops it breaks for everyone, the way a player's bullet breaks
+// it (CS2: a bot's bullets break glass as anyone's). World coordinates (game units); returns how many broke. One reused
+// path (no garbage per shot).
+const GLASS_PATH = new BulletPath();
+export function shotGlass(game, ex, ey, ez, tx, ty, tz, pen = 0) { const movers = ARENA_MAPS[game.arena?.map]?.movers; if (!movers?.length) return 0; const B = G(game).boxes; if (!B?.movers?.length) return 0;
+  let dx = tx - ex, dy = ty - ey, dz = tz - ez; const L = Math.hypot(dx, dy, dz); if (!(L > .01)) return 0; dx /= L; dy /= L; dz /= L;
+  const P = bulletPath(B, ex, ey, ez, dx, dy, dz, L, pen, GLASS_PATH), end = Math.min(P.stop, L); let n = 0;
+  for (let i = 0; i <= P.crossed.length; i++) { const b = i < P.crossed.length ? (P.crossed[i].t0 <= end ? P.crossed[i].b : null) : P.stop <= L ? P.stopBox : null;
+    const m = b?.mover != null && b.role === 'shut' ? movers[b.mover] : null; if (m?.kind === 'break' && m.glass && breakPane(game, b.mover)) n++; }
+  return n; }
 // Put an item on the ground at (x, z), resting at height y.
 // A gun keeps its rounds on the ground ([magazine, reserve]); `by` and their team are shown to whoever finds it.
 // fly (optional): tossed from { x, y, z } with { vx, vy, vz } — where it comes to rest is where it lies (tossFlight);
@@ -551,6 +562,7 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
       if (bot.ammo <= 0) { if (botReload(game, bot)) { bot.reloadUntil = now + wpn.reloadMs; bot.reloadN = (bot.reloadN || 0) + 1; } changed = true; continue; }
       if (Math.abs(diff) < .12 && now - bot.seenAt > react && now - bot.lastShot > wpn.rateMs * (wpn.auto ? 1.6 : 1.1)) {
         bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true; if (C.safe) delete C.safe[key(bot.name)];   // firing ends spawn protection
+        { const fy = feetOf(g, bot), ty = Number.isFinite(tgt.fy) ? tgt.fy + (tgt.cr ? 5.6 : 7.9) : (tgt.y ?? EYE) - 2; if (shotGlass(game, bot.x, fy + EYE, bot.z, tgt.x, ty, tgt.z, wpn.pen || 0)) changed = true; }   // (glass on its line breaks, hit or miss)
         // Difficulty: accuracy, head-shot share and reaction time (easy · normal · hard, host setting).
         const pHit = Math.max(.05, Math.min(.9, bot.skill * DF.aim * (1 - td / (wpn.range * 1.3)) * (wpn.kind === 'shotgun' && td > 40 ? .3 : 1)));
         if (Math.random() < pHit) { const r = Math.random(), zone = r < DF.head ? 'head' : r < .55 ? 'chest' : r < .8 ? 'stomach' : 'legs'; bleedFrom(game, tgt.name, applyHit(game, bot.name, tgt.name, wpn, zone, td, wpn.pellets ? 1 + Math.floor(Math.random() * wpn.pellets * .6) : 1, now), bot.x, feetOf(g, bot) + EYE, bot.z, tgt, now); }   /* (blood: combat-logic.js bleedFrom — gd-blood.js draws it) */

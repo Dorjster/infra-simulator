@@ -80,5 +80,37 @@ if (file('nuke')) { const { M, boxes, G, gy, toH } = load('nuke');
   let spots = 0, held = 0; const bad = [];
   for (let hx = 360; hx <= 840; hx += 60) for (let hy = -1060; hy <= -720; hy += 50) { const [x, z] = G(hx, hy), g = MV.groundAt(boxes, x, z, gy(-740)); spots++; if (toH(0, 0, g)[2] > -790) held++; else if (bad.length < 4) bad.push([hx, hy, +toH(0, 0, g)[2].toFixed(0)]); }
   ok('nuke: B\'s floor windows all broken, the floor still holds', held / spots >= .95, held + '/' + spots + ' ' + JSON.stringify(bad));
+  // Every glass on B breaks (the v52.0.1 report "Nuke's B glasses should break like the vent's board"): the 44 floor
+  // windows, the 20 floor panels the importer made world (17 over metal, 3 under a metal plate's collision — 2 panes, one
+  // two layers) and the 2 Observation windows (no glass collision in the file) — cs-maps/cs2-extra-panes.js.
+  const inBAll = m => { const a = toH(m.box[0], m.box[3], m.box[4]), c = toH(m.box[1], m.box[2], m.box[5]); return a[0] > -300 && c[0] < 1045 && a[1] > -1100 && c[1] < -400 && a[2] > -780 && c[2] < -500; };
+  const glass = M.movers.map((m, id) => ({ m, id })).filter(({ m }) => m.kind === 'break' && m.glass && inBAll(m));
+  ok('nuke: every glass on B is a breakable glass pane (floor windows, the panels over and under metal, Observation)', glass.length >= 65 && glass.filter(q => q.m.pane).length === glass.length, glass.length + ' panes');
+  // A shot at each from two places (bulletPath as weapons.js and the host's bots fire it: a pane crossed breaks).
+  for (const b of boxes.movers) b.off = b.mat === 'door' ? true : b.role !== 'shut';
+  const BP = new AM.BulletPath(), G3 = (hx, hy, hz) => { const [x, z] = G(hx, hy); return [x, gy(hz), z]; }; let shot = 0; const miss = [];
+  for (const { m, id } of glass) { const a = toH(m.box[0], m.box[3], m.box[4]), c = toH(m.box[1], m.box[2], m.box[5]), cx = (a[0] + c[0]) / 2, cy = (a[1] + c[1]) / 2, cz = (a[2] + c[2]) / 2, flat = c[2] - a[2] < 15; let got = 0;
+    for (const e of flat ? [[cx - 60, cy - 40, -708], [cx + 50, cy + 30, -708]] : [[cx - 48, cy, cz + 10], [cx + 45, cy, cz + 15]]) { const [ex, ey, ez] = G3(...e), [tx, ty, tz] = G3(cx, cy, flat ? c[2] : cz), L = Math.hypot(tx - ex, ty - ey, tz - ez);
+      AM.bulletPath(boxes, ex, ey, ez, (tx - ex) / L, (ty - ey) / L, (tz - ez) / L, L + 5, 0, BP); const end = Math.min(BP.stop, L + 5); if (BP.crossed.some(q => q.t0 <= end && q.b?.mover === id) || BP.stopBox?.mover === id) got++; }
+    if (got) shot++; else if (miss.length < 4) miss.push([id, a.map(Math.round)]); }
+  ok('nuke: a shot reaches every glass on B (its pane is crossed before anything stops the bullet)', shot === glass.length, shot + '/' + glass.length + ' · missed ' + JSON.stringify(miss));
+  // The added panes: the same on every computer (each parse gives the same movers, in the same order), after the file's own.
+  { const { parseCs2Map } = await import(REPO + '/dist/cs2-map.js'), r1 = parseCs2Map(file('nuke')), r2 = parseCs2Map(file('nuke')), sig = r => r.entities.map(e => e.added ? e.model : '').join();
+    const firstAdded = r1.entities.findIndex(e => e.added); ok('nuke: the added glass panes are the same on every computer, after the file\'s own entities', sig(r1) === sig(r2) && firstAdded > 0 && r1.entities.slice(firstAdded).every(e => e.added), 'first added entity ' + firstAdded); }
+  // All of B's glass broken: the floor holds there too (the panels over metal keep the metal; the windows' floor its own).
+  const floorSpots = []; for (let hx = -280; hx <= 860; hx += 40) for (let hy = -1060; hy <= -700; hy += 40) { const [x, z] = G(hx, hy), fz = toH(0, 0, MV.groundAt(boxes, x, z, gy(-740)))[2]; if (Math.abs(fz + 770) < 8) floorSpots.push([x, z]); }   // (B's floor, glass whole)
+  for (const b of boxes.movers) b.off = b.mat === 'door' ? true : b.role !== 'shut' || glass.some(q => q.id === b.mover);
+  const s2 = floorSpots.length, h2 = floorSpots.filter(([x, z]) => toH(0, 0, MV.groundAt(boxes, x, z, gy(-740)))[2] > -790).length;
+  ok('nuke: all of B\'s glass broken, B\'s floor still holds everywhere', s2 > 150 && h2 === s2, h2 + '/' + s2 + ' spots');
+  // Bots' bullets break glass (the host: arena-logic.js shotGlass — on every bot shot, hit or miss, along its line), for
+  // everyone (the room's map state), once; and the round's reset makes it whole (arena-defuse.js / freshMatch).
+  { const AL = await import(REPO + '/dist/arena-logic.js'), { ARENA } = await import(REPO + '/dist/facility-layout.js'), game = { mode: 'arena', arena: { map: 'nuke', kind: 'defuse', bots: [] }, combat: {} };
+    const W3 = (hx, hy, hz) => { const [x, y, z] = G3(hx, hy, hz); return [x + ARENA.cx, y, z + ARENA.cz]; };
+    const pane = glass.find(q => q.m.pane && toH(q.m.box[0], q.m.box[3], q.m.box[4])[0] > 440 && toH(q.m.box[0], q.m.box[3], q.m.box[4])[0] < 460 && Math.abs(toH(0, 0, q.m.box[5])[2] + 772) < 2) || glass[0], a = toH(pane.m.box[0], pane.m.box[3], pane.m.box[4]), c = toH(pane.m.box[1], pane.m.box[2], pane.m.box[5]);
+    const tgt = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2, -790], eye = [tgt[0] - 40, tgt[1] - 30, -708];   // (a bot on B shooting someone below the glass — the line crosses the pane)
+    const n1 = AL.shotGlass(game, ...W3(...eye), ...W3(...tgt)), st = AL.mapStateOf(game);
+    ok('nuke: a bot\'s shot through a B window breaks it for everyone (host map state)', n1 === 1 && st.broken[pane.id] === 1, 'broke ' + n1 + ', state ' + JSON.stringify(st.broken));
+    ok('nuke: …once (a second shot there breaks nothing more)', AL.shotGlass(game, ...W3(...eye), ...W3(...tgt)) === 0);
+    const wall = AL.shotGlass(game, ...W3(1000, -465, -700), ...W3(1000, -465, -1000)); ok('nuke: a bot\'s shot that meets no glass breaks nothing', wall === 0, 'broke ' + wall); }
 }
 console.log(`PASS: Global Defensive doors & glass · ${n} checks`);

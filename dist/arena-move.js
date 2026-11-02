@@ -125,7 +125,10 @@ const groundBy = (boxes, nh, x, z, feet, from = NaN) => { let g = groundAt(boxes
   return g; };
 // A ceiling between the head now (y + h) and after this tick's rise (ny + h)? On a ladder (`lad`) the floor it climbs
 // through is not one: the hole round a ladder is narrower than the collision's grid, so its edge would stop the head.
-const ceilingIn = (list, n, x, z, y, ny, h, lad = null) => { const r = RAD; for (let i = 0; i < n; i++) { const b = list[i]; if (b.y0 >= y + h && b.y0 < ny + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) {
+// A ceiling the head is already in counts too (its bottom anywhere over the feet's step): a step up onto a lip under a
+// low ceiling (Nuke's vents: a 4-unit trim at −596 under the vent's 4-unit roof at −526, 70 units over it) puts the head
+// into the roof's box, and a jump from there went on up through the roof onto it — out of the map into the void.
+const ceilingIn = (list, n, x, z, y, ny, h, lad = null) => { const r = RAD; for (let i = 0; i < n; i++) { const b = list[i]; if (b.y0 > y + MOVE.step + EPS && b.y0 < ny + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) {
   if (lad && b.minX < lad.maxX + r && b.maxX > lad.minX - r && b.minZ < lad.maxZ + r && b.maxZ > lad.minZ - r && b.y0 < lad.y1 + 1) continue; return true; } } return false; };
 // Someone over the head (feet in its top step or higher) is a ceiling too: the one below can't jump through them.
 const headIn = (nh, x, z, y, ny, h) => { for (let i = 0; i < nh; i++) { const b = HULLS[i]; if (!b.inside && b.y0 >= y + h - MOVE.step - EPS && b.y0 < ny + h && Math.abs(x - b.cx) < PW && Math.abs(z - b.cz) < PW) return true; } return false; };

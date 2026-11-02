@@ -3,7 +3,7 @@
 // places) with their boxes as brush models, and the collision as solid stretches along vertical lines — CS2's physics
 // sampled every 8 units, at the very points the builder's rays fall on. Grenades get their own (CS2's grenade clips
 // in, its player clips out). Pure: the room host, the clients and the tests share it.
-import PANE_RECTS from './cs-maps/cs2-pane-rects.js';
+import PANE_RECTS from './cs-maps/cs2-pane-rects.js'; import EXTRA_PANES from './cs-maps/cs2-extra-panes.js';
 export const isCs2Map = buf => { const u = new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer, buf.byteOffset || 0, 4); return u[0] === 67 && u[1] === 83 && u[2] === 50 && u[3] === 77; };   // "CS2M"
 export function parseCs2Map(buf) {
   const ab = buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), dv = new DataView(ab), hl = dv.getUint32(8, true);
@@ -32,6 +32,12 @@ export function parseCs2Map(buf) {
   // What the floor at (x, y) about height z is made of (CS2's surface name), or null.
   const surfaceAt = (x, y, z) => { if (!SURF) return null; const i = at(P, x, y); if (i < 0) return null; let best = -1, bd = 6; for (let k = P.offs[i]; k < P.offs[i + 1]; k += 2) { const d = Math.abs(P.vals[k + 1] / 2 - z); if (d < bd) { bd = d; best = SURF[k >> 1]; } } return best >= 0 && best < 255 ? H.surfaces[best] : null; };
   const pointIn = (g, x, y, z) => { const i = at(g, x, y); if (i < 0) return false; for (let k = g.offs[i]; k < g.offs[i + 1]; k += 2) if (z >= g.vals[k] / 2 && z <= g.vals[k + 1] / 2) return true; return false; };
+  // Glass the importer left unbreakable (cs-maps/cs2-extra-panes.js: Nuke's B floor panels it took for world, its
+  // Observation windows with no glass collision): breakable panes, added after the file's own entities (their ids — the
+  // movers' order — the same on every computer; the file's own keep theirs). A file that already has a pane there keeps it.
+  for (const r of EXTRA_PANES[H.id] || []) { const lo = r.slice(0, 3), hi = r.slice(3, 6);
+    if (H.entities.some(e => { if (!e.pane || !e.model) return false; const m = H.models[+e.model.slice(1)]; return m && [0, 1, 2].every(k => m.mins[k] < hi[k] + 1 && m.maxs[k] > lo[k] - 1); })) continue;
+    H.entities.push({ classname: 'func_breakable', model: '*' + H.models.length, origin: '0 0 0', material: '0', health: '1', spawnflags: '0', look: 'bounds', pane: 1, added: 1 }); H.models.push({ mins: lo, maxs: hi }); }
   const DOOR_QUARTER = /ch2_door_001\.vmdl$/;
   const models = H.models.map((m, i) => ({ mins: m.mins, maxs: m.maxs, head: i ? -1 : 0, hulls: [], ...(m.rects ? { rects: m.rects } : {}) }));
   // A pane whose one box is far bigger than its glass (cs-maps/cs2-pane-rects.js: Cache's Long A doorway): its glass's
