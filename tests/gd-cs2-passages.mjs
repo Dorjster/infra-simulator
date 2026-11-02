@@ -87,4 +87,41 @@ for (const id of have) { if (id !== 'nuke' || !AM.ARENA_MAPS.nuke?.columns) AM.u
         for (const b of boxesNear(boxes, s.x - R, s.z - R, s.x + R, s.z + R, NB)) if (s.x > b.minX - R + .01 && s.x < b.maxX + R - .01 && s.z > b.minZ - R + .01 && s.z < b.maxZ + R - .01 && b.y1 > s.y + st + .01 && b.y0 < s.y + h - st - .01) { hit = [Math.round(hx), Math.round(hy), Math.round(hf), a, t, Math.round(s.y / U + Hm.zLow), Math.round(b.y0 / U + Hm.zLow), Math.round(b.y1 / U + Hm.zLow)]; break; } }
       if (hit) bad.push(hit); } }
   ok(id + ': jumping under low ceilings never takes the body into or through one', tries > 100 && !bad.length, tries + ' runs from ' + cand.length + ' low spots, ' + bad.length + ' went into a ceiling · e.g. ' + JSON.stringify(bad.slice(0, 3))); }
+// ── Ladders on every map: climbed up and down as in CS2 (the v52 report "on Nuke's Lobby ladder we can't go up") ──
+// Every ladder (stacked pieces climbed as one: Nuke's Lobby ladder is two), from 40 HU out in front of its foot: W held,
+// looking up, it climbs to its top; from there one way off (over the top, sideways, back, or a mix — whatever its top
+// allows) lands on a floor within a body's height of its top; and from just under its top, looking down, W climbs down to
+// its foot. Nuke's Lobby ladder in particular (Hammer 232…235, −861…−835, −399 → −52, on a wall at x 244 — the importer's
+// rung clearing had cut that wall away, cs2-map.js ladderBackFix): the climber never goes in behind its face, W held at
+// its top keeps it at the top (it fell down the slot behind it onto a sliver at −280, and stayed), and stepping off
+// sideways (back and to the side) lands on the upper floor at −96 beside it (CS2's hull hangs 16 units out and steps off
+// there; arena-move.js climbs where CS2's player does).
+for (const id of have) { const M = AM.ARENA_MAPS[id]; if (!M?.ladders?.length) continue; const Hm = M.hammer, [W, D] = M.size, U = Hm.U, boxes = AM.mapBoxes(M, 0, 0);
+  for (const b of boxes.movers || []) b.off = b.mat === 'door' ? true : b.role !== 'shut';
+  const lad = M.ladders.map(([a, b, c, d, y0, y1]) => ({ minX: a, maxX: b, minZ: c, maxZ: d, y0, y1 })), world = { boxes, bounds: { minX: -W / 2, maxX: W / 2, minZ: -D / 2, maxZ: D / 2 }, ladders: lad, others: [] };
+  const toH = (x, z, y) => [(x + W / 2) / U + Hm.x0, Hm.y1 - (z + D / 2) / U, y / U + Hm.zLow].map(Math.round), st = MV.MOVE.step, T = 1 / 128;
+  const ov = (A, B) => A.minX < B.maxX && A.maxX > B.minX && A.minZ < B.maxZ && A.maxZ > B.minZ;
+  const chains = lad.filter(L => !lad.some(B => B !== L && ov(B, L) && Math.abs(B.y1 - L.y0) < 2 * U)).map(L => { let top = L, nx; while ((nx = lad.find(B => B !== top && ov(B, top) && Math.abs(B.y0 - top.y1) < 2 * U))) top = nx; return { ...L, y1: top.y1 }; });
+  const bad = []; let climbs = 0;
+  for (const L of chains) { const cx = (L.minX + L.maxX) / 2, cz = (L.minZ + L.maxZ) / 2, thinX = L.maxX - L.minX <= L.maxZ - L.minZ, half = (thinX ? L.maxX - L.minX : L.maxZ - L.minZ) / 2, at = toH(cx, cz, L.y0);
+    const lobby = id === 'nuke' && Math.abs(at[0] - 234) < 4 && Math.abs(at[1] + 848) < 4; let res = 'no side to climb from';
+    for (const sg of [1, -1]) { const nx = thinX ? sg : 0, nz = thinX ? 0 : sg, x0 = cx + nx * (half + MV.MOVE.radius + .3), z0 = cz + nz * (half + MV.MOVE.radius + .3);
+      const g = MV.groundAt(boxes, x0, z0, L.y0 + st), g2 = MV.groundAt(boxes, x0 + nx * 3, z0 + nz * 3, L.y0 + st);
+      if (Math.abs(g - L.y0) > 30 * U || MV.blocked(boxes, null, x0, z0, g) || Math.abs(g2 - L.y0) > 30 * U || MV.blocked(boxes, null, x0 + nx * 3, z0 + nz * 3, g2)) continue;
+      const s = MV.createMoveState(g); s.x = x0; s.z = z0; const f = [-nx, -nz]; let behind = 0, snap = null;
+      for (let k = 1; k <= 40 && !MV.blocked(boxes, null, x0 + nx * k * U, z0 + nz * k * U, g) && Math.abs(MV.groundAt(boxes, x0 + nx * k * U, z0 + nz * k * U, g + st) - g) < 4 * U; k++) { s.x = x0 + nx * k * U; s.z = z0 + nz * k * U; }
+      const face = () => (thinX ? (s.x - cx) * nx : (s.z - cz) * nz) / U;   // (HU out in front of the ladder's middle)
+      for (let t = 0; t < 128 * 4 && !(s.y > L.y1 - 6 * U && !s.onGround); t++) { MV.moveStep(s, { wish: f, look: f, pitch: .5, weapon: 'knife' }, world, T); if (!snap && s.onLadder && s.y > L.y1 - 40 * U) snap = { ...s }; behind = Math.min(behind, face()); }
+      if (s.y < L.y1 - 40 * U) { res = 'climbing up stopped at ' + toH(s.x, s.z, s.y); break; }
+      if (lobby) { const h = { ...s }; let low = h.y, beh = 0; for (let t = 0; t < 256; t++) { MV.moveStep(h, { wish: f, look: f, pitch: .5, weapon: 'knife' }, world, T); low = Math.min(low, h.y); beh = Math.min(beh, (h.x - cx) * nx / U); }
+        if (behind < -2 || beh < -2) { res = 'went in behind its face (' + Math.round(Math.min(behind, beh)) + ' HU)'; break; }
+        if (low < L.y1 - 40 * U) { res = 'W held at its top, fell to ' + toH(h.x, h.z, low)[2]; break; } }
+      let off = null; for (const [k, w] of [['on', f], ['left', [-f[1], f[0]]], ['right', [f[1], -f[0]]], ['back', [nx, nz]], ['on+left', [f[0] - f[1], f[1] + f[0]]], ['on+right', [f[0] + f[1], f[1] - f[0]]], ['back+left', [nx - f[1], nz + f[0]]], ['back+right', [nx + f[1], nz - f[0]]]]) { const q = { ...s };
+        for (let t = 0; t < 256 && !off; t++) { MV.moveStep(q, { wish: w, look: f, pitch: .5, weapon: 'knife' }, world, T); if (q.onGround && !q.onLadder && q.y > L.y1 - 72 * U && q.y < L.y1 + 40 * U) off = [k, toH(q.x, q.z, q.y)]; } if (off) break; }
+      if (!off) { res = 'no way off at its top (' + toH(s.x, s.z, s.y) + ')'; break; }
+      if (lobby && Math.abs(off[1][2] + 96) > 4) { res = 'got off at its top onto ' + off[1] + ', not the upper floor (−96)'; break; }
+      const q = snap; let down = false; for (let t = 0; q && t < 128 * 6 && !down; t++) { MV.moveStep(q, { wish: f, look: f, pitch: -.9, weapon: 'knife' }, world, T); down = q.onGround && q.y < L.y0 + 20 * U; }
+      res = down ? '' : 'climbing down stopped at ' + (q ? toH(q.x, q.z, q.y) : '?'); break; }
+    climbs++; if (res) bad.push('#' + chains.indexOf(L) + ' ' + JSON.stringify(at) + ': ' + res); }
+  ok(id + ': every ladder (' + climbs + ') climbs up, gets off at its top and climbs down, as in CS2', !bad.length, bad.join(' | ')); }
 console.log('PASS: Global Defensive CS2 passages · ' + n + ' checks · maps ' + have.join(', '));

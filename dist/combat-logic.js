@@ -10,7 +10,7 @@
 // from the reserve into the magazine. Clients show their own count and take the host's whenever they are in sync.
 import { skinKeyOf, skinOwner, touchSkin } from './skins.js';
 import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H, NADE_ORDER, BODY_R, accOf, shotBase, shotOffsets, offsetDir, rayBody, pelletDamage, HU, JUMP_IMPULSE, FLINCH } from './weapons-data.js';
-import { defuseDamage, defuseKill } from './arena-defuse.js';
+import { defuseDamage, defuseKill, defuseHurt, defuseAssist } from './arena-defuse.js';
 import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath, BulletPath } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
 import { smokeBlocks } from './arena-nades.js';   /* kill-feed mark: shot through smoke (only used at call time: no load-order issue) */
@@ -99,12 +99,13 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   const before = hpOf(game, targetName), hp = Math.max(0, before - dmg); c.hp[tk] = hp; const nm = c.names ??= {}; nm[me] = String(shooter).slice(0, 40); nm[tk] = String(targetName).slice(0, 40);
   if (me !== tk) { const d = ((c.dmg ??= {})[tk] ??= {}); d[me] = (d[me] || 0) + Math.min(before, dmg); }
   const shown = Math.min(before, dmg);
+  if (c.d && me !== tk) defuseHurt(game, shooter, targetName, shown, wpn, hp <= 0, zone === 'head' && isFirearm(wpn));   // (the round's damage report and head shots: arena-defuse.js)
   if (me !== tk && recording(game) && !friendly(game, shooter, targetName)) { const st = statOf(game, shooter), util = wpn.id === 'he' || wpn.id === 'molotov' || wpn.id === 'incendiary'; st.dmg += shown; if (util) st.util += shown; else if (isFirearm(wpn)) { st.hits++; if (zone === 'head') st.hsHits++; } if (hp <= 0 && zone === 'head' && isFirearm(wpn)) st.hsKills++; }
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + shown + ' HP', dmg: shown, hp, zone, head: zone === 'head' };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name, wid: wpn.id, head: zone === 'head', at: now };
   const teamKill = c.d && c.d.teams[me] && c.d.teams[me] === c.d.teams[tk];
   if (me !== tk && !teamKill) { c.kills[me] = (c.kills[me] || 0) + 1; const sk = game.arena && skinOwner(game.arena, me, wpn.id) === me && game.arena.skins?.[me]?.[skinKeyOf(wpn.id)]; if (sk?.st) { sk.kills = (sk.kills | 0) + 1; touchSkin(game.arena, me, skinKeyOf(wpn.id)); } }   /* (StatTrak™: the weapon counts its own kills — only in its owner's hands, CS2's "does not belong to you"; the room sends the new count) */ c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
-  let assist = null; for (const [a, n] of Object.entries(c.dmg?.[tk] || {})) if (a !== me && a !== tk && n >= 41 && !(c.d && c.d.teams[a] === c.d.teams[tk])) { (c.assists ??= {})[a] = (c.assists[a] || 0) + 1; assist = c.names?.[a] || a; }
+  let assist = null; for (const [a, n] of Object.entries(c.dmg?.[tk] || {})) if (a !== me && a !== tk && n >= 41 && !(c.d && c.d.teams[a] === c.d.teams[tk])) { (c.assists ??= {})[a] = (c.assists[a] || 0) + 1; if (c.d) defuseAssist(game, a); assist = c.names?.[a] || a; }
   if (c.dmg) delete c.dmg[tk];
   c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head', assist, ...(how ? { how } : {}) }); c.feed.length = Math.min(c.feed.length, 6);
   return { message: 'Killed ' + targetName + (zone === 'head' ? ' · head shot' : ''), dmg: shown, hp: 0, down: true, zone, head: zone === 'head' };

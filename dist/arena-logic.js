@@ -562,14 +562,14 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
       if (bot.ammo <= 0) { if (botReload(game, bot)) { bot.reloadUntil = now + wpn.reloadMs; bot.reloadN = (bot.reloadN || 0) + 1; } changed = true; continue; }
       if (Math.abs(diff) < .12 && now - bot.seenAt > react && now - bot.lastShot > wpn.rateMs * (wpn.auto ? 1.6 : 1.1)) {
         bot.lastShot = now; bot.ammo--; bot.shotN++; changed = true; if (C.safe) delete C.safe[key(bot.name)];   // firing ends spawn protection
-        { const fy = feetOf(g, bot), ty = Number.isFinite(tgt.fy) ? tgt.fy + (tgt.cr ? 5.6 : 7.9) : (tgt.y ?? EYE) - 2; if (shotGlass(game, bot.x, fy + EYE, bot.z, tgt.x, ty, tgt.z, wpn.pen || 0)) changed = true; }   // (glass on its line breaks, hit or miss)
+        { const fy = feetOf(g, bot), ty = Number.isFinite(tgt.fy) ? tgt.fy + (tgt.cr ? 5.6 : 7.9) : (tgt.y ?? EYE) - 2; bot.pitch = Math.atan2(ty - (fy + EYE), Math.max(td, 1));   /* (its shot's pitch: at the target's chest — everyone's tracer for it climbs or dips there, gd-tracers.js) */ if (shotGlass(game, bot.x, fy + EYE, bot.z, tgt.x, ty, tgt.z, wpn.pen || 0)) changed = true; }   // (glass on its line breaks, hit or miss)
         // Difficulty: accuracy, head-shot share and reaction time (easy · normal · hard, host setting).
         const pHit = Math.max(.05, Math.min(.9, bot.skill * DF.aim * (1 - td / (wpn.range * 1.3)) * (wpn.kind === 'shotgun' && td > 40 ? .3 : 1)));
         if (Math.random() < pHit) { const r = Math.random(), zone = r < DF.head ? 'head' : r < .55 ? 'chest' : r < .8 ? 'stomach' : 'legs'; bleedFrom(game, tgt.name, applyHit(game, bot.name, tgt.name, wpn, zone, td, wpn.pellets ? 1 + Math.floor(Math.random() * wpn.pellets * .6) : 1, now), bot.x, feetOf(g, bot) + EYE, bot.z, tgt, now); }   /* (blood: combat-logic.js bleedFrom — gd-blood.js draws it) */
       }
       continue;
     }
-    bot.target = null;
+    bot.target = null; bot.pitch = 0;   // (no one in sight: level again)
     // Bots pick up better guns they walk over (a rifle or the AWP instead of an SMG, shotgun or LMG).
     if (C.ground?.length && !BOT_UPGRADE.includes(bot.weapon)) { const bf = botFloor(game, bot), i = C.ground.findIndex(it => BOT_UPGRADE.includes(it.item) && Math.hypot(it.x - bot.x, it.z - bot.z) < 4 && Math.abs((it.y || 0) - bf) <= 4 && landed(it, now, 0));   // (on its own floor — not a rifle on the catwalk over its head — and landed, as for players)
       if (i >= 0) { const it = C.ground.splice(i, 1)[0]; if (bot.weapon) dropItem(game, bot.weapon, it.x, it.z, it.y, bot.name, now, [bot.ammo, bot.reserve], null, botOwn(bot)); botArm(bot, it.item, it.ammo); bot.own = it.own ? { w: it.item, k: it.own } : null; changed = true; } }   // (a player's gun keeps its owner's skin in a bot's hands too)
@@ -635,7 +635,7 @@ const wp = (g, i) => { const [x, z] = g.map.spawns[i]; return [ARENA.cx + x, ARE
 // players' poses arrive, and a later stamp on a position that hadn't moved made bots stop and lurch on everyone's screen)
 export function botRoster(game) {
   return (game.mode === 'arena' && game.arena?.bots || []).map((b, i) => ({ id: b.id, name: b.name, role: 'bot', bot: true, color: [0xff879e, 0xe2e779, 0x7ca1ff, 0xc5a27d][i % 4], slot: -1,
-    pose: { t: game.arena.botAt || Date.now(), x: b.x, y: EYE + botFloor(game, b), z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, ...(botOwn(b) ? { own: botOwn(b) } : {}), shot: { n: b.shotN, pitch: 0, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));   // (own: the player whose gun it carries — skins.js skinFor's hint)
+    pose: { t: game.arena.botAt || Date.now(), x: b.x, y: EYE + botFloor(game, b), z: b.z, yaw: b.yaw, crouched: false, active: !isDown(game, b.name), face: 'smile', skin: ['red', 'blue', 'green', 'pink'][i % 4], hat: 'helmet', outfit: 'vest', carry: null, point: false, gun: true, weapon: b.weapon, ...(botOwn(b) ? { own: botOwn(b) } : {}), shot: { n: b.shotN, pitch: Math.round((b.pitch || 0) * 1e4) / 1e4, r: b.reloadN || 0 }, emote: { id: null, n: 0 } } }));   // (own: the player whose gun it carries — skins.js skinFor's hint)
 }
 // The player whose gun a bot carries (picked up from the ground), or null: a bot's own guns take no skin.
 const botOwn = b => b.own && b.own.w === b.weapon ? b.own.k : null;

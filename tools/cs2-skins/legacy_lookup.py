@@ -5,10 +5,16 @@
 # same way (or, when that point is hidden under another legacy surface, the surface seen from just outside), and its legacy UV0. A legacy finish is then resampled into HD UV0 in numpy (bake.py), so every finish
 # works on the one HD mesh. Output npz: lut (res,res,3) float32 = legacy u, legacy v (glTF orientation: v down, like the
 # images), valid; legacy_cover (res,res) = texels inside body_legacy's UV islands (to pad the legacy bake before sampling);
-# stats. No Valve data is stored in this file.
-import bpy, sys, os, numpy as np, mathutils
+# plain (res,res) uint8 = bits for texels CS2 does not paint with the finish's own composite (bake.py leaves them at the
+# gun's base: coverage 0): 1 = the nearest legacy point is on a second composited material (the SSG 08's scope: CS2
+# composites it on its own and leaves it plain under artwork styles), 2 = on a material CS2 never composites (the scope
+# lenses: shared_scope*, the legacy UVs in u 1..2), 4 = a minor body_hd primitive (the SG 553's lens); stats.
+# No Valve data is stored in this file.
+import bpy, sys, os, json, struct, numpy as np, mathutils
 from mathutils.bvhtree import BVHTree
 a = sys.argv[sys.argv.index('--') + 1:]; GLB, OUT = a[0], a[1]; RES = int(a[2]) if len(a) > 2 else 1024
+with open(GLB, 'rb') as fh: _h = fh.read(20); _J = json.loads(fh.read(struct.unpack('<I', _h[12:16])[0]))
+PRIM_TRIS = {m.get('name', ''): [_J['accessors'][p['indices']]['count'] // 3 for p in m['primitives'] if 'indices' in p] for m in _J['meshes']}   # (the importer merges a mesh's primitives in order)
 bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath=GLB)
 meshes = [o for o in bpy.context.scene.objects if o.type == 'MESH']
 def pick(suffix): return [o for o in meshes if (o.data.name or '').endswith(suffix) or o.name.endswith(suffix)]
@@ -17,8 +23,9 @@ if not hd or not leg: raise SystemExit('need body_hd and body_legacy meshes in '
 
 
 def tris(objs):
-    """-> P (n,3,3) world positions, N (n,3,3) normals, UV (n,3,2) in image orientation (v down)"""
-    P, N, U = [], [], []
+    """-> P (n,3,3) world positions, N (n,3,3) normals, UV (n,3,2) in image orientation (v down), prim (n,) the glTF
+    primitive of each triangle (-1 where the counts do not match the file)"""
+    P, N, U, Q = [], [], [], []
     for o in objs:
         me = o.data; me.calc_loop_triangles(); M = o.matrix_world; R = M.to_3x3()
         uvl = me.uv_layers[0].data if me.uv_layers else None
@@ -30,7 +37,22 @@ def tris(objs):
         ln = np.zeros(len(me.loops) * 3, np.float32); me.loops.foreach_get('normal', ln); ln = ln.reshape(-1, 3) @ np.array(R, np.float32).T
         uv = np.zeros(len(me.loops) * 2, np.float32); uvl.foreach_get('uv', uv); uv = uv.reshape(-1, 2); uv[:, 1] = 1 - uv[:, 1]
         P.append(co[vi].reshape(-1, 3, 3)); N.append(ln[li].reshape(-1, 3, 3)); U.append(uv[li].reshape(-1, 3, 2))
-    return np.concatenate(P), np.concatenate(N), np.concatenate(U)
+        cnt = next((c for k, c in PRIM_TRIS.items() if k and (k == me.name or k == o.name or k.endswith(me.name) or me.name.endswith(k))), None)
+        Q.append(np.repeat(np.arange(len(cnt)), cnt) if cnt and sum(cnt) == nl else np.full(nl, -1, np.int64))
+    return np.concatenate(P), np.concatenate(N), np.concatenate(U), np.concatenate(Q)
+
+
+def roles(P, U, Q):
+    """per triangle: 0 the main painted primitive (the longest), 1 another composited one, 2 one CS2 never composites
+    (all its UVs in u 1..2, outside the composite: the scope lenses)"""
+    r = np.zeros(len(Q), np.int64)
+    if (Q < 0).any() or Q.max(initial=0) == 0: return r
+    ext = {q: float(np.linalg.norm(P[Q == q].reshape(-1, 3).max(0) - P[Q == q].reshape(-1, 3).min(0))) for q in np.unique(Q)}
+    main = max(ext, key=ext.get)
+    for q in ext:
+        if q == main: continue
+        r[Q == q] = 2 if U[Q == q][..., 0].min() >= 1 - 1e-3 else 1
+    return r
 
 
 def raster(UV, res):
@@ -52,7 +74,7 @@ def raster(UV, res):
     return ys[ok] % res, xs[ok] % res, ts[ok], bs[ok]
 
 
-Ph, Nh, Uh = tris(hd); Pl, Nl, Ul = tris(leg)
+Ph, Nh, Uh, Qh = tris(hd); Pl, Nl, Ul, Ql = tris(leg); Rh, Rl = roles(Ph, Uh, Qh), roles(Pl, Ul, Ql)
 ext = np.concatenate([Ph.reshape(-1, 3), Pl.reshape(-1, 3)]); diag = float(np.linalg.norm(ext.max(0) - ext.min(0)))
 flat = Pl.reshape(-1, 3); bvh = BVHTree.FromPolygons([tuple(v) for v in flat], [(3 * i, 3 * i + 1, 3 * i + 2) for i in range(len(Pl))], all_triangles=True)
 flat_h = Ph.reshape(-1, 3); bvh_hd = BVHTree.FromPolygons([tuple(v) for v in flat_h], [(3 * i, 3 * i + 1, 3 * i + 2) for i in range(len(Ph))], all_triangles=True)
@@ -86,6 +108,9 @@ UVl = Ul[np.maximum(hit_t, 0)]; luv = UVl[:, 0] * bu[:, None] + UVl[:, 1] * bv[:
 lut = np.zeros((RES, RES, 3), np.float32); lut[ys, xs, 0] = luv[:, 0]; lut[ys, xs, 1] = luv[:, 1]; lut[ys, xs, 2] = valid.astype(np.float32)
 ly, lx, _lt, _lb = raster(Ul, RES); cover = np.zeros((RES, RES), np.uint8); cover[ly, lx] = 1
 hdcover = np.zeros((RES, RES), np.uint8); hdcover[ys, xs] = 1
+pl = np.where(valid, np.where(Rl[np.maximum(hit_t, 0)] == 1, 1, np.where(Rl[np.maximum(hit_t, 0)] == 2, 2, 0)), 0) | np.where(Rh[ts] > 0, 4, 0)
+plain = np.zeros((RES, RES), np.uint8); np.maximum.at(plain, (ys, xs), pl.astype(np.uint8))   # (a texel shared by two triangles: either flag)
 st = dict(texels=int(n), valid=float(valid.mean()), far=float((dist >= TOL).mean()), median_dist=float(np.median(dist[valid]) / diag) if valid.any() else 1.0, diag=diag)
-np.savez_compressed(OUT, lut=lut, legacy_cover=cover, hd_cover=hdcover, stats=np.array([st['valid'], st['far'], st['median_dist'], diag], np.float32))
+np.savez_compressed(OUT, lut=lut, legacy_cover=cover, hd_cover=hdcover, plain=plain, stats=np.array([st['valid'], st['far'], st['median_dist'], diag], np.float32))
+st.update(plain={b: float(((plain & b) > 0).sum() / max(1, hdcover.sum())) for b in (1, 2, 4)})
 print('LUT', os.path.basename(GLB), st)

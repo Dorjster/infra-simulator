@@ -37,7 +37,11 @@ const {poseGate,fallCheck}=await import(pathToFileURL(path.join(root,'arena-move
 // newest of each whichever channel brings it first (a hit's reply can overtake the stream). Never the infrastructure world:
 // a GD action used to send everyone the whole ~120 KB facility snapshot.
 let arenaRev=0,loadoutRev=0,lastArenaKey='',tickMs=0,tickMsMax=0,tickMsAt=0,tickT0=0;
-const gdFrame=(g,{arena=false,loadout=false}={})=>{const f={...g.combat,sent:Date.now(),tk:tickMs};if(arena){f.arena=arenaView(g);f.arev=++arenaRev;f.lrev=++loadoutRev;}else if(loadout){f.loadout=g.arena?.loadout||{};f.lrev=++loadoutRev;}return f;};   // (the arena carries its loadouts: one lrev for both)
+const {matchStats}=await import(pathToFileURL(path.join(root,'arena-defuse.js')));let msAt=0;
+// Defuse match stats (Tab scoreboard, round history, the last round's damage report: arena-defuse.js matchStats): not part of
+// the combat state — added as f.ms only on catch-up, for 1.5 s after they change (several frames: one may be skipped) and
+// every 3 s. Pages that do not know it ignore it (NET_PROTOCOL unchanged).
+const gdFrame=(g,{arena=false,loadout=false}={})=>{const f={...g.combat,sent:Date.now(),tk:tickMs};const ms=matchStats(g);if(ms&&(arena||f.sent-ms.at<1500||f.sent-msAt>3000)){f.ms=ms;msAt=f.sent;}if(arena){f.arena=arenaView(g);f.arev=++arenaRev;f.lrev=++loadoutRev;}else if(loadout){f.loadout=g.arena?.loadout||{};f.lrev=++loadoutRev;}return f;};   // (the arena carries its loadouts: one lrev for both)
 const {radioCall,chatRecipients}=await import(pathToFileURL(path.join(root,'gd-radio.js')));const {locationOf}=await import(pathToFileURL(path.join(root,'gd-radar-art.js')));const {ARENA_MAPS:MAPS,useMapFile}=await import(pathToFileURL(path.join(root,'arena-maps.js')));const {CS_MAP_IDS,FILE_MAP_IDS}=await import(pathToFileURL(path.join(root,'cs-maps','themes.js')));
 // Maps from files (Counter-Strike 1.6 .bsp, imported on this computer, never shipped): <mapsDir>/<id>.bsp replaces the
 // built-in map <id> (dust2, mirage…). Loaded here for the host's own logic (bots, sites, spawns) and served to every

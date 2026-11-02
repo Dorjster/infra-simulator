@@ -253,7 +253,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     lastEnds = { origin: o.clone(), dir: base.clone(), ends, muzzle: muzzle.clone(), cone: ia, n: shots, at: t };   // (tests: where the shot went)
     shotRec = { n: shots, pitch: a.pitch, yaw: a.yaw, pu: [puP, puY], ia, sc: zs ? 1 : 0 };   // (the pose carries the newest: others draw its tracers — shotDirs)
     if (broke) dispatchEvent(new CustomEvent('gd-break', { detail: { boxes: [...broke], dmg: (current.dmg || 20) * dirs.length } }));   // glass and vents it hit: lab.js tells the room
-    effects.shootAt ? effects.shootAt(muzzle, ends, shotFx(current)) : effects.shoot(muzzle, base.clone(), { ...shotFx(current), dirs });
+    effects.shootAt ? effects.shootAt(muzzle, ends, { ...shotFx(current), n: shots }) : effects.shoot(muzzle, base.clone(), { ...shotFx(current), dirs, n: shots });   // (n: which shots draw a tracer — CS2's frequency, gd-tracers.js)
     const how = { noscope: !!current.zoom && !(scope > 0), air: !m.onGround, blind: blind() > .5 };   // for the kill feed (CS2 marks)
     // Each body hit: the shot's whole record (the host traces it again itself: eye, raw look, aim punch, inaccuracy,
     // shot number; ft the trigger's moment on this page's clock) — zone and pellets only as hints.

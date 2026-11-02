@@ -48,6 +48,8 @@ export function createSpectateView({ camera, scene }) {
   }
   const api = {
     get shown() { return hand.visible && !!(set || plain); }, get weapon() { return hand.visible ? weapon : null; }, get model() { return model; },
+    // Where the watched player's barrel is now (world), for their tracers (fun-pistol muzzleFor): false while nothing is held.
+    muzzle(out) { if (!hand.visible) return false; if (set?.muzzle) { set.muzzle(out); return true; } if (plain) { plain.getWorldPosition(out); return true; } return false; },
     get set() { return set; }, get group() { return hand; }, get stats() { return { holds, fires, reloads, throws }; },
     // Every frame while spectating. t: { key, weapon (null: empty hands), team, knife, skin, shotN, shotW, reloadN,
     // reloadW, speed, act, actUntil, gloves } (arena-spectate.js fills one reused record).

@@ -1,11 +1,12 @@
 // Darja's pistol: a just-for-fun toy. Only a player named Darja has it (key 4 to draw / holster, left
-// click to fire). Each shot fires one glowing tracer (the shotgun a spread of pellets) with a muzzle flash,
+// click to fire). Each shot fires one bright tracer streak (gd-tracers.js; the shotgun a spread of pellets) with a muzzle flash,
 // recoil and a bang; tracers leave sparks and small scorch marks that fade. Nothing in the facility is damaged.
 // In Payday, engineers can also buy guns (weapons.js) and shots at other engineers take HP (combat-logic.js).
 // The model is an original chrome "hand cannon" (long slide, black grip), not a copy of any real product.
 import * as THREE from './three.module.js';
 import { shotSound, fx as rec } from './sound-bank.js';
 import { audioCtx, outAt } from './spatial-audio.js';
+import { createTracers, tracerShot, tracerPellet, TRACER } from './gd-tracers.js';
 
 export const isDarja = name => /^\s*darja\s*$/i.test(String(name || ''));
 
@@ -58,9 +59,15 @@ const flashTexture = (() => { try { const c = document.createElement('canvas'); 
 // scene effects shared by the local player and remote players' shots.
 // onShot(origin, dir): each shot's ray (another player's, replayed here: a smoke's bullet tunnels).
 // fleshBits(): false → a body hit throws none of the little red bits (Global Defensive draws CS2's blood: gd-blood.js).
-export function createPistolEffects(scene, { pickables = () => [], onShot = null, fleshBits = () => true } = {}) {
-  const pellets = [], sparks = [], marks = [], flashes = [], ray = new THREE.Raycaster(), floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), tmp = new THREE.Vector3();
-  const pelletGeo = new THREE.CylinderGeometry(.02, .02, .9, 5).rotateX(Math.PI / 2), pelletMat = new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: .95 });
+// Tracers (gd-tracers.js: CS2's streaks, its per-gun frequency, one pooled draw): camera() the eye they face;
+// trace(origin, dir, src) → { t, n: [x, y, z] | null, flesh, mat } | null: where another player's bullet really stops
+// (Global Defensive: the map's walls and the bodies — else the old pick ray); muzzleFor(src, out) → true: that
+// player's shots leave this point instead (the watched player's first-person barrel while spectating).
+export function createPistolEffects(scene, { pickables = () => [], onShot = null, fleshBits = () => true, camera = () => null, trace = null, muzzleFor = null } = {}) {
+  const pellets = [], sparks = [], marks = [], flashes = [], ray = new THREE.Raycaster(), floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), tmp = new THREE.Vector3(), MZ = new THREE.Vector3();
+  // Bullets in flight (no mesh: the tracer pool draws the streaks); each lands — sparks, a hole, a sound — when a tracer
+  // at TRACER.speed would reach its stop.
+  const tracers = createTracers(scene, { camera }), SPEED = TRACER.speed;
   const sparkGeo = new THREE.BoxGeometry(.05, .05, .05), sparkMat = new THREE.MeshBasicMaterial({ color: 0xffc35a }), markGeo = new THREE.CircleGeometry(.09, 10), markMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: .8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
   function hitPoint(origin, dir) {
     ray.set(origin, dir); ray.far = 120;
@@ -82,27 +89,35 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
     flashes.push({ s, t: 0 });
   }
   // One shot: `count` pellets in a small cone from `origin` along `dir`.
-  function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null, at = null, id = null, src = null, delay = 0 } = {}) {
+  // n: the shot's number (the gun's own count: which shots draw a tracer, CS2's frequency); src: who fired.
+  function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null, at = null, id = null, src = null, delay = 0, n = null } = {}) {
+    if (src != null && muzzleFor?.(src, MZ)) origin = MZ;   // (spectating them: from their first-person barrel)
     flash(origin, dir, flashSize); if (!(id && shotSound(id, { at, volume: .8, src, delay }))) bang(volume, pitch, at);   // recorded shot (sound-bank.js), else synthesized (src, delay: Global Defensive's bank — who fired, a replayed shot's place in its burst)
     if (onShot) { if (dirs) for (const d of dirs) onShot(origin, d); else onShot(origin, dir); }
-    if (dirs) { for (const d of dirs) { const hit = hitPoint(origin, d), mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(origin.clone().add(d)); mesh.userData.gd = true; scene.add(mesh); pellets.push({ mesh, from: origin.clone(), dir: d, dist: hit.point.distanceTo(origin), travelled: 0, hit }); } return; }
+    const traced = tracerShot(id, n);
+    if (dirs) { let i = 0; for (const d of dirs) { const tr = trace ? trace(origin, d, src) : null, hit = tr ? { point: origin.clone().addScaledVector(d, tr.t), normal: tr.flesh || !tr.n ? null : new THREE.Vector3(tr.n[0], tr.n[1], tr.n[2]), mat: tr.mat || null, silent: !!tr.flesh || !tr.n } : hitPoint(origin, d), dist = hit.point.distanceTo(origin);
+      if (traced && tracerPellet(i, dirs.length)) tracers.spawn(origin.x, origin.y, origin.z, d.x, d.y, d.z, dist, delay); i++;
+      pellets.push({ from: origin.clone(), dir: d, dist, travelled: -delay * SPEED, hit }); } return; }
     for (let i = 0; i < count; i++) {
       const d = dir.clone().add(new THREE.Vector3((Math.random() - .5) * 2, (Math.random() - .5) * 2, (Math.random() - .5) * 2).multiplyScalar(spread)).normalize();
-      const hit = hitPoint(origin, d), mesh = new THREE.Mesh(pelletGeo, pelletMat);
-      mesh.position.copy(origin); mesh.lookAt(origin.clone().add(d)); mesh.userData.gd = true; scene.add(mesh);
-      pellets.push({ mesh, from: origin.clone(), dir: d, dist: hit.point.distanceTo(origin), travelled: 0, hit });
+      const hit = hitPoint(origin, d), dist = hit.point.distanceTo(origin);
+      if (traced && tracerPellet(i, count)) tracers.spawn(origin.x, origin.y, origin.z, d.x, d.y, d.z, dist, delay);
+      pellets.push({ from: origin.clone(), dir: d, dist, travelled: -delay * SPEED, hit });
     }
   }
   // Global Defensive: the impact points are already known (the eye ray); tracers fly from the muzzle to them.
   // ends: [{ point, normal (wall) | null, flesh }].
+  // n: your shot's number (which shots draw a tracer: CS2's frequency per gun, gd-tracers.js).
   const fleshMat = new THREE.MeshBasicMaterial({ color: 0x9a1010 });
-  function shootAt(origin, ends, { volume = .5, pitch = 1, flashSize = 1.1, at = null, id = null } = {}) {
+  function shootAt(origin, ends, { volume = .5, pitch = 1, flashSize = 1.1, at = null, id = null, n = null } = {}) {
     flash(origin, ends.at(-1) ? ends.at(-1).point.clone().sub(origin).normalize() : new THREE.Vector3(0, 0, -1), flashSize); if (!(id && shotSound(id, { at, volume: volume / .5 * .8 }))) bang(volume, pitch, at);
-    for (const e of ends) { if (e.mark) { impact({ point: e.point, normal: e.normal, mat: e.mat }); continue; } const d = e.point.clone().sub(origin), dist = d.length(); if (dist < 1e-3) continue; d.divideScalar(dist); const mesh = new THREE.Mesh(pelletGeo, pelletMat); mesh.position.copy(origin); mesh.lookAt(e.point); mesh.userData.gd = true; scene.add(mesh);
-      pellets.push({ mesh, from: origin.clone(), dir: d, dist, travelled: 0, hit: e.flesh ? { point: e.point, normal: null, flesh: true } : { point: e.point, normal: e.normal, mat: e.mat } }); }
+    tracers.shot(origin, ends, id, n);
+    for (const e of ends) { if (e.mark) { impact({ point: e.point, normal: e.normal, mat: e.mat }); continue; } const d = e.point.clone().sub(origin), dist = d.length(); if (dist < 1e-3) continue; d.divideScalar(dist);
+      pellets.push({ from: origin.clone(), dir: d, dist, travelled: 0, hit: e.flesh ? { point: e.point, normal: null, flesh: true } : { point: e.point, normal: e.normal, mat: e.mat } }); }
   }
   let heardAt = 0; const heard = () => { const n = performance.now(); if (n - heardAt < 35) return false; heardAt = n; return true; };   // one impact sound per 35 ms (shotgun pellets)
-  function impact({ point, normal, flesh, mat = null }) {
+  function impact({ point, normal, flesh, mat = null, silent = false }) {
+    if (silent) return;   // (another player's bullet in a body, as we trace it: the host's blood and sounds tell)
     if (heard()) rec(flesh ? 'flesh' : 'wall', { at: { x: point.x, y: point.y, z: point.z }, volume: flesh ? .55 : .35, rate: .9 + Math.random() * .25, kind: 'step', mat });   // (mat: what it hit — Global Defensive plays CS2's impact for that material)
     if (flesh) { if (!fleshBits()) return; for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(sparkGeo, fleshMat); m.position.copy(point); m.userData.gd = true; scene.add(m); sparks.push({ m, v: new THREE.Vector3((Math.random() - .5) * 8, Math.random() * 6, (Math.random() - .5) * 8), t: 0 }); } return; }
     if (!normal) return;
@@ -111,15 +126,16 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
 
   }
   function update(dt) {
-    for (let i = pellets.length - 1; i >= 0; i--) { const p = pellets[i]; p.travelled += dt * 900; if (p.travelled >= p.dist) { impact(p.hit); scene.remove(p.mesh); pellets.splice(i, 1); continue; } p.mesh.position.copy(p.from).addScaledVector(p.dir, p.travelled); }
+    for (let i = pellets.length - 1; i >= 0; i--) { const p = pellets[i]; p.travelled += dt * SPEED; if (p.travelled >= p.dist) { impact(p.hit); pellets.splice(i, 1); } }
+    tracers.update(dt);
     for (let i = sparks.length - 1; i >= 0; i--) { const s = sparks[i]; s.t += dt; s.v.y -= 30 * dt; s.m.position.addScaledVector(s.v, dt); s.m.scale.setScalar(Math.max(.01, 1 - s.t * 2.5)); if (s.t > .4) { scene.remove(s.m); sparks.splice(i, 1); } }
     for (let i = marks.length - 1; i >= 0; i--) { const k = marks[i]; k.t += dt; if (k.t > 6) k.m.material.opacity = Math.max(0, .8 - (k.t - 6) * .4); if (k.t > 8) { k.m.visible = false; marks.splice(i, 1); } }
     for (let i = flashes.length - 1; i >= 0; i--) { const f = flashes[i]; f.t += dt; f.s.material.opacity = Math.max(0, 1 - f.t * 14); if (f.t > .08) { f.s.visible = false; flashes.splice(i, 1); } }
     lightT += dt; light.intensity = Math.max(0, 6 - lightT * 90);
   }
   // One of each effect object, for warming up the GPU before the first shot (see graphics.prewarm).
-  function samples() { const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); return [new THREE.Mesh(pelletGeo, pelletMat), new THREE.Mesh(sparkGeo, sparkMat), new THREE.Mesh(markGeo, markMat.clone()), fl]; }
-  return { shoot, shootAt, update, hitPoint, samples, get active() { return pellets.length + sparks.length + marks.length; } };
+  function samples() { const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); return [tracers.sample(), new THREE.Mesh(sparkGeo, sparkMat), new THREE.Mesh(markGeo, markMat.clone()), fl]; }
+  return { shoot, shootAt, update, hitPoint, samples, tracers, get active() { return pellets.length + sparks.length + marks.length + tracers.active; } };
 }
 
 // The local player's pistol: a first-person view model on the camera, recoil and a fire-rate limit.

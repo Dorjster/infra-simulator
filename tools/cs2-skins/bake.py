@@ -223,6 +223,7 @@ for f in job['finishes']:
             # (default 'paint': HD texels whose nearest legacy point is farther than 2% of the gun — parts CS2 remodelled,
             #  e.g. the Five-SeveN grip — take the paint of that nearest same-facing point instead of showing bare base)
         else: layers = composite(hd, f)
+        if lut is not None and not KNIFE: layers[..., 6] *= lut.keep(bool(f.get('legacy')), int(f['F']))   # (scope lenses, the SSG 08's scope: CS2's base)
         r = finalize(layers, hd.island, pp, pm); r.update(kit=kit, ok=True, s=round(time.time() - t0, 2), v=BAKE_V)
     except Exception as ex:
         r = dict(kit=kit, ok=False, error=f'{type(ex).__name__}: {ex}')

@@ -45,12 +45,17 @@ export const DUCK = { speed: 8, spam: 2, min: 1.5, recover: 3 };
 // against CS2): a landing faster than 580 HU/s (a drop of ~210 HU) hurts, rising evenly to 100 HP at 1024 (~655 HU).
 export const FALL = { safe: 580, fatal: 1024 };
 export const fallDamage = speed => speed > FALL.safe ? Math.round((speed - FALL.safe) * 100 / (FALL.fatal - FALL.safe)) : 0;
-// Ladders (Source / CS): climbing speed, the push off when jumping from one, and how far round a ladder's volume you
-// still hold on (game units).
-export const LADDER = { climb: 200 * HU, jumpOff: 270 * HU, reach: .45, downPitch: -.4 };
+// Ladders (Source / CS): climbing speed, the push off when jumping from one, and `reach`: the body climbs CS2's hull
+// half-width and a reach out from a ladder's face (where CS2's player hangs on it: the body is narrower against the map
+// than CS2's hull, and climbing 8 units closer to the wall took it into the frame round Nuke's Lobby ladder, whose top
+// is got off sideways only from where CS2's player is), and holds on to two reaches past that.
+export const LADDER = { climb: 200 * HU, jumpOff: 270 * HU, reach: HU, downPitch: -.4 };
 // The ladder the body is on (feet at s.y, `h` tall), or null.
-function ladderAt(list, s, h) { const r = MOVE.radius * .6 + LADDER.reach;
+function ladderAt(list, s, h) { const r = MOVE.hull + 2 * LADDER.reach;
   for (const L of list) if (s.x > L.minX - r && s.x < L.maxX + r && s.z > L.minZ - r && s.z < L.maxZ + r && s.y < L.y1 + .3 && s.y + h > L.y0) return L; return null; }
+// Another ladder going on from this one's top (CS2's ladder surfaces come in pieces: Nuke's Lobby ladder is two, joined
+// at its mezzanine) — that top is no top to climb over.
+function ladderOn(list, L) { for (const B of list) if (B !== L && B.minX < L.maxX && B.maxX > L.minX && B.minZ < L.maxZ && B.maxZ > L.minZ && Math.abs(B.y0 - L.y1) < 2 * HU) return true; return false; }
 
 const NG = [], NB = [], NC = [];   // nearby boxes (box-grid.js), one list per query site
 
@@ -218,6 +223,9 @@ export function moveStep(s, input, world, dt) {
     // On the floor and not climbing up: just walking. The ladder's face: its thin side, toward you.
     const thinX = lad.maxX - lad.minX <= lad.maxZ - lad.minZ, cx = (lad.minX + lad.maxX) / 2, cz = (lad.minZ + lad.maxZ) / 2;
     let nx = thinX ? Math.sign(s.x - cx) || -lx : 0, nz = thinX ? 0 : Math.sign(s.z - cz) || -lz;
+    // (the side climbed from holds while climbing on: going over the top from a hull's width out, the body passes the
+    // ladder's plane before its feet clear the lip — taken for its other side, it climbed on up and flew over the ledge)
+    if (s.onLadder && s.ladN) { if (thinX) nx = s.ladN; else nz = s.ladN; } s.ladN = thinX ? nx : nz;
     const fm = wx * lx + wz * lz, sm = wx * -lz + wz * lx, v = LADDER.climb;
     const up = Math.max(-1, Math.min(1, (p + .3) / .15));
     let vx = (lx * cp * fm + -lz * sm) * v, vy = fm * up * v, vz = (lz * cp * fm + lx * sm) * v; const into = vx * nx + vz * nz;
@@ -225,9 +233,16 @@ export function moveStep(s, input, world, dt) {
     else if (!(s.onGround && (wl < 1e-6 || vy <= 0))) { climbing = true; s.onGround = false;
       // Over the top (CS2): with the feet within a step of the ladder's top, pushing toward it carries you over the lip
       // onto the floor behind (the push into it is kept, with a little lift; the step-up lands you); lower down the push
-      // into the ladder is dropped — you climb, never into the wall.
-      const overTop = s.y > lad.y1 - MOVE.step && into < 0;
-      if (overTop) vy = Math.max(vy, v * .6); else { vx -= nx * into; vz -= nz * into; }
+      // into the ladder is dropped — you climb, never into the wall. Not where the ladder goes on (another piece over it)
+      // or where a wall stands over its top (Nuke's Lobby: you get off sideways, as in CS2): the push there only took the
+      // body up against the wall, out of the way off.
+      const reach = (thinX ? lad.maxX - lad.minX : lad.maxZ - lad.minZ) / 2 + RAD + .05;
+      const overTop = s.y > lad.y1 - MOVE.step && into < 0 && !ladderOn(world.ladders, lad) && !blocked(boxes, bounds, cx - nx * reach, cz - nz * reach, lad.y1, height, RAD);
+      // (lifted to the lip and no higher, then carried level over it: from a hull's width out, leaving the ladder still
+      // rising flew the body over the ledge)
+      if (overTop) vy = Math.max(0, Math.min(Math.max(vy, v * .6), (lad.y1 + .02 - s.y) / dt)); else { vx -= nx * into; vz -= nz * into;
+        // (and the body kept where CS2's hangs: a hull's half-width and a reach out from the ladder's face)
+        const face = thinX ? (nx > 0 ? lad.maxX : lad.minX) : (nz > 0 ? lad.maxZ : lad.minZ), off = thinX ? (s.x - face) * nx : (s.z - face) * nz, vn = Math.max(-v, Math.min(v, (MOVE.hull + LADDER.reach - off) / dt)); vx += nx * vn; vz += nz * vn; }
       if (wl < 1e-6) vx = vy = vz = 0;
       s.vx = vx; s.vy = Math.max(-v, Math.min(v, vy)); s.vz = vz; } }
   s.onLadder = climbing;

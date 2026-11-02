@@ -112,5 +112,25 @@ if (file('nuke')) { const { M, boxes, G, gy, toH } = load('nuke');
     ok('nuke: a bot\'s shot through a B window breaks it for everyone (host map state)', n1 === 1 && st.broken[pane.id] === 1, 'broke ' + n1 + ', state ' + JSON.stringify(st.broken));
     ok('nuke: …once (a second shot there breaks nothing more)', AL.shotGlass(game, ...W3(...eye), ...W3(...tgt)) === 0);
     const wall = AL.shotGlass(game, ...W3(1000, -465, -700), ...W3(1000, -465, -1000)); ok('nuke: a bot\'s shot that meets no glass breaks nothing', wall === 0, 'broke ' + wall); }
+  // Broken windows: as CS2's collision lets players through, or doesn't (the v52 report "Nuke's B glasses: when they break
+  // we can go through the window"). CS2's crouched hull (32 × 54) fits through none of Nuke's 36 standing panes with their
+  // glass gone — its player clips and frames fill the openings (checked against CS2's own collision when
+  // cs-maps/cs2-pane-clips.js was made; the export isn't in the repo) — but the importer opened the players' collision at
+  // every pane, so a broken one let our narrower body through (the Observation windows over B: walked out of at a run).
+  // With every pane broken: no body fits through any of them, anywhere across its opening (feet from a crouch under its
+  // sill to its top), the run at the Observation window stays in the room, and bullets and sight still go through it.
+  { const PC = (await import(REPO + '/dist/cs-maps/cs2-pane-clips.js')).default.nuke || [], U = M.hammer.U, world = { boxes, bounds: null, ladders: [], others: [] };
+    for (const b of boxes.movers) b.off = true;   // (every door open, every pane broken)
+    const tall = M.movers.map((m, id) => ({ m, id })).filter(({ m }) => m.kind === 'break' && m.pane && m.box[5] - m.box[4] >= 12 * U && Math.min(m.box[1] - m.box[0], m.box[3] - m.box[2]) <= 16 * U);
+    const through = []; for (const { m, id } of tall) { const [x0, x1, z0, z1, y0, y1] = m.box, thinX = x1 - x0 < z1 - z0, c = thinX ? (x0 + x1) / 2 : (z0 + z1) / 2; let at = null;
+      for (let u = thinX ? z0 : x0; u <= (thinX ? z1 : x1) && !at; u += 2 * U) for (let f = y0 - 54 * U; f < y1 - 26 * U && !at; f += 2 * U) { const [x, z] = thinX ? [c, u] : [u, c]; if (!MV.blocked(boxes, null, x, z, f, MV.MOVE.duckHeight)) at = toH(x, z, f).map(Math.round); }
+      if (at) through.push([id, ...at]); }
+    ok('nuke: every standing pane, broken, still keeps players out as CS2\'s collision does (no body fits through any)', tall.length >= 36 && !through.length && PC.length >= 29, tall.length + ' panes, ' + through.length + ' let a body through · e.g. ' + JSON.stringify(through.slice(0, 4)));
+    const [ox, oz] = G(1230, -400), s = MV.createMoveState(MV.groundAt(boxes, ox, oz, gy(-600))); s.x = ox; s.z = oz;
+    for (let t = 0; t < 128 * 2; t++) MV.moveStep(s, { wish: [0, -1], look: [0, -1], weapon: 'knife', jump: t % 40 < 3, duck: t > 128 }, world, 1 / 128);
+    const end = toH(s.x, s.z, s.y); ok('nuke: running and jumping at the broken Observation window (y −354) stays in the room', end[1] < -350, end.map(Math.round).join(','));
+    const BP = new AM.BulletPath(), [ax, az] = G(1230, -420), [bx, bz] = G(1230, -300), ay = gy(-580), L = Math.hypot(bx - ax, bz - az); AM.bulletPath(boxes, ax, ay, az, (bx - ax) / L, 0, (bz - az) / L, L, 0, BP);
+    ok('nuke: …while a shot goes through it (nothing stops it at the window)', BP.stop >= L * .66, 'stopped after ' + (BP.stop / U).toFixed(0) + ' of ' + (L / U).toFixed(0) + ' HU');
+    if (M.nav?.sight) ok('nuke: …and so does sight (the bots\' line through the columns)', M.nav.sight(ax, ay, az, bx, ay, bz)); }
 }
 console.log(`PASS: Global Defensive doors & glass · ${n} checks`);

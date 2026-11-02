@@ -3,7 +3,7 @@
 // places) with their boxes as brush models, and the collision as solid stretches along vertical lines — CS2's physics
 // sampled every 8 units, at the very points the builder's rays fall on. Grenades get their own (CS2's grenade clips
 // in, its player clips out). Pure: the room host, the clients and the tests share it.
-import PANE_RECTS from './cs-maps/cs2-pane-rects.js'; import EXTRA_PANES from './cs-maps/cs2-extra-panes.js';
+import PANE_RECTS from './cs-maps/cs2-pane-rects.js'; import EXTRA_PANES from './cs-maps/cs2-extra-panes.js'; import PANE_CLIPS from './cs-maps/cs2-pane-clips.js';
 export const isCs2Map = buf => { const u = new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer, buf.byteOffset || 0, 4); return u[0] === 67 && u[1] === 83 && u[2] === 50 && u[3] === 77; };   // "CS2M"
 export function parseCs2Map(buf) {
   const ab = buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), dv = new DataView(ab), hl = dv.getUint32(8, true);
@@ -25,6 +25,10 @@ export function parseCs2Map(buf) {
   // look's glass doesn't count as drawn — and filled it solid up to the next floor (B's ceiling): pillars over a third
   // of B. Those lines are rebuilt (glassFloorFix): P.fix holds their stretches (half units, as the file's).
   P.fix = glassFloorFix(H, G, P, B, at);
+  // Ladders whose wall the importer cut away behind them (Nuke's Lobby ladder, the v52 report "we can't go up that
+  // ladder": its rung clearing took the 12-unit wall at its back for a ladder standing free, and left a slot through to
+  // the next room — at the mezzanine the climber went into it, at the top fell down it and stayed). Rebuilt (ladderBackFix).
+  P.fix = ladderBackFix(H, G, P, at, P.fix);
   // Solid stretches [bottom, top] (Hammer units) on the line through (x, y), clipped to [z0, z1].
   const spans = (g, x, y, z0, z1) => { const i = at(g, x, y), out = []; if (i < 0) return out; const f = g.fix?.get(i);
     if (f) { for (let k = 0; k < f.length; k += 2) { const b = f[k] / 2, t = f[k + 1] / 2; if (t > z0 && b < z1) out.push([Math.max(b, z0), Math.min(t, z1)]); } return out; }
@@ -38,6 +42,11 @@ export function parseCs2Map(buf) {
   for (const r of EXTRA_PANES[H.id] || []) { const lo = r.slice(0, 3), hi = r.slice(3, 6);
     if (H.entities.some(e => { if (!e.pane || !e.model) return false; const m = H.models[+e.model.slice(1)]; return m && [0, 1, 2].every(k => m.mins[k] < hi[k] + 1 && m.maxs[k] > lo[k] - 1); })) continue;
     H.entities.push({ classname: 'func_breakable', model: '*' + H.models.length, origin: '0 0 0', material: '0', health: '1', spawnflags: '0', look: 'bounds', pane: 1, added: 1 }); H.models.push({ mins: lo, maxs: hi }); }
+  // Windows CS2 keeps players out of with the glass gone (cs-maps/cs2-pane-clips.js: the v52 report "Nuke's B glasses:
+  // when they break we can go through the window"): their pane gets `clip` — bsp-map.js / arena-maps.js mapBoxes keep a
+  // box there for players only, broken or not (bullets, sight and grenades go by their own layers and pass a broken pane).
+  for (const r of PANE_CLIPS[H.id] || []) for (const e of H.entities) { if (!e.pane || !e.model) continue; const m = H.models[+e.model.slice(1)];
+    if (m && [0, 1, 2].every(k => Math.abs(m.mins[k] - r[k]) <= 1 && Math.abs(m.maxs[k] - r[k + 3]) <= 1)) e.clip = 1; }
   const DOOR_QUARTER = /ch2_door_001\.vmdl$/;
   const models = H.models.map((m, i) => ({ mins: m.mins, maxs: m.maxs, head: i ? -1 : 0, hulls: [], ...(m.rects ? { rects: m.rects } : {}) }));
   // A pane whose one box is far bigger than its glass (cs-maps/cs2-pane-rects.js: Cache's Long A doorway): its glass's
@@ -92,5 +101,42 @@ function glassFloorFix(H, G, P, B, at) {
     const all = []; for (let q = 0; q < L.length; q += 2) if (!ks.includes(q)) all.push([L[q], L[q + 1]]); for (let q = 0; q < add.length; q += 2) all.push([add[q], add[q + 1]]);
     all.sort((p, q) => p[0] - q[0]); const out = []; for (const [b0, t0] of all) { const n = out.length; if (n && b0 <= out[n - 1]) { if (t0 > out[n - 1]) out[n - 1] = t0; } else out.push(b0, t0); }
     fix.set(i, out); }
+  return fix;
+}
+
+// The wall behind a ladder, where the importer's rung clearing (tools/maps/import-cs2-map.mjs ladderClears) cut it away:
+// a ladder with a wall right beside both its ends on one side only (the lines just past its width, 12 and 20 units out
+// from its face, solid over 80% of its height) — that side is its back, the other the climbing side — whose lines in
+// between, 6 to 26 units behind its face, miss what both those neighbours share: those lines get it back (within 24 units
+// of the ladder's foot and top). A ladder in a hatch or standing free (no wall on either side, or on both) keeps its lines.
+// Returns the line fixes (Map, half units, as glassFloorFix's) with these added.
+function ladderBackFix(H, G, P, at, fix) {
+  const S = G.step, g0 = [G.x0, G.y0];
+  const runs = i => { if (i < 0) return null; const f = fix?.get(i); if (f) return f; const o = []; for (let k = P.offs[i]; k < P.offs[i + 1]; k += 2) o.push(P.vals[k], P.vals[k + 1]); return o; };
+  const cover = (R, lo, hi) => { let c = 0; if (R) for (let k = 0; k < R.length; k += 2) c += Math.max(0, Math.min(R[k + 1], hi) - Math.max(R[k], lo)); return c; };
+  for (const L of H.ladderBoxes || []) {
+    const a = L.maxs[0] - L.mins[0] < L.maxs[1] - L.mins[1] ? 0 : 1, b = 1 - a, p0 = (L.mins[a] + L.maxs[a]) / 2, z0 = L.mins[2] * 2, z1 = L.maxs[2] * 2;
+    const line = (av, bv) => a === 0 ? at(P, av, bv) : at(P, bv, av), ln = v => g0[a] + Math.round((v - g0[a]) / S) * S;
+    const bA = g0[b] + Math.ceil((L.mins[b] - 2 - g0[b]) / S) * S, bB = g0[b] + Math.floor((L.maxs[b] + 2 - g0[b]) / S) * S, ends = [bA - S, bB + S];
+    const wall = sg => [12, 20].every(d => ends.every(bv => cover(runs(line(ln(p0 + sg * d), bv)), z0, z1) >= .8 * (z1 - z0)));
+    const wp = wall(1), wn = wall(-1), sg = wp === wn ? 0 : wp ? 1 : -1;
+    // Where another piece of the same ladder goes on from its top (CS2's ladder surfaces come in pieces: Nuke's Lobby
+    // ladder is two, joined at its mezzanine), the clearing left a sliver between its two cuts (a unit thick, at the join):
+    // a climber coming down stood on it, short of the lower piece. On the ladder's own lines and its climbing side's (up
+    // to 26 units out), stretches no thicker than 4 units within 6 of the join go.
+    if (H.ladderBoxes.some(B => B !== L && B.mins[0] < L.maxs[0] && B.maxs[0] > L.mins[0] && B.mins[1] < L.maxs[1] && B.maxs[1] > L.mins[1] && Math.abs(B.mins[2] - L.maxs[2]) < 2))
+      for (let av = ln(p0 - 26); av <= p0 + 26; av += S) { if (sg && sg * (av - p0) >= 6) continue;
+        for (let bv = bA; bv <= bB; bv += S) { const i = line(av, bv), R = runs(i); if (!R) continue; const out = [];
+          for (let k = 0; k < R.length; k += 2) if (!(R[k + 1] - R[k] <= 8 && Math.abs(R[k] - z1) <= 12)) out.push(R[k], R[k + 1]);
+          if (out.length !== R.length) (fix ??= new Map()).set(i, out); } }
+    if (!sg) continue;
+    for (let av = ln(p0 + sg * 6); sg * (av - p0) <= 26; av += sg * S) { if (sg * (av - p0) < 6) continue;
+      const n1 = runs(line(av, ends[0])), n2 = runs(line(av, ends[1])); if (!n1 || !n2) continue; const both = [];
+      for (let p = 0; p < n1.length; p += 2) for (let q = 0; q < n2.length; q += 2) { const lo = Math.max(n1[p], n2[q], z0 - 48), hi = Math.min(n1[p + 1], n2[q + 1], z1 + 48); if (hi - lo >= 16) both.push(lo, hi); }
+      if (!both.length) continue;
+      for (let bv = bA; bv <= bB; bv += S) { const i = line(av, bv), R = runs(i); if (!R) continue; const all = [];
+        for (let k = 0; k < R.length; k += 2) all.push([R[k], R[k + 1]]); for (let k = 0; k < both.length; k += 2) all.push([both[k], both[k + 1]]);
+        all.sort((p, q) => p[0] - q[0]); const out = []; for (const [b0, t0] of all) { const n = out.length; if (n && b0 <= out[n - 1]) { if (t0 > out[n - 1]) out[n - 1] = t0; } else out.push(b0, t0); }
+        if (out.length !== R.length || out.some((v, k) => v !== R[k])) (fix ??= new Map()).set(i, out); } } }
   return fix;
 }

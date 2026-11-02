@@ -4,6 +4,10 @@ import numpy as np
 from imglib import dilate, resize
 
 
+ART_STYLES = (4, 6, 8)   # paint styles CS2 leaves off a second composited material (the SSG 08's scope stays black under
+                          # anodized-multicolour, custom and gunsmith finishes in its econ icons; hydrographic / patina paint it)
+
+
 class Lookup:
     def __init__(self, path, res):
         z = np.load(path); lut = z['lut']
@@ -12,6 +16,16 @@ class Lookup:
         self.legacy_cover = z['legacy_cover'].astype(bool); self.hd_cover = z['hd_cover'].astype(bool)
         if self.hd_cover.shape[0] != res: self.hd_cover = resize(self.hd_cover[..., None].astype(np.float32), res)[..., 0] > 0.5
         self.stats = z['stats'].tolist()
+        # texels CS2 leaves at the gun's base (legacy_lookup.py 'plain' bits; lookups before v4 have none): 1 a second
+        # composited legacy material (the SSG 08's scope), 2 a material CS2 never composites (lenses), 4 a minor HD part
+        pl = z['plain'] if 'plain' in z.files else np.zeros(lut.shape[:2], np.uint8)
+        if pl.shape[0] != res: pl = pl[(np.arange(res) * pl.shape[0]) // res][:, (np.arange(res) * pl.shape[1]) // res]   # (nearest: bit flags)
+        self.plain = pl.astype(np.uint8)
+
+    def keep(self, legacy, style):
+        """coverage multiplier (res, res) for a finish: 0 where CS2 shows the gun's own base instead of this finish's paint"""
+        drop = 4 | ((2 | (1 if style in ART_STYLES else 0)) if legacy else 0)
+        return ((self.plain & drop) == 0).astype(np.float32)
 
     def pad_legacy(self, img, steps=6):
         """grow a legacy-layout image past its UV islands so bilinear lookups at island edges do not pick up the background"""

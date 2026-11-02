@@ -124,7 +124,7 @@ if (!nGun && !nKnife) die('Nothing to bake.');
 
 // ---- 3. legacy lookups (Blender, once per gun and resolution)
 const LUT = path.join(WORK, 'lut'); mkdirSync(LUT, { recursive: true });
-const LUT_VERSION = 3;   // (bump when legacy_lookup.py changes: 3 = hidden legacy layers skipped, 2026-11-01)
+const LUT_VERSION = 4;   // (bump when legacy_lookup.py changes: 3 = hidden legacy layers skipped, 2026-11-01; 4 = 'plain' texels: scope lenses, the SSG 08's scope, 2026-11-02)
 const lutOf = gid => path.join(LUT, `${gid}_${RES}_v${LUT_VERSION}.npz`);
 // finished bakes are reused only when they were made by this bake code (bake.py and what it imports) and this lookup
 const BAKE_VERSION = (() => { const h = createHash('sha1'); for (const f of ['bake.py', 'imglib.py', 'transfer.py', 'vtex.py', 'vpk.py']) h.update(f).update(readFileSync(path.join(PY, f))); return h.update('lut' + LUT_VERSION).digest('hex').slice(0, 12); })();

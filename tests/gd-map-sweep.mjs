@@ -25,6 +25,7 @@ for (const f of readdirSync(dir).sort()) { const id = f.replace(/\.bsp$/i, ''); 
   const buf = readFileSync(dir + '/' + f); if (buf.subarray(0, 4).toString() !== 'CS2M') continue;
   useMapFile(id, buf); const M = ARENA_MAPS[id], C = M.columns, G = C?.G; if (!G) { console.log(id + ': no columns'); continue; }
   const boxes = mapBoxes(M, cx, cz); for (const b of boxes.movers || []) b.off = true;   // (doors open, panes and vents broken: the map's own shapes walked — doors have their own tests)
+  const clips = [...boxes].filter(b => b.mat === 'clip');   // (windows CS2 keeps players out of, broken or not — cs-maps/cs2-pane-clips.js: their sill is no floor anyone stands on)
   const [W, D] = M.size, bounds = { minX: cx - W / 2, maxX: cx + W / 2, minZ: cz - D / 2, maxZ: cz + D / 2 }, world = { boxes, bounds, ladders: [] };
   const place = (x, z) => { for (const p of M.places || []) if (p.poly ? false : (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1)) return p.name; return M.calloutAt?.(x - cx, z - cz) || ''; };
   const where = (x, z, y) => ({ x: +(x - cx).toFixed(1), z: +(z - cz).toFixed(1), y: +y.toFixed(1), hammer: M.hammer ? [Math.round((x - cx + M.hammer.W / 2) / M.hammer.U + M.hammer.x0), Math.round(M.hammer.y1 - (z - cz + M.hammer.D / 2) / M.hammer.U)] : null, place: M.locationAt?.(x - cx, z - cz, y) || '' });
@@ -33,6 +34,7 @@ for (const f of readdirSync(dir).sort()) { const id = f.replace(/\.bsp$/i, ''); 
   const RM = existsSync(RADARS) ? radarMask(RADARS, id) : null, H = M.hammer, offRadar = (x, z) => RM && H && !RM.inPlay((x - cx + H.W / 2) / H.U + H.x0, H.y1 - (z - cz + H.D / 2) / H.U);
   for (let r = 1; r < G.rows - 1; r += step) for (let c = 1; c < G.cols - 1; c += step) { const i = r * G.cols + c;
     for (let k = 0; k < G.n[i]; k++) { const h = G.z[i * MAXF + k]; if (h === NONE || G.ceil[i * MAXF + k] - h < 54) continue;   /* (room to crouch over it: a floor you can be on — the rest are ledges kept beside walls) */ const y = (h - C.zLow) * C.U, x = cx - C.W / 2 + (c + .5) * C.cell, z = cz - C.D / 2 + (r + .5) * C.cell; res.spots++;
+      if (clips.some(b => x > b.minX - MOVE.radius && x < b.maxX + MOVE.radius && z > b.minZ - MOVE.radius && z < b.maxZ + MOVE.radius && b.y1 > y && b.y0 < y + MOVE.duckHeight)) continue;
       // Standing: in no solid (a little clearance: the body's radius less a hair — a spot beside a wall is fine).
       if (blocked(boxes, bounds, x, z, y + .05, MOVE.duckHeight * .95, MOVE.radius * .5)) { res.stuck.push(where(x, z, y)); continue; }   // (crouched: a floor under a low ceiling is crawled — a vent)
       // Dropped from just above: rests on this floor.

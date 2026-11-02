@@ -58,8 +58,40 @@ export function roundMvp(game, winner, reason) { const C = game.combat, d = C?.d
   const dmg = { ...(r.rd || {}) }; for (const [v, by] of Object.entries(C.dmg || {})) if (d.teams[v] && d.teams[v] !== winner) for (const [x, n] of Object.entries(by || {})) if (d.teams[x] === winner) dmg[x] = (dmg[x] || 0) + n;   // (and the damage to those still standing)
   let best = null, bk = 0, bd = 0; for (const [k, t] of Object.entries(d.teams)) { if (t !== winner) continue; const n = r.rk?.[k] || 0, m = dmg[k] || 0; if (n > bk || (n === bk && m > bd)) { best = k; bk = n; bd = m; } }
   return best ? { k: best, why: 'kills', kills: bk } : null; }
+// This round's damage report (CS2's win panel: each player's damage given and taken, with hits) and its head-shot kills and
+// assists: kept host-side by the round object (a WeakMap — never in the combat frames), and summed into the round's own
+// small report (r.sum, r.mvp's stats) only when the round ends. A new round object starts empty.
+const LIVE = new WeakMap();
+// Match stats (the Tab scoreboard, CS2): per player [kills, assists, deaths, MVPs, head-shot kills, damage to enemies] and
+// each round's [winner, reason], plus the last round's damage report (sum, of round sumN). Host-side, kept by the match
+// object d (a WeakMap: a new match or a rematch makes a new d, so they start at 0) — never in the per-frame combat state:
+// lan/room.mjs sends them as frame.ms only when they changed (rev / at), on catch-up and every few seconds. ~1 KB.
+const MATCH = new WeakMap();
+const msOf = d => { let m = MATCH.get(d); if (!m) MATCH.set(d, m = { match: d.match, rev: 0, at: 0, p: {}, r: [], sum: null, sumN: 0 }); return m; };
+const msRow = (m, k) => m.p[k] ??= [0, 0, 0, 0, 0, 0];
+const msTouch = m => { m.rev++; m.at = Date.now(); };
+export function matchStats(game) { const d = game?.combat?.d; return d ? MATCH.get(d) || null : null; }
+const liveOf = r => { let t = LIVE.get(r); if (!t) LIVE.set(r, t = { p: {}, hs: {}, as: {} }); return t; };
+// Every hit that took HP (combat-logic hurt): shooter → victim [damage, hits]; kill: it knocked them out (head: a head shot
+// with a firearm, CS2's HS%). The bomb's blast is nobody's damage here.
+export function defuseHurt(game, shooter, target, dmg, wpn, kill = false, head = false) {
+  const d = game.combat?.d, r = d?.round, k = key(shooter), tk = key(target); if (!r || r.phase === 'warmup' || k === tk || !(dmg > 0) || wpn?.id === 'c4') return;
+  const L = liveOf(r), row = L.p[k] ??= {}, pr = row[tk] ??= [0, 0]; pr[0] += dmg; pr[1]++;
+  if (!d.teams[k] || !d.teams[tk] || d.teams[k] === d.teams[tk]) return; const m = msOf(d), row2 = msRow(m, k); row2[5] += dmg;
+  if (kill && head) { L.hs[k] = (L.hs[k] || 0) + 1; row2[4]++; } msTouch(m); }
+// An assist (combat-logic: 41+ damage to someone another player then killed, CS2): counted for this round too.
+export function defuseAssist(game, k) { const d = game.combat?.d, r = d?.round; if (r && r.phase !== 'warmup') { const L = liveOf(r); L.as[k] = (L.as[k] || 0) + 1; const m = msOf(d); msRow(m, k)[1]++; msTouch(m); } }
+// The round's report, made once at its end: for each player who dealt or took damage, the enemies they hurt most (top 3:
+// [name key, damage, hits]), their damage dealt to enemies, and the damage and hits they took. ~1 KB for 10 players.
+export function roundReport(game) { const d = game.combat?.d, r = d?.round; if (!r) return {}; const L = LIVE.get(r), out = {}; if (!L) return out;
+  const ent = k => out[k] ??= { g: [], d: 0, t: 0, th: 0 };
+  for (const [k, row] of Object.entries(L.p)) for (const [v, [n, h]] of Object.entries(row)) { if (!d.teams[k] || d.teams[k] === d.teams[v]) continue; const a = ent(k), b = ent(v); a.g.push([v, n, h]); a.d += n; b.t += n; b.th += h; }
+  for (const e of Object.values(out)) { e.g.sort((x, y) => y[1] - x[1]); e.g.length = Math.min(3, e.g.length); }
+  return out; }
 export function defuseKill(game, shooter, target, wpn) {
-  const d = game.combat?.d; if (!d) return; roundTally(game, d, key(shooter), key(target), wpn); const k = key(shooter), a = d.teams[k], b = d.teams[key(target)]; if (!a || k === key(target)) return;
+  const d = game.combat?.d; if (!d) return; roundTally(game, d, key(shooter), key(target), wpn);
+  { const r = d.round, sk = key(shooter), tk = key(target); if (r && r.phase !== 'warmup' && d.teams[tk]) { const m = msOf(d); msRow(m, tk)[2]++; if (sk !== tk && d.teams[sk] && d.teams[sk] !== d.teams[tk]) msRow(m, sk)[0]++; msTouch(m); } }   // (match stats: CS2's K / D)
+  const k = key(shooter), a = d.teams[k], b = d.teams[key(target)]; if (!a || k === key(target)) return;
   if (a === b && d.rules?.ff === false) return; gain(d, k, a === b ? -300 : ({ he: 300, molotov: 300, incendiary: 300, decoy: 300, c4: 0 })[wpn.id] ?? weaponById(wpn.id)?.reward ?? 300);
 }
 
@@ -69,7 +101,7 @@ export function startDefuse(game, now, players = [], teams = null) {
   // match: this match's id; every round gets `round.id` (match id · round sequence, restarts and warmup included), which
   // round-bound requests (buys, plant, defuse) carry so one sent in a round that has since ended is refused.
   // (the match id is the arena's — arena-logic.js startArena / beginMatch — so every request and frame names one match)
-  game.combat.d = { match: A?.match || now.toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0'), rseq: 0, rules: cleanRules(game.arena?.rules), teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {}, history: [] }; game.combat.stats = {};   // a fresh match: fresh report
+  game.combat.d = { match: A?.match || now.toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0'), rseq: 0, rules: cleanRules(game.arena?.rules), teams: teams ? { ...teams } : {}, money: {}, score: { t: 0, ct: 0 }, loss: { t: 0, ct: 0 }, round: null, bomb: { carrier: null }, kits: {}, n: 0, matchOver: null, pending: {}, history: [] }; game.combat.stats = {}; msOf(game.combat.d);   // a fresh match: fresh report
   // Bots start a match like everyone: their side's pistol, then what round 1's $800 buys (newRound: arm + botBuy) — never
   // the deathmatch gun addBot gave them, nor the rifle they ended the last match with.
   for (const [i, b] of (game.arena.bots || []).entries()) { const k = key(b.name); game.combat.d.teams[k] ??= i % 2 ? 'ct' : 't'; b.weapon = null; }
@@ -215,7 +247,12 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   return changed;
 }
 function end(game, winner, reason, now) {
-  const C = game.combat, d = C.d, r = d.round; r.mvp = roundMvp(game, winner, reason); r.phase = 'over'; r.winner = winner; r.reason = reason; r.overAt = now; r.plant = null; r.defuse = null;   // (mvp: before the defuse is cleared)
+  const C = game.combat, d = C.d, r = d.round; r.mvp = roundMvp(game, winner, reason);
+  // The win panel's data (CS2): the MVP's stats this round, a star on the scoreboard, and everyone's damage report.
+  // (the report goes in the match stats, sent once — not in every frame of the round's end; the MVP card's numbers stay on r.mvp)
+  const sum = roundReport(game); if (r.mvp) { const L = LIVE.get(r); r.mvp.dmg = sum[r.mvp.k]?.d || 0; r.mvp.hs = L?.hs[r.mvp.k] || 0; r.mvp.as = L?.as[r.mvp.k] || 0; }
+  if (r.phase !== 'warmup') { const m = msOf(d); if (r.mvp) msRow(m, r.mvp.k)[3]++; m.r.push([winner, reason]); if (m.r.length > 40) m.r.shift(); m.sum = sum; m.sumN = d.n; msTouch(m); }
+  r.phase = 'over'; r.winner = winner; r.reason = reason; r.overAt = now; r.plant = null; r.defuse = null;   // (mvp: before the defuse is cleared)
   d.score[winner]++; const loser = other(winner); (d.history ??= []).push({ n: d.n, winner, reason, at: now, score: { ...d.score } }); if (d.history.length > 40) d.history.shift();
   for (const [k, t] of Object.entries(d.teams)) { if (t === winner) gain(d, k, WIN[reason]); else gain(d, k, LOSS[Math.min(4, d.loss[loser])] + (loser === 't' && r.planted ? 800 : 0)); }
   d.loss[loser]++; d.loss[winner] = Math.max(0, d.loss[winner] - 1);
