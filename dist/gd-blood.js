@@ -27,6 +27,15 @@
 // Settings → Global Defensive → Blood (live.blood, default on): off hides it at once and draws none.
 // Your own wounds (and, spectating, the watched player's) spray nothing in your view (CS2: no impact on your own body
 // in first person); their decals are drawn as for everyone.
+// v53 (Addendum 6, stage 3): the headshot "dink" — a headshot on a HELMET (the record's hm, combat-logic.js hitMarks) also
+// throws CS2's helmet impact (particles/impact_fx/impact_helmet_headshot.vpcf and its children _spark and _glow, the
+// user's install, decompiled with Source2Viewer-CLI): electric blue-white spark trails back toward the shooter, two
+// long fast streaks out through the head and a brief bright flare at the helmet — DINK below, every number from those
+// files. A third pool (DINK_N trail / sprite quads, ONE additive draw, warmed with the others), written from the same
+// host records, so everyone who can see the head sees the same sparks; a bare head gets the blood only. Not your own
+// head in first person (as the spray). The sparks are not blood: Settings → Blood off leaves them.
+// Not drawn (CS2 children of impact_helmet_headshot left out): impact_generic_smoke_small, ricochet_sparks,
+// impact_metal_sparks_trailing, impact_metal_child_glow2, blood_impact_friendly_flash.
 import * as THREE from './three.module.js';
 import { HU } from './weapons-data.js';
 import { bulletPath, BulletPath } from './arena-maps.js';
@@ -79,8 +88,8 @@ export const tierOf = rec => rec.z === 'head' || rec.d >= 60 ? 'high' : rec.d >=
 const LISTS = { low: [EMIT.low], med: [EMIT.med], high: [EMIT.high], head: [EMIT.high, EMIT.head] }, TRAIL = { low: EMIT.low.find(e => e.trail), med: EMIT.med.find(e => e.trail), high: EMIT.high.find(e => e.trail) };
 
 // ── deterministic randomness: the same record gives the same blood everywhere ────────────────────────────────────────
-let S = 1;
-const seed = s => { S = (s >>> 0) || 1; }, rnd = () => { S = (S + 0x6D2B79F5) | 0; let t = Math.imul(S ^ (S >>> 15), 1 | S); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const SS = new Int32Array([1]);   // (the state in a typed array: a module variable past ±2^30 is a boxed number, one allocation per draw — v53)
+const seed = s => { SS[0] = (s >>> 0) || 1; }, rnd = () => { const S = SS[0] = (SS[0] + 0x6D2B79F5) | 0; let t = Math.imul(S ^ (S >>> 15), 1 | S); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rr = (a) => a[0] + (a[1] - a[0]) * rnd();
 const hashStr = s => { let h = 2166136261; for (let k = 0; k < s.length; k++) h = Math.imul(h ^ s.charCodeAt(k), 16777619); return h >>> 0; };
 const recSeed = (rec, salt) => (Math.floor(+rec.i) % 2147483647) ^ hashStr(String(rec.v || '')) ^ salt;
@@ -88,9 +97,11 @@ const lin = c => { c /= 255; return c <= .04045 ? c / 12.92 : Math.pow((c + .055
 
 // A record's frame: D the bullet's direction, L sideways (horizontal), U up.
 const D = [0, 0, 0], L = [0, 0, 0];
-function frame(rec) { let x = +rec.r[0], y = +rec.r[1], z = +rec.r[2]; const n = Math.hypot(x, y, z) || 1; x /= n; y /= n; z /= n; D[0] = x; D[1] = y; D[2] = z;
-  let lx = -z, lz = x; const ln = Math.hypot(lx, lz); if (ln < 1e-4) { lx = 1; lz = 0; } else { lx /= ln; lz /= ln; } L[0] = lx; L[1] = 0; L[2] = lz; }
-export const validRecord = r => !!r && Number.isFinite(+r.i) && Array.isArray(r.p) && r.p.length === 3 && r.p.every(Number.isFinite) && Array.isArray(r.r) && r.r.length === 3 && r.r.every(Number.isFinite) && Math.hypot(r.r[0], r.r[1], r.r[2]) > 1e-6;
+function frame(rec) { let x = +rec.r[0], y = +rec.r[1], z = +rec.r[2]; const n = Math.sqrt(x * x + y * y + z * z) || 1;   // (sqrt, not hypot: no boxed numbers per hit — v53)
+  x /= n; y /= n; z /= n; D[0] = x; D[1] = y; D[2] = z;
+  let lx = -z, lz = x; const ln = Math.sqrt(lx * lx + lz * lz); if (ln < 1e-4) { lx = 1; lz = 0; } else { lx /= ln; lz /= ln; } L[0] = lx; L[1] = 0; L[2] = lz; }
+const fin3 = a => Array.isArray(a) && a.length === 3 && Number.isFinite(a[0]) && Number.isFinite(a[1]) && Number.isFinite(a[2]);   // (v53: unrolled — every() / hypot() cost an allocation per hit)
+export const validRecord = r => !!r && Number.isFinite(+r.i) && fin3(r.p) && fin3(r.r) && r.r[0] * r.r[0] + r.r[1] * r.r[1] + r.r[2] * r.r[2] > 1e-12;
 
 // ── the spray: a record → particles (pure) ───────────────────────────────────────────────────────────────────────────
 // Each particle: SP floats — start x y z, velocity x y z, life, radius, grow0, grow1, gravity, drag (/s), rotation,
@@ -109,6 +120,46 @@ export function planSpray(rec, out) {
     out[o + 12] = rnd() * Math.PI * 2; out[o + 13] = CELL[e.cell]; out[o + 14] = FRAMES[e.cell]; out[o + 15] = e.st || 0;
     out[o + 16] = lin(e.col[0][0] + (e.col[1][0] - e.col[0][0]) * cr); out[o + 17] = lin(e.col[0][1] + (e.col[1][1] - e.col[0][1]) * cr); out[o + 18] = lin(e.col[0][2] + (e.col[1][2] - e.col[0][2]) * cr);
     out[o + 19] = rr(e.alpha); out[o + 20] = 0; n++; }
+  return n;
+}
+
+// ── the helmet dink: a record → spark particles (pure) ─────────────────────────────────────────────────────────────
+// CS2 (HU, s; local z = the impact's normal, back toward the shooter; x, y across it): [impact_helmet_headshot.vpcf]
+// 15 trails (InstantaneousEmitter 15): speed local (−900…900, −900…900, 550…950) + up to 300 any way
+// (CreateWithinSphereTransform m_fSpeedMax) + up to 500 along z (InitialVelocityNoise m_vecOutputMax, as a uniform
+// draw), life .05–.3, radius .35–.9 (× the renderer's .5), alpha .5–1, colour (103,255,242)–(82,216,255), gravity
+// −300, drag .5, trail ≤ 25 HU (fading in over .1 s), overbright 3, additive, no fade (Decay); [_spark.vpcf] 2 streaks
+// out through the head, speed (−900…900, −900…900, −1600…−400) + up to 500, life .09–.1, radius 4–6 going ×4 → ×.5
+// (InterpolateRadius), trail length .0142–.0205 s of speed (field 10) ≤ 64 HU fading in over .051 s, colour
+// (77,254,239)–(175,224,255), fade over its life (FadeOutSimple 1), overbright 3; [_glow.vpcf] 1 flare 3 HU out, life
+// .1–.13, radius 2–3 going ×.5 → ×2, colour (155,218,255)–(184,207,250), fading out at the end (FadeOut), overbright 8,
+// at most 1 % of the screen (m_flMaxSize .01). The main trails' own trail length is the engine's default (.1 s).
+export const DINK = {
+  trails: { n: 15, xy: [-900, 900], z: [550, 950], sph: 300, noise: 500, life: [.05, .3], r: [.35, .9], rs: .5, grow: [1, 1], alpha: [.5, 1], col: [[103, 255, 242], [82, 216, 255]], grav: -300, drag: .5, tt: [.1, .1], max: 25, fadeIn: .1, ob: 3, fade: 0 },
+  spark: { n: 2, xy: [-900, 900], z: [-1600, -400], sph: 500, noise: 0, life: [.09, .1], r: [4, 6], rs: .5, grow: [4, .5], alpha: [1, 1], col: [[77, 254, 239], [175, 224, 255]], grav: 0, drag: 0, tt: [.0142, .0205], max: 64, fadeIn: .051, ob: 3, fade: 1 },
+  glow: { n: 1, off: 3, life: [.1, .13], r: [2, 3], rs: .5, grow: [.5, 2], alpha: [1, 1], col: [[155, 218, 255], [184, 207, 250]], ob: 8, fade: 2, maxScreen: .01, sprite: 1 },
+};
+export const DK = 24, MAX_DINK = 18, DINK_N = 54; const DINK_PARTS = [DINK.trails, DINK.spark, DINK.glow];
+// Does this record dink? A headshot that met a helmet (host: hm).
+export const dinks = rec => !!rec && rec.z === 'head' && !!rec.hm;
+const Ux = [0, 0, 0];
+export function planDink(rec, out) {
+  if (!validRecord(rec) || !dinks(rec)) return 0; frame(rec); seed(recSeed(rec, 0xD1));
+  // local axes: z back toward the shooter (−D), x the sideways L, y = z × x
+  const zx = -D[0], zy = -D[1], zz = -D[2], xx = L[0], xy = L[1], xz = L[2]; Ux[0] = zy * xz - zz * xy; Ux[1] = zz * xx - zx * xz; Ux[2] = zx * xy - zy * xx;
+  const px = +rec.p[0], py = +rec.p[1], pz = +rec.p[2]; let n = 0;
+  for (let w = 0; w < 3; w++) { const e = DINK_PARTS[w]; for (let k = 0; k < e.n && n < MAX_DINK; k++) {
+    let vx = 0, vy = 0, vz = 0, ox = 0;
+    if (!e.sprite) { const a = rr(e.xy), b = rr(e.xy), c = rr(e.z) + (e.noise ? rnd() * e.noise : 0); vx = xx * a + Ux[0] * b + zx * c; vy = xy * a + Ux[1] * b + zy * c; vz = xz * a + Ux[2] * b + zz * c;
+      if (e.sph) { const u = rnd() * 2 - 1, an = rnd() * Math.PI * 2, q = Math.sqrt(1 - u * u), sp = rnd() * e.sph; vx += q * Math.cos(an) * sp; vy += u * sp; vz += q * Math.sin(an) * sp; } }
+    else ox = e.off;
+    const o = n * DK, cr = rnd();
+    out[o] = px + zx * ox * HU; out[o + 1] = py + zy * ox * HU; out[o + 2] = pz + zz * ox * HU;
+    out[o + 3] = vx * HU; out[o + 4] = vy * HU; out[o + 5] = vz * HU; out[o + 6] = rr(e.life);
+    out[o + 7] = rr(e.r) * e.rs * HU; out[o + 8] = e.grow[0]; out[o + 9] = e.grow[1]; out[o + 10] = (e.grav || 0) * HU; out[o + 11] = Math.max(.02, (e.drag || 0) * 30);
+    out[o + 12] = e.tt ? rr(e.tt) : 0; out[o + 13] = (e.max || 0) * HU; out[o + 14] = e.fadeIn || 0;
+    out[o + 15] = lin(e.col[0][0] + (e.col[1][0] - e.col[0][0]) * cr) * e.ob; out[o + 16] = lin(e.col[0][1] + (e.col[1][1] - e.col[0][1]) * cr) * e.ob; out[o + 17] = lin(e.col[0][2] + (e.col[1][2] - e.col[0][2]) * cr) * e.ob;
+    out[o + 18] = rr(e.alpha); out[o + 19] = e.sprite ? 1 : 0; out[o + 20] = e.fade; out[o + 21] = e.maxScreen || 0; out[o + 22] = 0; out[o + 23] = 0; n++; } }
   return n;
 }
 
@@ -285,6 +336,38 @@ void main() {
   gl_FragColor = vec4(mix(vec3(1.0), clamp(t.rgb * uDark, 0.0, 1.0), a), 1.0);
   #include <colorspace_fragment>
 }`;
+// The dink: trails stretched back along their screen velocity (at least a pixel wide), sprites capped to a share of the
+// screen; additive (CS2 PARTICLE_OUTPUT_BLEND_MODE_ADD), colours pre-multiplied by CS2's overbright.
+const DINK_VS = `uniform float uTime; uniform float uPx;
+attribute vec4 aP; attribute vec4 aV; attribute vec4 aS; attribute vec4 aM; attribute vec4 aC; attribute vec4 aK;
+varying vec2 vQ; varying vec4 vCol; varying float vKind;
+void main() {
+  float age = uTime - aP.w, life = aV.w;
+  if (age < 0.0 || age >= life) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); vKind = 0.0; return; }
+  float n = age / life, k = aM.x, e = exp(-k * age);
+  vec3 vt = vec3(0.0, aS.w / k, 0.0);
+  vec3 p = aP.xyz + (aV.xyz - vt) * (1.0 - e) / k + vt * age, vel = (aV.xyz - vt) * e + vt;
+  vec4 mv = viewMatrix * vec4(p, 1.0); float d = max(0.05, -mv.z), onePx = d * uPx;
+  float rad = aS.x * mix(aS.y, aS.z, n); vec2 c = position.xy * 2.0;
+  if (aK.x < 0.5) {
+    vec3 vv = (viewMatrix * vec4(vel, 0.0)).xyz; float sp = length(vel), sl = length(vv.xy);
+    vec2 ay = sl > 1e-5 ? vv.xy / sl : vec2(0.0, 1.0), ax = vec2(ay.y, -ay.x);
+    float len = min(aM.z, sp * aM.y) * clamp(age / max(aM.w, 1e-3), 0.0, 1.0) * (sp > 1e-5 ? sl / sp : 0.0);
+    float w = max(rad, onePx * 0.75);
+    mv.xy += ax * c.x * w + ay * ((c.y * 0.5 - 0.5) * len + c.y * w);
+  } else { rad = min(rad, aK.z * d / projectionMatrix[1][1]); mv.xy += c * max(rad, onePx); }
+  gl_Position = projectionMatrix * mv;
+  float a = aC.a; if (aK.y > 1.5) a *= 1.0 - smoothstep(0.75, 1.0, n); else if (aK.y > 0.5) a *= 1.0 - n;
+  vCol = vec4(aC.rgb, a); vQ = c; vKind = aK.x;
+}`;
+const DINK_FS = `varying vec2 vQ; varying vec4 vCol; varying float vKind;
+void main() {
+  float a = vKind < 0.5 ? (1.0 - vQ.x * vQ.x) * mix(0.3, 1.0, vQ.y * 0.5 + 0.5) : pow(max(0.0, 1.0 - length(vQ)), 2.0);
+  a *= vCol.a; if (a < 0.004) discard;
+  gl_FragColor = vec4(vCol.rgb, a);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
 function quad(n, attrs) { const p = new THREE.PlaneGeometry(1, 1), g = new THREE.InstancedBufferGeometry(); g.index = p.index; g.setAttribute('position', p.getAttribute('position')); g.setAttribute('uv', p.getAttribute('uv')); g.instanceCount = n;
   const out = {}; for (const [k, s] of attrs) { const a = new THREE.InstancedBufferAttribute(new Float32Array(n * s), s); a.setUsage(THREE.DynamicDrawUsage); g.setAttribute(k, a); out[k] = a; } return { g, a: out }; }
 
@@ -304,6 +387,26 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
   spray.name = 'gd-blood-spray'; decals.name = 'gd-blood-decals'; decals.renderOrder = -1;
   for (const o of [spray, decals]) { o.frustumCulled = false; o.visible = false; o.matrixAutoUpdate = false; o.userData.gd = true; o.userData.warm = true; o.userData.noPool = true; scene?.add(o); }
   spray.userData.fx = true;   // (after a smoke: arena-smoke-pass.js)
+  // the helmet dink (v53): its own additive pool, one draw, warmed with the others (userData.warm)
+  const dk = quad(DINK_N, [['aP', 4], ['aV', 4], ['aS', 4], ['aM', 4], ['aC', 4], ['aK', 4]]);
+  const dinkMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uPx: { value: 2 / 1080 } }, vertexShader: DINK_VS, fragmentShader: DINK_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  dinkMat.userData.shared = true;
+  const dink = new THREE.Mesh(dk.g, dinkMat); dink.name = 'gd-dink'; dink.frustumCulled = false; dink.visible = false; dink.matrixAutoUpdate = false; dink.userData.gd = true; dink.userData.warm = true; dink.userData.noPool = true; dink.userData.fx = true; scene?.add(dink);
+  const KB = new Float32Array(MAX_DINK * DK), KA = Object.values(dk.a); let kHead = 0, dinkEnd = -1, dinksN = 0;
+  function spawnDink(n, t) {
+    const P = dk.a.aP.array, V = dk.a.aV.array, Sz = dk.a.aS.array, M = dk.a.aM.array, Cc = dk.a.aC.array, K = dk.a.aK.array;
+    for (let j = 0; j < n; j++) { const o = j * DK, q = kHead * 4; kHead = (kHead + 1) % DINK_N;
+      P[q] = KB[o]; P[q + 1] = KB[o + 1]; P[q + 2] = KB[o + 2]; P[q + 3] = t + KB[o + 22];
+      V[q] = KB[o + 3]; V[q + 1] = KB[o + 4]; V[q + 2] = KB[o + 5]; V[q + 3] = KB[o + 6];
+      Sz[q] = KB[o + 7]; Sz[q + 1] = KB[o + 8]; Sz[q + 2] = KB[o + 9]; Sz[q + 3] = KB[o + 10];
+      M[q] = KB[o + 11]; M[q + 1] = KB[o + 12]; M[q + 2] = KB[o + 13]; M[q + 3] = KB[o + 14];
+      Cc[q] = KB[o + 15]; Cc[q + 1] = KB[o + 16]; Cc[q + 2] = KB[o + 17]; Cc[q + 3] = KB[o + 18];
+      K[q] = KB[o + 19]; K[q + 1] = KB[o + 20]; K[q + 2] = KB[o + 21]; K[q + 3] = 0;
+      dinkEnd = Math.max(dinkEnd, t + KB[o + 22] + KB[o + 6]); }
+    for (let j = 0; j < KA.length; j++) KA[j].needsUpdate = true; dink.visible = true; dinksN++;
+  }
+  function dinkHit(rec, t) { if (!dinks(rec) || !validRecord(rec)) return false; if (rec.v && (rec.v === me() || rec.v === watched())) return false; const n = planDink(rec, KB); if (n) spawnDink(n, t); return n > 0; }
+  function clearDink() { dk.a.aV.array.fill(0); dk.a.aV.needsUpdate = true; kHead = 0; dinkEnd = -1; dink.visible = false; }
   // particles start with no life: nothing drawn
   const PB = new Float32Array(MAX_PER_HIT * SP), DB = new Float32Array(MAX_DECALS_PER_HIT * DC), cast = mapCast(boxes);
   let sHead = 0, dHead = 0, dCount = 0, sprayEnd = -1, lastList = null, lastSeq = 0, lastTop = 0, hits = 0;
@@ -360,29 +463,32 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
     const r = globalThis.__infra?.renderer; try { r?.initTexture(T.decals); r?.initTexture(T.spray); } catch {} source = 'cs2'; }
   // Per frame: the clock uniform, new host records, at most one record's decals, quiet-moment texture swap.
   function update() {
-    const t = now(); sprayMat.uniforms.uTime.value = t; decalMat.uniforms.uTime.value = t;
+    const t = now(); sprayMat.uniforms.uTime.value = t; decalMat.uniforms.uTime.value = t; dinkMat.uniforms.uTime.value = t;
     if (spray.visible && t > sprayEnd) spray.visible = false;
+    if (dink.visible && t > dinkEnd) dink.visible = false;
     if (pendingTex) swapTextures();
     const G = game();
-    if (roundChanged(G)) { if (dCount || spray.visible || pN) clear(); lastSeq = 0; }
+    if (roundChanged(G)) { if (dCount || spray.visible || pN) clear(); if (dink.visible) clearDink(); lastSeq = 0; }
     const on = live.blood, list = G?.mode === 'arena' ? G.combat?.bl : null;
     // new records (each once, by its rising number; one far below the last — another host — starts the count again)
     // (a client gets a new list each update; a host in this page — practice, solo — changes its own in place: the newest number tells)
     const top = list && list.length ? +list[list.length - 1]?.i : 0;
-    if (list && (list !== lastList || top !== lastTop)) { lastList = list; lastTop = top; const hn = on ? clock() : 0;
-      for (let j = 0; j < list.length; j++) { const r = list[j], i = +r?.i; if (!(i > lastSeq) && !(i < lastSeq - 6e5)) continue; lastSeq = i; if (on && hn - r.at <= KEEP_MS) hit(r, t); } }
+    if (list && (list !== lastList || top !== lastTop)) { lastList = list; lastTop = top; const hn = clock();
+      for (let j = 0; j < list.length; j++) { const r = list[j], i = +r?.i; if (!(i > lastSeq) && !(i < lastSeq - 6e5)) continue; lastSeq = i; if (hn - r.at <= KEEP_MS) { if (on) hit(r, t); if (r.hm) dinkHit(r, t); } } }   // (the dink: whatever the Blood setting)
     if (!on) { if (dCount || spray.visible || pN) clear(); return; }
     placeNext();
   }
-  return { spray, decals, update, hit, clear, placeNext, swapTextures,
-    get stats() { return { decals: dCount, sprayAlive: spray.visible, pending: pN, hits, source, sHead, dHead }; },
+  return { spray, decals, dink, update, hit, clear, placeNext, swapTextures, dinkHit, clearDink,
+    get stats() { return { decals: dCount, sprayAlive: spray.visible, pending: pN, hits, source, sHead, dHead, dinks: dinksN, dinkAlive: dink.visible, kHead }; },
+    // the dink's one-pixel width: the picture's height in pixels (lab / tests; 1080 until told)
+    setViewHeight(h) { if (h > 0) dinkMat.uniforms.uPx.value = 2 / h; },
     get time() { return now(); },
     // tests and pictures: stop the clock (seconds since this started; null runs it again) · which pictures ('builtin' | 'cs2')
     hold(t) { held = t === null ? null : Number.isFinite(t) ? t : (performance.now() - t0) / 1000; },
     textures(which) { if (which === 'builtin') { decalMat.uniforms.uMap.value = decalTex; sprayMat.uniforms.uMap.value = sprayTex; source = 'builtin'; } else if (which === 'cs2' && cs2) { decalMat.uniforms.uMap.value = cs2.decals; sprayMat.uniforms.uMap.value = cs2.spray; source = 'cs2'; } return source; },
     // tests: the pools' arrays
-    get pools() { return { spray: sp.a, decals: dc.a }; },
+    get pools() { return { spray: sp.a, decals: dc.a, dink: dk.a }; },
     // one visible sample of each (sharing the pools' materials), for a warm-up that wants its own objects
-    warmObjects() { const a = new THREE.Mesh(sp.g, sprayMat), b = new THREE.Mesh(dc.g, decalMat); a.frustumCulled = b.frustumCulled = false; return [a, b]; },
-    dispose() { scene?.remove(spray); scene?.remove(decals); sp.g.dispose(); dc.g.dispose(); sprayMat.dispose(); decalMat.dispose(); decalTex.dispose(); sprayTex.dispose(); } };
+    warmObjects() { const a = new THREE.Mesh(sp.g, sprayMat), b = new THREE.Mesh(dc.g, decalMat), c = new THREE.Mesh(dk.g, dinkMat); a.frustumCulled = b.frustumCulled = c.frustumCulled = false; return [a, b, c]; },
+    dispose() { scene?.remove(spray); scene?.remove(decals); scene?.remove(dink); sp.g.dispose(); dc.g.dispose(); dk.g.dispose(); sprayMat.dispose(); decalMat.dispose(); dinkMat.dispose(); decalTex.dispose(); sprayTex.dispose(); } };
 }

@@ -1,12 +1,15 @@
 // Global Defensive HUD (compact, CS2-like): health + armor (bottom left), weapon · magazine / reserve · fire mode ·
 // reload · grenades · bomb / kit (bottom right), the dynamic crosshair (moves to where the next bullet goes and opens
-// up with movement inaccuracy) and the scope overlay. DOM is touched only when a value changes.
+// up with movement inaccuracy) and the scope overlay. DOM is touched only when a value changes. v53: the hit marker,
+// headshot sounds and hit-direction arc (gd-hit-feedback.js: hit() from lab.js, its update() each frame).
 import { skinTitle, skinFor, catalogHash } from './skins.js';
 import { weaponById, moveInaccuracy, MAX_HP, isFirearm, NADE_ORDER } from './weapons-data.js';
 import { hpOf, armorOf } from './combat-logic.js';
 import { loadCrosshair, crosshairHTML } from './gd-crosshair.js';
 import { bindingOf, keyLabel } from './input.js';
 import { gdView } from './gd-display.js';
+import { createHitFeedback } from './gd-hit-feedback.js';   // (v53 S3: hit marker, headshot sounds, the hit-direction arc)
+import { hostNow } from './host-clock.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const MODE = { auto: 'AUTO', semi: 'SEMI', pump: 'PUMP', bolt: 'BOLT' };
@@ -35,9 +38,14 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active })
   const keyOf = id => { const c = bindingOf('arena', NADE_KEY[id])[0]; return c ? keyLabel(c).replace(/[<&>"]/g, '') : ''; };
   const countOf = (list, id) => { let c = 0; for (let i = 0; i < list.length; i++) if (list[i] === id) c++; return c; };
   const px = (rad, f) => Math.tan(rad) / Math.tan(f * Math.PI / 360) * (gdView.h || innerHeight) / 2;   // (the picture's height: black bars leave less than the window — gd-display.js)
+  // (v53 S3) Hit feedback: the marker and the arcs live in this HUD's box (the crosshair's centre); your key cached per name.
+  const fb = createHitFeedback({ parent: root }); let fbName = null, fbKey = '';
   return {
+    // A hit of yours the host confirmed (lab.js reportHit): marker + sounds (gd-hit-feedback.js).
+    hit(kill, head, helmet) { fb.hit(kill, head, helmet); },
     update() {
       const g = world.operations.game, on = g.mode === 'arena' && active(); if (root.hidden === on) root.hidden = !on; if (!on) return;
+      { const nm = name(); if (nm !== fbName) { fbName = nm; fbKey = key(nm); } fb.update(g, fbKey, hostNow()); }   // (v53 S3: hurt sounds, arcs, onlookers' headshots)
       const me = name(), hp = hpOf(g, me), arm = armorOf(g, me), w = weapons.current, l = g.arena?.loadout?.[key(me)] || {}, d = g.combat?.d;
       set('hp', els.hp, 'text', String(hp)); set('hpc', els.hpBox, 'class', 'v hp' + (hp <= 25 ? ' low' : '')); set('bar', els.bar, 'width', Math.max(0, hp) / MAX_HP * 100 + '%');
       set('arm', els.arm, 'text', String(arm.kevlar || 0)); set('armc', els.armBox, 'class', 'v arm' + (arm.kevlar ? '' : ' none')); set('armi', els.armIco, 'text', arm.helmet ? '⛑' : '⛨');

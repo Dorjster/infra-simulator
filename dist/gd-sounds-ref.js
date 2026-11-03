@@ -77,4 +77,11 @@ export const REF = {
   'UIPanorama.buymenu_select': [0.5,[[0,1],[300,1]],1,0,1,1,0], 'UIPanorama.round_report_round_won': [0.7,[[0,1],[300,1]],1,0,1,1,0], 'UIPanorama.round_report_round_lost': [0.6,[[0,1],[300,1]],1,0,1,1,0],
   'Glass.Break': [0.7,[[40,1],[318.9,0.308],[1200,0]],2,0.8,0.99,1.01,0], 'Wood.Break': [0.8,[[40,1],[219.4,0.332],[600,0]],2,0.8,0.98,1,0], 'Door.wood_full_open': [1,[[0,1],[1400,0]],1,0.8,1,1,0],
   'Door.wood_full_close': [1,[[0,1],[1400,0]],1,0.8,1.1,1.1,0],
+  // (v53 S3: the helmet / headshot feedback events — the same tool's --ref output from the local game_sounds_player.vsndevts)
+  'Player.DamageHeadShotArmor.Victim': [0.75,[[22,1],[1300,1]],0,0.5,1,1,0], 'Player.DamageHeadShotArmor.Onlooker': [0.5,[[22,1],[298.3,0.429],[1070,0]],0,0.5,1,1,0],
+  'Player.DamageHeadShotArmor.AttackerFeedback': [0.5,[[104.4,1],[1100,0.768]],0,0,1,1,0], 'Player.DeathHeadShot.AttackerFeedback.Dink': [0.6,[[104.4,1],[1100,0.774]],0,0,1.1,1.1,0],
+  'Player.DeathHeadShot.AttackerFeedback.Flesh': [0.3,[[15.7,1],[1100,0.764]],0,0,1,1,0],
+  'Player.DeathHeadShot.Victim': [0.55,[[22,1],[1070,1]],0,0.5,1,1,0], 'Player.DeathHeadShotArmor.Victim': [0.7,[[22,1],[1070,1]],0,0.7,0.97,1,0], 'Player.DeathHeadShot.Victim.Dink': [0.7,[[22,1],[1200,1]],0,0.7,1,1,0],
+  'Player.DeathHeadShot.Victim.Flesh': [0.2,[[22,1],[1200,1]],0,0.7,1,1,0], 'Player.DeathHeadShot.Onlooker': [0.5,[[22,1],[298.3,0.429],[1070,0]],0,0.5,1,1,0], 'Player.DeathHeadShotArmor.Onlooker': [0.5,[[22,1],[298.3,0.429],[1070,0]],0,0.7,0.97,1,0],
+  'Player.DeathHeadShot.Dink': [0.7,[[22,1],[298.3,0.429],[1200,0]],0,0.7,1,1,0], 'Player.DeathHeadShot.Flesh': [0.2,[[22,1],[298.3,0.429],[1200,0]],0,0.7,1,1,0],
 };
