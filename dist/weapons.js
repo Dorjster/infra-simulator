@@ -86,11 +86,11 @@ export const sounds = { draw: (at, id) => { const w = weaponById(id); if (w?.kin
 // moment of them shown, sent with a hit for lag compensation), report(hit),
 // canFire(), blind() 0…1 (flashed), aim() { pitch, yaw } (the raw look), boxes() map boxes, move() { speed, max,
 // onGround, landedAgo, ducked, vy (units/s), ladder, landSpeed (HU/s, the last landing) },
-// throwNade(id, strength), moveSpeed(), host() { ammo: { id: [mag, res] }, shots: { n, r, pending } } (mine).
+// throwNade(id, strength, rel — v53: { t (s, performance.now's clock), pitch, yaw } of the release), moveSpeed(), host() { ammo: { id: [mag, res] }, shots: { n, r, pending } } (mine).
 const PIVOT = new THREE.Vector3(), pivR = new THREE.Quaternion(), pivE = new THREE.Euler(), pivA = new THREE.Vector3(), pivB = new THREE.Vector3();
 // Viewmodel lag: k (radians of lag per radian a second of turn), max (radians), K / D (the spring: stiffness, damping — critical).
 const SWAY = { k: .012, max: .035, K: 90, D: 2 * Math.sqrt(90) };
-export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, onShot = () => {}, skinOf = () => null, blind = () => 0, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true, planting = () => false, practiceAmmo = () => false, team = () => null, knifeSkin = () => null, skinRev = () => 0, glovesOf = () => null }) {
+export function createWeapons({ scene, camera, effects, arsenal, targets, report, canFire, onShot = () => {}, skinOf = () => null, blind = () => 0, aim = () => ({ pitch: 0, yaw: 0 }), boxes = () => [], move = () => ({ speed: 0, max: 1, onGround: true, landedAgo: 9 }), throwNade = () => {}, moveSpeed = () => 0, host = () => null, autoRescope = () => true, planting = () => false, practiceAmmo = () => false, practiceMag = () => false /* (v53 S2: GD practice, sv_infinite_ammo 1 — the magazine never empties) */, team = () => null, knifeSkin = () => null, skinRev = () => 0, glovesOf = () => null }) {
   let current = null, view = null, lastShot = 0, kick = 0, heldLeft = false, reloadUntil = 0, reloadId = null, lastDry = 0;
   // Shot and reload numbers start somewhere random each session, so a host that saw an older session re-syncs.
   let shots = 1e6 + Math.floor(Math.random() * 4e8), reloads = 1000 + Math.floor(Math.random() * 1e6);
@@ -210,14 +210,31 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // draw) → held (armed) → released → thrown. A click throws as soon as the pin is out; holding waits for the
   // release. The buttons held at the moment you let go pick the throw: both = medium, left = long, right = short.
   // Switching weapons, a menu or leaving the window cancels (cancelUtility).
-  function nadeButton(btn, on) {
+  function nadeButton(btn, on, at) {
     if (on) { if (nade.state === 'thrown' || nade.state === 'release') return; nade.buttons.add(btn); if (nade.state === 'idle') { nade.state = 'priming'; nade.primedAt = Math.max(now(), drawAt + drawMs) + THROW.primeMs; nade.queued = null; if (!clipStart('prime')) sounds.pin(null, current.id); if (fp?.prime) fp.prime(); else fp?.fire(); } return; }
     if (!nade.buttons.has(btn)) return; const held = new Set(nade.buttons); nade.buttons.delete(btn);
     const pick = held.size > 1 ? 'medium' : held.has(0) ? 'long' : 'short';
     if (nade.state === 'priming') { if (!nade.buttons.size || held.size > 1) nade.queued = pick; return; }   // let go early: thrown the moment the pin is out (CS2)
     if (nade.state !== 'held') return;
-    nade.strength = pick; nade.state = 'release';
+    nade.strength = pick; nade.state = 'release'; releaseAt(evAt(at));   // (v53: the button event's own moment — lab.js passes e.timeStamp)
   }
+  // v53 (sub-tick release): the moment of letting go (ms, performance.now — the button's event) and the raw look angles
+  // at that moment (aim(): the view's own pitch / yaw, no punch or smoothing) go with the throw; the movement then gives
+  // the state at that moment (lab.js → arena-move.js pressThrow), so the same input lands the same at any frame rate.
+  function releaseAt(t) { const A = aim(); nade.relAt = t; nade.relP = +A.pitch || 0; nade.relY = +A.yaw || 0; }
+  // evAt: an input event's moment (ms, e.timeStamp — performance.now()'s clock, the moment the OS took the input, not the
+  // moment a busy frame let its handler run), when it is one: else now. The angles are still read at the handler: every
+  // mouse move before the release has been applied by then (events run in order), so they are the release's angles.
+  const evAt = at => { const T = now(); return Number.isFinite(at) && at <= T && T - at < 1000 ? at : T; };
+  // A jump-throw (GD's 'jumpthrow' action, or Jump with the "Jump + release" helper): the grenade in hand let go at
+  // moment t (seconds, performance.now() / 1000 — the same moment lab.js gives pressJump) with the buttons held now picking the strength (left 1, right 0, both 0.5 — as a release), and lab.js
+  // presses Jump at the same t: both fall on one movement tick. Returns true when a grenade was let go (or will be the
+  // moment its pin is out).
+  function jumpThrow(t) {
+    if (current?.kind !== 'nade' || !nade.buttons.size || (nade.state !== 'held' && nade.state !== 'priming')) return false;
+    const pick = nade.buttons.size > 1 ? 'medium' : nade.buttons.has(0) ? 'long' : 'short'; nade.buttons.clear();
+    if (nade.state === 'priming') { nade.queued = pick; return true; }
+    nade.strength = pick; nade.state = 'release'; releaseAt(t * 1000); return true; }   // (t: s, on performance.now()'s clock — lab.js's pressJump moment; releaseAt keeps ms)
   function cancelNade() { if (nade.state === 'thrown') return; nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }; }
   // A shot at moment t (ms; the trigger's own time — update() passes when a held trigger's next shot was due, so the
   // cadence and the aim state don't depend on the frame rate).
@@ -233,7 +250,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     // CS2's inaccuracy now (penalty + movement), its visual view punch, then the ray: from the eye along the raw look +
     // the aim punch (spray + flinch) + the shot's seeded offset — the host recomputes exactly this (combat-logic.js).
     const zs = scopedMode(), acc = accOf(current, zs), ia = inacc = inaccuracyOf(acc, A, MV);
-    viewKick(current, shots, zs, KICK); shake.pitch += KICK.pitch * D2R; shake.yaw += KICK.yaw * D2R; ammo.set(id, [mag - 1, res]); fp?.fire();
+    viewKick(current, shots, zs, KICK); shake.pitch += KICK.pitch * D2R; shake.yaw += KICK.yaw * D2R; ammo.set(id, [practiceMag() ? mag : mag - 1, res]); fp?.fire();
     const a = aim(), o = camera.getWorldPosition(origin), m = MV, puP = A.aimP + A.flP, puY = A.aimY + A.flY, reach = current.reach ?? current.range;
     shotBase(a.pitch, a.yaw, puP, puY, B3); base.set(B3[0], B3[1], B3[2]); const np = shotOffsets(current, shots, ia, acc.spread, OFFS), dirs = [];
     for (let k = 0; k < np; k++) { offsetDir(B3, OFFS[2 * k], OFFS[2 * k + 1], D3); dirs.push(new THREE.Vector3(D3[0], D3[1], D3[2])); }
@@ -290,11 +307,11 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     // What to hold when the current item is gone (a thrown grenade, a planted bomb): the last weapon, else the best one.
     fallback() { const own = arsenal().filter(Boolean); return own.includes(prevWeapon) ? prevWeapon : own.find(i => !['nade', 'bomb'].includes(weaponById(i)?.kind)) || null; },
     get knife() { return knife; }, get drawing() { return now() - drawAt < drawMs; },
-    equip, cycle, fire, reload, setView,
+    equip, cycle, fire, reload, setView, jumpThrow,
     // Mouse buttons (0 left, 2 right) while playing.
-    button(btn, on) {
+    button(btn, on, at) {   // (at: the event's moment, ms on performance.now()'s clock — grenades' sub-tick release)
       if (!current) return;
-      if (current.kind === 'nade') return nadeButton(btn, on);
+      if (current.kind === 'nade') return nadeButton(btn, on, at);
       // Left: a press fires now if the gun is ready; else a semi-automatic gun's press waits and fires the moment it is,
       // as long as the button is still held (CS2); an automatic one fires on while held (update).
       if (btn === 0) { heldLeft = on; wantShot = false; if (!on) return; readMove(); advance(now()); if (!fire() && isFirearm(current) && left(current.id)[0] > 0) wantShot = true; return; }   // (an empty gun clicks once per press, as before: nothing to wait for)
@@ -303,7 +320,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
         if (current.mode === 'bolt' && now() - lastShot < current.rateMs) { if (rescope) rescope = null; else rescope = { id: current.id, level: 1, at: lastShot + current.rateMs * .9, manual: true }; return; }
         scope = (scope + 1) % (current.zoom.length + 1); scopeAt = now(); sounds.scope(); } }
     },
-    press(on) { this.button(0, on); },
+    press(on, at) { this.button(0, on, at); },   // (at: the event's moment, ms — GD grenades)
     // Death, respawn, new round: no scope, no spray, no half-done throws or reloads. Leaving the window, losing the
     // mouse or opening a menu (lab.js blur / pointerlockchange / panelOpen call this too) also lets go of the trigger.
     cancelUtility() { cancelNade(); heldLeft = false; wantShot = false; }, get rescope() { return rescope; },
@@ -336,8 +353,8 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       if (fp && view?.visible) fp.update(dt, moveSpeed());
       punch.pitch = (A.aimP + A.flP) * D2R; punch.yaw = (A.aimY + A.flY) * D2R;   // (the camera follows RECOIL.view of it: lab.js)
       if (knife && !knife.done && now() >= knife.hitAt) { knife.done = true; if (canFire()) knifeHit(); }
-      if (nade.state === 'priming' && now() >= nade.primedAt) { if (nade.queued) { nade.strength = nade.queued; nade.state = 'release'; } else nade.state = 'held'; }
-      if (nade.state === 'release') { nade.state = 'thrown'; nade.thrownAt = now(); fp?.throw?.(nade.strength); if (!clipStart(nade.strength === 'short' ? 'throwlow' : 'throw')) sounds.toss(null, current.id);   /* (one throw sound: CS2's clip, else its event / a whoosh — arena-ui no longer adds its own: GD-AUD-07) */ if (canFire()) throwNade(current.id, nade.strength); else cancelNade(); }
+      if (nade.state === 'priming' && now() >= nade.primedAt) { if (nade.queued) { nade.strength = nade.queued; nade.state = 'release'; releaseAt(nade.primedAt); } else nade.state = 'held'; }   // (let go early: released the moment the pin is out)
+      if (nade.state === 'release') { nade.state = 'thrown'; nade.thrownAt = now(); fp?.throw?.(nade.strength); if (!clipStart(nade.strength === 'short' ? 'throwlow' : 'throw')) sounds.toss(null, current.id);   /* (one throw sound: CS2's clip, else its event / a whoosh — arena-ui no longer adds its own: GD-AUD-07) */ if (canFire()) throwNade(current.id, nade.strength, { t: (nade.relAt ?? now()) / 1000, pitch: nade.relP, yaw: nade.relY }); else cancelNade(); }   /* (v53: the release's moment, s, and its angles) */
       // After the throw (the arm follows through): another of the same grenade comes up, else back to your last weapon.
       if (nade.state === 'thrown' && now() - nade.thrownAt > 450) { const own = arsenal(); if (own.includes(current.id)) { nade = { state: 'idle', buttons: new Set(), primedAt: 0, both: false }; drawAt = now(); drawMs = DRAW_MS[current.id] || 500; setView(current.id, true); } else return this.equip(this.fallback()); }
       if (rescope && now() >= rescope.at) { if (current?.id === rescope.id && !reloading() && (rescope.manual || autoRescope())) { scope = rescope.level; scopeAt = now(); sounds.scope(); } rescope = null; }

@@ -44,6 +44,9 @@ export const ACTIONS = [
   { id: 'a-right', label: 'Move right', legacy: 'd', def: ['KeyD'], ctx: ['arena'], hold: true },
   { id: 'a-walk', label: 'Walk quietly (hold)', legacy: 'walk', def: ['ShiftLeft'], ctx: ['arena'], hold: true },
   { id: 'a-jump', label: 'Jump', legacy: 'jump', def: ['Space', 'WheelDown'], ctx: ['arena'], hold: true },
+  // v53: CS2's jump-throw — the grenade in hand let go and a jump on the same movement tick (lab.js → arena-move.js
+  // pressThrow), whatever buttons are held (left full, right underhand, both medium). Unbound by default, as in CS2.
+  { id: 'a-jumpthrow', label: 'Jump-throw (jump and let go of the grenade on the same tick)', legacy: 'jumpthrow', def: [], ctx: ['arena'] },
   { id: 'a-crouch', label: 'Crouch / sit (hold)', legacy: 'c', def: ['ControlLeft', 'KeyC'], ctx: ['arena'], hold: true },
   { id: 'a-primary', label: 'Primary weapon (rifle, sniper, SMG, shotgun)', legacy: 'slot1', def: ['Digit1'], ctx: ['arena'] },
   { id: 'a-secondary', label: 'Pistol', legacy: 'slot2', def: ['Digit2'], ctx: ['arena'] },

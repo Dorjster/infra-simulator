@@ -14,7 +14,7 @@ import { arenaArsenalOf } from './combat-logic.js';
 import { slotOf, PICK_R, ROUND_BOUND } from './arena-logic.js';
 import { hostNow } from './host-clock.js';   // (round, buy, bomb, lobby and respawn times are the host's: compared on its clock)
 import { weaponModel, groundRest } from './weapon-models.js';
-import { NADES, stepNade, TOSS_DT, TOSS_GRAVITY } from './arena-nades.js';
+import { NADES, stepNade, TOSS_DT, TOSS_GRAVITY, THROW_DELAY } from './arena-nades.js';   // (THROW_DELAY: v53 S2)
 import { replay } from './phys-smooth.js';   // (a dropped gun's toss drawn between its steps)
 import { FINISHES, STICKERS, STICKER_IDS, stickerSlots, wearName, skinTitle, SKIN_SLOTS, groundSkin, hasCatalog, isCs2 } from './skins.js';
 import { finishSwatch, skinObject, unskinObject } from './skin-render.js';
@@ -24,6 +24,8 @@ import { gloveKit } from './skins.js';
 import { explosion, beep, defuseClick } from './arena-nades-view.js';
 import { PRICE, DEFUSE, DEFAULT_RULES, matchStats } from './arena-defuse.js';
 import { createRoundPanel, boardHTML as gdBoardHTML, ROUND_PANEL_CSS } from './gd-round-panel.js';   // (CS2's round-end win panel and Tab board: gd-round-panel.js)
+import { createKillEmblems, createDeathPanel, reduceFlashesNow } from './gd-kill-emblem.js';   // (v53 S3: the round's kill emblems, the death panel)
+import { loadPreferences } from './player-preferences.js';
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -47,7 +49,7 @@ const MARK = { blind: '<svg viewBox="0 0 20 16" width="20" height="16"><path d="
 // CS2's own kill-feed icons when the host imported them (tools/import-cs2-killfeed.mjs -> user-assets/icons/killfeed/ —
 // Valve's, never shipped): read once per page; without them the pictures and marks below stay.
 let KF = null;
-if (typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) fetch('/user-assets/icons/killfeed/killfeed.json').then(r => r.ok ? r.json() : null).then(m => { if (m?.weapons && m.marks) KF = { w: m.weapons, m: m.marks, src: n => `/user-assets/icons/killfeed/${encodeURIComponent(n)}.svg?h=${encodeURIComponent(m.hash || '')}` }; }).catch(() => {});
+if (typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) fetch('/user-assets/icons/killfeed/killfeed.json').then(r => r.ok ? r.json() : null).then(m => { if (m?.weapons && m.marks) KF = { w: m.weapons, m: m.marks, p: m.pips && typeof m.pips === 'object' ? m.pips : null, c: m.cards && typeof m.cards === 'object' ? m.cards : null, l: m.logos && typeof m.logos === 'object' ? m.logos : null, src: n => `/user-assets/icons/killfeed/${encodeURIComponent(n)}.svg?h=${encodeURIComponent(m.hash || '')}` }; }).catch(() => {});
 const kfImg = (n, c) => `<img class="${c}" src="${KF.src(n)}" alt="" draggable="false">`;
 const kfMark = (k, ours) => KF?.m[k] ? kfImg(KF.m[k], 'km') : ours;
 const kfGun = (id, kn) => { const n = KF && ((id === 'knife' && kn && kn !== 'default' && KF.w['knife:' + kn]) || KF.w[id]); return n ? kfImg(n, 'kw') : wpic(id); };
@@ -57,7 +59,7 @@ const wpic = id => HAS_PIC.has(id) ? `<img class="wi" src="${ICON_DIR}w-${id}.pn
 const feedLine = (f, mine, ca = '', cv = '', kn = '') => { const h = f.how || {}; return `<p class="${mine ? 'mine' : ''}"><span class="a"${ca ? ` style="color:${ca}"` : ''}>${esc(f.by)}</span>${f.assist ? `<small class="as">+ ${esc(f.assist)}</small>` : ''}${h.blind ? kfMark('blind', MARK.blind) : ''}${kfGun(f.wid, kn)}${h.noscope ? kfMark('noscope', MARK.noscope) : ''}${h.air ? kfMark('air', MARK.air) : ''}${h.smoke ? kfMark('smoke', MARK.smoke) : ''}${h.wallbang ? kfMark('wallbang', MARK.wallbang) : ''}${f.head ? kfMark('head', HS) : ''}${h.far >= 35 ? `<small class="far">${h.far} m</small>` : ''}<span class="v"${cv ? ` style="color:${cv}"` : ''}>${esc(f.target)}</span></p>`; };
 const HS = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><circle cx="8" cy="7" r="5"/><rect x="6" y="11" width="4" height="4"/><circle cx="6" cy="7" r="1.2" fill="#000"/><circle cx="10" cy="7" r="1.2" fill="#000"/></svg>';
 
-export function createArenaUI({ voice = () => null, comms = () => null, report = () => null, world, lan, name, notify, scene, send: sendRaw, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null, invite = () => null }) {
+export function createArenaUI({ voice = () => null, comms = () => null, report = () => null, world, lan, name, notify, scene, send: sendRaw, teleport, holster, equip, onEnter, onLeave, where = () => null, current = () => null, feet = () => 0, yaw = () => 0, ready = () => null, aim = () => ({}), setAmmo = null, onBuyClose = () => {}, lookDir = () => null, invite = () => null, throwFrom = null }) {   // (throwFrom(rel, strength) → Promise of the throw message from the simulated eye at the release — v53, lab.js; none: the camera, as before)
   // Round-bound requests (buys, plant, defuse) carry the round they were made in (the host refuses stale ones).
   const send = a => { const id = world.operations.game.combat?.d?.round?.id; return sendRaw(id && ROUND_BOUND.has(a.type) ? { ...a, round: id } : a); };
   const g = () => world.operations.game, me = () => key(name());
@@ -109,6 +111,14 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
   // sendReady) is entered again (the map rebuilt from it; that entry tells the host it is ready). Compared field by field: per frame.
   let enteredMap = null, enteredAt = null, enteredHash = null; const isIn = A => entered !== null && enteredMap === A.map && enteredAt === A.startedAt && enteredHash === (mapFileOf(A.map)?.hash ?? null);
   // A kill just reported: the victim's death cry where they fell (3D; once per kill).
+  // (v53 S3) The round's kill emblems (bottom centre) and the death panel, with the kill feed's icons — CS2's when the host
+  // imported them (KF: weapons, marks, and the kill tally's pips KF.p, cards KF.c, badge logos KF.l), ours otherwise. KF
+  // arrives once (a fetch): the emblems take the new art then, once. Your key is cached per name (no string made per frame).
+  const kfArt = { url: (grp, n) => { const t = grp === 'pip' ? KF?.p : grp === 'card' ? KF?.c : grp === 'logo' ? KF?.l : null; return t?.[n] ? KF.src(t[n]) : null; }, mark: (k, ours) => kfMark(k, ours), gun: (id, kn) => kfGun(id, kn), hs: HS };
+  const emblems = createKillEmblems({ art: kfArt, reduce: reduceFlashesNow(loadPreferences()) }), deathPanel = createDeathPanel({ art: kfArt });
+  addEventListener('infra-preferences', e => emblems.setReduce(reduceFlashesNow(e.detail || loadPreferences())));
+  let kfSeen = KF, kfName = null, kfKey = '';
+  const killFx = on => { if (KF !== kfSeen) { kfSeen = KF; emblems.setArt(kfArt); } const nm = name(); if (nm !== kfName) { kfName = nm; kfKey = key(nm); } const G = g(), t = hostNow(); emblems.update(on, G, kfKey, t); deathPanel.update(on, G, kfKey, t); };
   const deathSounds = feed => { for (const f of feed) { if (f.at <= deathAt) continue; const p = (lan.players || []).find(x => key(x.name) === key(f.target))?.pose, at = p && key(f.target) !== me() ? { x: p.x, y: p.y - 3, z: p.z } : null; if (!gdPlay('player.death', { at, src: key(f.target), key: 'death:' + key(f.target) + ':' + f.at })) recFx('death', { at, volume: .7, rate: .92 + Math.random() * .16, kind: 'effect' }); } deathAt = Math.max(deathAt, ...feed.map(f => f.at)); };
   const inArena = () => g().mode === 'arena' && !!g().arena;
   const names = () => { const A = g().arena, C = g().combat || {}, list = new Map(); for (const p of lan.players || []) if (p.pose?.z < -200 || p.bot) list.set(key(p.name), p.name); list.set(me(), name()); for (const b of A?.bots || []) list.set(key(b.name), b.name); for (const k of Object.keys(C.kills || {})) if (!list.has(k)) list.set(k, C.names?.[k] || k); return [...list.values()]; };
@@ -135,7 +145,7 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
   function enterNow() { performance.mark?.('arena:enter'); const A = g().arena;
     // The map's first frames (GPU uploads, first shadow pass) are drawn behind the loading card; play starts warm.
     $('ar-load').hidden = false; revealWhenSmooth(); campaignHud(false); spawnAt = g().combat?.spawnTo?.[me()]?.at ?? null; scene.show(A.map); entered = A.map + ':' + A.startedAt; enteredMap = A.map; enteredAt = A.startedAt; enteredHash = mapFileOf(A.map)?.hash ?? null; onEnter(); holster(); { const so = g().combat?.spawnTo?.[me()]; if (so) goSpawn(so); else goTo(spawnIndex()); } const own = arenaArsenalOf(g(), name()); equip(own.find(id => slotOf(id) === 'secondary') || own[0]); if (!D() && !g().arena.loadout?.[me()]?.primary) setTimeout(() => buy(true), 400); notify('Global Defensive · ' + ARENA_MAPS[A.map].name + (D() ? ' · defuse · you are ' + (myTeam() === 'ct' ? 'Counter-Terrorist' : 'Terrorist') + ' · B buy (in spawn, first 35 s)' : ' · deathmatch · B buy menu') + ' · Tab scores'); }
-  function leave() { connSeen = false; connLost = 0; for (const id of ['ar-conn', 'ar-paused', 'ar-alive', 'ar-money', 'ar-banner', 'ar-rp', 'ar-prog', 'ar-lobby', 'ar-team', 'ar-look']) $(id).hidden = true; teamOpen = false; bombView(null); for (const m of groundMeshes.values()) { unskinObject(m); m.removeFromParent(); } groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
+  function leave() { killFx(false); connSeen = false; connLost = 0; for (const id of ['ar-conn', 'ar-paused', 'ar-alive', 'ar-money', 'ar-banner', 'ar-rp', 'ar-prog', 'ar-lobby', 'ar-team', 'ar-look']) $(id).hidden = true; teamOpen = false; bombView(null); for (const m of groundMeshes.values()) { unskinObject(m); m.removeFromParent(); } groundMeshes.clear(); groundKey = -1; entered = null; campaignHud(true); scene.hide(); buy(false); scoreboard(false); $('ar-top').hidden = true; $('ar-feed').innerHTML = ''; $('ar-over').hidden = true; onLeave(); }
   // Buy menu (B opens and closes it, Escape closes it). Guns by category with an info card; equipment (armor, kit);
   // grenades; and, apart from the shop, the guns lying near you (free to pick up, E or click).
   const CATS2 = [['Pistols', w => w.kind === 'pistol'], ['SMGs', w => w.kind === 'smg'], ['Heavy', w => w.kind === 'shotgun' || w.kind === 'lmg'], ['Rifles', w => w.kind === 'rifle'], ['Snipers', w => w.kind === 'sniper']];
@@ -461,7 +471,7 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
     if (!$('ar-rp').hidden) $('ar-rp').hidden = true;   // (Deathmatch: no win panel)
     const A = g().arena, C = g().combat || {}, left = Math.max(0, A.endsAt - hostNow()), mm = Math.floor(left / 60000), ss = String(Math.floor(left / 1000) % 60).padStart(2, '0');
     const top = Object.entries(C.kills || {}).sort((a, b) => b[1] - a[1])[0], mine = C.kills?.[me()] || 0;
-    shown($('ar-top'), `<span><small>KILLS</small> ${mine}</span><span>${A.practice ? 'PRACTICE' : mm + ':' + ss}</span><span><small>LEADER</small> ${top ? esc(C.names?.[top[0]] || top[0]) + ' ' + top[1] : '—'}</span>`);
+    shown($('ar-top'), `<span><small>KILLS</small> ${mine}</span><span>${A.practice ? 'PRACTICE' + practiceClock(A.practice) : mm + ':' + ss}</span><span><small>LEADER</small> ${top ? esc(C.names?.[top[0]] || top[0]) + ' ' + top[1] : '—'}</span>`);
     const feed = (C.feed || []).filter(f => hostNow() - f.at < 7000), fk = feed.map(f => f.at).join();
     if (fk !== feedKey) { feedKey = fk; deathSounds(feed); $('ar-feed').innerHTML = feed.slice().reverse().map(f => feedLine(f, key(f.by) === me() || key(f.target) === me(), '', '', A.knives?.[key(f.by)])).join(''); }
     $('ar-over').hidden = !A.over; if (A.over) $('ar-over').innerHTML = `MATCH OVER<small>${A.over.winner ? 'Winner: ' + esc(A.over.winner) : 'No kills'} · next match in ${Math.max(0, Math.ceil((A.over.at + 12000 - hostNow()) / 1000))} s</small>`;
@@ -605,7 +615,10 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
     // Throw the grenade in hand (left click); then the next one of that kind, or back to your best gun.
     // (A: the eye and aim at the release, kept — the camera moves on during the round trip; gd-throw-start: the grenade
     // view draws it leaving your hand at once, until the host's arrives — arena-nades-view.js)
-    async throwNade(id, strength = 'long') { const at = where(), a = aim(); if (!at) return; /* (the throw's sound is weapons.js's alone: CS2's clip, else its event — one sound, not two: GD-AUD-07) */const A = { x: at.x, y: at.y, z: at.z, strength, ...a }, seq = Math.random(); dispatchEvent(new CustomEvent('gd-throw-start', { detail: { kind: id, a: A, by: name(), seq } }));
+    // v53: with rel (weapons.js: the release's moment and raw angles) the message is throwFrom's — the movement's own
+    // state at that moment (feet + CS2's eye, velocity, sub-tick fraction, jump-throw: arena-nades.js throwPacket), sent
+    // unrounded; gd-throw-start carries the moment (t) so the copy here flies from it.
+    async throwNade(id, strength = 'long', rel = null) { const P = rel && throwFrom ? await throwFrom(rel, strength) : null, at = P || where(), a = P ? null : aim(); if (!at) return; /* (the throw's sound is weapons.js's alone: CS2's clip, else its event — one sound, not two: GD-AUD-07) */const A = P || { x: at.x, y: at.y, z: at.z, strength, ...a }, seq = Math.random(); { const wait = (P ? rel.t : performance.now() / 1000) + THROW_DELAY - performance.now() / 1000; if (wait > 0) await new Promise(r => setTimeout(r, wait * 1000)); }   /* (v53 S2 review: CS2's grenade leaves the hand THROW_DELAY after the release — sent then, so the host makes it at CS2's moment, not 0.1 s early: arena-nades.js cs2Release) */dispatchEvent(new CustomEvent('gd-throw-start', { detail: { kind: id, a: A, by: name(), seq, t: P ? rel.t : undefined } }));
       const r = await send({ type: 'throw', kind: id, ...A }); if (r?.error) { dispatchEvent(new CustomEvent('gd-throw-refused', { detail: { seq } })); notify(r.error); return; } dispatchEvent(new CustomEvent('gd-throw', { detail: { kind: id, a: A } }));   /* (practice: its flight path) */
       const own = arenaArsenalOf(g(), name()); equip(own.includes(id) ? id : own[0]); },
     update(dt) {   // (dt: the frame's, s — tossed guns move on it)
@@ -620,8 +633,12 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
       const s = g().combat?.spawnTo?.[me()]; if (s && s.at !== spawnAt) { spawnAt = s.at; goSpawn(s); const own = arenaArsenalOf(g(), name()); equip(own[0]); notify('Respawned'); }   // back with your primary in hand (CS2)
       drawGround(); flyGround(dt); if (performance.now() - pickAt > 160) { pickAt = performance.now(); autoPick(); lookPrompt(); if (buyOpen && nearby().map(n => n.it.id).join() !== lastNear) { lastNear = nearby().map(n => n.it.id).join(); buy(true); } }
       bombView(D()?.round?.phase === 'planted' ? D().round.planted : null); bombActs(D()?.round);
+      killFx(true);   // (v53 S3: kill emblems, death panel — every frame, allocation-free unless something new)
       const ph = D() ? D().n + ':' + D().round?.phase : '';   // round events (planted, round over…) show at once
       if (performance.now() - hudAt > 200 || ph !== hudPhase) { hudAt = performance.now(); hudPhase = ph; trackBuys(); hud(); lobbyPanel(); if (teamOpen && performance.now() - (teamAt || 0) > 1000) { teamAt = performance.now(); } skinsFresh(); }
     },
   };
 }
+// v53 S2: a practice round's clock (mp_roundtime / mp_freezetime, arena-logic.js practiceRound) after PRACTICE in the top
+// bar: the freeze time counting down, then the round's time left.
+function practiceClock(P) { const R = P?.round; if (!R) return ''; const now = hostNow(),   /* (v53 S2 review: round.free / ends are the host's times — on its clock, as every round time here) */ f = now < R.free, left = Math.max(0, Math.ceil(((f ? R.free : R.ends) - now) / 1000)); return ' · ' + (f ? 'FREEZE ' : '') + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'); }

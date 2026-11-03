@@ -9,6 +9,8 @@
 //    with a contact (its end velocity not the start's under gravity) is drawn straight, never bulging into the wall.
 //  · fixedSteps(clock, dt, step, max): how many fixed steps a frame of dt takes (the rest carried), and clock.a: how far
 //    into the next step the frame is drawn (0…1) — the physics props (arena-physprops.js) at 128 Hz, like the movement.
+//  · drawFixed(out, S, p, step, grav) / backStep (v53): a grenade copy flown in the host's own fixed 1/64 s steps
+//    (arena-nades.js flyNade) drawn between its last two steps — smooth at any frame rate, one step behind.
 //  · easeOff(o, dt, tau): a correction offset decayed with time constant tau (frame-rate independent): the host's word
 //    on where a grenade is, eased out over ~3 tau instead of a jump (multiplayer, arena-nades-view.js).
 //  · deathFall(t): how far over a body has fallen t seconds after death (0 standing … 1 flat): a rigid body toppling
@@ -71,15 +73,23 @@ export function frameClock(c, dt, now) { const t = c.t + dt * 1000; if (c.t === 
 // host's grenade: the two are the same path a few tens of ms apart in time (the host's first tick flies a grenade the
 // whole tick, the request took half a round trip), 1–4 units; eased in 50 ms that was a 380 units/s lurch.
 export const SLOW_TAU = .15;
-export function flightFrame(v, g, isNew, late, dt, step, paused = false, tau = .05) {
+const DR = { x: 0, y: 0, z: 0 };   // (v53: where a fixed-step copy is drawn, before / after the host's word — reused)
+// v53 (fixed-step grenades, arena-nades.js flyNade): the host's word also carries its own clock — g.n (whole 1/64 s steps
+// flown) and g.acc (time since its last step) — taken over with it, so the copy takes the host's very steps; `late` is
+// then added to that leftover. S.p (made with the copy): the state before its last step (flyNade writes it), set from a
+// free-flight step back on a reset (grav: the arc's gravity) — what drawFixed draws between. v.exact: the copy flies the
+// host's own steps, so it is never slid on past its own rest (the slide below is for copies stepped by the frame).
+export function flightFrame(v, g, isNew, late, dt, step, paused = false, tau = .05, grav = 0, stepLen = 0) {
   if (v.slow > 0) { tau = SLOW_TAU; v.slow -= dt; }
   if (v.sim) { v.ox = easeOff(v.ox, dt, tau); v.oy = easeOff(v.oy, dt, tau); v.oz = easeOff(v.oz, dt, tau); }
-  if (isNew && Number.isFinite(g.vx)) { const first = !v.sim, S = v.sim ??= { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, still: 0, rest: false, grav: undefined, bt: undefined, void: false, bad: false, view: true, pastGlass: null };
+  if (isNew && Number.isFinite(g.vx)) { const first = !v.sim, S = v.sim ??= { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, still: 0, rest: false, grav: undefined, bt: undefined, void: false, bad: false, view: true, pastGlass: null, n: 0, acc: 0, p: new Float64Array(6) };
     if (!first && !v.fresh && !paused && !S.void) fly(v, S, dt, step);
-    const wx = S.x + v.ox, wy = S.y + v.oy, wz = S.z + v.oz; v.fresh = false;
+    const ex = !first && S.p && stepLen > 0; if (ex) drawFixed(DR, S, S.p, stepLen, grav);   // (v53: a fixed-step copy is drawn between its steps — the correction is the drawn grenade's, not the state's)
+    const wx = (ex ? DR.x : S.x) + v.ox, wy = (ex ? DR.y : S.y) + v.oy, wz = (ex ? DR.z : S.z) + v.oz; v.fresh = false;
     S.x = g.x; S.y = g.y; S.z = g.z; S.vx = g.vx; S.vy = g.vy; S.vz = g.vz; S.still = g.still || 0; S.rest = !!g.rest; S.grav = g.grav; S.bt = g.bt; S.void = S.bad = false; v.hostRest = !!g.rest; v.slide = 0;
+    S.n = Number.isFinite(g.n) ? g.n : 0; S.acc = Number.isFinite(g.acc) ? g.acc : 0; if (S.p && stepLen > 0) backStep(S.p, S, stepLen, grav);
     if (late > 0 && !paused) fly(v, S, Math.min(.25, late), step);
-    if (first) { v.ox = v.oy = v.oz = 0; } else { v.ox = wx - S.x; v.oy = wy - S.y; v.oz = wz - S.z; } return; }
+    if (first) { v.ox = v.oy = v.oz = 0; } else if (ex) { drawFixed(DR, S, S.p, stepLen, grav); v.ox = wx - DR.x; v.oy = wy - DR.y; v.oz = wz - DR.z; } else { v.ox = wx - S.x; v.oy = wy - S.y; v.oz = wz - S.z; } return; }
   if (v.sim && !v.sim.void && !paused) { if (!v.fresh) fly(v, v.sim, dt, step); } v.fresh = false; }
 // The copy flown d s as the host flies it — but never brought to rest by itself while the host's last word has it moving:
 // its bounces on the floor fall a substep apart from the host's, so it stopped dead up to 4 frames before the host's
@@ -90,7 +100,19 @@ const SLIDE_K = 6, SLIDE_S = .12;
 function fly(v, S, d, step) {
   if (v.slide > 0) { if (v.slide >= SLIDE_S) return; v.slide += d; S.x += S.vx * d; S.z += S.vz * d; const k = Math.exp(-SLIDE_K * d); S.vx *= k; S.vz *= k; return; }
   const vx = S.vx, vz = S.vz, was = S.rest; step(S, d);
-  if (S.rest && !was && !v.hostRest && vx * vx + vz * vz > 0) { v.slide = 1e-9; S.vx = vx; S.vz = vz; S.vy = 0; } }
+  if (S.rest && !was && !v.hostRest && !v.exact && vx * vx + vz * vz > 0) { v.slide = 1e-9; S.vx = vx; S.vz = vz; S.vy = 0; } }
+// v53: a fixed-step copy drawn smoothly — S at its last step, p (Float64Array 6: x y z vx vy vz) the state one step
+// before, S.acc the time since: drawn between the two (hermiteStep: the exact arc without a contact, the bounce point
+// with one) at S.acc / step, i.e. one step (15.6 ms) behind its newest state, at any frame rate. At rest: where it lies;
+// before its first step (S.n 0): where it leaves the hand (the first step then starts from there — continuous).
+export function drawFixed(out, S, p, step, grav = 0) {
+  if (S.rest || !p || !(step > 0) || !(S.n > 0)) { out.x = S.x; out.y = S.y; out.z = S.z; return out; }
+  return hermiteStep(out, p, S, step, Math.min(1, Math.max(0, (S.acc || 0) / step)), grav); }
+// p set to the free flight one step back from S (under grav): a copy just reset to the host's word has no step of its
+// own yet to draw from. At rest: p = S, standing.
+export function backStep(p, S, step, grav = 0) {
+  if (S.rest) { p[0] = S.x; p[1] = S.y; p[2] = S.z; p[3] = p[4] = p[5] = 0; return p; }
+  const vy0 = S.vy + grav * step; p[0] = S.x - S.vx * step; p[1] = S.y - (vy0 + S.vy) / 2 * step; p[2] = S.z - S.vz * step; p[3] = S.vx; p[4] = vy0; p[5] = S.vz; return p; }
 
 // The death fall: tabulated once (1 ms) from the toppling body — no per-frame work beyond a lookup.
 const FALL_MS = 900, FALL = new Float32Array(FALL_MS + 1);

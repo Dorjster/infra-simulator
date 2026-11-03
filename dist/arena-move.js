@@ -4,6 +4,8 @@
 // are CS2's (cvar defaults, weapons.vdata) converted from Hammer units (HU, 1 HU ≈ 2.54 cm) to game units (1 unit ≈
 // 16.5 cm); the few that are not are marked as approximations. Deterministic: fixed ticks of 1/128 s (moveFor,
 // moveTicks), so the same keys make the same path at any frame rate. Pure: the game and the tests drive it with plain objects.
+// v53: a grenade's release (pressThrow) is read off the tick it falls in — position, velocity and duck at its sub-tick
+// moment — and a release on a take-off's tick is a jump-throw at the take-off state (state machine above moveTicks).
 import { boxesNear } from './box-grid.js';
 import { weaponById } from './weapons-data.js';
 export const HU = 2.54 / 16.5;
@@ -20,6 +22,7 @@ export const MOVE = { friction: 5.2, stopspeed: 80 * HU, accelerate: 5.5, airacc
 // it; CS2's view offset is 64.06) and crouched CS2's 46 HU (view offset 46.04), in between with the duck. The hall and
 // the office keep their own (lab.js).
 export const EYE_GD = { stand: 9.7, duck: 46 * HU };
+const STOP_SNAP = HU;   // (v53: Source's WalkMove stop — under 1 u/s on the ground is standing still; moveStep)
 export const eyeAt = duck => EYE_GD.stand + (EYE_GD.duck - EYE_GD.stand) * duck;
 // Max running speed (HU/s) with each weapon drawn: CS2's m_flMaxSpeed (weapons.vdata), kept per weapon in weapons-data.js
 // (knife 250, Glock 240, AK 215, Negev 150, grenades 245, bomb 250…); scoped, its second value (AUG and SG 553 150, AWP 100,
@@ -252,13 +255,19 @@ export function moveStep(s, input, world, dt) {
     // No bunny hopping (CS: sv_enablebunnyhopping 0): a jump trims horizontal speed to 1.1× the weapon's top speed.
     const sp = Math.hypot(s.vx, s.vz), cap = maxSpeed(input.weapon, input.scoped) * MOVE.bhop; if (sp > cap) { s.vx *= cap / sp; s.vz *= cap / sp; }
     s.vy = MOVE.jump * (100 - s.stamina) / 100; s.onGround = false; s.stamina = Math.min(STAMINA.max, s.stamina + STAMINA.jump * s.vy / HU);
+    // v53 (jump-throw): the take-off itself — feet still on the floor, the impulse just given, before this tick's air
+    // move and gravity — kept for a grenade released on this tick (moveTicks / pressThrow). s.jt: a Float64Array(8) the
+    // clock gives the state (none: nothing kept).
+    if (s.jt) { const J = s.jt; J[0] = 1; J[1] = s.x; J[2] = s.y; J[3] = s.z; J[4] = s.vx; J[5] = s.vy; J[6] = s.vz; J[7] = s.duck || 0; }
   }
   if (s.onGround) {
     // Friction, the stamina's slow-down (a landing's), then acceleration toward the wished direction (counter-strafing
-    // stops you in a few ticks).
+    // stops you in a few ticks). v53: then Source's stop (CGameMovement::WalkMove: a ground speed under 1 u/s is 0) — a
+    // player who has let go stands exactly still, so a "standing" throw carries nothing of the walk.
     const sp = Math.hypot(s.vx, s.vz);
     if (sp > 0) { const drop = Math.max(sp, MOVE.stopspeed) * MOVE.friction * dt, k = Math.max(0, sp - drop) / sp * (s.stamina > 0 ? Math.pow((100 - s.stamina) / 100, dt * STAMINA.ref) : 1); s.vx *= k; s.vz *= k; }
     accelerate(s, wx, wz, wishspeed, MOVE.accelerate, dt, Infinity, wishspeed > 0 ? Math.max(MOVE.accelScale, wishspeed) : 0);
+    if (s.vx * s.vx + s.vz * s.vz < STOP_SNAP * STOP_SNAP) s.vx = s.vz = 0;
   } else if (!climbing) {
     accelerate(s, wx, wz, wishspeed, MOVE.airaccelerate, dt, MOVE.aircap);
     vy0 = s.vy; s.vy -= MOVE.gravity * dt;
@@ -325,21 +334,57 @@ export function moveFor(s, input, world, dt) { s.acc = (s.acc || 0) + dt; while 
 // ticks is never lost, and it jumps only if that tick starts on the ground (one in the air is spent there: no buffered
 // jumps in CS2). Each tick's other input is the frame's. clk.landed / landSpeed: a landing in this frame and its speed;
 // clk.lift: how far ducks in the air moved the feet this frame (the view keeps still: lab.js).
+// v53 — a grenade's release (pressThrow, at the moment of the button's event, on the same clock as pressJump): the
+// release state is the movement's, never the drawn camera's. Every tick moveTicks runs is kept in a short history
+// (clk.hist, the last HIST ticks = 250 ms: its end moment, number, start and end state, a take-off on it), so a release
+// registered late (weapons.js sees it in its next update; a grenade let go before its pin was out is released at the
+// pin's moment) is still read off the tick it falls in. State machine of clk.rt / clk.thr:
+//   none (rt NaN) → pressThrow(t) → waiting (the tick holding t, or the one after it, has not run yet) → resolved
+//   (thr[0] = 1: lab.js takes it and sends the throw, then sets thr[0] = 0; rt back to NaN).
+//   Resolved state: the tick holding t (end − TICK < t ≤ end), its start and end blended by the sub-tick fraction
+//   f = 1 − (end − t) / TICK: feet, velocity (vertical 0 on the ground), duck. Jump-throw: a take-off (moveStep's s.jt)
+//   whose jump press (its own moment, kept with the tick) is at most JT_WIN = one CS2 tick (1/64 s = 15.625 ms) before or
+//   after the release — by the time between the two moments, so it does not depend on where they fall in the 128 Hz
+//   grid; the release waits until the movement has run past t + JT_WIN for a jump after it — makes it one: the state is
+//   then the take-off's: feet on the floor, the full jump impulse upward (MOVE.jump, 301.993 u/s × the stamina's share),
+//   as CS2's jump and release on the same sub-tick give. So the bindable 'jumpthrow' (both at one moment) is always
+//   exact, and a plain Space + release within a CS2 tick are too. A release older than the history: its oldest tick. A
+//   clock without moments (now NaN): only a take-off on the release's own tick counts.
+// thr: [ready, x, y (feet), z, vx, vy, vz, duck, f, jump, t] (game units, s). Allocation-free (arrays made once per clock).
+const JT_WIN = 1 / 64, HIST = 32, HS = 25;   // (HS: one tick's entry — at, tk, start x y z vx vy vz duck, end x y z vx vy vz duck, jump, take-off x y z vx vy vz duck, the jump press's moment)
+function resolveThrow(clk) {
+  const rt = clk.rt, H = clk.hist, cnt = Math.min(clk.hn, HIST); if (rt !== rt || !cnt) return;
+  const last = (clk.hn - 1) % HIST, lastAt = H[last * HS], lastTk = H[last * HS + 1]; let e = -1;
+  if (lastAt !== lastAt) e = last;   // (a clock without moments: the newest tick)
+  else { if (rt > lastAt) return;   // (its tick has not run yet)
+    if (lastAt < rt + JT_WIN - 1e-9) return;   // (a jump pressed up to one CS2 tick after the release still makes it a jump-throw: wait for its tick)
+    for (let i = 0; i < cnt; i++) { const j = (clk.hn - 1 - i) % HIST; if (rt > H[j * HS] - TICK - 1e-12) { e = j; break; } }
+    if (e < 0) e = (clk.hn - cnt) % HIST; }
+  const o = e * HS, rk = H[o + 1];
+  const T = clk.thr, at = H[o], f = at === at ? Math.max(0, Math.min(1, 1 - (at - rt) / TICK)) : 1;
+  let jo = -1, best = Infinity; for (let i = 0; i < cnt; i++) { const j = (clk.hn - 1 - i) % HIST, q = j * HS; if (!H[q + 16]) continue;   // the take-off whose press is nearest the release, within JT_WIN
+    const gap = at === at ? Math.abs(H[q + 24] - rt) : H[q + 1] === rk ? 0 : Infinity; if (gap <= JT_WIN + 1e-9 && gap < best) { best = gap; jo = q; } }
+  if (jo >= 0) { for (let k = 1; k <= 7; k++) T[k] = H[jo + 16 + k]; T[9] = 1; }   // a jump-throw: the take-off's state
+  else { for (let k = 0; k < 7; k++) T[1 + k] = H[o + 2 + k] + (H[o + 9 + k] - H[o + 2 + k]) * f; T[9] = 0; }
+  T[8] = f; T[10] = rt; T[0] = 1; clk.rt = NaN; }
+export function pressThrow(clk, t) { clk.thr ??= new Float64Array(11); clk.hist ??= new Float64Array(HIST * HS); clk.hn ??= 0; clk.rt = t; clk.thr[0] = 0; resolveThrow(clk); }
 export const MAX_TICKS = 8;
-export function createMoveClock() { return { acc: 0, alpha: 0, ticks: 0, q: new Float64Array(8), nq: 0, px: NaN, py: 0, pz: 0, pd: 0, x: 0, y: 0, z: 0, duck: 0, lift: 0, landed: 0, landSpeed: 0 }; }
+export function createMoveClock() { return { acc: 0, alpha: 0, ticks: 0, q: new Float64Array(8), nq: 0, px: NaN, py: 0, pz: 0, pd: 0, x: 0, y: 0, z: 0, duck: 0, lift: 0, landed: 0, landSpeed: 0, rt: NaN, thr: new Float64Array(11), hist: new Float64Array(HIST * HS), hn: 0, jt: new Float64Array(8) }; }
 export function pressJump(clk, t) { if (clk.nq < clk.q.length) clk.q[clk.nq++] = t; else clk.q[clk.nq - 1] = t; }
 export function moveTicks(s, clk, input, world, dt, now = NaN) {
   clk.acc += dt; let n = Math.floor((clk.acc + 1e-9) / TICK); if (n > MAX_TICKS) { n = MAX_TICKS; clk.acc = n * TICK; }
   clk.lift = 0; clk.landed = 0; clk.landSpeed = 0; if (clk.px !== clk.px) { clk.px = s.x; clk.py = s.y; clk.pz = s.z; clk.pd = s.duck || 0; }
-  const left = Math.max(0, clk.acc - n * TICK);
-  for (let i = 0; i < n; i++) { const at = now - left - (n - 1 - i) * TICK;   // this tick's moment on `now`'s clock (NaN: a press counts at the next tick)
-    let press = false, k = 0; for (let j = 0; j < clk.nq; j++) { if (clk.q[j] > at) clk.q[k++] = clk.q[j]; else press = true; } clk.nq = k;
+  const left = Math.max(0, clk.acc - n * TICK), J = clk.jt ??= new Float64Array(8), Hs = clk.hist ??= new Float64Array(HIST * HS); s.jt = J; clk.hn ??= 0;
+  for (let i = 0; i < n; i++) { const at = now - left - (n - 1 - i) * TICK, tk = clk.ticks + i;   // this tick's moment on `now`'s clock (NaN: a press counts at the next tick); tk: its number
+    let press = false, k = 0, pt = NaN; for (let j = 0; j < clk.nq; j++) { if (clk.q[j] > at) clk.q[k++] = clk.q[j]; else { press = true; pt = clk.q[j]; } } clk.nq = k;   // (pt: the press's own moment — jump-throws)
     input.jumpPress = press && !input.noJump; clk.px = s.x; clk.py = s.y; clk.pz = s.z; clk.pd = s.duck || 0;
+    const o = (clk.hn % HIST) * HS; Hs[o] = at; Hs[o + 1] = tk; Hs[o + 2] = s.x; Hs[o + 3] = s.y; Hs[o + 4] = s.z; Hs[o + 5] = s.vx; Hs[o + 6] = s.onGround ? 0 : s.vy; Hs[o + 7] = s.vz; Hs[o + 8] = s.duck || 0; J[0] = 0;   // (v53: this tick in the release history)
     moveStep(s, input, world, TICK);
+    Hs[o + 3] += s.dy || 0; Hs[o + 9] = s.x; Hs[o + 10] = s.y; Hs[o + 11] = s.z; Hs[o + 12] = s.vx; Hs[o + 13] = s.onGround ? 0 : s.vy; Hs[o + 14] = s.vz; Hs[o + 15] = s.duck || 0; Hs[o + 16] = J[0]; if (J[0]) { for (let q = 1; q <= 7; q++) Hs[o + 16 + q] = J[q]; Hs[o + 24] = pt; } clk.hn++;   // (a take-off on it: jump-throws)
     if (s.dy) { clk.py += s.dy; clk.lift += s.dy; }
     if (s.landed) { s.landed = 0; clk.landed = 1; clk.landSpeed = Math.max(clk.landSpeed, s.landSpeed); } }
   input.jumpPress = undefined; if (input.noJump) clk.nq = 0;
-  clk.acc = left; clk.ticks += n; const a = clk.alpha = Math.min(1, left / TICK);
+  clk.acc = left; clk.ticks += n; if (clk.rt === clk.rt) resolveThrow(clk); const a = clk.alpha = Math.min(1, left / TICK);   // (v53: a release waiting for its tick)
   clk.x = clk.px + (s.x - clk.px) * a; clk.y = clk.py + (s.y - clk.py) * a; clk.z = clk.pz + (s.z - clk.pz) * a; clk.duck = clk.pd + ((s.duck || 0) - clk.pd) * a;
   return clk;
 }

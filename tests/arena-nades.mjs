@@ -8,6 +8,7 @@ import { ARENA_MAPS, mapBoxes } from '../dist/arena-maps.js';
 import { hpOf, isDown, arenaArsenalOf } from '../dist/combat-logic.js';
 import { ARENA } from '../dist/facility-layout.js';
 import { MAX_HP, weaponById } from '../dist/weapons-data.js';
+import { nadeStep } from '../dist/arena-nades.js';
 import { tossFlight, flashBlind, stackFlash, flashWhite, FLASH, fireFlinch, burnTag, decoyShots, decoyBlip, DECOY, NADE_LOG, GAP_WHY, holdNades, canCarry, R as NADE_R } from '../dist/arena-nades.js';
 import { buildNadeMesh } from '../tools/maps/nade-mesh.mjs';
 import { createNadeMesh } from '../dist/nade-mesh.js';
@@ -59,8 +60,9 @@ assert.match(arenaApply(g3, { type: 'pickup', id: g3.combat.ground[0].id }, 'Bo'
 { const dist = strength => { const pts = predictThrow('smoke', { x: 0, y: 9.7, z: 0, dx: 0, dy: .3, dz: -1, strength }); const e = pts.at(-1); return Math.hypot(e[0], e[2]); };
   // (CS2 on flat ground: a full throw flies ~1 150 u and its bounces, each keeping 45 % of the speed, add ~300: ~220 game units.)
   const L = dist('long'), M = dist('medium'), S = dist('short'); assert(L > 200 && M < L * .75 && S < M * .6 && S > 15, `full ${L | 0} · medium ${M | 0} · short ${S | 0}`);
-  const gq = { kind: 'he', ...throwStart({ x: 0, y: 9.7, z: 0, dx: 0, dy: .2, dz: -1, strength: 'long' }), ...launch({ dx: 0, dy: .2, dz: -1, strength: 'long' }), still: 0 }, pred = predictThrow('he', { x: 0, y: 9.7, z: 0, dx: 0, dy: .2, dz: -1, strength: 'long' });
-  for (let i = 1; i < pred.length; i++) { stepNade(gq, [], null, .05); assert(Math.hypot(gq.x - pred[i][0], gq.y - pred[i][1], gq.z - pred[i][2]) < 1e-9, 'preview = host flight'); } }
+  const gq = { kind: 'he', ...throwStart({ x: 0, y: 9.7, z: 0, dx: 0, dy: .2, dz: -1, strength: 'long' }), ...launch({ dx: 0, dy: .2, dz: -1, strength: 'long' }), still: 0, n: 0 }, pred = predictThrow('he', { x: 0, y: 9.7, z: 0, dx: 0, dy: .2, dz: -1, strength: 'long' });
+  // (v53: the preview takes the host's own 1/64 s steps — a point every 3 of them and the last)
+  for (let i = 1; i < pred.length; i++) { for (let k = 0; k < 3 && gq.n < pred.steps; k++) nadeStep(gq, [], null); assert(Math.hypot(gq.x - pred[i][0], gq.y - pred[i][1], gq.z - pred[i][2]) < 1e-9, 'preview = host flight'); } }
 // CS2's throw (Source ThrowGrenade, kept by CS:GO and CS2): a level aim throws 10° up; looking down d° throws
 // −10 + d·100/90 (so 45° down throws 40° down, straight down straight down); looking up u° throws −10 − u·80/90 (45° up
 // throws 50° up, straight up straight up); it starts 22 units ahead of the eye, short of a wall in the way.
@@ -195,7 +197,7 @@ for (const mesh of [true, false]) { const pane = { minX: 5, maxX: 5.2, minZ: -5,
   const world = (kind, y, z = 0) => ({ levels: {}, combat: { nades: [{ id: 'b' + kind + y, kind, phase: 'air', x: 0, y, z, vx: 0, vy: 0, vz: 0, at: T - 1510, still: 1, rest: true }], hp: {}, down: {} }, arena: { map: '__stack', bots: [{ name: 'Bot', x: 4, z: 0, y: 32, yaw: 0 }] } });
   const low = world('he', 32 + NADE_R); nadesTick(low, [], .05, T, { boxes: bx }); assert(hpOf(low, 'Bot') < MAX_HP, 'an HE on the bot\'s own (lower) floor hurts it · ' + hpOf(low, 'Bot'));
   const high = world('he', 62 + NADE_R); nadesTick(high, [], .05, T, { boxes: bx }); assert.equal(hpOf(high, 'Bot'), MAX_HP, 'one on the floor above does not');
-  const fl = world('flash', 32 + NADE_R + 1, 0); fl.arena.bots[0].x = 0; fl.arena.bots[0].z = 4; nadesTick(fl, [], .05, T, { boxes: bx }); assert((fl.arena.bots[0].blindUntil || 0) > T + 1500, 'a bot facing a flash on its floor is blinded · ' + ((fl.arena.bots[0].blindUntil || 0) - T));
+  const fl = world('flash', 32 + NADE_R + 1, 0); fl.combat.nades[0].at = T - 1620;   /* (v53 S2: a flash pops on its first 0.2 s think after the 1.5 s fuse — step 103, 1.609 s: arena-nades.js goesOff) */ fl.arena.bots[0].x = 0; fl.arena.bots[0].z = 4; nadesTick(fl, [], .05, T, { boxes: bx }); assert((fl.arena.bots[0].blindUntil || 0) > T + 1500, 'a bot facing a flash on its floor is blinded · ' + ((fl.arena.bots[0].blindUntil || 0) - T));
   delete ARENA_MAPS.__stack; }
 // HE-ARMOR: kevlar takes CS2's share of an HE (m_flArmorRatio 1.2: 60 % through) and loses armor.
 { const T = 7.8e9, mk = arm => ({ levels: {}, combat: { nades: [{ id: 'a', kind: 'he', phase: 'air', x: 0, y: NADE_R, z: 0, vx: 0, vy: 0, vz: 0, at: T - 1510, still: 1, rest: true }], hp: {}, down: {}, armor: arm ? { bo: { kevlar: 100, helmet: false } } : {} }, arena: { bots: [] } });
@@ -221,7 +223,7 @@ for (const mesh of [true, false]) { const pane = { minX: 5, maxX: 5.2, minZ: -5,
 // …bots too (CS's bots are players: its straight-or-nothing rule is for hostages): one behind a short wall the light
 // gets round is blinded for a while, as a player there would be.
 { const T = 7.9e9, bx = [{ minX: 9.5, maxX: 10.5, minZ: -5, maxZ: 5, y0: 0, y1: 14 }, { minX: -60, maxX: 60, minZ: -60, maxZ: 60, y0: -3, y1: 0 }];
-  const w = { levels: {}, combat: { nades: [{ id: 'fb', kind: 'flash', phase: 'air', x: 0, y: 1, z: 0, vx: 0, vy: 0, vz: 0, at: T - 1510, still: 1, rest: true }], hp: {}, down: {} }, arena: { bots: [{ name: 'Bot', x: 20, z: 0, y: 0, yaw: Math.PI / 2 }] } };
+  const w = { levels: {}, combat: { nades: [{ id: 'fb', kind: 'flash', phase: 'air', x: 0, y: 1, z: 0, vx: 0, vy: 0, vz: 0, at: T - 1620, still: 1, rest: true }], hp: {}, down: {} }, arena: { bots: [{ name: 'Bot', x: 20, z: 0, y: 0, yaw: Math.PI / 2 }] } };
   const pl = flashAmount(bx, 0, 1, 0, 20, 9.7, 0, -1, 0, 0); nadesTick(w, [], .05, T, { boxes: bx }); const ms = (w.arena.bots[0].blindUntil || 0) - T;
   assert(pl > .2 && pl < .5 && ms > 600, `a bot behind a short wall, facing the flash: blind ${ms | 0} ms (a player there gets ${pl.toFixed(2)} of it)`); }
 // FLASH-FACING: where you look sets how long, not how white (CS: full white in the first three tiers, 200/255 behind).

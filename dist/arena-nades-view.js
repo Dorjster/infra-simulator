@@ -3,10 +3,11 @@
 // molotov fire, each with 3D sound. Materials are made once and shared (the graphics warm-up compiles them).
 import * as THREE from './three.module.js';
 import { weaponModel, groundRest } from './weapon-models.js';
-import { NADES, stepNade, throwStart, launch, flashBlind, stackFlash, flashWhite, decoyShots, decoyShotAt, DECOY, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeRadius, smokeHoleCells, HOLE_IN, HOLE_OUT, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
+import { NADES, stepNade, throwStart, launch, cs2Release, THROW_DELAY, flashBlind, stackFlash, flashWhite, decoyShots, decoyShotAt, DECOY, fireCells, smokeShape, holeOpen, smokeDensity, smokeVoxels, smokeFront, holeRadius, smokeHoleCells, HOLE_IN, HOLE_OUT, SMOKE, VOX, FIRE, cellEnd } from './arena-nades.js';
 import { smokeHoleBytes, smokeLocalCut, smokeCutsNow, SMOKE_CUTS, TUNNEL as CUT_RULES, BILLOW, R as NADE_R } from './arena-nades.js';
+import { flyNade, NADE_DT, GRAVITY as NADE_G } from './arena-nades.js';   // (v53: copies fly the host's own 1/64 s steps)
 import { createSmokePass } from './arena-smoke-pass.js';
-import { flightFrame, frameClock } from './phys-smooth.js';
+import { flightFrame, frameClock, drawFixed } from './phys-smooth.js';
 // A flight's correction (the host's word on where your copy of it flies) eased out with this time constant (s): ~95 %
 // gone in 150 ms and never faster than the grenade flies (v51's 25 ms pulled a 2-unit correction back at 80 units/s:
 // a grenade flying 100 units/s all but stopped). A resting grenade settles into its lying pose over REST_BLEND s.
@@ -57,7 +58,7 @@ export const TUNNEL = CUT_RULES;
 // crosses no smoke cuts nothing.
 let cutClock = () => Date.now(), cutGame = () => null;
 export function smokeTunnel(ox, oy, oz, dx, dy, dz, len = TUNNEL.reach, view = false) { const g = cutGame(); if (g?.mode !== 'arena') return false; return smokeLocalCut(ox, oy, oz, dx, dy, dz, len, cutClock(), view, g); }
-const NO_HOLES = [], SEEN = new Set();
+const NO_HOLES = [], SEEN = new Set(), DRAWN = { x: 0, y: 0, z: 0 };   // (DRAWN: where a fixed-step copy is drawn this frame — drawFixed, reused)
 const fadeNow = (s, now) => Math.max(0, Math.min(1, (NADES.smoke.lasts - (now - (s.firedAt || now))) / SMOKE.fade));   // (arena-nades.js fadeOf: its last SMOKE.fade ms)
 // An effect's parts let go of (its own materials, instanced meshes; its smoke slot): when it ends, and on clear().
 function disposeFx(F, pass) { F.loop?.stop?.(); F.fx.removeFromParent(); if (F.slot >= 0) { pass?.remove(F.slot); F.slot = -1; }
@@ -155,12 +156,14 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
   // that kind arrives a round trip later — that one then takes over this model, the gap eased out like any correction.
   // Refused, or not heard back within MINE_MS: let go of. (arena-ui.js throwNade: gd-throw-start / gd-throw-refused.)
   const mine = [], MINE_MS = 1200, nameKey = n => String(n || '').trim().toLowerCase();
-  const onThrow = e => { const d = e?.detail; if (!d?.a || !NADES[d.kind]) return; try { const b = boxes(), s = throwStart(d.a, b?.length ? b : null, bounds()), v = launch(d.a), m = weaponModel(d.kind, 1.4);
-    m.position.set(s.x, s.y, s.z); group.add(m); mine.push({ kind: d.kind, by: nameKey(d.by), seq: d.seq, model: m, age: 0, sim: { x: s.x, y: s.y, z: s.z, vx: v.vx, vy: v.vy, vz: v.vz, still: 0, rest: false, grav: undefined, bt: undefined, void: false, bad: false, view: true, pastGlass: null } }); } catch {} };
+  // (v53: flown in the host's own fixed steps from the moment of release — d.t, s on performance.now()'s clock: the throw
+  // waited up to a movement tick for its state, arena-move.js pressThrow — so it is where the host's will be)
+  const onThrow = e => { const d = e?.detail; if (!d?.a || !NADES[d.kind]) return; try { const b = boxes(), bb = b?.length ? b : null, ra = cs2Release(d.a, THROW_DELAY, bb, bounds()), s = throwStart(ra, bb, bounds()), v = launch(ra), m = weaponModel(d.kind, 1.4), late = Number.isFinite(d.t) ? Math.max(0, Math.min(.1, performance.now() / 1000 - d.t - THROW_DELAY)) : 0;   /* (v53 S2 review: made THROW_DELAY after the release d.t — arena-ui.js sends it then — with the host's collision during the delay) */
+    m.position.set(s.x, s.y, s.z); group.add(m); mine.push({ kind: d.kind, by: nameKey(d.by), seq: d.seq, model: m, age: 0, sim: { x: s.x, y: s.y, z: s.z, vx: v.vx, vy: v.vy, vz: v.vz, still: 0, rest: false, grav: undefined, bt: undefined, void: false, bad: false, view: true, pastGlass: null, n: 0, acc: late, p: new Float64Array(6) } }); } catch {} };
   const dropMine = i => { mine[i].model.removeFromParent(); mine.splice(i, 1); };
   if (typeof addEventListener === 'function') { addEventListener('gd-throw-start', onThrow); addEventListener('gd-throw-refused', e => { const i = mine.findIndex(c => c.seq === e?.detail?.seq); if (i >= 0) dropMine(i); }); }
   // (the host's new grenade: yours of this kind thrown here and still waiting — the oldest — or none)
-  const flyStep = (S, d) => stepNade(S, boxes(), bounds(), d);   // (one closure: no allocation per frame)
+  const flyStep = (S, d) => flyNade(S, boxes(), bounds(), d, null, S.p);   // (one closure: no allocation per frame; v53: the host's fixed steps — arena-nades.js flyNade)
   const adopt = g => { const by = nameKey(g.by), i = mine.findIndex(c => c.kind === g.kind && c.by === by); if (i < 0) return null; const c = mine[i]; mine.splice(i, 1); return c; };
   document.body.insertAdjacentHTML('beforeend', '<div id="gd-flash" style="position:fixed;inset:0;z-index:39;background:#fff;opacity:0;pointer-events:none"></div>');
   const white = document.getElementById('gd-flash') || { style: {} };
@@ -206,11 +209,11 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
       FXP.update(dt);
       if (pass) { const hn = hostNow(); pass.frame((hn / 1000) % BILLOW.period, SMOKE_CUTS, list.length ? smokeCutsNow(G, hn) : 0); }   // (the clouds pushed below; the billows on the host's clock, the tunnels the rules subtract)
       for (let i = mine.length - 1; i >= 0; i--) { const c = mine[i]; c.age += dt; if (c.age * 1000 > MINE_MS) { dropMine(i); continue; }   // your throws waiting for the host's word
-        if (!c.sim.rest && !c.sim.void && !G.combat?.d?.paused) stepNade(c.sim, boxes(), bounds(), dt); c.model.position.set(c.sim.x, c.sim.y, c.sim.z); c.model.rotation.x += dt * 9; c.model.rotation.z += dt * 5; }
+        if (!c.sim.void && !G.combat?.d?.paused) flyNade(c.sim, boxes(), bounds(), dt, null, c.sim.p); drawFixed(DRAWN, c.sim, c.sim.p, NADE_DT, NADE_G); c.model.position.set(DRAWN.x, DRAWN.y, DRAWN.z); c.model.rotation.x += dt * 9; c.model.rotation.z += dt * 5; }
       for (const g of list) {
         seen.add(g.id); let v = live.get(g.id);
         if (!v) { const c = g.phase === 'air' && mine.length ? adopt(g) : null;   // (yours, already flying here: it carries on from where it is drawn)
-          v = c ? { model: c.model, fx: null, sim: c.sim, ox: 0, oy: 0, oz: 0, fresh: true, slow: .45 } : { model: weaponModel(g.kind, 1.4), fx: null, ox: 0, oy: 0, oz: 0, fresh: false, slow: 0 }; if (!c) { v.model.position.set(g.x, g.y, g.z); group.add(v.model); } live.set(g.id, v); }   // (fresh: its copy already flown this frame — the loop above)
+          v = c ? { model: c.model, fx: null, sim: c.sim, ox: 0, oy: 0, oz: 0, fresh: true, slow: .45, exact: true } : { model: weaponModel(g.kind, 1.4), fx: null, ox: 0, oy: 0, oz: 0, fresh: false, slow: 0, exact: true }; if (!c) { v.model.position.set(g.x, g.y, g.z); group.add(v.model); } live.set(g.id, v); }   // (exact: flown in the host's own steps — phys-smooth.js flightFrame; fresh: its copy already flown this frame — the loop above)
         if (g.phase === 'air') { const isNew = g.x !== v.hx || g.y !== v.hy || g.z !== v.hz; if (isNew) { // a new host position: a sharp turn in its path is a bounce
           if (v.hx !== undefined) { const vx = g.x - v.hx, vy = g.y - v.hy, vz = g.z - v.hz, m = Math.hypot(vx, vy, vz), pm = Math.hypot(v.vx, v.vy, v.vz);
             if (m > .05 && pm > .05 && (vx * v.vx + vy * v.vy + vz * v.vz) / (m * pm) < .55 && now - (v.bounced || 0) > 120) { v.bounced = now; rec('bounce', { at: { x: g.x, y: g.y, z: g.z }, volume: Math.min(.8, .25 + pm * .15), rate: g.kind === 'molotov' ? .8 : .95 + Math.random() * .15, kind: 'step' }); }
@@ -224,8 +227,8 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
           // the grenade all but stood still for a frame, then raced (132 / 117 / 57 units/s on a 102 units/s flight, every
           // 50 ms — the "laggy" flight). The difference left (a bounce met a tick apart, your own throw's head start of half
           // a round trip) is eased out with time constant CORR_TAU, never a jump. (paused: the host holds it where it is)
-          flightFrame(v, g, isNew, isNew ? Math.max(0, (fhn - (G.combat?.clock ?? fhn)) / 1000) : 0, dt, flyStep, !!G.combat?.d?.paused, CORR_TAU);
-          if (v.sim) v.model.position.set(v.sim.x + v.ox, v.sim.y + v.oy, v.sim.z + v.oz);
+          flightFrame(v, g, isNew, isNew ? Math.max(0, (fhn - (G.combat?.clock ?? fhn)) / 1000) : 0, dt, flyStep, !!G.combat?.d?.paused, CORR_TAU, NADE_G, NADE_DT);
+          if (v.sim) { drawFixed(DRAWN, v.sim, v.sim.p, NADE_DT, NADE_G); v.model.position.set(DRAWN.x + v.ox, DRAWN.y + v.oy, DRAWN.z + v.oz); }   // (v53: between its last two fixed steps)
           else { const k = 1 - Math.exp(-dt * 18); v.model.position.x += (g.x - v.model.position.x) * k; v.model.position.y += (g.y - v.model.position.y) * k; v.model.position.z += (g.z - v.model.position.z) * k; }
           if (!v.sim?.rest) { v.model.rotation.x += dt * 9; v.model.rotation.z += dt * 5; } continue; }   // (lying still, waiting to go off: no longer tumbling)
         if (v.fx && v.fx.phase !== g.phase) { disposeFx(v.fx, pass); v.fx = null; }   // fire → out

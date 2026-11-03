@@ -14,6 +14,20 @@
 //    fires), then pops.
 //  · Molotov (T) / Incendiary (CT): bursts on a floor it hits (or after 2 s) · 7 s of fire over up to 37 units around,
 //    spreading only over the floor it landed on (walls and drops stop it); burns anyone standing in it.
+// Deterministic flight (v53, SPEC 1.2 — lineups land where CS2's do, on every computer, at every tick and frame rate):
+//  · Every grenade has its own clock: g.at (its throw, host ms), g.n (whole 1/64 s steps flown — CS2's 64 Hz tick) and
+//    g.acc (the time since its last step, s). However long the host's tick (15–100 ms, late or early), the flight
+//    advances in whole NADE_DT steps up to the host's `now` — the leftover waits for the next tick — and each step is
+//    the same stepNade(g, …, NADE_DT) with its anti-tunnelling sweep. Fuses, bounces, rest detection and the smoke /
+//    decoy 'at rest' wait all count in these steps (age = g.n × NADE_MS), so a flash pops on step 96 whatever the tick.
+//  · flyNade is that one stepper: the host (nadesTick), the client's copy of a flight (arena-nades-view.js, phys-smooth.js
+//    flightFrame) and the trajectory preview (predictThrow / simThrow) all call it, so all three take the same steps
+//    from the same state; nadeDrawn draws a copy between its last two steps (one step behind, smooth at any fps).
+//  · The throw itself (throwPacket): from the SIMULATED eye — the movement's feet + CS2's eye height (NADE_EYE, 64.06
+//    standing / 46.04 crouched), never the drawn camera (bob, step smoothing, interpolation) — along the raw view
+//    angles, with the movement's velocity at the release tick (arena-move.js pressThrow: sub-tick fraction; a jump and a
+//    release on the same tick → a jump-throw at the take-off velocity). Sent unrounded (JSON doubles); the host uses it
+//    as sent (LAN trust) on the same nadeMesh (both build it with mapBoxes from the same map file).
 import { EYE, weaponById, defaultPistol } from './weapons-data.js';
 import { hurt, applyHit, isDown, recording, statOf } from './combat-logic.js';
 import { lineOfSight, segmentClear, ARENA_MAPS, floorAt } from './arena-maps.js';
@@ -28,7 +42,7 @@ export const NADES = {
   // HE (weapons.vdata weapon_hegrenade): m_nDamage 99, m_flRange 350 (the blast's reach, HU), m_flArmorRatio 1.2 → ap
   // .6 (half the ratio through kevlar, as every gun's `ap` in weapons-data.js).
   he: { id: 'he', name: 'HE Grenade', kind: 'nade', price: 300, fuse: 1500, dmg: 99, radius: 350 * HU, ap: .6 },
-  flash: { id: 'flash', name: 'Flashbang', kind: 'nade', price: 200, fuse: 1500, radius: 2000 * HU },
+  flash: { id: 'flash', name: 'Flashbang', kind: 'nade', price: 200, fuse: 1500, think: 200, radius: 2000 * HU },   // (think: v53 S2 — it pops on the first 0.2 s think after the fuse, 1.609 s: goesOff)
   smoke: { id: 'smoke', name: 'Smoke Grenade', kind: 'nade', price: 300, fuse: 1500, radius: 164 * HU, lasts: 18000, maxAir: 12000 },   // (CS2's cloud is 144 units round, about 150 high; here 30 % more ground (164 round) and 30 % more height, as asked)
   // Decoy ($50, m_nPrice): goes off once it rests like a smoke (12 s at the latest), then DECOY below.
   decoy: { id: 'decoy', name: 'Decoy Grenade', kind: 'nade', price: 50, fuse: 1500, maxAir: 12000 },
@@ -49,7 +63,18 @@ export const FIRE_KINDS = { molotov: 1, incendiary: 1 }; export const isFire = k
 export const DECOY = { lasts: 15000, start: 300, blip: 1000, dmg: 5, radius: 64 * HU, pop: 600 };
 // Flight, exactly CS2's (Source) grenade physics in our units (1 hammer unit = HU): a throw leaves at 675 u/s × the
 // strength's power (long 1.0, medium 0.65, short 0.3), under 0.4 × 800 u/s² gravity; bounces keep 45 %.
+// (THROW: weapons.vdata m_flThrowVelocity 750.0 — the same for all seven grenades in the user's CS2 scripts/weapons.vdata
+// — × 0.9, Source's CBaseCSGrenade::ThrowGrenade clamp(750 × 0.9, 15, 750) = 675; GRAVITY: sv_gravity 800 × the
+// grenade's 0.4 gravity scale — CS2's cvar default is in its server binary, not in the install's data files.)
 export const GRAVITY = 320 * HU, THROW = 675 * HU, BOUNCE = .45, R = .35;
+// v53: the grenades' fixed tick — CS2's 64 Hz (1/64 s = 15.625 ms, exact in binary) — and the eye a throw starts from:
+// standing 64.06 HU over the feet (MEASURED: CS2's own getpos lines on Mirage minus CS2's floor under them, from the
+// user's map file — 64.062 and 64.063 HU, tests/gd-lineups.mjs's Cart lineups; CS:GO's networked m_vecViewOffset is
+// 64.062561), crouched 46.04 HU (CS:GO's VEC_DUCK_VIEW 46.044968 as CS2 networks it — no crouched getpos line or data
+// file in the install to measure it from: not verified here), in between with the duck.
+export const NADE_HZ = 64, NADE_DT = 1 / NADE_HZ, NADE_MS = 1000 / NADE_HZ;
+export const NADE_EYE = { stand: 64.0626 * HU, duck: 46.045 * HU };
+export const throwEye = duck => NADE_EYE.stand + (NADE_EYE.duck - NADE_EYE.stand) * Math.max(0, Math.min(1, +duck || 0));
 export const STRENGTH = { long: 1, medium: .5, short: .25 };   // (kept for old saves / validation)
 // CS2's throw strength per mode (m_flThrowStrength): long = 1, medium (both buttons) = 0.5, short (right) = 0.
 export const POWER = { long: 1, medium: .5, short: 0 };
@@ -63,33 +88,37 @@ const num = v => { const n = +v; return Number.isFinite(n) ? n : 0; };   // (a t
 // the aim pitch is remapped so a level aim throws 10° up — looking down by 100/90 of the angle, up by 80/90, so
 // straight down still throws straight down and straight up straight up (Source's ThrowGrenade, kept by CS:GO and CS2:
 // a lineup's angles land where CS2's do) — speed is 675 × (power × 0.7 + 0.3), and 1.25 × the
-// thrower's velocity is added (running throws go further).
-export function launch(a) {
+// thrower's velocity is added (running throws go further). v53: the thrower's velocity is taken whole — Source's
+// ThrowGrenade adds GetAbsVelocity() × 1.25 with no clamp (the old ±60 units/s = ±390 HU/s clamp was ours and cut only
+// throws made while falling fast); the flight's own cap is sv_maxvelocity (stepNade's MAX_V, 3500 HU/s).
+export function launch(a, o = null) {   // (o: v53 S2 — into this object instead of a new one: the practice preview, allocation-free)
   const n = Math.hypot(num(a.dx), num(a.dy), num(a.dz)) || 1, dx = num(a.dx) / n, dy = num(a.dy) / n, dz = num(a.dz) / n, P = POWER[a.strength] ?? 1;
   const down = -Math.asin(Math.max(-1, Math.min(1, dy))) * 180 / Math.PI, pitch = down >= 0 ? -10 + down * 100 / 90 : -10 + down * 80 / 90, up = -pitch * Math.PI / 180;
-  const h = Math.hypot(dx, dz) || 1, cu = Math.cos(up), speed = THROW * (P * .7 + .3); const cl = v => Math.max(-60, Math.min(60, num(v)));   /* run / jump speed only (never a launcher; the ±60 clamp is ours) */
-  return { vx: dx / h * cu * speed + cl(a.vx) * 1.25, vy: Math.sin(up) * speed + cl(a.vy) * 1.25, vz: dz / h * cu * speed + cl(a.vz) * 1.25 }; }
+  const h = Math.hypot(dx, dz) || 1, cu = Math.cos(up), speed = THROW * (P * .7 + .3);
+  const vx = dx / h * cu * speed + num(a.vx) * 1.25, vy = Math.sin(up) * speed + num(a.vy) * 1.25, vz = dz / h * cu * speed + num(a.vz) * 1.25;
+  if (o) { o.vx = vx; o.vy = vy; o.vz = vz; return o; } return { vx, vy, vz }; }
 // Where a throw starts (Source): the eye, lower for weaker throws (power × 12 − 12 units), then 22 units ahead along
 // the throw's own direction (the remapped pitch: 10° up for a level aim — Source traces along angThrow, not the eye's
 // aim) — short of a wall in the way (a grenade thrown against a wall starts on this side of it). On a CS2 map it is
 // swept from the eye itself — down to the hand, then out along the throw: a surface crossed on the way (a wall, a low
 // ceiling, a railing; one-faced CS2 walls too; a shut door, a whole crate, an intact pane) stops it R short, then it steps back along the way until the ball
 // touches nothing — a grenade never starts inside or behind a wall.
-export function throwStart(a, boxes = null, bounds = null) {
-  const v = launch({ dx: a.dx, dy: a.dy, dz: a.dz, strength: 'long' }), n = Math.hypot(v.vx, v.vy, v.vz) || 1, dx = v.vx / n, dy = v.vy / n, dz = v.vz / n;
+export function throwStart(a, boxes = null, bounds = null, o = null) {   // (o: v53 S2 — into this object, allocation-free)
+  TSA.dx = a.dx; TSA.dy = a.dy; TSA.dz = a.dz; const v = launch(TSA, TSV), n = Math.hypot(v.vx, v.vy, v.vz) || 1, dx = v.vx / n, dy = v.vy / n, dz = v.vz / n;
   const x = num(a.x), ey = num(a.y) || EYE, y = ey + ((POWER[a.strength] ?? 1) * 12 - 12) * HU, z = num(a.z);
   let t = 22 * HU; const M = boxes?.nadeMesh;
   // (The doors, crates and panes too, while shut / whole: their boxes grown by R — where the ball first touches one, as
   // in flight; a pane of no thickness counts — a pane included, the flight then breaks it. A sweep of the triangles
   // alone started a throw 16 HU from a shut door on its far side.)
   if (M) { const mv = boxes.movers, drop = ey - y, reach = (w, wm, L) => Math.min(w <= 1 ? w * L - R : Infinity, wm <= 1 ? wm * L - 1e-3 : Infinity);
-    if (drop > 1e-6) { const d = reach(meshFirst(M, x, ey, z, x, y, z), moverFirst(mv, x, ey, z, x, y, z, true, R), drop); if (d < Infinity) return backOff(boxes, bounds, x, ey, z, 0, -1, 0, d); }   // (something between the eye and the hand: from the eye, short of it)
-    const ex = x + dx * t, ey2 = y + dy * t, ez = z + dz * t; return backOff(boxes, bounds, x, y, z, dx, dy, dz, Math.min(t, reach(meshFirst(M, x, y, z, ex, ey2, ez), moverFirst(mv, x, y, z, ex, ey2, ez, true, R), t))); }
+    if (drop > 1e-6) { const d = reach(meshFirst(M, x, ey, z, x, y, z), moverFirst(mv, x, ey, z, x, y, z, true, R), drop); if (d < Infinity) return backOff(boxes, bounds, x, ey, z, 0, -1, 0, d, o); }   // (something between the eye and the hand: from the eye, short of it)
+    const ex = x + dx * t, ey2 = y + dy * t, ez = z + dz * t; return backOff(boxes, bounds, x, y, z, dx, dy, dz, Math.min(t, reach(meshFirst(M, x, y, z, ex, ey2, ez), moverFirst(mv, x, y, z, ex, ey2, ez, true, R), t)), o); }
   if (boxes) for (let s = 2 * HU; s <= t; s += 2 * HU) if (solid(boxes, bounds, x + dx * s, y + dy * s, z + dz * s)) { t = Math.max(0, s - 2 * HU - R); break; }
-  return { x: x + dx * t, y: y + dy * t, z: z + dz * t }; }
+  return pt(o, x + dx * t, y + dy * t, z + dz * t); }
+const TSA = { dx: 0, dy: 0, dz: 0, strength: 'long' }, TSV = { vx: 0, vy: 0, vz: 0 }, pt = (o, x, y, z) => { if (!o) return { x, y, z }; o.x = x; o.y = y; o.z = z; return o; };
 // From (x, y, z), `t` along (dx, dy, dz) at most: the furthest point where the ball touches nothing, stepping back R/2
 // at a time (the start itself at worst).
-function backOff(boxes, bounds, x, y, z, dx, dy, dz, t) { for (; t > 0; t -= R / 2) if (!solid(boxes, bounds, x + dx * t, y + dy * t, z + dz * t)) break; t = Math.max(0, t); return { x: x + dx * t, y: y + dy * t, z: z + dz * t }; }
+function backOff(boxes, bounds, x, y, z, dx, dy, dz, t, o = null) { for (; t > 0; t -= R / 2) if (!solid(boxes, bounds, x + dx * t, y + dy * t, z + dz * t)) break; t = Math.max(0, t); return pt(o, x + dx * t, y + dy * t, z + dz * t); }
 // The map's grenade bounds for a game (its grid: arena-logic.js geo), or null.
 const boundsOf = game => { const m = ARENA_MAPS[game?.arena?.map]; if (!m?.size) return null; const [w, d] = m.size; return { minX: ARENA.cx - w / 2, maxX: ARENA.cx + w / 2, minZ: ARENA.cz - d / 2, maxZ: ARENA.cz + d / 2 }; };
 // Throw from the eye along (dx, dy, dz): one grenade leaves the loadout (never two for one throw). The host takes the
@@ -99,12 +128,13 @@ const boundsOf = game => { const m = ARENA_MAPS[game?.arena?.map]; if (!m?.size)
 export function throwNade(game, name, kind, a, now = Date.now()) {
   if (!NADES[kind]) throw Error('Unknown grenade');
   const l = game.arena?.loadout?.[key(name)], list = Array.isArray(l?.nades) ? l.nades : [], i = list.indexOf(kind);   // (no loadout is made for a thrower without one: a throw never hands out a pistol)
-  if (i < 0) throw Error('You have no ' + NADES[kind].name);
+  const P = game.arena?.practice, again = !!(P && a.rethrow);   // (v53 S2, practice only: sv_rethrow_last_grenade throws your last one again without one in hand; sv_infinite_ammo 1 keeps a thrown one)
+  if (i < 0 && !again) throw Error('You have no ' + NADES[kind].name);
   const r = game.combat?.d?.round; if (r && (['freeze', 'warmup'].includes(r.phase) || r.phase === 'over' && game.combat.d.matchOver) || game.arena?.lobby && !game.arena.lobby.started || game.combat?.d?.paused) throw Error('You can’t throw now');
-  for (const f of ['x', 'y', 'z', 'dx', 'dy', 'dz', 'vx', 'vy', 'vz']) if (a[f] !== undefined && a[f] !== null && !Number.isFinite(+a[f])) throw Error('Bad throw');
+  for (const f of ['x', 'y', 'z', 'dx', 'dy', 'dz', 'vx', 'vy', 'vz', 'pitch', 'yaw', 'frac']) if (a[f] !== undefined && a[f] !== null && !Number.isFinite(+a[f])) throw Error('Bad throw');   // (pitch / yaw / frac: v53's sub-tick release, throwPacket)
   const bx = solidsOf?.(game) || null, boxes = bx?.length ? bx : null, bounds = boundsOf(game);
-  list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1; const v = launch(a), s0 = throwStart(a, boxes, bounds), id = 'n' + C.nadeSeq;
-  const g = { id, kind, by: String(name).slice(0, 40), ...s0, ...v, at: now, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long' };
+  if (i >= 0 && !again && !P?.nades) list.splice(i, 1); const C = game.combat; C.nades ??= []; C.nadeSeq = (C.nadeSeq || 0) + 1; const ar = cs2Release(a, THROW_DELAY, boxes, bounds), v = launch(ar), s0 = throwStart(ar, boxes, bounds), id = 'n' + C.nadeSeq;   // (v53 S2: CS2's throw delay — cs2Release, with the map's collision)
+  const g = { id, kind, by: String(name).slice(0, 40), ...s0, ...v, at: now, n: 0, acc: 0, phase: 'air', still: 0, strength: STRENGTH[a.strength] ? a.strength : 'long', ...(a.jt ? { jt: true } : {}) };   // (n / acc: its own 64 Hz clock — flyNade; jt: a jump-throw, for the practice tools)
   if (kind === 'decoy') { const team = game.combat?.d?.teams?.[key(name)] || null; g.gun = l.primary || l.secondary || defaultPistol(team); g.team = team; g.seed = (C.nadeSeq * 7919 + (now % 100003)) % 2147483646 + 1; }   // (the thrower's primary, else pistol; the side whose enemies hear it)
   C.nades.push(g); traceStart(game, g);
   return 'Threw a ' + NADES[kind].name;
@@ -250,14 +280,101 @@ export function tossFlight(boxes, bounds, fly, view = false) { const g = { x: fl
 // its fuse; a smoke and a decoy once at rest (no faster than STILL for 0.2 s: Source checks every 0.2 s for a speed of
 // about nothing), not before the fuse, at the latest after maxAir.
 const FIRE_SLOPE_NY = Math.cos(30 * Math.PI / 180);
-const goesOff = (g, hitFloor, age) => { const N = NADES[g.kind]; return isFire(g.kind) ? (hitFloor && lastNy >= FIRE_SLOPE_NY) || age > N.fuse : g.kind === 'smoke' || g.kind === 'decoy' ? ((g.rest || g.still > .2) && age >= N.fuse) || age > N.maxAir : age >= N.fuse; };
-// The path a throw will take (client preview): points every 50 ms until it goes off (≤ 4 s). A copy of a flight
-// (view): it never breaks a pane in the local collision — the real throw does that for everyone.
+const goesOff = (g, hitFloor, age) => { const N = NADES[g.kind]; return isFire(g.kind) ? (hitFloor && lastNy >= FIRE_SLOPE_NY) || age > N.fuse : g.kind === 'smoke' || g.kind === 'decoy' ? ((g.rest || g.still > .2) && age >= N.fuse) || age > N.maxAir : N.think ? (g.n || 0) >= thinkStep(N) : age >= N.fuse; };
+// v53 S2 — a flashbang pops on the first of its 0.2 s thinks after its 1.5 s fuse (Source's grenade DetonateThink runs
+// every 0.2 s from the throw): 1.6 s, the first 64 Hz step at or after it = step 103 (1.609 s). MEASURED, not read: 57
+// of CS2's own flashbang lineups (www.cs2util.com: setpos/setang + CS2's recorded pop point, effectPosition — 7 maps,
+// standing, crouched and jump-throws) against these flights: the pop point lies on the flight at step 103 (median miss
+// 5.8 HU; step 96 = 1.5 s: 30+ HU short of it on every one). scratchpad s2/tools/flashstep.mjs; tests/gd-lineups.mjs.
+const thinkStep = N => Math.ceil((Math.floor(N.fuse / N.think + 1e-9) + 1) * N.think / NADE_MS - 1e-9);
+// ── v53: the one fixed-step stepper (host, client copy, preview — see the top of this file) ──
+// nadeStep: one CS2 tick of a flight (stepNade over exactly NADE_DT; g.n counts them). Returns true on a floor.
+export function nadeStep(g, boxes, bounds, bodies = null) { const hit = stepNade(g, boxes, bounds, NADE_DT, bodies); g.n = (g.n || 0) + 1; return hit; }
+// flyNade: a flight's own clock moved on by dt (a client frame, a host word's lateness): as many whole steps as fit, the
+// leftover kept in g.acc (at most NADE_MAX_STEPS at once — a stall drops the rest rather than bursting). prev (a
+// Float64Array(6), optional): the state before the last step taken (x y z vx vy vz) — what nadeDrawn-style drawing
+// interpolates from. Allocation-free. Returns the steps taken.
+export const NADE_MAX_STEPS = 256;
+export function flyNade(g, boxes, bounds, dt, bodies = null, prev = null) {
+  if (!(dt > 0) || g.void || g.bad) return 0; g.acc = (g.acc || 0) + dt; let k = 0;
+  while (g.acc >= NADE_DT - 1e-9 && k < NADE_MAX_STEPS) { g.acc -= NADE_DT; if (prev) { prev[0] = g.x; prev[1] = g.y; prev[2] = g.z; prev[3] = g.vx; prev[4] = g.vy; prev[5] = g.vz; } nadeStep(g, boxes, bounds, bodies); k++; if (g.void || g.bad) break; }
+  if (g.acc < 0 || k === NADE_MAX_STEPS) g.acc = Math.max(0, Math.min(g.acc, NADE_DT - 1e-9)); return k; }
+// A whole throw flown to where it goes off (or maxMs): the host's rules on the host's steps — what the preview shows
+// and what tests compare the host and the client copy with. onStep(g) after each step (and once at the start, g.n 0).
+// Returns the flight's state: g.n steps, g.off (went off at step g.n — its age g.n × NADE_MS), g.rest, x y z.
+// into (v53 S2, optional): a flight object to reuse — every field a flight touches reset, then the same start and the
+// same steps (the practice preview each frame without garbage: the same function as the throw, SPEC 1.3).
+export function simThrow(kind, a, boxes = [], bounds = null, maxMs = AIR_MAX, onStep = null, view = true, into = null) {
+  a = cs2Release(a, THROW_DELAY, boxes?.length ? boxes : null, bounds);   // (v53 S2: CS2's throw delay, as the host's throwNade — the same collision)
+  let g; if (into) { g = into; g.kind = kind; throwStart(a, boxes?.length ? boxes : null, bounds, g); launch(a, g); g.n = 0; g.acc = 0; g.still = 0; g.view = view; g.off = false; g.rest = false; g.bt = undefined; g.void = false; g.bad = false; g.panes = null; g.pastGlass = null; g.grav = undefined; g.glass = null; }
+  else g = { kind, ...throwStart(a, boxes?.length ? boxes : null, bounds), ...launch(a), n: 0, acc: 0, still: 0, view, off: false };
+  const max = Math.ceil(maxMs / NADE_MS);
+  if (onStep) onStep(g);
+  while (g.n < max) { const hit = nadeStep(g, boxes, bounds); if (onStep) onStep(g); if (g.void || g.bad) break; if (goesOff(g, hit, g.n * NADE_MS)) { g.off = true; break; } }
+  return g; }
+// The path a throw will take (client preview): the same steps as the host's (simThrow), a point every 3 steps (47 ms)
+// and the last, until it goes off (≤ 4 s). A copy of a flight (view): it never breaks a pane in the local collision —
+// the real throw does that for everyone. pts.steps / pts.off: where it ends (tests, the practice tools).
 export function predictThrow(kind, a, boxes = [], bounds = null) {
-  const g = { kind, ...throwStart(a, boxes?.length ? boxes : null, bounds), ...launch(a), still: 0, view: true }, pts = [[g.x, g.y, g.z]];
-  for (let t = 50; t <= 4000; t += 50) { const hit = stepNade(g, boxes, bounds, .05); pts.push([g.x, g.y, g.z]); if (g.void || g.bad || goesOff(g, hit, t)) break; }
-  return pts;
+  const pts = []; const g = simThrow(kind, a, boxes, bounds, 4000, s => { if (s.n % 3 === 0) pts.push([s.x, s.y, s.z]); });
+  if (g.n % 3) pts.push([g.x, g.y, g.z]); pts.steps = g.n; pts.off = g.off; return pts;
 }
+// The view direction for the game's look angles (radians: pitch up positive, yaw as the camera's rotation.y — the
+// same as people() and lab.js use), into out (or a new object).
+export function lookDir(pitch, yaw, out = { dx: 0, dy: 0, dz: 0 }) { const cp = Math.cos(pitch); out.dx = -Math.sin(yaw) * cp; out.dy = Math.sin(pitch); out.dz = -Math.cos(yaw) * cp; return out; }
+// The throw message (client → host, as the host's own throw): from the movement's simulated state at the release —
+// feet (x, y, z), how far ducked, velocity (game units/s), the raw look angles at the moment of release (radians),
+// the strength, the sub-tick fraction and whether it is a jump-throw. Every number as computed (JSON carries doubles
+// exactly). One object per throw.
+// v53 S2 — CS2's throw delay. A grenade leaves the hand THROW_DELAY after the release (Source's m_fThrowTime = release +
+// 0.1 s, the grenade made on the tick after it), from where the thrower is THEN: a jump-throw's grenade starts that much
+// higher, with that much less of the jump's upward speed; a running throw's that much further along. cs2Release(a): the
+// release state (a throwPacket, or a test's/a lineup's plain { x, y (eye), z, vx, vy, vz }) moved on by the delay —
+// in the air (a jump-throw, a.jt, or any vertical speed): a free fall under the movement's 800 u/s²; on the ground:
+// on at its speed (approximation: no friction over the 0.1 s — a throw just after letting go of the keys goes ≤ 2 HU
+// too far). Used by the host's throwNade and by simThrow (the preview, the client's copy, tests): one rule for all.
+// THROW_DELAY is MEASURED, not read (the server code is not in the install): 27 of CS2's own jump-throw flashbang
+// lineups (www.cs2util.com: getpos + CS2's recorded pop point, 6 maps) fit best at 0.104 s after the take-off (mean
+// miss 5.2 HU, height bias 0); 0.1 s: 7.1 HU, 7 ticks (0.109 s): 7.8 HU; the take-off itself (no delay): 60–1400 HU off.
+// scratchpad s2/tools/fitjump*.mjs, flashpath.mjs. Allocation-free: into REL (reused — read at once by the caller).
+// WHEN (v53 S2 review): the grenade is MADE at the end of the delay, not at the release — the client sends the throw
+// THROW_DELAY after the release moment (arena-ui.js throwNade), so the host's g.at (its arrival) is CS2's spawn moment
+// and a flash pops 1.609 s after it = 1.713 s after the click (CS2: the 0.1 s delay + the first think after 1.5 s).
+// COLLISION during the delay (v53 S2 review; boxes given — the host, the preview, the client copy all pass the map's):
+// the body meets the map as the movement would, in REL_K sub-steps: across, the eye's level path stops the body's
+// radius (16 HU) short of a wall (and the body stops there); rising, the head (the hull's top, 72 HU over the feet:
+// HEAD_GAP over the eye) stops under a ceiling and the upward speed goes to 0 (Source clips it), then it falls; falling,
+// the feet (the standing eye's height under the eye) land on a floor and it stops there. Without it a jump-throw under
+// an 82-HU ceiling started the grenade above the ceiling. Approximation: the grenade mesh stands in for the player's
+// collision (no player clips; the eye's ray, not the whole hull); a crouched fall lands by the standing eye height.
+export const THROW_DELAY = .104; const JUMP_G = 800 * HU, REL = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, vx: 0, vy: 0, vz: 0, strength: 'long', jt: 0 };
+const REL_K = 8, HEAD_GAP = 72 * HU - NADE_EYE.stand, BODY_GAP = 16 * HU;
+export function cs2Release(a, d = THROW_DELAY, boxes = null, bounds = null) {
+  let x = num(a.x), y = num(a.y), z = num(a.z), vx = num(a.vx), vy = num(a.vy), vz = num(a.vz), air = !!a.jt || vy !== 0;
+  REL.dx = a.dx; REL.dy = a.dy; REL.dz = a.dz; REL.strength = a.strength; REL.jt = a.jt ? 1 : 0;
+  if (!boxes) { REL.x = x + vx * d; REL.z = z + vz * d; REL.vx = vx; REL.vz = vz;
+    if (air) { REL.y = y + vy * d - JUMP_G / 2 * d * d; REL.vy = vy - JUMP_G * d; } else { REL.y = a.y; REL.vy = vy; }
+    return REL; }
+  const h = d / REL_K;
+  for (let k = 0; k < REL_K; k++) {
+    if (vx || vz) { const sp = Math.hypot(vx, vz), L = sp * h, ux = vx / sp, uz = vz / sp, far = L + BODY_GAP, s = pointFirst(boxes, bounds, x, y, z, x + ux * far, y, z + uz * far), go = Math.max(0, Math.min(L, s - BODY_GAP)); x += ux * go; z += uz * go; if (go < L) vx = vz = 0; }
+    if (!air) continue; const dy = vy * h - JUMP_G / 2 * h * h, nvy = vy - JUMP_G * h;
+    if (dy > 0) { const s = pointFirst(boxes, bounds, x, y, z, x, y + dy + HEAD_GAP, z), go = Math.max(0, Math.min(dy, s - HEAD_GAP)); y += go; vy = go < dy ? 0 : nvy; }   // (the head on a ceiling)
+    else if (dy < 0) { const s = pointFirst(boxes, bounds, x, y, z, x, y + dy - NADE_EYE.stand, z), go = Math.max(0, Math.min(-dy, s - NADE_EYE.stand)); y -= go; if (go < -dy) { vy = 0; air = false; } else vy = nvy; }   // (the feet on a floor)
+    else vy = nvy; }
+  REL.x = x; REL.y = y; REL.z = z; REL.vx = vx; REL.vy = vy; REL.vz = vz; return REL; }
+// How far a point gets from a towards b before it meets the map (game units; Infinity: it gets there): CS2's triangles
+// and the shut doors / whole panes on a CS2 map, else the boxes sampled every HU (solid(): a ball's radius early).
+function pointFirst(boxes, bounds, ax, ay, az, bx, by, bz) {
+  const L = Math.hypot(bx - ax, by - ay, bz - az); if (!(L > 1e-9)) return Infinity; const M = boxes.nadeMesh;
+  if (M) { const w = Math.min(meshFirst(M, ax, ay, az, bx, by, bz), moverFirst(boxes.movers, ax, ay, az, bx, by, bz, true, 0)); return w <= 1 ? w * L : Infinity; }
+  for (let s = HU; s <= L + 1e-9; s += HU) { const f = s / L; if (solid(boxes, bounds, ax + (bx - ax) * f, ay + (by - ay) * f, az + (bz - az) * f)) return s - HU; } return Infinity; }
+export function throwPacket(s, out = null) {   // (out: v53 S2 — into this object: the practice preview, allocation-free)
+  const d = lookDir(num(s.pitch), num(s.yaw), out ? TPD : undefined), P = out || {};
+  P.x = num(s.x); P.y = num(s.y) + throwEye(s.duck); P.z = num(s.z); P.dx = d.dx; P.dy = d.dy; P.dz = d.dz; P.vx = num(s.vx); P.vy = num(s.vy); P.vz = num(s.vz);
+  P.strength = POWER[s.strength] !== undefined ? s.strength : 'long'; P.pitch = num(s.pitch); P.yaw = num(s.yaw); P.frac = Math.max(0, Math.min(1, num(s.frac)));
+  if (s.jt) P.jt = 1; else if (out) P.jt = 0; return P; }
+const TPD = { dx: 0, dy: 0, dz: 0 };
 // The living, for grenades (bodies to bounce off, blasts, flashes, fire): players at their pose — feet = the eye less
 // its height over them (e: pose.ey, from the client's true feet, lan/room.mjs; else CS2's eye, 64 HU standing / 46
 // crouched — as combat-logic.js poseFeet; the old eye − 64 HU put a crouched player's feet 18 HU under the floor, so
@@ -611,16 +728,23 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
   const C = game.combat; if (C) C.clock = now; if (C && players?.length) cutShots(game, players, now);   // (the players' new shots through a smoke cut its tunnels on the host — counted every tick, smoke or not)
   if (!C?.nades?.length) return false; let changed = false; const bodies = C.nades.some(g => g.phase === 'air') ? people(game, players) : null;   // (the living, for grenades in flight to bounce off)
   for (const g of C.nades) {
-    const N = NADES[g.kind], age = now - g.at; if (!N) { g.phase = 'gone'; continue; }
+    const N = NADES[g.kind]; if (!N) { g.phase = 'gone'; continue; }
     if (g.phase === 'air') {
-      const hitFloor = stepNade(g, boxes, bounds, dt, bodies); changed = true; traceStep(g);
+      // v53: its own 64 Hz clock (top of this file) — every whole 1/64 s step due by now (since its throw, g.at; a pause
+      // moves g.at on: holdNades), each checked for going off on its own step; the part of a step left waits (g.acc:
+      // also how far into the next step the host's state is, for the clients' copies). dt (this tick's length) is not
+      // used for the flight any more: a 15 ms tick and a 100 ms one fly the same steps.
+      if (!Number.isFinite(g.n)) g.n = Math.max(0, Math.floor((now - g.at) / NADE_MS + 1e-6) - 1);   // (a grenade with no clock of its own — an older state, a hand-made one: it is where it is now, one step due)
+      const due = Math.min(g.n + NADE_MAX_STEPS, Math.floor((now - g.at) / NADE_MS + 1e-6)); let hitFloor = false, off = false;
+      while ((g.n || 0) < due) { hitFloor = nadeStep(g, boxes, bounds, bodies); traceStep(g); if (g.void || g.bad) break; if (goesOff(g, hitFloor, g.n * NADE_MS)) { off = true; break; } }
+      g.n ||= 0; g.acc = Math.max(0, (now - g.at) / 1000 - g.n * NADE_DT); changed = true; const age = g.n * NADE_MS;
       if (g.glass?.length) { for (const id of g.glass) onGlass?.(id); g.glass = null; }   // (panes it broke on the way: broken for everyone)
       // Out of the world (a lob over an outer wall falls past CS2's lowest surface: a deliberate removal, logged — or,
       // with a surface over it, a fall through a gap in the map file: voidWhy), or gone wrong (numbers not finite; in
       // the air past any fuse): removed at once.
       if (g.void || g.bad || age > AIR_MAX) { logNade(game, g, g.void ? voidWhy(boxes, g) : g.bad ? 'not finite' : 'too long in the air', now); g.phase = 'gone'; continue; }
-      if (!goesOff(g, hitFloor, age)) continue;
-      g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', decoy: 'decoy', molotov: 'fire', incendiary: 'fire' }[g.kind]; g.firedAt = now; g.vx = g.vy = g.vz = 0;
+      if (!off) continue;
+      g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', decoy: 'decoy', molotov: 'fire', incendiary: 'fire' }[g.kind]; g.firedAt = g.at + age; g.vx = g.vy = g.vz = 0;   // (firedAt: the step it went off on, not the tick that saw it)
       if (isFire(g.kind) || g.kind === 'smoke') { const fy = groundUnder(boxes, g.x, g.z, g.y);   // (the surface it lies on: CS2's triangles on a CS2 map — beside a wall, on a roof or a stair as they are)
         if (fy === null && !isFire(g.kind)) { logNade(game, g, 'out of the world', now); g.phase = 'gone'; continue; }   // (no surface under it at all: out of the world)
         if (isFire(g.kind) && (fy === null || (!(hitFloor && lastNy >= FIRE_SLOPE_NY) && g.y - fy > N.airburst))) { g.phase = 'out'; g.airburst = true; }   // timed out high in the air (or over nothing at all): it bursts there, no fire (CS2)
