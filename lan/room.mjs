@@ -31,6 +31,7 @@ const {arenaTick,botRoster,epochError,arenaEpochKey,arenaView,shiftClock,skinsLi
 // pick is checked against. Everyone's picks are saved next to the room's save (gd-skins.json) — at most every 5 s, never
 // in a live round — and read back (checked again) at start.
 const {setSkinCatalog,setGloveCatalog,takeSkinDelta,fullSkins,skinSave,cleanSkinSave}=await import(pathToFileURL(path.join(root,'skins.js')));
+const {userFile:lineupFile,cleanLineup,MAP_ID:LINEUP_MAP}=await import(pathToFileURL(path.join(root,'gd-lineups.js')));/* v53 S2: Global Defensive practice lineups, the player's own (user-assets/lineups/<map>.json) */
 const {poseGate,fallCheck}=await import(pathToFileURL(path.join(root,'arena-move.js')));const {hurt:hurtBody}=await import(pathToFileURL(path.join(root,'combat-logic.js')));/* Global Defensive poses: the movement check and fall damage (arena-move.js; the host never runs the movement itself) */
 // Global Defensive state frames ('combat'): the combat state, plus — when they changed — the arena (arenaView: map, match,
 // lobby, settings, loadouts) and the loadouts, each with its own rising revision (arev, lrev) so a client applies the
@@ -151,6 +152,15 @@ const handler=async(req,res)=>{try{
  if(url.pathname==='/api/user-assets/pack'&&req.method==='POST'){const p=players.get(req.headers['x-player-token']);if(!(p?.isHost||(!p&&loopback(req)))){json(res,403,{error:'Only the host adds models and maps'});return;}
    const chunks=[];let n=0;for await(const c of req){n+=c.length;if(n>3584*1048576){json(res,413,{error:'Asset pack too large (3.5 GB at most)'});return;}chunks.push(c);}/* (a zip addresses 4 GB; the CS2 maps' grenade collision made the pack about 2 GB) */
    try{const r=await installPack(Buffer.concat(chunks));broadcast('user-maps',{maps:[...userMaps.values()]});broadcast('user-assets',{});log('Asset pack installed: '+r.files+' model files, '+r.maps+' maps'+(r.skinsNote?', CS2 finishes '+r.skinsNote:'')+(r.glovesNote?', CS2 gloves '+r.glovesNote:''));json(res,200,r);}catch(e){json(res,400,{error:'Not a usable asset pack: '+e.message});}return;}
+ /* v53 S2 — Global Defensive practice lineups saved on this computer (gd-lineups.js): GET /api/lineups/<map> → { map, lineups };
+    POST { add: lineup } / { remove: id } (the host's page or this computer only — the file is on the host's disk), the
+    file rewritten whole through a temporary one (never half-written), at most MAX_USER a map. Not cached. */
+ { const m=/^\/api\/lineups\/([a-z0-9_]{1,24})$/.exec(url.pathname); if(m&&LINEUP_MAP.test(m[1])&&(req.method==='GET'||req.method==='POST')){const file=path.join(assetsDir,'lineups',m[1]+'.json'),cur=await readFile(file,'utf8').then(t=>lineupFile(m[1],JSON.parse(t)?.lineups)).catch(()=>lineupFile(m[1],[]));
+   if(req.method==='GET'){res.setHeader('Cache-Control','no-store');json(res,200,cur);return;}
+   const p=players.get(req.headers['x-player-token']);if(!(p?.isHost||(!p&&loopback(req)))){json(res,403,{error:'Lineups are kept on the host\'s computer: only the host saves them'});return;}
+   let b;try{b=await body(req);}catch{json(res,400,{error:'Bad lineup'});return;}
+   let list=cur.lineups;if(b?.remove){list=list.filter(l=>l.id!==String(b.remove));}if(b?.add){const c=cleanLineup({...b.add,user:true},m[1]);if(!c){json(res,400,{error:'Not a lineup (a getpos line, a grenade)'});return;}list=list.filter(l=>l.id!==c.id);list.push(c);}
+   const out=lineupFile(m[1],list);await mkdir(path.dirname(file),{recursive:true});const tmpF=file+'.'+randomBytes(4).toString('hex')+'.tmp';await writeFile(tmpF,JSON.stringify(out,null,1));await rename(tmpF,file);json(res,200,out);return;} }
  if(url.pathname==='/api/user-assets'&&req.method==='GET'){json(res,200,await readFile(path.join(assetsDir,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({models:{}})));return;}
  if(url.pathname.startsWith('/user-assets/')&&req.method==='GET'){const rel=decodeURIComponent(url.pathname.slice(13)),file=path.resolve(assetsDir,rel),mime=ASSET_MIME[path.extname(file)];
    if(!/^[a-z0-9][a-z0-9_.\-\/]*$/i.test(rel)||rel.split('/').some(x=>!x||x.startsWith('.'))||!file.startsWith(assetsDir+path.sep)||!mime){res.writeHead(403);res.end();return;}

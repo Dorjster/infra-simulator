@@ -59,7 +59,8 @@ export function takeShots(game, name, n, id, fromHit = false, fromPose = false) 
   if (!Number.isFinite(n)) return s; if (fromHit && s.n >= SESSION_N && n > s.n + 500) return s;
   if (s.n === null || n < s.n - 1e6 || n > s.n + 500) { s.n = n; return s; }   // first contact (or a client restart): sync, take nothing
   const w = weaponById(id); if (!isFirearm(w) || game.combat?.d?.round?.phase === 'freeze') { s.n = Math.max(s.n, n); return s; }
-  while (s.n < n) { s.n++; const a = ammoOf(game, name, id); if (a[0] > 0) { a[0]--; setAmmo(game, name, id, a); if (recording(game)) statOf(game, name).shots++; } else { s.dry.push(s.n); if (s.dry.length > 24) s.dry.shift(); } }
+  const keepMag = game.mode === 'arena' && !!game.arena?.practice?.mag;   // (v53 S2 review: Global Defensive practice, sv_infinite_ammo 1 — the magazine never empties, no reloading)
+  while (s.n < n) { s.n++; const a = ammoOf(game, name, id); if (a[0] > 0) { if (!keepMag) a[0]--; setAmmo(game, name, id, a); if (recording(game)) statOf(game, name).shots++; } else { s.dry.push(s.n); if (s.dry.length > 24) s.dry.shift(); } }
   return s;
 }
 // A reload numbered by the client (pose shot.r): moves rounds from the reserve to the magazine, once per number — a
@@ -84,15 +85,21 @@ export function poseAmmo(game, name, shot, weapon) {
 // ── Damage ──────────────────────────────────────────────────────────────────────────────────────────────────
 // Damage one player (or bot) with a weapon hit: armor and the head-shot rule apply (weapons-data.js hitDamage).
 export function applyHit(game, shooter, targetName, wpn, zone, dist, pellets = 1, now = Date.now(), base = null, how = null) {
-  const C = state(game), tk = key(targetName), arm = C.armor?.[tk] || null, r = hitDamage(wpn, zone, dist, pellets, arm, base);
+  const C = state(game), tk = key(targetName), arm = C.armor?.[tk] || null, r = hitDamage(wpn, zone, dist, pellets, arm, base), helm = zone === 'head' && !!arm?.helmet && arm.kevlar > 0;
   if (arm && r.armor) { arm.kevlar = Math.max(0, arm.kevlar - r.armor); if (!arm.kevlar) arm.helmet = false; }
-  return hurt(game, shooter, targetName, wpn, r.hp, zone, now, r.headKill, how);
+  return hitMarks(game, hurt(game, shooter, targetName, wpn, r.hp, zone, now, r.headKill, how), shooter, helm);
 }
+// (v53 S3) Who hit (sk: the shooter's key) and whether the bullet met a helmet (hm: the victim wore one as it struck the
+// head) on a hit's result — the shooter's headshot sound (gd-sounds.js hitEvents) — and so on its blood record (bleed:
+// s, hm), from which the victim and the onlookers hear the right headshot (gd-hit-feedback.js). Additive fields only,
+// Global Defensive only (other modes' hit results stay as in 52.0.5 — v53 integration, tests/gd-other-modes-untouched.mjs).
+function hitMarks(game, out, shooter, helm) { if (game?.mode === 'arena' && out && out.dmg > 0) { out.sk = key(shooter); if (helm && out.zone === 'head') out.hm = 1; } return out; }
 // Take `dmg` HP (grenades and fire pass their own damage); knocks out at 0 with a kill-feed line; assists for
 // anyone else who did 41+ damage to the victim in this life (CS2).
 // `how`: CS2 kill-feed marks { wallbang, smoke, noscope, air, blind, far (metres) }.
 export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = Date.now(), headKill = false, how = null) {
   if (!game.combat?.d && (game.combat?.safe?.[key(targetName)] || 0) > now) return { message: 'Spawn protection', dmg: 0, hp: hpOf(game, targetName), safe: true };   // deathmatch: just (re)spawned
+  if (game.mode === 'arena' && game.arena?.practice?.god?.[key(targetName)]) return { message: 'God mode', dmg: 0, hp: hpOf(game, targetName), safe: true };   // (v53 S2: Global Defensive practice, the console's god)
   if (game.combat?.d && !headKill) dmg = defuseDamage(game, shooter, targetName, wpn, dmg);   // friendly fire: reduced, not off
   else if (game.combat?.d && headKill && friendly(game, shooter, targetName)) dmg = Math.round(defuseDamage(game, shooter, targetName, wpn, damageCap(wpn)));   // a team mate's head shot is not an instant kill
   const c = state(game), me = key(shooter), tk = key(targetName); if (isDown(game, targetName, now) || dmg <= 0) return { message: 'Already down', dmg: 0, hp: hpOf(game, targetName) };
@@ -133,7 +140,7 @@ export function bleed(game, victim, res, px, py, pz, dx, dy, dz, now = Date.now(
   const c = state(game), L = c.bl ??= [], len = Math.hypot(dx, dy, dz); if (!(len > 1e-6)) return null;
   while (L.length && (now - L[0].at > BLEED_MS || L.length >= 12)) L.shift();
   const rec = { i: c.blI = Math.max((c.blI || 0) + 1, now), at: now, v: key(victim), z: res.zone || 'chest', d: Math.round(res.dmg), p: [r2(px), r2(py), r2(pz)], r: [r3(dx / len), r3(dy / len), r3(dz / len)] };
-  if (res.down) rec.k = 1; if (knife) rec.kn = 1; L.push(rec); return rec;
+  if (res.down) rec.k = 1; if (knife) rec.kn = 1; if (res.hm) rec.hm = 1; if (typeof res.sk === 'string') rec.s = res.sk; L.push(rec); return rec;   // (hm, s: v53 S3 — hitMarks)
 }
 // From a shooter's eye to a body (its pose: x, z, feet — poseFeet — or fy, crouched / cr) at the hit's zone: the point on
 // the body's near side, along that line (bots' shots, knives, hits without a shot record).
@@ -239,8 +246,8 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
   // Damage is computed here from the real distance and what the bullet went through, never trusted from the shooter.
   // Kill-feed marks: wallbang and through smoke are the host's own findings; no-scope, airborne and blind come from the shooter.
   const eyeA = from ? (from.y ?? 9.7) : 0, eyeB = to ? (to.y ?? 9.7) - 1.5 : 0, how = { wallbang: through < 1, smoke: !!(from && to && smokeBlocks(game, from.x, eyeA, from.z, to.x, eyeB, to.z, now)), noscope: !!a.noscope && !!wpn.zoom, air: !!a.air, blind: !!a.blind, far: Math.round(dist * .165) };
-  const arm = c.armor?.[tk]; if (arm && res.armor) { arm.kevlar = Math.max(0, arm.kevlar - res.armor); if (!arm.kevlar) arm.helmet = false; }
-  const out = hurt(game, name, target.name, wpn, res.hp, res.zone, now, false, how);
+  const arm = c.armor?.[tk], helm = !!arm?.helmet && arm.kevlar > 0; if (arm && res.armor) { arm.kevlar = Math.max(0, arm.kevlar - res.armor); if (!arm.kevlar) arm.helmet = false; }
+  const out = hitMarks(game, hurt(game, name, target.name, wpn, res.hp, res.zone, now, false, how), name, helm);
   if (wound) bleed(game, target.name, out, wound.at[0], wound.at[1], wound.at[2], wound.dir[0], wound.dir[1], wound.dir[2], now);
   else if (from && to) bleedFrom(game, target.name, out, from.x, from.y ?? EYE, from.z, to, now);
   return out;

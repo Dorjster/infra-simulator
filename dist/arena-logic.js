@@ -36,7 +36,18 @@ const clampS = (v, [lo, hi], dflt) => { const n = Math.round(+v); return Number.
 // stand still / move without shooting / fight back, infinite ammo, and the assists the client draws (bullet impacts,
 // your recoil pattern, grenade flight paths). Only a practice session carries arena.practice: no assist reaches a
 // normal match.
-export function cleanPractice(p = {}) { return { bots: ['stand', 'move', 'fight'].includes(p.bots) ? p.bots : 'stand', ammo: p.ammo !== false, impacts: p.impacts !== false, recoil: p.recoil !== false, paths: p.paths !== false }; }
+// v53 S2 (SPEC 1.3, the console's practice commands — gd-console.js): nades (sv_infinite_ammo 1: a thrown grenade stays
+// in your loadout), god (by player: no damage — CS2's god), roundtime (min, 0 = none) / freezetime (s): a practice round
+// (practiceRound) — its clock in the top bar, and at its end everyone back at a spawn, grenades gone, the freeze time
+// still, the clock again (CS2's mp_roundtime / mp_freezetime, on this session only).
+const PR_LIMIT = { roundtime: [0, 60], freezetime: [0, 60] };
+const prNum = (v, k) => { const n = +v, [lo, hi] = PR_LIMIT[k]; return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : 0; };
+export function cleanPractice(p = {}) { const god = {}; if (p.god && typeof p.god === 'object') for (const k of Object.keys(p.god).slice(0, 32)) if (p.god[k]) god[String(k).slice(0, 40)] = 1;
+  const out = { bots: ['stand', 'move', 'fight'].includes(p.bots) ? p.bots : 'stand', ammo: p.ammo !== false, impacts: p.impacts !== false, recoil: p.recoil !== false, paths: p.paths !== false, nades: p.nades === true, mag: p.mag === true, god, roundtime: prNum(p.roundtime, 'roundtime'), freezetime: prNum(p.freezetime, 'freezetime') };
+  if (out.roundtime > 0 && p.round && Number.isFinite(p.round.start) && Number.isFinite(p.round.ends) && Number.isFinite(p.round.free)) out.round = { start: p.round.start, free: p.round.free, ends: p.round.ends, n: p.round.n | 0 };
+  return out; }
+// A practice round from `now`: still until free (the freeze time), its clock running out at ends.
+export function practiceRound(P, now, n = (P.round?.n || 0) + 1) { if (!(P.roundtime > 0)) { delete P.round; return null; } const free = now + P.freezetime * 1000; return P.round = { start: now, free, ends: free + P.roundtime * 60000, n }; }
 export function startArena(game, { map = 'yard', kind = 'dm', bots = 0, lobbyMs = 0, difficulty = 'normal', freezeS = 15, warmupS = null, rules = null, practice = null } = {}, now = Date.now()) {
   if (!ARENA_MAPS[map] || ARENA_MAPS[map].stub) throw Error(ARENA_MAPS[map]?.stub ? ARENA_MAPS[map].name + ': the room has no map file for it' : 'Unknown arena map');   // (a file-only map's stand-in: arena-maps.js)
   if (practice) kind = 'dm';
@@ -207,6 +218,12 @@ export function arenaApply(game, a, name, players = [], now = Date.now(), perm =
   // A request made in a round or match that has ended (it crossed the change on the network) does nothing.
   { const late = epochError(game, a); if (late) throw Error(late); }
   // ── Match: lobby, teams, host settings, map ──
+  // v53 S2: the console's practice commands — your god mode, bot_kick (one by name, or all), a new practice round
+  if (a.type === 'practice-god') { if (!A.practice) throw Error('Only in practice'); const k = key(name); if (a.on) A.practice.god[k] = 1; else delete A.practice.god[k]; return 'god ' + (a.on ? 'ON' : 'OFF'); }
+  if (a.type === 'practice-kick') { if (!A.practice) throw Error('Only in practice'); const want = a.name ? key(a.name) : null; let n = 0;
+    for (let i = A.bots.length - 1; i >= 0; i--) { if (want && key(A.bots[i].name) !== want) continue; const b = A.bots.splice(i, 1)[0]; A.bots.push(b); removeBot(game); n++; }
+    if (!n) throw Error(want ? 'No bot named ' + a.name : 'No bots to kick'); return 'Kicked ' + n + ' bot' + (n > 1 ? 's' : ''); }
+  if (a.type === 'practice' && a.settings && ('roundtime' in a.settings || 'freezetime' in a.settings)) { if (!A.practice) throw Error('Only in practice'); A.practice = cleanPractice({ ...A.practice, ...a.settings }); practiceRound(A.practice, now); return 'Practice round: ' + (A.practice.roundtime ? A.practice.roundtime + ' min, freeze ' + A.practice.freezetime + ' s' : 'no clock'); }
   if (a.type === 'practice') { if (!A.practice) throw Error('Only in practice'); A.practice = cleanPractice({ ...A.practice, ...(a.settings || {}) }); return 'Practice: ' + ({ stand: 'bots stand still', move: 'bots move', fight: 'bots fight back' })[A.practice.bots]; }   // its settings, changed during the session
   if (a.type === 'ready') { if (!A.lobby || A.lobby.started) throw Error('The match is running'); A.lobby.ready[key(name)] = a.ready !== false; return a.ready === false ? 'Not ready' : 'Ready'; }
   if (a.type === 'start-match') { if (!perm.isHost) throw Error('Only the host starts the match'); if (!A.lobby || A.lobby.started) throw Error('The match is already running'); const e = lobbyShort(game, players); if (e) throw Error(e); beginMatch(game, players, now); return 'Match started'; }
@@ -503,6 +520,10 @@ export function arenaTick(game, players = [], dt = .05, now = Date.now()) { TICK
   syncMapState(game, now, players);
   // Lobby: start at the timeout when there are enough players, else wait 30 s more and say why.
   if (A.lobby && !A.lobby.started) { A.endsAt = now + DM_MS; if (now >= A.lobby.until) { const e = lobbyShort(game, players); if (e) { A.lobby.until = now + LOBBY_MORE_MS; A.lobby.note = e; } else beginMatch(game, players, now); changed = true; } }
+  // v53 S2: a practice round's clock ran out (mp_roundtime): everyone back at a spawn, alive, the grenades gone, and the
+  // next round (its freeze time first: the clients hold still until round.free — lab.js).
+  { const P = A.practice; if (P?.round && now >= P.round.ends) { for (const p of players) { if (p.bot) continue; const k = key(p.name); delete C.down[k]; C.hp[k] = MAX_HP; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at: now, x: s.x, z: s.z }; }
+    for (const b of A.bots) { const k = key(b.name); delete C.down[k]; C.hp[k] = MAX_HP; } if (C.nades) C.nades.length = 0; practiceRound(P, now); changed = true; } }
   // Spawn orders for players who just respawned (their client moves them there).
   for (const [k, at] of Object.entries(C.respawnedAt || {})) { if (C.spawnTo[k]?.at === at) continue; const p = players.find(x => key(x.name) === k); if (!p) continue; const s = bestSpot(game, occupied(game, players, p.name, now)); C.spawnTo[k] = { at, x: s.x, z: s.z }; changed = true; }
   // Deathmatch: a player seen for the first time gets a spot of their own too (not the client's guess).
