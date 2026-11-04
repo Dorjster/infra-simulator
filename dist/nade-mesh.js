@@ -8,34 +8,36 @@
 const TIE = 1e-3;   // (first(): faces this close along the line, in the mesh's units — Hammer units — are at one point; over the bullets' step past a face, arena-maps.js FINE_EPS ≈ 6.5e-4)
 export function createNadeMesh({ o, s, tri, box, links, sight = null }) {
   const ox = o[0], oy = o[1], oz = o[2], sx = s[0], sy = s[1], sz = s[2], stack = new Int32Array(96);
-  let qx = 0, qy = 0, qz = 0;   // the closest point found by closest()
-  // The point of triangle t nearest to (px, py, pz) into qx qy qz (Ericson, Real-Time Collision Detection 5.1.5).
-  function closest(t, px, py, pz) {
+  // (v53 DEATH, allocation: the point asked about and the closest point found live in two small typed arrays, not in
+  // arguments and closure variables — V8 boxes a number passed to, or stored by, a function it does not inline: a
+  // HeapNumber per triangle tested, ~45 KB of garbage per ragdoll step on a CS2 map. The same arithmetic: the same answers.)
+  const PC = new Float64Array(4), QC = new Float64Array(3), SG = new Float64Array(6);   // the ball asked about (x y z r); the closest point found by closest(); the segment asked about
+  // The point of triangle t nearest to PC into QC (Ericson, Real-Time Collision Detection 5.1.5).
+  function closest(t) {
+    const px = PC[0], py = PC[1], pz = PC[2];
     const k = t * 9, ax = ox + tri[k] * sx, ay = oy + tri[k + 1] * sy, az = oz + tri[k + 2] * sz, bx = ox + tri[k + 3] * sx, by = oy + tri[k + 4] * sy, bz = oz + tri[k + 5] * sz, cx = ox + tri[k + 6] * sx, cy = oy + tri[k + 7] * sy, cz = oz + tri[k + 8] * sz;
     const abx = bx - ax, aby = by - ay, abz = bz - az, acx = cx - ax, acy = cy - ay, acz = cz - az, apx = px - ax, apy = py - ay, apz = pz - az;
-    const d1 = abx * apx + aby * apy + abz * apz, d2 = acx * apx + acy * apy + acz * apz; if (d1 <= 0 && d2 <= 0) { qx = ax; qy = ay; qz = az; return; }
-    const bpx = px - bx, bpy = py - by, bpz = pz - bz, d3 = abx * bpx + aby * bpy + abz * bpz, d4 = acx * bpx + acy * bpy + acz * bpz; if (d3 >= 0 && d4 <= d3) { qx = bx; qy = by; qz = bz; return; }
-    const vc = d1 * d4 - d3 * d2; if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); qx = ax + abx * v; qy = ay + aby * v; qz = az + abz * v; return; }
-    const cpx = px - cx, cpy = py - cy, cpz = pz - cz, d5 = abx * cpx + aby * cpy + abz * cpz, d6 = acx * cpx + acy * cpy + acz * cpz; if (d6 >= 0 && d5 <= d6) { qx = cx; qy = cy; qz = cz; return; }
-    const vb = d5 * d2 - d1 * d6; if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); qx = ax + acx * w; qy = ay + acy * w; qz = az + acz * w; return; }
-    const va = d3 * d6 - d5 * d4; if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); qx = bx + (cx - bx) * w; qy = by + (cy - by) * w; qz = bz + (cz - bz) * w; return; }
-    const den = 1 / (va + vb + vc), v = vb * den, w = vc * den; qx = ax + abx * v + acx * w; qy = ay + aby * v + acy * w; qz = az + abz * v + acz * w;
+    const d1 = abx * apx + aby * apy + abz * apz, d2 = acx * apx + acy * apy + acz * apz; if (d1 <= 0 && d2 <= 0) { QC[0] = ax; QC[1] = ay; QC[2] = az; return; }
+    const bpx = px - bx, bpy = py - by, bpz = pz - bz, d3 = abx * bpx + aby * bpy + abz * bpz, d4 = acx * bpx + acy * bpy + acz * bpz; if (d3 >= 0 && d4 <= d3) { QC[0] = bx; QC[1] = by; QC[2] = bz; return; }
+    const vc = d1 * d4 - d3 * d2; if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); QC[0] = ax + abx * v; QC[1] = ay + aby * v; QC[2] = az + abz * v; return; }
+    const cpx = px - cx, cpy = py - cy, cpz = pz - cz, d5 = abx * cpx + aby * cpy + abz * cpz, d6 = acx * cpx + acy * cpy + acz * cpz; if (d6 >= 0 && d5 <= d6) { QC[0] = cx; QC[1] = cy; QC[2] = cz; return; }
+    const vb = d5 * d2 - d1 * d6; if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); QC[0] = ax + acx * w; QC[1] = ay + acy * w; QC[2] = az + acz * w; return; }
+    const va = d3 * d6 - d5 * d4; if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); QC[0] = bx + (cx - bx) * w; QC[1] = by + (cy - by) * w; QC[2] = bz + (cz - bz) * w; return; }
+    const den = 1 / (va + vb + vc), v = vb * den, w = vc * den; QC[0] = ax + abx * v + acx * w; QC[1] = ay + aby * v + acy * w; QC[2] = az + abz * v + acz * w;
   }
   function faceNormal(t, out) { const k = t * 9, ax = tri[k] * sx, ay = tri[k + 1] * sy, az = tri[k + 2] * sz, ux = tri[k + 3] * sx - ax, uy = tri[k + 4] * sy - ay, uz = tri[k + 5] * sz - az, vx = tri[k + 6] * sx - ax, vy = tri[k + 7] * sy - ay, vz = tri[k + 8] * sz - az;
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; out[0] = nx / l; out[1] = ny / l; out[2] = nz / l; }
-  return {
-    tris: tri.length / 9,
-    contact(px, py, pz, r, out) {
+  function contactAt(out) { const px = PC[0], py = PC[1], pz = PC[2], r = PC[3];
       const x0 = Math.floor((px - r - ox) / sx), x1 = Math.ceil((px + r - ox) / sx), y0 = Math.floor((py - r - oy) / sy), y1 = Math.ceil((py + r - oy) / sy), z0 = Math.floor((pz - r - oz) / sz), z1 = Math.ceil((pz + r - oz) / sz);
       let best = r * r, bt = -1, bx = 0, by = 0, bz = 0, sp = 0; stack[sp++] = 0;
       while (sp > 0) { const n = stack[--sp], b = n * 6; if (box[b] > x1 || box[b + 3] < x0 || box[b + 1] > y1 || box[b + 4] < y0 || box[b + 2] > z1 || box[b + 5] < z0) continue;
         const a = links[n * 2], c = links[n * 2 + 1];
-        if (c) { for (let t = a; t < a + c; t++) { closest(t, px, py, pz); const dx = px - qx, dy = py - qy, dz = pz - qz, d = dx * dx + dy * dy + dz * dz; if (d < best) { best = d; bt = t; bx = qx; by = qy; bz = qz; } } }
+        if (c) { for (let t = a; t < a + c; t++) { closest(t); const qx = QC[0], qy = QC[1], qz = QC[2], dx = px - qx, dy = py - qy, dz = pz - qz, d = dx * dx + dy * dy + dz * dz; if (d < best) { best = d; bt = t; bx = qx; by = qy; bz = qz; } } }
         else if (sp < 94) { stack[sp++] = a; stack[sp++] = n + 1; } }
       if (bt < 0) return false;
       const d = Math.sqrt(best); if (d > 1e-4) { out[0] = (px - bx) / d; out[1] = (py - by) / d; out[2] = (pz - bz) / d; } else faceNormal(bt, out);
-      out[3] = r - d; return true; },
-    blocked(ax, ay, az, bx, by, bz, sightOnly = false) {
+      out[3] = r - d; return true; }
+  function blockedAt(sightOnly) { const ax = SG[0], ay = SG[1], az = SG[2], bx = SG[3], by = SG[4], bz = SG[5];
       const dx = bx - ax, dy = by - ay, dz = bz - az, x0 = Math.floor((Math.min(ax, bx) - ox) / sx) - 1, x1 = Math.ceil((Math.max(ax, bx) - ox) / sx) + 1, y0 = Math.floor((Math.min(ay, by) - oy) / sy) - 1, y1 = Math.ceil((Math.max(ay, by) - oy) / sy) + 1, z0 = Math.floor((Math.min(az, bz) - oz) / sz) - 1, z1 = Math.ceil((Math.max(az, bz) - oz) / sz) + 1;
       const ix = 1 / (dx / sx || 1e-30), iy = 1 / (dy / sy || 1e-30), iz = 1 / (dz / sz || 1e-30), qax = (ax - ox) / sx, qay = (ay - oy) / sy, qaz = (az - oz) / sz; let sp = 0; stack[sp++] = 0;
       while (sp > 0) { const n = stack[--sp], b = n * 6; if (box[b] > x1 || box[b + 3] < x0 || box[b + 1] > y1 || box[b + 4] < y0 || box[b + 2] > z1 || box[b + 5] < z0) continue;
@@ -51,7 +53,15 @@ export function createNadeMesh({ o, s, tri, box, links, sight = null }) {
           const tx = ax - Ax, ty = ay - Ay, tz = az - Az, u = (tx * px + ty * py + tz * pz) * inv; if (u < 0 || u > 1) continue;
           const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x, v = (dx * qx + dy * qy + dz * qz) * inv; if (v < 0 || u + v > 1) continue;
           const w = (e2x * qx + e2y * qy + e2z * qz) * inv; if (w > 1e-6 && w < 1 - 1e-6) return true; } }
-      return false; },
+      return false; }
+  return {
+    tris: tri.length / 9,
+    contact(px, py, pz, r, out) { PC[0] = px; PC[1] = py; PC[2] = pz; PC[3] = r; return contactAt(out); },
+    // (v53 DEATH) the same with the ball as a vector P = [x, y, z, r] / the segment as S = [ax, ay, az, bx, by, bz]: no
+    // number crosses a call (the ragdolls' many queries a step make nothing)
+    contactV(P, out) { PC[0] = P[0]; PC[1] = P[1]; PC[2] = P[2]; PC[3] = P[3]; return contactAt(out); },
+    blocked(ax, ay, az, bx, by, bz, sightOnly = false) { SG[0] = ax; SG[1] = ay; SG[2] = az; SG[3] = bx; SG[4] = by; SG[5] = bz; return blockedAt(sightOnly); },
+    blockedV(S, sightOnly = false) { SG[0] = S[0]; SG[1] = S[1]; SG[2] = S[2]; SG[3] = S[3]; SG[4] = S[4]; SG[5] = S[5]; return blockedAt(sightOnly); },
     // The nearest crossing on a→b: its fraction w (0…1 along the segment; Infinity: none) and, into out ([nx, ny, nz]),
     // the crossed triangle's unit normal — CS2's triangles face out of their solid (the first crossing from open space
     // faces the ray on 99.4–100 % of rays on all eight maps), so n·(b − a) > 0 means the segment is leaving a solid.

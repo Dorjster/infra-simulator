@@ -79,6 +79,9 @@ export function defuseHurt(game, shooter, target, dmg, wpn, kill = false, head =
   const L = liveOf(r), row = L.p[k] ??= {}, pr = row[tk] ??= [0, 0]; pr[0] += dmg; pr[1]++;
   if (!d.teams[k] || !d.teams[tk] || d.teams[k] === d.teams[tk]) return; const m = msOf(d), row2 = msRow(m, k); row2[5] += dmg;
   if (kill && head) { L.hs[k] = (L.hs[k] || 0) + 1; row2[4]++; } msTouch(m); }
+// (v53 DEATH) [damage, hits] shooter a dealt victim b this round, from the round's own report (name keys): the death
+// panel's "Damage given / taken" (combat-logic.js deathReport). Host-side, read once per death.
+export function pairDamage(game, a, b) { const r = game.combat?.d?.round, L = r ? LIVE.get(r) : null, p = L?.p?.[a]?.[b]; return p ? [p[0], p[1]] : [0, 0]; }
 // An assist (combat-logic: 41+ damage to someone another player then killed, CS2): counted for this round too.
 export function defuseAssist(game, k) { const d = game.combat?.d, r = d?.round; if (r && r.phase !== 'warmup') { const L = liveOf(r); L.as[k] = (L.as[k] || 0) + 1; const m = msOf(d); msRow(m, k)[1]++; msTouch(m); } }
 // The round's report, made once at its end: for each player who dealt or took damage, the enemies they hurt most (top 3:

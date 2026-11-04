@@ -56,7 +56,7 @@ const camera = new THREE.PerspectiveCamera(); camera.position.set(0, 50, 0);
 const sp = createSpectator({ camera, world: { operations: { game: G } }, lan, name: () => 'Me', view: fakeView });
 check('no chase camera / no Space toggle: the spectator has no toggle()', !('toggle' in sp));
 const lab = readFileSync(path.join(root, 'dist/lab.js'), 'utf8');
-check('lab.js: Space while spectating does nothing (no spectator.toggle call)', !/spectator\??\.toggle\(/.test(lab) && /spectator\?\.on&&k==='jump'\)return;/.test(lab));
+check('lab.js: Space while spectating does nothing but skip CS2\'s death cam (no spectator.toggle call; v53 DEATH: spectator.skip — a no-op once spectating)', !/spectator\??\.toggle\(/.test(lab) && /spectator\?\.on&&k==='jump'\)\{spectator\.skip\?\.\(\);return;\}/.test(lab));
 check('lab.js: your own view model hidden (not animated) while spectating, before the weapons update', /pistol\.hideView\(thirdPerson\.on\|\|!!spectator\?\.on\);[^]{0,300}?pistol\.update\(dt\)/.test(lab));
 sp.update(1 / 60); check('alive: not spectating, nothing hidden', !sp.on && mate.cs.g.visible && calls.length === 0);
 G.combat.down.me = { until: hostNow() + 60000, by: 'Foe' }; sp.update(1 / 60);

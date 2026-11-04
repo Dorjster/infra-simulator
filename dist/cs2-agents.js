@@ -18,6 +18,7 @@ import { live } from './live-settings.js';
 import { fitImage, anisotropy } from './texture-quality.js';
 import { deathFall, DEATH_FALL_S } from './phys-smooth.js';
 import { gloveLook, gloveMaterial, gloveVersion } from './glove-assets.js';   // (the death fall's curve: package P)
+import { agentRig, startRagdoll, updateRagdoll, stopRagdoll, deathOf, deathCtx, loadCs2Ragdolls, trackVy } from './gd-ragdoll.js';   // (v53 DEATH: the death ragdoll — CS2's own when imported)
 
 const templates = {}; let loading = null;
 // Load the imported agents (once): resolves to the sides that have one.
@@ -25,7 +26,8 @@ export function loadAgents() {
   return loading ??= userAssets().then(ua => { const json = f => ua.models.agents ? fetch(userAssetURL(ua, f)).then(r => r.ok ? r.json() : null).catch(() => null) : null, holds = json('holds/holds.json'), holdClips = json('holds/holds-clips.json');   // (CS2's hold data, if exported on the host: tools/export-cs2-holds.mjs; none → the palm grip below)
     return Promise.all([...Object.entries(ua.models.agents || {}).map(([side, a]) =>
     gltfLoader().loadAsync(userAssetURL(ua, a.file)).then(async g => { await fitTextures(g.scene); templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))),
-    ua.models.agentAnims ? gltfLoader().loadAsync(userAssetURL(ua, ua.models.agentAnims.file)).then(g => { CLIPS = splitClips(g.animations); }, e => console.warn('agent animations', e?.message)) : null]).then(async () => { if (useHolds(await holds, await holdClips)) loadRealWeapons().then(() => { const ids = Object.keys(HOLDS || {}), next = () => { if (ids.length) { warmHolds([ids.shift()]); setTimeout(next, 0); } }; next(); }, () => {}); return Object.keys(templates); }); });   // (each item's model measured once, now, not at its first equip)
+    ua.models.agentAnims ? gltfLoader().loadAsync(userAssetURL(ua, ua.models.agentAnims.file)).then(g => { CLIPS = splitClips(g.animations); }, e => console.warn('agent animations', e?.message)) : null,
+    ua.models.agents ? loadCs2Ragdolls(json) : null]).then(async () => { if (useHolds(await holds, await holdClips)) loadRealWeapons().then(() => { const ids = Object.keys(HOLDS || {}), next = () => { if (ids.length) { warmHolds([ids.shift()]); setTimeout(next, 0); } }; next(); }, () => {}); return Object.keys(templates); }); });   // (each item's model measured once, now, not at its first equip)
 }
 // CS2's own hold data (user-assets/holds, tools/export-cs2-holds.mjs; never shipped): every item's world model measured
 // in its `weapon` bone frame — the frame CS2 hangs it by: the model's weapon bone on the agent's wpn bone — and the
@@ -161,6 +163,11 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   g.updateMatrixWorld(true); for (const s of ['l', 'r']) { B['ankle_' + s].getWorldQuaternion(ankleRest[s]); model.getWorldQuaternion(q1); ankleRest[s].premultiply(q1.invert()); }   // feet flat: their rotation in model space
   const holder = new THREE.Group(); holder.scale.setScalar(1 / T.k); holder.rotation.y = Math.PI; model.add(holder);   // the gun, in game units, muzzle → +z
   const A = CLIPS ? animator(body, T) : null;   // CS2's own clips when the room has them; else posed here (below)
+  // (v53 DEATH) The death ragdoll (gd-ragdoll.js): its rig made now with the agent (CS2's own for this side when imported,
+  // else ours); started on the first dead update from the pose the body had, stepped by the host's clock, stopped when
+  // the player is back. Its skeletons are told the bones moved (the sun's pass), the gun hidden (it drops: gd-drops).
+  let rag = null; try { rag = agentRig(body, team, T, THREE); } catch (e) { console.warn('ragdoll', e?.message); }
+  let ragOn = false, ragTried = false; const ragSkels = [], VY = new Float64Array(2);   // (VY: the feet's height last update, its speed — a typed array: no number boxed per frame) body.traverse(o => { if (o.isSkinnedMesh && !ragSkels.includes(o.skeleton)) ragSkels.push(o.skeleton); });
   const skels = []; if (!A) body.traverse(o => { if (o.isSkinnedMesh && !skels.includes(o.skeleton)) skels.push(o.skeleton); });   // (posed here: update() walks the bones' world matrices itself — sun-shadows.js bonesMoved)
   // Bones draw nothing, yet three.js's render walks every object of every pass (≈ 80 bones an agent: 700+ visits a pass for 9
   // agents, a weak laptop's CPU — package W). A bone with nothing drawn under it — any but the gun's bone (wpn) and the chain
@@ -190,6 +197,10 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     // Death: toppled about the feet as a body falls (phys-smooth.js deathFall: slow to start, fastest as it lands, ~0.5 s,
     // a small rebound; the same at any frame rate) — the old exponential leapt a third of the way over in 60 ms and crept.
     // Already down when first drawn (joined mid-round): lying there. Back up (a new round): eased up as before.
+    if (rag && !s.dead) trackVy(VY, g, dt);   // (v53 DEATH r2: the body's vertical speed from its place — a remote player's own isn't sent)
+    if (rag) { if (s.dead) { if (!ragTried) { ragTried = true; fall = 0; fallG.rotation.x = 0; fallG.position.y = 0; ragOn = startRagdoll(rag, deathOf(p?.name), s.vx || 0, Number.isFinite(s.vy) ? s.vy : VY[1], s.vz || 0, deathCtx()); } }   // (v53 DEATH: down — the ragdoll from this pose; r2: its vertical speed too — a death in a jump or a fall keeps it)
+      else if (ragTried) { ragTried = false; if (ragOn) { stopRagdoll(rag); ragOn = false; fallG.visible = true; if (gun) gun.visible = true; } } }
+    if (ragOn) { if (gun) gun.visible = false; if (updateRagdoll(rag)) for (let i = 0; i < ragSkels.length; i++) bonesMoved(ragSkels[i]); if (fallG.visible === rag.catching) fallG.visible = !rag.catching; return; }   // (v53 DEATH final: not drawn while a late body catches up; its bones re-posed only when it moved — a sleeping body costs nothing)
     if (s.dead) { deadT = fallNew ? DEATH_FALL_S : deadT + dt; fall = deathFall(deadT); } else { deadT = 0; fall *= Math.exp(-dt * 7); } fallNew = false;
     fallG.rotation.x = -fall * Math.PI / 2; fallG.position.y = fall * 1.3;
     if (A) { A.update(dt, s, g); return; }   // (the clips pose it)
@@ -247,7 +258,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     const gripR = .35 + .65 * palm, gripL = .35 + .65 * two; curlAx.set(CURL.axis === 'x' ? 1 : 0, CURL.axis === 'y' ? 1 : 0, CURL.axis === 'z' ? 1 : 0);
     for (const [b, thumb, seg, left] of fingers) { curlQ.setFromAxisAngle(curlAx, CURL.sign * (thumb ? CURL.thumb : CURL.fingers)[seg] * (left ? gripL : gripR)); b.quaternion.multiply(curlQ); }
   }
-  function dispose() { g.removeFromParent(); if (gun) { unskinObject(gun); gun.removeFromParent(); } A?.mixer.stopAllAction(); A?.mixer.uncacheRoot(body); for (const m of own) m.dispose(); const sk = new Set(); body.traverse(o => { if (o.isSkinnedMesh) sk.add(o.skeleton); }); for (const s of sk) s.dispose(); }   // (its skin's material copy, the clips' bindings and its own skeletons' bone textures: nothing left per agent across side changes and rematches)
+  function dispose() { stopRagdoll(rag); g.removeFromParent(); if (gun) { unskinObject(gun); gun.removeFromParent(); } A?.mixer.stopAllAction(); A?.mixer.uncacheRoot(body); for (const m of own) m.dispose(); const sk = new Set(); body.traverse(o => { if (o.isSkinnedMesh) sk.add(o.skeleton); }); for (const s of sk) s.dispose(); }   // (its skin's material copy, the clips' bindings and its own skeletons' bone textures: nothing left per agent across side changes and rematches)
   // Their skin on the gun in their hands (skins.js): set as the room's state changes; drawn by skin-render.js.
   let skinNow = null; function setSkin(sk) { sk = sk || null; if (sameSkin(sk, skinNow)) return; skinNow = sk; if (gun) skinObject(gun, skinNow); }
   // Their CS2 gloves (the room's skins record 'gloves'): called with every dress; a pick (the record's identity) or glove
@@ -270,14 +281,14 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
     else dgMesh.material = glTint ? gloveMaterial(L.fb, 'tptint:' + team, () => { const m = dgOrig.clone(); m.color.set(L.fb.color); m.onBeforeCompile = dgOrig.onBeforeCompile; m.customProgramCacheKey = dgOrig.customProgramCacheKey; m.userData = { shared: true }; return m; }) : dgOrig;
     return shown ? (L.tex.state === 'ready' ? 'glove' : 'fallback') : glTint ? 'tint' : 'agent';
   }
-  return { g, team, update, setWeapon, setSkin, setGloves, wearGloves, get gloveMeshes() { return glMeshes; }, dispose };
+  return { g, team, update, setWeapon, setSkin, setGloves, wearGloves, get gloveMeshes() { return glMeshes; }, get ragdoll() { return rag; }, dispose };   // (ragdoll: its rig — v53 DEATH, the tests)
 }
 // The animated agent (CS2's clips; see CLIPS): legs from the walking / running / crouching clips of the gun's class
 // (rifle, pistol, knife), blended by the speed and the direction moved relative to the facing (CS2's eight
 // directions), their time kept in step with the feet; the upper body in the gun's own hold, and a reload, a shot, a
 // throw or a knife swing played over it once; a plant or a defuse moves the whole body. The gun rides CS2's weapon
 // bone (wpn). Allocation-free per frame.
-const DIR8 = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'], U = 2.54 / 16.5, KNIFE_ID = /knife|karambit|butterfly|stiletto|^m9$/;   // (the chosen star knives are knives too: their hold, not a rifle's)
+const DIR8 = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'], U = 2.54 / 16.5, KNIFE_ID = /knife|karambit|butterfly|stiletto|^m9$|^(bayonet|skeleton|talon|flip|nomad)$/;   // (the chosen star knives are knives too: their hold, not a rifle's; v53 KNIVES: the five new ones — gd-knives.js)
 const WALK = 130 * U, RUN = 250 * U, CROUCH = 85 * U;   // CS2's speeds (u/s) in game units: the clips' own pace
 const NADE_IDS = new Set(['he', 'flash', 'smoke', 'molotov', 'incendiary', 'incgrenade', 'decoy']);   // game kind ids ('incendiary'); 'incgrenade' = CS2's own name
 const ikT = new THREE.Vector3(), ikA = new THREE.Vector3(), ikB = new THREE.Vector3(), ikD = new THREE.Vector3(), ikQ = new THREE.Quaternion(), ikM = new THREE.Matrix3(), ikLen = [0, 0];   // (the left hand's IK: shared scratch, frame code)
