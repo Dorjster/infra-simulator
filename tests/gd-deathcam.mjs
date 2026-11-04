@@ -148,9 +148,16 @@ check('joined mid-round (down, nobody\'s kill, no time): no cam, no death panel'
   check('…while a real death (with its time) does leave their body where they died', made >= 1 && sp2.selfBody?.g.visible === true, `made ${made}`);
   delete G.combat.down.me; G.combat.d.teams.me = 'ct'; T += 16; sp2.update(1 / 60); }
 // allocations: frames of cam + panel, the heap counted with no collection in between, in a fresh process (this file's
-// checks above leave the shared code's type feedback mixed — the killer gone, other deaths — which one death never sees)
-{ const r = spawnSync(process.execPath, ['--expose-gc', '--max-semi-space-size=64', '--min-semi-space-size=64', fileURLToPath(import.meta.url), '--alloc'], { encoding: 'utf8' }); const m = /DCALLOC (\S+) (\S+) (\S+)/.exec(r.stdout || '');
+// checks above leave the shared code's type feedback mixed — the killer gone, other deaths — which one death never sees).
+// The bytes left are V8's boxed numbers (a double crossing a call the JIT did not inline), and how many depends on the Node
+// version and on when its background compiles land: 16 to 300 B a frame for this same code (Node 20, 22, 25; GitHub's CI
+// runs 22). Node 20 (this project's own machine, no Maglev): the strict check, < 32 B a frame (the cam measures ~16; one
+// 2-number array a frame more is ~70). Node 22 and later: compiles on the main thread (--single-threaded: the same number
+// every run) and < 160 B a frame (the cam measures 96 on Node 22.23, 137 on 25.2; one 2-number array a frame more puts
+// Node 22 at 168). The strict per-frame rule is held on Node 20; this keeps CI honest without failing on V8's tiering.
+{ const v8new = +process.versions.node.split('.')[0] >= 22, LIMIT = v8new ? 160 : 32;
+  const r = spawnSync(process.execPath, ['--expose-gc', ...(v8new ? ['--single-threaded'] : []), '--max-semi-space-size=64', '--min-semi-space-size=64', fileURLToPath(import.meta.url), '--alloc'], { encoding: 'utf8' }); const m = /DCALLOC (\S+) (\S+) (\S+)/.exec(r.stdout || '');
   check('the allocation check sees allocation (2000 frames of a 3-number array and a string: > 100 KB)', !!m && +m[3] > 100000, m ? m[3] + ' bytes' : (r.stderr || '').slice(-300));
-  check('the cam and the panel make nothing per frame (2000 frames, a fresh process: < 32 bytes a frame over the test\'s own clock — the clock it hands the panel is one boxed number a frame)', !!m && (+m[1] - +m[2]) / 2000 < 32, m ? `${m[1]} bytes measured, the test's own clock alone ${m[2]}` : '?'); }
+  check(`the cam and the panel make nothing per frame (2000 frames, a fresh process: < ${LIMIT} bytes a frame over the test's own clock on Node ${process.versions.node} — V8's boxed numbers only)`, !!m && (+m[1] - +m[2]) / 2000 < LIMIT, m ? `${((+m[1] - +m[2]) / 2000).toFixed(1)} B a frame (${m[1]} bytes measured, the test's own clock alone ${m[2]})` : '?'); }
 console.log(ok === n ? `PASS: gd-deathcam · ${n} checks (CS2 death cam: anim → travel → freeze → spectate, skip after the lock, killer framed / gone, self / fall / bomb / fire, panel, dg / dt / rg, respawn modes, no allocation)` : `FAIL: gd-deathcam · ${n - ok} of ${n} failed`);
 process.exit(ok === n ? 0 : 1);

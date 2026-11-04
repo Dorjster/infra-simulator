@@ -79,7 +79,8 @@ export function setLook(id, entry, use) {
 // (0–1) the map's grade gives it, before its colour table.
 export function displayOf(x, T) {
   if (!T) return Math.min(1, Math.max(0, x)); const A = +T.m_flShoulderStrength, B = +T.m_flLinearStrength, C = +T.m_flLinearAngle, D = +T.m_flToeStrength, E = +T.m_flToeNum, F = +T.m_flToeDenom, W = +T.m_flWhitePoint || 1;
-  const h = v => v * (A * v * (F - E) + B * (C * F - E)) / (F * (v * (A * v + B) + D * F)); return Math.min(1, Math.max(0, h(Math.max(0, x)) / h(W)));
+  const h = v => v * (A * v * (F - E) + B * (C * F - E)) / (F * (v * (A * v + B) + D * F)), y = h(Math.max(0, x)) / h(W);
+  return Number.isFinite(y) ? Math.min(1, Math.max(0, y)) : Math.min(1, Math.max(0, x));   // (a tone record without the whole curve — only a bias, as when look.json is not imported — is linear, never NaN)
 }
 // CS2's CBloomLayer → what graphics.js gives the bloom pass: { screen, strength, threshold, width, lo, hi, weights,
 // tints } (strength 0: the pass is off). CS2 thresholds the HDR scene; this game grades in the map's materials, so the
