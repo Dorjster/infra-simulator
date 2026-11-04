@@ -39,6 +39,7 @@ export function makeSoldier(p, team) {
     setWeapon(id, knife = null) { const w = id ? weaponById(id) : null; a.setWeapon(knifeFor(id || 'cannon', team, knife), w?.kind === 'knife' ? KNIFE_HOLD : w?.kind === 'pistol' ? PISTOL_HOLD : null); },   // (knife: the one this player chose, drawn when its model is in; the hold: CS2's convention, below)
     setSkin(sk) { a.setSkin(sk); },
     get ragdoll() { return rag; },   // (its rig: the tests)
+    get torso() { return P?.torso || null; },   // (v53 C4: the bomb carried on the back hangs here — gd-c4-back.js)
     dispose() { stopRagdoll(rag); a.dispose(); },
   };
 }
