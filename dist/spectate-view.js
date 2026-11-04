@@ -64,7 +64,7 @@ export function createSpectateView({ camera, scene }) {
       // Their shot (the newest shot number moved on, fired from this gun): the set's own fire clip — the kick.
       if (t.shotN !== shotN) { if (shotN !== null && set && (!t.shotW || t.shotW === weapon) && GUN_KINDS.has(w?.kind)) { if (T >= reloadUntil) set.fire?.(); else { set.stopReload?.(); set.fire?.(); reloadUntil = 0; } fires++; } shotN = t.shotN; }
       // Their reload (the reload number moved on for this gun; a shotgun numbers every shell: one reload is one reload).
-      if (t.reloadN !== reloadN) { if (reloadN !== null && set && (!t.reloadW || t.reloadW === weapon) && GUN_KINDS.has(w?.kind) && T >= reloadUntil) { const ms = w.reloadMs || 2000; set.reload?.(ms); reloadUntil = T + ms; reloads++; } reloadN = t.reloadN; }
+      if (t.reloadN !== reloadN) { if (reloadN !== null && set && (!t.reloadW || t.reloadW === weapon) && GUN_KINDS.has(w?.kind) && T >= reloadUntil) { const ms = (w.shellMs ? w.reloadMs : w.reloadClipMs || w.reloadMs) || 2000; set.reload?.(ms);   /* (v53 RELOAD: CS2's clip at its own length) */ reloadUntil = T + ms; reloads++; } reloadN = t.reloadN; }
       // Their grenade throw (multiplayer.js marks the thrower's model): the set's own throw clip.
       if (t.act === 'throw' && t.actUntil && t.actUntil !== actSeen && w?.kind === 'nade') { actSeen = t.actUntil; set?.throw?.('long'); throws++; }
       // Their skin changed (the menu, between rounds): shown at once, as your own.

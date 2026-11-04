@@ -210,7 +210,7 @@ for (const S2 of [2e8, 2e6]) { const { g, P, a, b } = fresh(), t = 3e9 + 5000, S
 { const t0 = 8e9, d = { levels: {} }; startArena(d, { map: 'dust2', kind: 'defuse', bots: 0 }, t0); const M = ARENA_MAPS.dust2, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7 + (M.nav ? M.nav.floorAt(x, z) || 0 : 0), z: ARENA.cz + z, yaw: 0 });
   const DP = [{ id: 't1', name: 'Tess', pose: at(M.t[0]) }, { id: 'c1', name: 'Cal', pose: at(M.ct[0]) }]; const { arenaTick } = await import('../dist/arena-logic.js'); arenaTick(d, DP, .05, t0 + 50);
   ok('freeze time', d.combat.d.round.phase === 'freeze'); poseAmmo(d, 'Tess', { n: 100, r: 0 }, 'pistol'); poseAmmo(d, 'Tess', { n: 103, r: 0, w: 'pistol' }, 'pistol');
-  ok('late shot numbers in the freeze are counted, not charged to the fresh magazine', JSON.stringify(ammoOf(d, 'Tess', 'pistol')) === '[20,120]' && d.combat.shots.tess.n === 103, JSON.stringify(ammoOf(d, 'Tess', 'pistol')));
+  ok('late shot numbers in the freeze are counted, not charged to the fresh magazine', JSON.stringify(ammoOf(d, 'Tess', 'pistol')) === '[20,60]'   /* (v53 RELOAD: CS2's Glock reserve, 3 magazines — weapons.vdata) */ && d.combat.shots.tess.n === 103, JSON.stringify(ammoOf(d, 'Tess', 'pistol')));
   assert.throws(() => combatApply(d, { type: 'hit', target: 'c1', weapon: 'pistol', zone: 'chest', n: 104 }, 'Tess', DP, 't1', t0 + 60), /hasn’t started/); n++;
   arenaTick(d, DP, .05, t0 + DEFUSE.freezeMs + 200); poseAmmo(d, 'Tess', { n: 104, r: 0, w: 'pistol' }, 'pistol'); ok('the first live shot takes its round', ammoOf(d, 'Tess', 'pistol')[0] === 19);
   const rid = d.combat.d.round.id; ok('a hit tagged with an older round is refused before it is judged (room: epochError)', /round has ended/.test(epochError(d, { type: 'hit', round: rid - 1 }) || '') && !epochError(d, { type: 'hit', round: rid })); }
@@ -227,16 +227,16 @@ for (const S2 of [2e8, 2e6]) { const { g, P, a, b } = fresh(), t = 3e9 + 5000, S
 
 // ── SHOOT-13: ammo charged to the gun that fired and the one that reloaded ──
 { const { g, P } = fresh('sniper'); takeShots(g, 'Ann', 500, 'sniper');
-  poseAmmo(g, 'Ann', { n: 501, r: 0, w: 'sniper' }, 'knife'); ok('an AWP shot, then a switch to the knife before the pose: the AWP is charged', JSON.stringify(ammoOf(g, 'Ann', 'sniper')) === '[4,30]', JSON.stringify(ammoOf(g, 'Ann', 'sniper')));
+  poseAmmo(g, 'Ann', { n: 501, r: 0, w: 'sniper' }, 'knife'); ok('an AWP shot, then a switch to the knife before the pose: the AWP is charged', JSON.stringify(ammoOf(g, 'Ann', 'sniper')) === '[4,10]'   /* (v53 RELOAD: CS2's AWP reserve, 2 magazines) */, JSON.stringify(ammoOf(g, 'Ann', 'sniper')));
   const { g: g2 } = fresh('ak'); takeShots(g2, 'Ann', 500, 'ak'); poseAmmo(g2, 'Ann', { n: 502, r: 0, w: 'ak' }, 'pistol');
-  ok('AK shots with the pistol already in hand: the AK pays, the pistol is untouched', JSON.stringify(ammoOf(g2, 'Ann', 'ak')) === '[28,90]' && JSON.stringify(ammoOf(g2, 'Ann', 'pistol')) === '[20,120]');
+  ok('AK shots with the pistol already in hand: the AK pays, the pistol is untouched', JSON.stringify(ammoOf(g2, 'Ann', 'ak')) === '[28,90]' && JSON.stringify(ammoOf(g2, 'Ann', 'pistol')) === '[20,60]');
   T = 6e6; const c = rig('ak'); c.P.button(0, true); c.P.button(0, false); ok('the client names the gun that fired in its pose', c.P.poseShot(0, 0).w === 'ak' && c.P.lastFired === 'ak'); }
 
 // ── SHOOT-17: shotguns reload shell by shell; a click fires the shells in ──
 { const { g } = fresh('shotgun'); g.combat.ammo.ann.shotgun = [6, 32]; takeReload(g, 'Ann', 10, 'shotgun'); takeReload(g, 'Ann', 12, 'shotgun'); ok('host: two shell numbers move two shells', JSON.stringify(ammoOf(g, 'Ann', 'shotgun')) === '[8,30]', JSON.stringify(ammoOf(g, 'Ann', 'shotgun')));
   g.combat.ammo.ann.shotgun = [6, 32]; takeReload(g, 'Ann', 13, 'shotgun'); ok('…one number, one shell', JSON.stringify(ammoOf(g, 'Ann', 'shotgun')) === '[7,31]');
   T = 7e6; const nova = weaponById('shotgun'), { P, reports } = rig('shotgun'); P.setAmmo('shotgun', [5, 32]); const r0 = P.reloads; P.reload();
-  frames(P, 60, nova.reloadStartMs + nova.shellMs + 30, 1); ok('client: the first shell after the start, one per shellMs (reload number each)', P.ammo === 7 && P.reloads === r0 + 2, P.ammo + ' ' + (P.reloads - r0));
+  frames(P, 60, nova.shellIntroMs + nova.shellAddMs + nova.shellMs + 30, 1); ok('client: the first shell after CS2\'s intro + add moment, one per loop (shellMs) after (reload number each) — v53 RELOAD', P.ammo === 7 && P.reloads === r0 + 2, P.ammo + ' ' + (P.reloads - r0));
   P.button(0, true); P.button(0, false); ok('a click with shells in fires and ends the reload', reports.length === 1 && !P.reloading && P.ammo === 6, reports.length + ' ' + P.reloading + ' ' + P.ammo);
   frames(P, 60, 2000, 2); ok('…no shells after that', P.ammo === 6); }
 
