@@ -20,7 +20,7 @@
 //    g.acc (the time since its last step, s). However long the host's tick (15–100 ms, late or early), the flight
 //    advances in whole NADE_DT steps up to the host's `now` — the leftover waits for the next tick — and each step is
 //    the same stepNade(g, …, NADE_DT) with its anti-tunnelling sweep. Fuses, bounces, rest detection and the smoke /
-//    decoy 'at rest' wait all count in these steps (age = g.n × NADE_MS), so a flash pops on step 96 whatever the tick.
+//    decoy 'at rest' wait all count in these steps (age = g.n × NADE_MS), so a flash pops on step 103 whatever the tick.
 //  · flyNade is that one stepper: the host (nadesTick), the client's copy of a flight (arena-nades-view.js, phys-smooth.js
 //    flightFrame) and the trajectory preview (predictThrow / simThrow) all call it, so all three take the same steps
 //    from the same state; nadeDrawn draws a copy between its last two steps (one step behind, smooth at any fps).
@@ -29,6 +29,30 @@
 //    angles, with the movement's velocity at the release tick (arena-move.js pressThrow: sub-tick fraction; a jump and a
 //    release on the same tick → a jump-throw at the take-off velocity). Sent unrounded (JSON doubles); the host uses it
 //    as sent (LAN trust) on the same nadeMesh (both build it with mapBoxes from the same map file).
+// After the first contact (v53 LINEUPS — the CS2 feel audit, SPEC ADDENDUM 9; bounce, meshHit / boxWayOut, goesOff):
+//  · SOURCE RULES (the public SDK's CBaseCSGrenadeProjectile::ResolveFlyCollisionCustom, PhysicsToss and Spawn, which
+//    CS2's grenades inherited; not in the CS2 files): ONE reflection a 1/64 s tick (backoff 2) × elasticity 0.45 × the
+//    surface's 1.0 (a player's 0.3), clamped to 0.9 — a later touch in the same tick only pushes it out (the rest of the
+//    tick's PhysicsPushEntity), so a rolling grenade loses 55 % a tick; on a floor (normal up > 0.7) it rests once its
+//    speed² is under 30² (off a player only stopped); breakable glass: it breaks and the grenade keeps 0.4 of its velocity;
+//    the box hull (±2 units: an edge or a corner answers with a plane, never a rounded normal). Ours: BOUNCE .45,
+//    PLAYER_BOUNCE, STOP 30 u/s, GLASS_KEEP .4, boxWayOut; the hull's size stays R = .35 (2.27 units: 2.0 and 3.0 both land
+//    fewer of the lineups below).
+//  · CS2's collision layers: its window props ("window": solid, not blocking light or sight, nothing excluded — scripts/
+//    collision_properties.txt; breakable) become breakable glass panes at load (nade-mesh.js windowPanes → cs2-map.js);
+//    grenade clips stay in, player-only clips were never in (tools/maps/nade-mesh.mjs). NOT like CS2 yet: csgo_railing
+//    and the other layers that exclude thrown grenades are solid here (the map file keeps no layer per triangle).
+//  · FITTED to the 366 public CS2 lineups (tests/fixtures/cs2-lineups-public.json, players' setpos/setang and CS2's
+//    recorded landing / pop point — not CS2 files): which plane the box answers with at an edge (boxWayOut); a window
+//    prop's pane lets the grenade through at full speed (hitMover.win); the window panes' shape rule (nade-mesh.js).
+//  · OURS, checked: a smoke / decoy goes off on the step it rests (Source re-checks every 0.2 s — equal on the lineups'
+//    air times: goesOff).
+//  · Hits within 32 HU (smoke) / 16 HU at the 1.6 s pop (flash), the same measure before and after (tests/gd-lineups.mjs;
+//    scratchpad lineups/harness2.mjs): 189 → 209 of 366 (21 more, 1 lost) — smoke standing 48 → 52 of 77, crouched 2 → 2
+//    of 3, jump 83 → 94 of 217; flash standing 31 → 32 of 37, crouched 0 of 1, jump 25 → 29 of 31; by map smokes /
+//    flashes: Mirage 21 → 22 / 11 → 12, Dust II 29 → 33 / 17 → 19, Inferno 19 → 20 / 5, Nuke 11 → 15 / 3 → 5, Anubis
+//    20 → 21 / 3, Ancient 23 → 27 / 9, Overpass 10 / 8; median miss 29.0 → 13.5 HU. The flashes that popped on CS2's
+//    point before still do, to the same 5.24 HU on average.
 import { EYE, weaponById, defaultPistol, hitDamage } from './weapons-data.js';
 import { hurt, applyHit, isDown, recording, statOf } from './combat-logic.js';
 import { lineOfSight, segmentClear, ARENA_MAPS, floorAt } from './arena-maps.js';
@@ -162,17 +186,34 @@ function solid(boxes, bounds, x, y, z) {
 // before — and no floor of our own: under CS2's lowest triangle there is nothing (a grenade falling VOID_DEPTH past
 // it has left the world: stepNade marks it g.void; the old plane at the lowest player floor held grenades in mid-air
 // over the Anubis canal and caught every lob over an outer wall).
-const CT = new Float64Array(4), PEN = new Float64Array(6); let DEPTH = 0;
+const CT = new Float64Array(7), PEN = new Float64Array(6); let DEPTH = 0;   // (CT[4..6]: the touched face's own normal — v53 LINEUPS boxWayOut)
 function meshHit(boxes, bounds, x, y, z) {
   hitMover = null; hitKind = 3;
   if (bounds) { const e = Math.min(x - bounds.minX, bounds.maxX - x, z - bounds.minZ, bounds.maxZ - z); if (e < 0) { N[1] = 0; N[0] = e === x - bounds.minX ? 1 : e === bounds.maxX - x ? -1 : 0; N[2] = N[0] ? 0 : e === z - bounds.minZ ? 1 : -1; DEPTH = -e; return true; } }
   hitKind = 2; for (const b of boxes.movers || NONE) { if (!whole(b) || x <= b.minX - R || x >= b.maxX + R || z <= b.minZ - R || z >= b.maxZ + R || y <= b.y0 - R || y >= b.y1 + R) continue; hitMover = b;
     const p = PEN; p[0] = x - (b.minX - R); p[1] = b.maxX + R - x; p[2] = y - (b.y0 - R); p[3] = b.y1 + R - y; p[4] = z - (b.minZ - R); p[5] = b.maxZ + R - z; let k = 0; for (let i = 1; i < 6; i++) if (p[i] < p[k]) k = i;
     N[0] = k === 0 ? -1 : k === 1 ? 1 : 0; N[1] = k === 2 ? -1 : k === 3 ? 1 : 0; N[2] = k === 4 ? -1 : k === 5 ? 1 : 0; DEPTH = p[k]; return true; }
-  hitKind = 1; if (boxes.nadeMesh.contact(x, y, z, R, CT)) { N[0] = CT[0]; N[1] = CT[1]; N[2] = CT[2]; DEPTH = CT[3]; return true; }
+  hitKind = 1; CT[4] = CT[5] = CT[6] = 0; if (boxes.nadeMesh.contact(x, y, z, R, CT)) { boxWayOut(); DEPTH = CT[3]; return true; }
   return false;
 }
 let hitKind = 0;   // (what meshHit met: 1 a CS2 surface, 2 a door / breakable, 3 the map's edge)
+// v53 LINEUPS — the way out of a Source grenade's box, into N. Source's grenade is a box, not a ball
+// (CBaseCSGrenadeProjectile::Spawn: SetSize(-2 -2 -2, 2 2 2), "smaller, cube bounding box so we rest on the ground" —
+// SOURCE RULE, the public SDK, not in the CS2 files), and a box traced against the world answers with a plane — the face
+// it met, or an axial (bevel) plane where its flat side or edge meets an edge or a corner — never the rounded direction a
+// ball gets there, which threw grenades sideways off ledges, window frames and door edges. So: on a face, the face's
+// normal (the ball's way out is the same); at an edge or a corner, whichever of the touched face's normal and the three
+// axes (towards the ball) lies nearest the ball's way out. Which plane a real box would pick there is our approximation
+// (FITTED: all 366 public CS2 lineups, tests/fixtures/cs2-lineups-public.json, which are not CS2 files — +12 hits, −2,
+// no flash pop moved: v53 notes). Without the face's normal (CT[4..6] zero: an older wrapper) the ball's way out stands.
+const EDGE_COS = .9999;
+function boxWayOut() {
+  const rx = CT[0], ry = CT[1], rz = CT[2], k = CT[4] * rx + CT[5] * ry + CT[6] * rz < 0 ? -1 : 1, fx = CT[4] * k, fy = CT[5] * k, fz = CT[6] * k, c = fx * rx + fy * ry + fz * rz;   // (the face turned towards the ball)
+  N[0] = rx; N[1] = ry; N[2] = rz; if (!(fx * fx + fy * fy + fz * fz > .5) || !(c < EDGE_COS)) return;
+  N[0] = fx; N[1] = fy; N[2] = fz; const ax = Math.abs(rx), ay = Math.abs(ry), az = Math.abs(rz);
+  if (ax >= ay && ax >= az) { if (ax > c) { N[0] = rx > 0 ? 1 : -1; N[1] = 0; N[2] = 0; } }
+  else if (ay >= az) { if (ay > c) { N[0] = 0; N[1] = ry > 0 ? 1 : -1; N[2] = 0; } }
+  else if (az > c) { N[0] = 0; N[1] = 0; N[2] = rz > 0 ? 1 : -1; } }
 // Where the segment a→b first crosses CS2's triangles: its fraction (0…1; Infinity: nowhere) and the crossed surface's
 // unit normal into FN, turned back towards a (nade-mesh.js first(); without it — an older map wrapper — bisection on
 // blocked(), the normal then straight back along the segment). sightOnly: only surfaces that stop sight.
@@ -187,13 +228,17 @@ function meshFirst(M, ax, ay, az, bx, by, bz, sightOnly = false) {
 // long host tick or a client catching up takes more of them, never longer ones (the old fixed cap of 24 let a 100 ms
 // tick pass thin walls) — and on CS2's triangles each substep's committed path is swept: a surface the centre would
 // cross (a one-faced wall, a thin floor) stops it there, R on the side it came from. Nothing is passed through at any
-// tick length. On a hit (Source's ResolveFlyCollisionCustom, run once a 64-tick): reflected off the surface's own way
-// out (slopes and corners too), 45 % of the speed kept; touching again within the same 1/64 s it only slides along (no
-// sinking in, no second loss: the loss per second is Source's whatever the step); on a floor (facing up within ~45°)
-// it stops dead once slower than 30 u/s, off a wall too slow it drops. Speed is capped at Source's sv_maxvelocity
+// tick length. On a hit it moves into (Source's ResolveFlyCollisionCustom, once a 1/64 s tick — bounce): reflected off
+// the surface's way out (slopes too; at an edge or a corner the box's plane, boxWayOut), 45 % of the speed kept; on a
+// floor (normal up more than 0.7, ~45°) it stops dead once slower than 30 u/s, off a wall too slow it drops. A breakable
+// glass pane it meets breaks (the host's word) and it flies on at GLASS_KEEP — Source's breakthrough: 'slow our flight a
+// little bit', the whole velocity × 0.4, for a func_breakable / func_breakable_surf (SOURCE RULE, the public SDK, not in
+// the CS2 files) — or, one of CS2's window props (cs2-map.js: hitMover.win), at full speed: CS2's own lineups through
+// them pop where an unslowed grenade does (Nuke T roof → A flash 3.7 HU, silo yard 4.7; at 0.4 they pop short and miss
+// — FITTED to tests/fixtures/cs2-lineups-public.json, not CS2 files). Speed is capped at Source's sv_maxvelocity
 // (3500 u/s). Falling VOID_DEPTH under the map's lowest triangle marks g.void (out of the world); numbers gone non-
 // finite mark g.bad. Allocation-free. Returns true when it hit a floor; lastNy: the most upward-facing surface hit.
-const STOP = 30 * HU, SUB = R * .8, N = new Float64Array(3), DIRS = [], GLASS_KEEP = .15, TICK = 1 / 64, MAX_V = 3500 * HU, VOID_DEPTH = 64 * HU, STILL = 1;
+const STOP = 30 * HU, SUB = R * .8, N = new Float64Array(3), DIRS = [], GLASS_KEEP = .4, MAX_V = 3500 * HU, VOID_DEPTH = 64 * HU, STILL = 1;
 let lastNy = -1, probe = null;
 // Tests: a function called after each substep a flight moves (g, and where it was: ox, oy, oz) — the sweep test checks
 // every committed piece of path against the map's triangles. null (the game): nothing.
@@ -212,14 +257,25 @@ function bodyHit(bodies, thrower, x, y, z) {
   for (const b of bodies) { if (b.name === thrower) continue; const cx = Math.max(b.x - BODY_R, Math.min(x, b.x + BODY_R)), cy = Math.max(b.y, Math.min(y, b.y + (b.h ?? BODY_H))), cz = Math.max(b.z - BODY_R, Math.min(z, b.z + BODY_R)), dx = x - cx, dy = y - cy, dz = z - cz, d2 = dx * dx + dy * dy + dz * dz;
     if (d2 >= R * R) continue; const d = Math.sqrt(d2); if (d > 1e-6) { N[0] = dx / d; N[1] = dy / d; N[2] = dz / d; DEPTH = R - d; } else { const hx = x - b.x, hz = z - b.z, hl = Math.hypot(hx, hz) || 1; N[0] = hx / hl; N[1] = 0; N[2] = hz / hl; DEPTH = BODY_R - Math.hypot(hx, hz) + R; } return true; }
   return false; }
-// The surface's answer at a contact whose way out is (nx, ny, nz) (Source's ResolveFlyCollisionCustom): only when the
-// grenade moves into it; a fresh hit (none in the last 1/64 s — Source resolves one a tick) reflects it (overbounce 2)
-// keeping `keep` of the speed, another touch in the same tick only takes away what goes into the surface. Then on a
-// floor at rest once slower than STOP; off a wall too slow it is stopped (and drops). Returns true on a floor.
-function bounce(g, nx, ny, nz, keep) {
-  const d = g.vx * nx + g.vy * ny + g.vz * nz; if (d >= 0) return false; if (ny > lastNy) lastNy = ny;
-  if ((g.bt ?? TICK) >= TICK) { g.vx = (g.vx - 2 * d * nx) * keep; g.vy = (g.vy - 2 * d * ny) * keep; g.vz = (g.vz - 2 * d * nz) * keep; g.bt = 0; } else { g.vx -= d * nx; g.vy -= d * ny; g.vz -= d * nz; }
-  const sp = Math.hypot(g.vx, g.vy, g.vz); if (ny > .7) { if (sp < STOP) { g.vx = g.vy = g.vz = 0; g.rest = true; } return true; }
+// The surface's answer at a contact whose way out is (nx, ny, nz) — Source's CBaseCSGrenadeProjectile::
+// ResolveFlyCollisionCustom, run from PhysicsToss once a tick (SOURCE RULES, the public SDK, not in the CS2 files): only
+// when the grenade moves into it; PhysicsClipVelocity with a backoff of 2 (a reflection) times the total elasticity — the
+// grenade's 0.45 (GetGrenadeElasticity) × the surface's 1.0 (0.3 off a player: PLAYER_BOUNCE), clamped to 0.9. Then on a
+// floor (normal up > 0.7) at rest once the speed² is under 30² (a player is no floor — IsStandable — so off a body it is
+// only stopped); off a wall that slow it is stopped (and drops). Returns true on a floor.
+// ONE full reflection a 1/64 s tick (full): Source traces a tick's move once and resolves that one impact; on a floor the
+// rest of the tick is a PhysicsPushEntity at the reflected velocity, which stops at whatever it meets without touching
+// the velocity. So a later touch in the same tick (full false: our substeps meet the floor again) only pushes it out
+// (stepNade) — no second loss, no slide — and the next tick's touch reflects it again: a rolling grenade loses 55 % a
+// tick, stopping in as many ticks as Source's (tests/gd-nade-bounce.mjs). (v53 LINEUPS: the old 'a later touch slides
+// along' — taking away what goes into the surface — was not Source's; 'every touch reflects' stopped a slide within one
+// tick. Harness, all 366 public lineups: slide 206, this 208–209, every-touch 209 — the Source rule kept.)
+let reflected = false;   // (set by bounce: this touch was the tick's full reflection)
+function bounce(g, nx, ny, nz, keep, full = true, body = false) {
+  const d = g.vx * nx + g.vy * ny + g.vz * nz; reflected = false; if (d >= 0) return false; if (ny > lastNy && !body) lastNy = ny;
+  if (!full) return ny > .7 && !body;
+  g.vx = (g.vx - 2 * d * nx) * keep; g.vy = (g.vy - 2 * d * ny) * keep; g.vz = (g.vz - 2 * d * nz) * keep; reflected = true;
+  const sp = Math.hypot(g.vx, g.vy, g.vz); if (ny > .7 && !body) { if (sp < STOP) { g.vx = g.vy = g.vz = 0; g.rest = true; } return true; }
   if (sp < STOP) g.vx = g.vy = g.vz = 0; return false; }
 // The last contact (the host's development log of a grenade that went wrong: nadesTick → NADE_LOG).
 const LC = new Float64Array(7); let lcSet = false;
@@ -233,19 +289,20 @@ export function stepNade(g, boxes, bounds, dt, bodies = null) {
   if (sp > MAX_V) { const k = MAX_V / sp; g.vx *= k; g.vy *= k; g.vz *= k; sp = MAX_V; }
   if (g.rest && !solid(boxes, bounds, g.x, g.y - R * 1.2, g.z)) g.rest = false;   // (the floor went: a door opened, a crate broke)
   const n = g.rest ? 0 : Math.max(1, Math.ceil((sp + Math.abs(grav) * dt) * dt / SUB)), h = dt / Math.max(1, n);
+  let rk = -1;   // (the tick of this step's last full reflection)
   for (let s = 0; s < n; s++) {
-    g.bt = (g.bt ?? TICK) + h; const ox = g.x, oy = g.y, oz = g.z;
+    const ox = g.x, oy = g.y, oz = g.z, tk = Math.floor(s * h * NADE_HZ + 1e-9);   // (tk: which 1/64 s tick of this step the substep starts in — one full reflection each, bounce)
     const gh = grav * h, x = g.x + g.vx * h, y = g.y + (g.vy - gh * .5) * h, z = g.z + g.vz * h; g.vy -= gh;   // (half the step's gravity before the move, half after: Source's PhysicsAddGravityMove — the exact arc, whatever the step; g.grav: a dropped gun falls at the full 800)
     if (bodies && bodies.length && bodyHit(bodies, g.by, x, y, z)) { const nx = N[0], ny = N[1], nz = N[2], d = g.vx * nx + g.vy * ny + g.vz * nz; let px = x + nx * DEPTH, py = y + ny * DEPTH, pz = z + nz * DEPTH;
       if (M && meshFirst(M, ox, oy, oz, px, py, pz) <= 1) { px = ox; py = oy; pz = oz; }   // (pushed off a body into a wall: stays where it was)
       g.x = px; g.y = py; g.z = pz; note(px, py, pz, nx, ny, nz, 4); if (probe !== null) probe(g, ox, oy, oz);
-      if (d < 0) { g.vx = (g.vx - 2 * d * nx) * PLAYER_BOUNCE; g.vy = (g.vy - 2 * d * ny) * PLAYER_BOUNCE; g.vz = (g.vz - 2 * d * nz) * PLAYER_BOUNCE; } continue; }
+      bounce(g, nx, ny, nz, PLAYER_BOUNCE, rk !== tk, true); if (reflected) rk = tk; continue; }   // (Source: the same resolve as a wall's — 0.45 × 0.3, stopped under 30 u/s, never at rest on a body)
     // CS2's triangles: out of the surface to just touching it, then off it — reflected about the surface's own way out,
     // 45 % kept; a second surface still touching (a corner) pushes it out of that too. Then the sweep: the way from where
     // it was to where it ends up must cross no surface — if it does, it stops at the crossing, R back.
     if (M) { let px = x, py = y, pz = z, nx = 0, ny = 0, nz = 0, hit = 0;
       if (meshHit(boxes, bounds, x, y, z)) {
-        if (hitMover && hitMover.mat === 'glass') { if (!g.view) { (g.glass ??= []).push(hitMover.mover); hitMover.off = true; } else if (hitMover.off) keepPanes = g.panes = g.panes.filter(id => id !== hitMover.mover); else if (g.pastGlass === hitMover) { g.x = x; g.y = y; g.z = z; continue; } else g.pastGlass = hitMover; g.vx *= GLASS_KEEP; g.vz *= GLASS_KEEP; g.vy = Math.min(g.vy, 0) * GLASS_KEEP; continue; }   // (g.view: a copy of a flight — a client's, the preview, a client's replay of a dropped gun: the host breaks the pane for everyone; the copy only goes on through it)
+        if (hitMover && hitMover.mat === 'glass') { if (!g.view) { (g.glass ??= []).push(hitMover.mover); hitMover.off = true; } else if (hitMover.off) keepPanes = g.panes = g.panes.filter(id => id !== hitMover.mover); else if (g.pastGlass === hitMover) { g.x = x; g.y = y; g.z = z; continue; } else g.pastGlass = hitMover; { const k = hitMover.win ? 1 : GLASS_KEEP; g.vx *= k; g.vy *= k; g.vz *= k; } continue; }   // (g.view: a copy of a flight — a client's, the preview, a client's replay of a dropped gun: the host breaks the pane for everyone; the copy only goes on through it)
         nx = N[0]; ny = N[1]; nz = N[2]; hit = hitKind;
         px = x + nx * DEPTH; py = y + ny * DEPTH; pz = z + nz * DEPTH;
         if (meshHit(boxes, bounds, px, py, pz) && !(hitMover && hitMover.mat === 'glass')) { px += N[0] * DEPTH; py += N[1] * DEPTH; pz += N[2] * DEPTH; } }
@@ -254,14 +311,14 @@ export function stepNade(g, boxes, bounds, dt, bodies = null) {
         if (meshHit(boxes, bounds, px, py, pz) && !(hitMover && hitMover.mat === 'glass')) { px += N[0] * DEPTH; py += N[1] * DEPTH; pz += N[2] * DEPTH; }
         if (meshFirst(M, ox, oy, oz, px, py, pz) <= 1) { px = ox; py = oy; pz = oz; } }   // (a tight corner: it stays where it was this substep)
       g.x = px; g.y = py; g.z = pz; if (probe !== null) probe(g, ox, oy, oz);
-      if (hit) { note(px, py, pz, nx, ny, nz, hit); if (bounce(g, nx, ny, nz, BOUNCE)) hitFloor = true; if (g.rest) break; }
+      if (hit) { note(px, py, pz, nx, ny, nz, hit); if (bounce(g, nx, ny, nz, BOUNCE, rk !== tk)) hitFloor = true; if (reflected) rk = tk; if (g.rest) break; }
       if (g.y < voidY) { g.void = true; g.vx = g.vy = g.vz = 0; break; }   // (under the world's lowest surface: out of the world)
       continue; }
     if (!solid(boxes, bounds, x, y, z)) { g.x = x; g.y = y; g.z = z; if (probe !== null) probe(g, ox, oy, oz); continue; }
-    // A glass pane in the way: it breaks, and the grenade, its run spent on it, drops on through (g.glass: which pane —
+    // A glass pane in the way: it breaks and the grenade goes on through, slowed (GLASS_KEEP, above; g.glass: which pane —
     // the host breaks it for everyone; a copy of a flight, g.view, only goes on through it).
-    if (hitMover && hitMover.mat === 'glass') { if (!g.view) { (g.glass ??= []).push(hitMover.mover); hitMover.off = true; } else if (hitMover.off) keepPanes = g.panes = g.panes.filter(id => id !== hitMover.mover); else if (g.pastGlass === hitMover) { g.x = x; g.y = y; g.z = z; continue; } else g.pastGlass = hitMover; g.vx *= GLASS_KEEP; g.vz *= GLASS_KEEP; g.vy = Math.min(g.vy, 0) * GLASS_KEEP; continue; }
-    normalAt(boxes, bounds, x, y, z); note(g.x, g.y, g.z, N[0], N[1], N[2], hitMover ? 2 : 5); if (bounce(g, N[0], N[1], N[2], BOUNCE)) hitFloor = true; if (g.rest) break; }
+    if (hitMover && hitMover.mat === 'glass') { if (!g.view) { (g.glass ??= []).push(hitMover.mover); hitMover.off = true; } else if (hitMover.off) keepPanes = g.panes = g.panes.filter(id => id !== hitMover.mover); else if (g.pastGlass === hitMover) { g.x = x; g.y = y; g.z = z; continue; } else g.pastGlass = hitMover; { const k = hitMover.win ? 1 : GLASS_KEEP; g.vx *= k; g.vy *= k; g.vz *= k; } continue; }
+    normalAt(boxes, bounds, x, y, z); note(g.x, g.y, g.z, N[0], N[1], N[2], hitMover ? 2 : 5); if (bounce(g, N[0], N[1], N[2], BOUNCE, rk !== tk)) hitFloor = true; if (reflected) rk = tk; if (g.rest) break; }
   keepPanes = null; if (!Number.isFinite(g.x + g.y + g.z + g.vx + g.vy + g.vz)) g.bad = true;
   const speed = Math.hypot(g.vx, g.vy, g.vz); g.still = speed < STILL ? (g.still || 0) + dt : 0; return hitFloor;
 }
@@ -282,6 +339,11 @@ export function tossFlight(boxes, bounds, fly, view = false) { const g = { x: fl
 // weapon_molotov_maxdetonateslope 30°: CS2's assumed the same) — on a steeper one it bounces on — else in the air after
 // its fuse; a smoke and a decoy once at rest (no faster than STILL for 0.2 s: Source checks every 0.2 s for a speed of
 // about nothing), not before the fuse, at the latest after maxAir.
+// v53 LINEUPS — checked, NOT taken: gating it to the grenade's 0.2 s thinks (Source's smoke Think_Detonate looks again
+// 0.2 s later while its speed is over 0.1 u/s — SOURCE RULE, the public SDK, not in the CS2 files; the flash's pop does
+// run on that clock, below). Against the site's air times of the 139 public CS2 smoke lineups we land (tests/fixtures/
+// cs2-lineups-public.json, to 0.1 s, not CS2 files; + THROW_DELAY): going off the step it rests is 0.028 s early on
+// average (|error| 0.308 s), on the 0.2 s thinks 0.068 s late (0.317 s). Where it rests is the same either way.
 const FIRE_SLOPE_NY = Math.cos(30 * Math.PI / 180);
 const goesOff = (g, hitFloor, age) => { const N = NADES[g.kind]; return isFire(g.kind) ? (hitFloor && lastNy >= FIRE_SLOPE_NY) || age > N.fuse : g.kind === 'smoke' || g.kind === 'decoy' ? ((g.rest || g.still > .2) && age >= N.fuse) || age > N.maxAir : N.think ? (g.n || 0) >= thinkStep(N) : age >= N.fuse; };
 // v53 S2 — a flashbang pops on the first of its 0.2 s thinks after its 1.5 s fuse (Source's grenade DetonateThink runs
@@ -309,7 +371,7 @@ export function flyNade(g, boxes, bounds, dt, bodies = null, prev = null) {
 // same steps (the practice preview each frame without garbage: the same function as the throw, SPEC 1.3).
 export function simThrow(kind, a, boxes = [], bounds = null, maxMs = AIR_MAX, onStep = null, view = true, into = null) {
   a = cs2Release(a, THROW_DELAY, boxes?.length ? boxes : null, bounds);   // (v53 S2: CS2's throw delay, as the host's throwNade — the same collision)
-  let g; if (into) { g = into; g.kind = kind; throwStart(a, boxes?.length ? boxes : null, bounds, g); launch(a, g); g.n = 0; g.acc = 0; g.still = 0; g.view = view; g.off = false; g.rest = false; g.bt = undefined; g.void = false; g.bad = false; g.panes = null; g.pastGlass = null; g.grav = undefined; g.glass = null; }
+  let g; if (into) { g = into; g.kind = kind; throwStart(a, boxes?.length ? boxes : null, bounds, g); launch(a, g); g.n = 0; g.acc = 0; g.still = 0; g.view = view; g.off = false; g.rest = false; g.void = false; g.bad = false; g.panes = null; g.pastGlass = null; g.grav = undefined; g.glass = null; }
   else g = { kind, ...throwStart(a, boxes?.length ? boxes : null, bounds), ...launch(a), n: 0, acc: 0, still: 0, view, off: false };
   const max = Math.ceil(maxMs / NADE_MS);
   if (onStep) onStep(g);

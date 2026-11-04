@@ -222,7 +222,7 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
     else if (kind === 'door') { const ang = +e.angle || 0, d = ang === -1 ? [0, 0, 1] : ang === -2 ? [0, 0, -1] : [Math.cos(ang * Math.PI / 180), Math.sin(ang * Math.PI / 180), 0], size = [0, 1, 2].map(k => b.maxs[k] - b.mins[k]);
       const len = Math.max(0, Math.abs(d[0]) * size[0] + Math.abs(d[1]) * size[1] + Math.abs(d[2]) * size[2] - (+e.lip || 0)), g = [d[0] * len * U, d[2] * len * U, -d[1] * len * U].map(v => +v.toFixed(3)); m.slide = g;
       m.open = { open: [box[0] + g[0], box[1] + g[0], box[2] + g[2], box[3] + g[2], box[4] + g[1], box[5] + g[1]] }; }
-    else { m.glass = !+e.material; m.health = Math.max(1, +e.health || 1); if (e.look === 'bounds') m.lookBounds = true; if (e.pane) m.pane = true; if (e.clip) m.clip = true; if (bsp.models[mi].rects) m.rects = bsp.models[mi].rects.map(r => boxOf(r.mins, r.maxs)); }   // (rects: a pane's glass as boxes, its collision — cs2-map.js)   // (its look: the meshes in its box — cs2-render.js)
+    else { m.glass = !+e.material; m.health = Math.max(1, +e.health || 1); if (e.look === 'bounds') m.lookBounds = true; if (e.pane) m.pane = true; if (e.window) m.window = true; /* (v53 LINEUPS: one of CS2's window props — cs2-map.js) */ if (e.clip) m.clip = true; if (bsp.models[mi].rects) m.rects = bsp.models[mi].rects.map(r => boxOf(r.mins, r.maxs)); }   // (rects: a pane's glass as boxes, its collision — cs2-map.js)   // (its look: the meshes in its box — cs2-render.js)
     movers.push(m); });
   // Grenades fly through the map's real shapes, as in CS — not its player clips (the roofs and edges that stop only
   // players) nor the collision columns (a gap narrower than a column would be shut): a point test on the file. Counter-
@@ -235,8 +235,10 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
     : (gx, gy, gz) => { const [x, y, z] = fromGame(gx, gy, gz); for (const q of parts) { if (x < q.mins[0] || x > q.maxs[0] || y < q.mins[1] || y > q.maxs[1] || z < q.mins[2] || z > q.maxs[2]) continue; if (contentsAt(bsp, q.head, x - q.off[0], y - q.off[1], z - q.off[2]) === -2) return true; } return false; };
   // Counter-Strike 2 (newer files): its grenade collision as triangles — contact(x, y, z, r, out) in map-relative game
   // units: the way out of the nearest surface (game axes) and how far in (dist/nade-mesh.js).
-  const NMC = bsp.nadeMesh ? createNadeMesh(bsp.nadeMesh) : null, NMO = new Float64Array(4);
-  const nadeMesh = NMC ? { tris: NMC.tris, contact: (gx, gy, gz, r, out) => { if (!NMC.contact(x0 + (gx + W / 2) / U, y1 - (gz + D / 2) / U, zLow + gy / U, r / U, NMO)) return false; out[0] = NMO[0]; out[1] = NMO[2]; out[2] = -NMO[1]; out[3] = NMO[3] * U; return true; },
+  // (v53 LINEUPS: a caller whose out has room for 7 also gets the touched face's own normal in out[4..6], game axes —
+  // the grenades' Source box hull, arena-nades.js boxWayOut; NMF holds it in Hammer axes)
+  const NMC = bsp.nadeMesh ? createNadeMesh(bsp.nadeMesh) : null, NMO = new Float64Array(4), NMF = new Float64Array(3);
+  const nadeMesh = NMC ? { tris: NMC.tris, contact: (gx, gy, gz, r, out) => { if (!NMC.contact(x0 + (gx + W / 2) / U, y1 - (gz + D / 2) / U, zLow + gy / U, r / U, NMO)) return false; out[0] = NMO[0]; out[1] = NMO[2]; out[2] = -NMO[1]; out[3] = NMO[3] * U; if (out.length > 6 && NMC.faceOf && NMC.faceOf(NMF)) { out[4] = NMF[0]; out[5] = NMF[2]; out[6] = -NMF[1]; } return true; },
     blocked: (ax, ay, az, bx, by, bz, sightOnly) => NMC.blocked(x0 + (ax + W / 2) / U, y1 - (az + D / 2) / U, zLow + ay / U, x0 + (bx + W / 2) / U, y1 - (bz + D / 2) / U, zLow + by / U, sightOnly),   // (blocked: does a→b cross a surface — sightOnly: one that stops sight)
     // first: the fraction of a→b where it first crosses a surface (the same in either units: the map is only scaled and
     // turned) or Infinity, and that triangle's outward normal in game axes into out (bullets: arena-maps.js bulletPath).

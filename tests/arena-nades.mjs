@@ -76,10 +76,12 @@ assert.match(arenaApply(g3, { type: 'pickup', id: g3.combat.ground[0].id }, 'Bo'
   nadesTick(high, [], .01, T, {}); assert(high.combat.nades[0].phase === 'out' && high.combat.nades[0].airburst, 'high in the air: an air burst, no fire');
   const low = { levels: {}, combat: { nades: [{ id: 'm2', kind: 'molotov', phase: 'air', x: 0, y: 6, z: 0, vx: 0, vy: 0, vz: 0, at: T - 2100, still: 0 }], hp: {}, down: {} }, arena: { bots: [] } };
   nadesTick(low, [], .01, T, {}); assert(low.combat.nades[0].phase === 'fire' && low.combat.nades[0].y === 0, 'low over the floor: the floor burns'); }
-// A grenade into a glass pane (a map file's breakable): the pane breaks, the grenade loses its run and drops through.
+// A grenade into a glass pane (a map file's breakable): the pane breaks and the grenade flies on through at 0.4 of its
+// velocity (v53 LINEUPS: Source's breakthrough in ResolveFlyCollisionCustom, vel × 0.4 — the public SDK, not in the CS2
+// files; it was ours, 0.15 of the run and no upward speed).
 { const pane = { minX: 5, maxX: 5.3, minZ: -5, maxZ: 5, y0: 0, y1: 20, mat: 'glass', mover: 3, off: false }, bx = [pane]; bx.movers = [pane]; bx.nadeSolid = () => false;
   const g = { kind: 'he', x: 0, y: 9, z: 0, vx: 60, vy: 0, vz: 0, still: 0 }; let broke = null; for (let i = 0; i < 4 && !broke; i++) { stepNade(g, bx, null, .02); if (g.glass?.length) broke = g.glass[0]; }
-  assert(broke === 3 && pane.off, 'the pane it hits breaks'); assert(Math.abs(g.vx) < 60 * .2, 'and the grenade loses most of its speed · ' + g.vx.toFixed(1)); }
+  assert(broke === 3 && pane.off, 'the pane it hits breaks'); const v0 = g.vx; for (let i = 0; i < 4; i++) stepNade(g, bx, null, .02); assert(Math.abs(v0 - 60 * .4) < 1e-9 && g.x > 5.3 && g.vx === v0, 'and the grenade flies on through at 0.4 of its speed (Source) · ' + v0.toFixed(1)); }
 // Fire (v53 FIRE): CS2's inferno in the open — 16 flames, within its 150 HU range (+ a flame's 30 HU half width); never
 // through a wall; a fire on a crate stays on the crate.
 { const HU = 2.54 / 16.5, open = fireCells([], 0, 0, 0, { id: 'o', at: 1, bv: [0, 0] }); assert(open.length === 16 && open.every(f => Math.hypot(f[0], f[1]) <= 150 * HU + 1e-6), 'fire: CS2\'s 16 flames within 150 HU · ' + open.length);
@@ -158,8 +160,8 @@ const lone = (kind, extra = {}, T = 7e9) => ({ levels: {}, combat: { nades: [{ i
 // unslowed and snapped ~11 units back).
 for (const mesh of [true, false]) { const pane = { minX: 5, maxX: 5.2, minZ: -5, maxZ: 5, y0: 0, y1: 20, mat: 'glass', mover: 3, off: false }; let bx;
   if (mesh) bx = meshBoxes(meshOf([flat(0)]), [pane], [pane]); else { bx = [pane]; bx.movers = [pane]; bx.nadeSolid = (x, y) => y < 0; }
-  const fly = { x: 0, y: 8, z: 0, vx: 30, vy: 5, vz: 0 }, host = tossFlight(bx, null, fly), copy = tossFlight(bx, null, { ...fly, glass: host.glass }, true);
-  assert(pane.off && host.glass?.[0] === 3 && host.x < 8 && Math.hypot(copy.x - host.x, copy.z - host.z) < .05, `${mesh ? 'CS2 map' : 'map file'}: the replay through a broken pane ends at ${copy.x.toFixed(2)}, the host's toss at ${host.x.toFixed(2)}`); }
+  const fly = { x: 0, y: 8, z: 0, vx: 30, vy: 5, vz: 0 }, host = tossFlight(bx, null, fly), copy = tossFlight(bx, null, { ...fly, glass: host.glass }, true), free = tossFlight(bx, null, fly);   // (free: the pane already broken — no slowing; v53 LINEUPS: Source's 0.4 kept, it was 0.15: host.x < 8)
+  assert(pane.off && host.glass?.[0] === 3 && host.x < free.x - 1 && Math.hypot(copy.x - host.x, copy.z - host.z) < .05, `${mesh ? 'CS2 map' : 'map file'}: the replay through a broken pane ends at ${copy.x.toFixed(2)}, the host's toss at ${host.x.toFixed(2)}`); }
 // NADE-1: on a CS2 map a smoke / molotov goes off on the surface it lies on (CS2's triangles) — not on the players'
 // column boxes' tops, which put a canister beside a wall or on a stair at the map's bottom (y = 0).
 { const bx = meshBoxes(meshOf([flat(20)]), [{ minX: -1, maxX: 1, minZ: -1, maxZ: 1, y0: 0, y1: 60 }, { minX: 3, maxX: 30, minZ: -30, maxZ: 30, y0: 0, y1: 20.9 }]);   // (a wall's column over the canister, a stair column rounded up)

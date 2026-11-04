@@ -3,6 +3,7 @@
 // places) with their boxes as brush models, and the collision as solid stretches along vertical lines — CS2's physics
 // sampled every 8 units, at the very points the builder's rays fall on. Grenades get their own (CS2's grenade clips
 // in, its player clips out). Pure: the room host, the clients and the tests share it.
+import { windowPanes } from './nade-mesh.js';   // (v53 LINEUPS: CS2's window panes — below)
 import PANE_RECTS from './cs-maps/cs2-pane-rects.js'; import EXTRA_PANES from './cs-maps/cs2-extra-panes.js'; import PANE_CLIPS from './cs-maps/cs2-pane-clips.js';
 export const isCs2Map = buf => { const u = new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer, buf.byteOffset || 0, 4); return u[0] === 67 && u[1] === 83 && u[2] === 50 && u[3] === 77; };   // "CS2M"
 export function parseCs2Map(buf) {
@@ -42,6 +43,17 @@ export function parseCs2Map(buf) {
   for (const r of EXTRA_PANES[H.id] || []) { const lo = r.slice(0, 3), hi = r.slice(3, 6);
     if (H.entities.some(e => { if (!e.pane || !e.model) return false; const m = H.models[+e.model.slice(1)]; return m && [0, 1, 2].every(k => m.mins[k] < hi[k] + 1 && m.maxs[k] > lo[k] - 1); })) continue;
     H.entities.push({ classname: 'func_breakable', model: '*' + H.models.length, origin: '0 0 0', material: '0', health: '1', spawnflags: '0', look: 'bounds', pane: 1, added: 1 }); H.models.push({ mins: lo, maxs: hi }); }
+  // v53 LINEUPS — CS2's window panes (the "window" collision layer: solid to grenades, breakable; nade-mesh.js
+  // windowPanes finds them in the grenade triangles by shape — Nuke 8, Anubis 15): each becomes a breakable glass pane
+  // like those above, its triangles out of the grenades' copy (the file's bytes untouched) — a grenade or a bullet breaks
+  // it for everyone (the host's word) and a grenade flies on through unslowed (arena-nades.js: hitMover.win — CS2's own
+  // lineups through these windows pop where an unslowed grenade does); whole again next round. (Before v53 LINEUPS'
+  // final pass the panes were only taken out of the grenades' triangles: glass grenades flew through unbroken.)
+  if (nadeMesh) { const wp = windowPanes(nadeMesh); if (wp) { nadeMesh = { ...nadeMesh, tri: wp.tri };
+    for (const r of wp.boxes) { const lo = r.slice(0, 3), hi = r.slice(3, 6);
+      const had = H.entities.find(e => { if (!e.pane || !e.model || e.window === 2) return false; const m = H.models[+e.model.slice(1)]; return m && [0, 1, 2].every(k => m.mins[k] < hi[k] + 1 && m.maxs[k] > lo[k] - 1); });
+      if (had) { had.window = 1; continue; }   // (a pane the file already has there: it is that window — marked so)
+      H.entities.push({ classname: 'func_breakable', model: '*' + H.models.length, origin: '0 0 0', material: '0', health: '1', spawnflags: '0', look: 'bounds', pane: 1, added: 1, window: 2 }); H.models.push({ mins: lo, maxs: hi }); } } }   // (window 2: added here — its neighbours, 2 units over it, get their own)
   // Windows CS2 keeps players out of with the glass gone (cs-maps/cs2-pane-clips.js: the v52 report "Nuke's B glasses:
   // when they break we can go through the window"): their pane gets `clip` — bsp-map.js / arena-maps.js mapBoxes keep a
   // box there for players only, broken or not (bullets, sight and grenades go by their own layers and pass a broken pane).

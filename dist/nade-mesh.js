@@ -5,9 +5,41 @@
 // and how far in. blocked(ax, ay, az, bx, by, bz, sightOnly): does the segment a→b cross a surface (sightOnly: only
 // those that stop sight — a flash's light passes grenade clips, fences, grates and glass)? first(…): where a→b first
 // crosses one (bullets: arena-maps.js). Pure, allocation-free (a fixed stack); the host and every client get the same answer.
+// v53 LINEUPS (scratchpad lineups/harness2.mjs: all 366 public lineups replayed):
+//  · faceOf(out): the face normal of the triangle the last contact touched — arena-nades.js picks the way out of a
+//    Source box hull from it (an edge or a corner never gives a rounded normal — see boxWayOut there).
+//  · windowPanes(nadeMesh): CS2's window panes, found in the grenade triangles — cs2-map.js turns each into a breakable
+//    glass pane at load (CS2's collision property "window" is "Solid but does not block light or LOS", interact_exclude
+//    empty: solid to grenades — scripts/collision_properties.txt; the props break — their break pieces, e.g.
+//    models/props/de_nuke/windows/nuke_window_84x68/piece.vmdl_c, are in the install's file list). A grenade then
+//    breaks the pane for everyone and flies on through at Source's 0.4 (arena-nades.js GLASS_KEEP), as bullets break it.
+//    The map file keeps no collision layer per triangle, so the panes are found by shape, a FITTED rule: a see-through
+//    (sight 0) closed box of 12 triangles, at most WIN_THIN thick, 20–100 units on its other sides — CS2's prop windows
+//    are 0.5 units thick (nuke_window_84x68, anubis_window_42x80 / 38x26); the thinnest grenade clip, fence or grate box
+//    that wide on the seven maps is 1.0 (thinner ones are rods or strips under 20). Nuke: 8 panes, Anubis: 15, the
+//    other five maps none. Returns null, or { tri: a copy without the panes' triangles (the file's bytes untouched),
+//    boxes: [[minX minY minZ maxX maxY maxZ], …] in Hammer units }. Once, at load.
+const WIN_THIN = .7, WIN_MIN = 20, WIN_MAX = 100;   // (units; 0.7: 0.5 plus the file's 16-bit rounding — up to 0.19 a corner on Nuke)
+export function windowPanes({ o, s, tri, sight }) {
+  if (!sight || !tri) return null; const T = tri.length / 9 | 0, key = new Map(), up = new Int32Array(T).fill(-1), find = x => { while (up[x] !== x) x = up[x] = up[up[x]]; return x; };
+  for (let t = 0; t < T; t++) { if (sight[t]) continue; up[t] = t;
+    for (let c = 0; c < 3; c++) { const k = t * 9 + c * 3, v = tri[k] + tri[k + 1] * 65536 + tri[k + 2] * 4294967296, q = key.get(v); if (q === undefined) key.set(v, t); else { const a = find(q), b = find(t); if (a !== b) up[b] = a; } } }
+  const groups = new Map(); for (let t = 0; t < T; t++) { if (up[t] < 0) continue; const r = find(t); let g = groups.get(r); if (!g) groups.set(r, g = []); if (g.length <= 12) g.push(t); }
+  let out = null; const boxes = [];
+  for (const g of groups.values()) { if (g.length !== 12) continue; const V = new Map(); for (const t of g) for (let c = 0; c < 3; c++) { const k = t * 9 + c * 3; V.set(tri[k] + tri[k + 1] * 65536 + tri[k + 2] * 4294967296, [tri[k] * s[0], tri[k + 1] * s[1], tri[k + 2] * s[2]]); }
+    if (V.size !== 8) continue; const P = [...V.values()], ext = [];
+    for (const t of g) { const k = t * 9, a = [tri[k] * s[0], tri[k + 1] * s[1], tri[k + 2] * s[2]], u = [tri[k + 3] * s[0] - a[0], tri[k + 4] * s[1] - a[1], tri[k + 5] * s[2] - a[2]], w = [tri[k + 6] * s[0] - a[0], tri[k + 7] * s[1] - a[1], tri[k + 8] * s[2] - a[2]];
+      const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(n[0], n[1], n[2]); if (!(l > 0)) continue; let lo = Infinity, hi = -Infinity;
+      for (const p of P) { const d = (p[0] * n[0] + p[1] * n[1] + p[2] * n[2]) / l; if (d < lo) lo = d; if (d > hi) hi = d; } ext.push(hi - lo); }
+    if (ext.length !== 12) continue; ext.sort((a, b) => a - b); const thin = ext[1], mid = ext[5], wide = ext[10];   // (a box: its three sizes, each along four of its twelve normals — the middle one of each four, against the 16-bit rounding)
+    if (!(thin <= WIN_THIN && mid >= WIN_MIN && wide <= WIN_MAX)) continue;
+    const bx = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]; for (const p of P) for (let k = 0; k < 3; k++) { const v = o[k] + p[k]; if (v < bx[k]) bx[k] = v; if (v > bx[k + 3]) bx[k + 3] = v; }
+    boxes.push(bx.map(v => +v.toFixed(3)));
+    if (!out) out = tri.slice(); for (const t of g) out.fill(0, t * 9, t * 9 + 9); }   // (a triangle at the mesh's own corner, under and outside the map: never touched or crossed)
+  return out ? { tri: out, boxes } : null; }
 const TIE = 1e-3;   // (first(): faces this close along the line, in the mesh's units — Hammer units — are at one point; over the bullets' step past a face, arena-maps.js FINE_EPS ≈ 6.5e-4)
 export function createNadeMesh({ o, s, tri, box, links, sight = null }) {
-  const ox = o[0], oy = o[1], oz = o[2], sx = s[0], sy = s[1], sz = s[2], stack = new Int32Array(96);
+  const ox = o[0], oy = o[1], oz = o[2], sx = s[0], sy = s[1], sz = s[2], stack = new Int32Array(96); let lastT = -1;   // (lastT: the triangle the last contact touched)
   // (v53 DEATH, allocation: the point asked about and the closest point found live in two small typed arrays, not in
   // arguments and closure variables — V8 boxes a number passed to, or stored by, a function it does not inline: a
   // HeapNumber per triangle tested, ~45 KB of garbage per ragdoll step on a CS2 map. The same arithmetic: the same answers.)
@@ -36,7 +68,7 @@ export function createNadeMesh({ o, s, tri, box, links, sight = null }) {
         else if (sp < 94) { stack[sp++] = a; stack[sp++] = n + 1; } }
       if (bt < 0) return false;
       const d = Math.sqrt(best); if (d > 1e-4) { out[0] = (px - bx) / d; out[1] = (py - by) / d; out[2] = (pz - bz) / d; } else faceNormal(bt, out);
-      out[3] = r - d; return true; }
+      out[3] = r - d; lastT = bt; return true; }   // (lastT: v53 LINEUPS — faceOf)
   function blockedAt(sightOnly) { const ax = SG[0], ay = SG[1], az = SG[2], bx = SG[3], by = SG[4], bz = SG[5];
       const dx = bx - ax, dy = by - ay, dz = bz - az, x0 = Math.floor((Math.min(ax, bx) - ox) / sx) - 1, x1 = Math.ceil((Math.max(ax, bx) - ox) / sx) + 1, y0 = Math.floor((Math.min(ay, by) - oy) / sy) - 1, y1 = Math.ceil((Math.max(ay, by) - oy) / sy) + 1, z0 = Math.floor((Math.min(az, bz) - oz) / sz) - 1, z1 = Math.ceil((Math.max(az, bz) - oz) / sz) + 1;
       const ix = 1 / (dx / sx || 1e-30), iy = 1 / (dy / sy || 1e-30), iz = 1 / (dz / sz || 1e-30), qax = (ax - ox) / sx, qay = (ay - oy) / sy, qaz = (az - oz) / sz; let sp = 0; stack[sp++] = 0;
@@ -56,6 +88,10 @@ export function createNadeMesh({ o, s, tri, box, links, sight = null }) {
       return false; }
   return {
     tris: tri.length / 9,
+    // (v53 LINEUPS) the touched triangle's own face normal (its winding's side: the caller turns it towards the ball) of
+    // the last contact that touched something, into out; false before any. Separate from contact() so a caller that
+    // does not ask (ragdolls, props) pays nothing (arena-nades.js boxWayOut, through bsp-map.js).
+    faceOf(out) { if (lastT < 0) return false; faceNormal(lastT, out); return true; },
     contact(px, py, pz, r, out) { PC[0] = px; PC[1] = py; PC[2] = pz; PC[3] = r; return contactAt(out); },
     // (v53 DEATH) the same with the ball as a vector P = [x, y, z, r] / the segment as S = [ax, ay, az, bx, by, bz]: no
     // number crosses a call (the ragdolls' many queries a step make nothing)
