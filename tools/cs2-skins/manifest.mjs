@@ -9,7 +9,7 @@ import path from 'node:path';
 
 export const MANIFEST = 'skins.json';
 export const ICON_W = 192, ICON_H = 144;
-export const KNIFE_MODELS = ['karambit', 'butterfly', 'm9', 'stiletto'];
+export const KNIFE_MODELS = ['karambit', 'butterfly', 'm9', 'stiletto', 'bayonet', 'skeleton', 'talon', 'flip', 'nomad'];   // (v53 KNIVES: the five new star knives after the first four)
 
 // ---- image sizes from the first bytes of a file (PNG, JPEG, WebP), or null when it is none of them / truncated
 export function imageSize(buf) {
@@ -174,6 +174,35 @@ export function bakeHash(dir) {
 // assets: the user-assets folder; from: a baked folder (holding skins.json); only the files its manifest lists are
 // copied. When the installed skins/ already holds exactly this bake, nothing changes (no backup is used up).
 // -> { installed, backup, removed[], unchanged }
+// v53 KNIVES: a partial bake (--only / --kits) ADDED to the installed finishes (tools/import-cs2-skins.mjs --add): the
+// installed manifest with the new one's bases, knife bakes (merged into each family's models and icons, in KNIFE_MODELS
+// order) and guns laid over it, written with every file both list into user-assets/skins.new (a copy: neither folder is
+// changed). Then installSkins({ from: skins.new }) backs the installed folder up and puts the merged one in its place.
+// Pure merge (mergeManifests) kept apart for the node test. Both must be at the same resolution.
+export function mergeManifests(old, add) {
+  if ((old.res | 0) !== (add.res | 0)) throw Error(`the installed finishes are ${old.res}², the new bake ${add.res}²: bake at --res ${old.res}`);
+  const m = JSON.parse(JSON.stringify(old)); m.made = add.made || m.made; m.shared = { ...(m.shared || {}), ...(add.shared || {}) }; m.base = { ...(m.base || {}), ...(add.base || {}) }; m.weapons = { ...(m.weapons || {}) };
+  for (const [gid, g] of Object.entries(add.weapons || {})) m.weapons[gid] = m.weapons[gid] ? { ...m.weapons[gid], ...g, finishes: { ...m.weapons[gid].finishes, ...g.finishes } } : g;
+  m.knives = { ...(m.knives || {}) };
+  for (const [fam, f] of Object.entries(add.knives || {})) {
+    // (the same finish may be keyed otherwise there: catalog.py keys a family by its shortest kit name among the knives
+    // baked together — Marked Up is am_marked_up_90 with the karambit's, am_marked_up on the new knives alone — so by name too)
+    const o = m.knives[fam] || Object.values(m.knives).find(x => x.name === f.name); if (!o) { m.knives[fam] = JSON.parse(JSON.stringify(f)); continue; }   // (a family no installed knife had: as it is)
+    o.models = { ...o.models, ...f.models }; o.icon = { ...(o.icon || {}), ...(f.icon || {}) };   // (the family's name, rarity, wear and fallback: the installed ones)
+  }
+  for (const f of Object.values(m.knives)) f.models = Object.fromEntries(KNIFE_MODELS.filter(k => f.models[k]).map(k => [k, f.models[k]]));
+  return m;
+}
+export function addSkins({ assets, from, log = () => {} }) {
+  const A = path.resolve(assets), dst = path.join(A, 'skins'), nw = path.join(A, 'skins.new'), src = path.resolve(from);
+  if (!existsSync(path.join(dst, MANIFEST))) throw Error('no installed finishes to add to (' + dst + '): run a full import with --install');
+  if (existsSync(nw)) throw Error(nw + ' is left from an earlier run: remove it first');
+  const v0 = validateManifest(dst), v1 = validateManifest(src); if (!v0.ok) throw Error('the installed finishes do not pass the check:\n  ' + v0.errors.join('\n  ')); if (!v1.ok) throw Error('the new bake does not pass the check:\n  ' + v1.errors.join('\n  '));
+  const m = mergeManifests(v0.manifest, v1.manifest), newRel = new Set(manifestFiles(v1.manifest).map(f => f.rel));
+  for (const rel of new Set(manifestFiles(m).map(f => f.rel))) { const t = path.join(nw, rel); mkdirSync(path.dirname(t), { recursive: true }); copyFileSync(path.join(newRel.has(rel) ? src : dst, rel), t, fsConst.COPYFILE_EXCL); }
+  writeFileSync(path.join(nw, MANIFEST), JSON.stringify(m, null, 1)); const v = validateManifest(nw); if (!v.ok) { rmSync(nw, { recursive: true, force: true }); throw Error('merged check failed: ' + v.errors.join('; ')); }
+  log(`merged ${newRel.size} new files with the installed finishes → ${nw}`); return nw;
+}
 export function installSkins({ assets, from, now = new Date(), keep = 2, log = () => {} }) {
   const A = path.resolve(assets), src = path.resolve(from), dst = path.join(A, 'skins'), nw = path.join(A, 'skins.new');
   if (!existsSync(A) || !statSync(A).isDirectory()) throw Error('no user-assets folder at ' + A);

@@ -4,10 +4,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WEAPONS, KNIVES, GRENADES, C4, DARJA_GUN } from '../dist/weapons-data.js';
+import { KNIFE_SKIN_IDS } from '../dist/gd-knives.js';   // (v53 KNIVES: every chosen knife's own icon, the five new ones too)
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'user-assets', 'icons', 'killfeed'), J = path.join(DIR, 'killfeed.json');
 if (!existsSync(J)) { console.log('gd-killfeed-icons: skipped (no CS2 kill-feed icons imported)'); process.exit(0); }
 const m = JSON.parse(readFileSync(J, 'utf8')), bad = [];
-const ids = [...WEAPONS, ...KNIVES, ...GRENADES, C4, DARJA_GUN].map(w => w.id).concat('kit', 'knife:butterfly', 'knife:stiletto', 'knife:m9', 'knife:karambit');
+const ids = [...WEAPONS, ...KNIVES, ...GRENADES, C4, DARJA_GUN].map(w => w.id).concat('kit', 'knife:karambit', ...KNIFE_SKIN_IDS.map(k => 'knife:' + k));
 for (const id of ids) { const n = m.weapons?.[id]; if (!n) bad.push(id + ': no icon'); else if (!existsSync(path.join(DIR, n + '.svg'))) bad.push(id + ': missing ' + n + '.svg'); }
 for (const k of ['blind', 'noscope', 'air', 'smoke', 'wallbang', 'head']) { const n = m.marks?.[k]; if (!n || !existsSync(path.join(DIR, n + '.svg'))) bad.push('mark ' + k + ': missing'); }
 if (bad.length) { console.error('gd-killfeed-icons FAILED:\n  ' + bad.join('\n  ')); process.exit(1); }

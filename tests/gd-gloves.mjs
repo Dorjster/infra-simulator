@@ -145,7 +145,7 @@ setGloveCatalog(null);
   await room.close(); setGloveCatalog(null); }
 
 // ── The importer packs them only when asked (tools/import-cs2-models.mjs --with-gloves; the app copy under the same rule) ──
-{ const src = readFileSync(new URL('../tools/import-cs2-models.mjs', import.meta.url), 'utf8'), forge = readFileSync(new URL('../desktop/forge.config.cjs', import.meta.url), 'utf8');
+{ const src = readFileSync(new URL('../tools/import-cs2-models.mjs', import.meta.url), 'utf8') + readFileSync(new URL('../tools/asset-pack-files.mjs', import.meta.url), 'utf8') /* (v53 KNIVES final: the pack's file rule lives in asset-pack-files.mjs, which the importer imports) */, forge = readFileSync(new URL('../desktop/forge.config.cjs', import.meta.url), 'utf8');
   ok('import-cs2-models: gloves/ left out of the hash, app copy and pack unless --with-gloves, then as gloves-pack/ and installGloves in the app', /GLOVES = \/\^gloves\(\$\|\[\.\]\)\//.test(src) && /SKINS\.test\(e\.name\) \|\| GLOVES\.test\(e\.name\)/.test(src) && /'gloves-pack\/'/.test(src) && /installGloves\(\{ assets: path\.join\(app, 'assets'\)/.test(src) && /--with-gloves/.test(src));
   ok('the desktop app carries tools/cs2-gloves/manifest.mjs (installPack imports it for gloves-pack/)', /cs2-gloves', 'manifest\.mjs'/.test(forge)); }
 console.log(`PASS: CS2 gloves as skins · ${n} checks (one 'gloves' slot, the host's catalogue, wear clamped, everyone picks, Darja gives, a live pick at the freeze; small skins message, never the arena frame; merged, kept across rematch, a new match, a restart and a reconnect; the page's catalogue, order, wear steps and bake, what loads for whom; gloves-pack/ under the back-up rule; --with-gloves)`);

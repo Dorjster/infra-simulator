@@ -40,11 +40,14 @@ const W = { pistol: 'glock18/weapon_pist_glock18', usps: 'usp_silencer/weapon_pi
   shotgun: 'nova/weapon_shot_nova', xm1014: 'xm1014/weapon_shot_xm1014', galil: 'galilar/weapon_rif_galilar', famas: 'famas/weapon_rif_famas', ak: 'ak47/weapon_rif_ak47', m4: 'm4a4/weapon_rif_m4a4', m4s: 'm4a1_silencer/weapon_rif_m4a1_silencer',
   sg553: 'sg556/weapon_rif_sg556', aug: 'aug/weapon_rif_aug', ssg08: 'ssg08/weapon_snip_ssg08', sniper: 'awp/weapon_snip_awp', lmg: 'm249/weapon_mach_m249', negev: 'negev/weapon_mach_negev',
   knife: 'knife/knife_default_ct/weapon_knife_default_ct', 'knife-t': 'knife/knife_default_t/weapon_knife_default_t', karambit: 'knife/knife_karambit/weapon_knife_karambit', butterfly: 'knife/knife_butterfly/weapon_knife_butterfly', stiletto: 'knife/knife_stiletto/weapon_knife_stiletto', m9: 'knife/knife_m9/weapon_knife_m9',
+  // (v53 KNIVES: CS2's Bayonet, Skeleton, Talon — weapon_knife_widowmaker, model folder knife_talon —, Flip and Nomad — knife_outdoor)
+  bayonet: 'knife/knife_bayonet/weapon_knife_bayonet', skeleton: 'knife/knife_skeleton/weapon_knife_skeleton', talon: 'knife/knife_talon/weapon_knife_talon', flip: 'knife/knife_flip/weapon_knife_flip', nomad: 'knife/knife_outdoor/weapon_knife_outdoor',
   he: 'grenade/hegrenade/weapon_hegrenade', flash: 'grenade/flashbang/weapon_flashbang', smoke: 'grenade/smokegrenade/weapon_smokegrenade', decoy: 'grenade/decoy/weapon_decoy', molotov: 'grenade/molotov/weapon_molotov', incendiary: 'grenade/incendiary/weapon_incendiarygrenade', c4: 'c4/weapon_c4' };
 // The hold clip each item plays in game (cs2-agents.js setGun): a gun its own (cs2_anims.glb: <id>/hold), each knife
 // its own (CS2's per-knife idle; the karambit's is its own grip), the molotov its own, other grenades the shared one.
 const A = 'animation/anims/world/', EXTRA = { 'knife-ct': 'knife/default_ct/idle%_default_ct', 'knife-t': 'knife/default_t/idle%_default_t', karambit: 'knife/knife_karambit/idle%_karambit', butterfly: 'knife/knife_butterfly/idle%_butterfly',
-  stiletto: 'knife/knife_stiletto/idle%_stiletto', m9: 'knife/knife_m9/idle%_m9', molotov: 'grenade/grenade_molotov/idle%_molotov' };
+  stiletto: 'knife/knife_stiletto/idle%_stiletto', m9: 'knife/knife_m9/idle%_m9', molotov: 'grenade/grenade_molotov/idle%_molotov',
+  bayonet: 'knife/knife_bayonet/idle%_bayonet', skeleton: 'knife/knife_skeleton/idle%_skeleton', talon: 'knife/knife_talon/idle%_talon', flip: 'knife/knife_flip/idle%_flip', nomad: 'knife/knife_outdoor/idle%_outdoor' };   // (v53 KNIVES: each its own CS2 idle)
 const NADES = ['he', 'flash', 'smoke', 'decoy', 'incendiary'];
 const tp = JSON.parse(readFileSync(path.join(CS2, 'export/tp/clips.json'), 'utf8'));   // (what cs2_anims.glb was built from: ~/CS2-extract/build/tp_clips.py)
 const s2v = (vpkPath, out, anim) => { if (existsSync(out)) return out; try { execFileSync(S2V, ['-i', PAK, '-f', vpkPath, '-o', out, '-d', '--gltf_export_format', 'glb', ...(anim ? ['--gltf_export_animations'] : [])], { stdio: 'ignore', cwd: SRC }); } catch {} return existsSync(out) ? out : null; };
@@ -83,7 +86,7 @@ for (const [id, m] of Object.entries(W)) {
     const ix = o.geometry.index; for (let t = 0; t < (ix ? ix.count : p.count); t += 3) { const i0 = ix ? ix.getX(t) : t, i1 = ix ? ix.getX(t + 1) : t + 1, i2 = ix ? ix.getX(t + 2) : t + 2; if (skip[i0] || skip[i1] || skip[i2]) continue; a.copy(P[i0]); b.copy(P[i1]); d.copy(P[i2]);
       tv.push(a.x, a.y, a.z, b.x, b.y, b.z, d.x, d.y, d.z); const s = e1.subVectors(b, a).cross(e2.subVectors(d, a)).length() / 2; area += s; c.addScaledVector(a.add(b).add(d), s / 3); } pts.push(...P.filter((_, i) => !skip[i])); }
   TRIS[id] = new Float32Array(tv);   // (its triangles, weapon frame: where the hands touch it — the grip data below)
-  c.divideScalar(area || 1); const kind = /^knife|karambit|butterfly|stiletto|m9$/.test(id) ? 'knife' : NADES.includes(id) || id === 'molotov' ? 'nade' : id === 'c4' ? 'c4' : 'gun';
+  c.divideScalar(area || 1); const kind = /^knife|karambit|butterfly|stiletto|m9|bayonet|skeleton|talon|flip|nomad$/.test(id) ? 'knife' : NADES.includes(id) || id === 'molotov' ? 'nade' : id === 'c4' ? 'c4' : 'gun';
   // muzzle: guns — the centre of the vertices within 1 cm of the front end (+x); knives — the blade's tip end (+z in their frame)
   let muzzle = null; if (kind === 'gun') { const f0 = pts.filter(p => p.x > box.max.x - .01); muzzle = arr(f0.reduce((s, p) => s.add(p), new THREE.Vector3()).divideScalar(f0.length)); }
   else if (kind === 'knife') { const f0 = pts.filter(p => p.z > box.max.z - .01); muzzle = arr(f0.reduce((s, p) => s.add(p), new THREE.Vector3()).divideScalar(f0.length)); }
@@ -132,6 +135,9 @@ for (const id of Object.keys(W)) { const it = items[id]; truth[id] = {};
     truth[id][st] = T; }
   if (truth[id].stand) console.log('  ' + id.padEnd(10) + ' muzzle ' + (truth[id].stand.muzzle || []).map(x => (x * 100).toFixed(0)).join(',') + ' dir ' + (truth[id].stand.dir || []).map(x => x.toFixed(2)).join(',') + (truth[id].stand.stockToShoulder ? ' stock→shoulder ' + (truth[id].stand.stockToShoulder * 100).toFixed(1) + ' cm' : '') + (truth[id].stand.twoHands ? ' two hands' : ''));
 }
+// (v53 KNIVES: the back-up rule — the files there now are copied to holds.bak-<stamp>/ first, never written over unkept)
+{ const old = ['holds.json', 'holds-clips.json', 'holds-truth.json'].filter(f => existsSync(path.join(OUT, f)));
+  if (old.length) { const bak = OUT + '.bak-' + new Date().toISOString().replace(/\D/g, '').slice(0, 12); mkdirSync(bak, { recursive: true }); for (const f of old) copyFileSync(path.join(OUT, f), path.join(bak, f)); console.log('kept the old ' + old.join(', ') + ' in ' + bak); } }
 writeFileSync(path.join(OUT, 'holds.json'), JSON.stringify({ version: 1, from: 'Counter-Strike 2 (local install): world models in their weapon bone frame (metres, Source axes)', items }));
 writeFileSync(path.join(OUT, 'holds-clips.json'), JSON.stringify({ version: 1, clips }));
 writeFileSync(path.join(OUT, 'holds-truth.json'), JSON.stringify({ version: 1, frame: 'agent root, metres, +y up, facing +z; first frame of the hold clip', truth }, null, 0));

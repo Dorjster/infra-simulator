@@ -21,6 +21,12 @@ const knife = (cls, dir, infix) => ({ kind: 'knife', cls, model: 'weapon_' + dir
 export const KNIVES = {
   karambit: knife('weapon_knife_karambit', 'knife_karambit', ['karam', 'karambit']), butterfly: knife('weapon_knife_butterfly', 'knife_butterfly', ['butterfly']),
   m9: knife('weapon_knife_m9_bayonet', 'knife_m9', ['m9', 'bay', 'bayonet']), stiletto: knife('weapon_knife_stiletto', 'knife_stiletto', ['stiletto']),
+  // v53 KNIVES: CS2's item classes (weapons.vdata m_szName / items_game) and model folders. The Talon is CS2's
+  // weapon_knife_widowmaker in the knife_talon folder (its kits: am_doppler_phase1_widow, aq_damascus_widow…); the Nomad
+  // is weapon_knife_outdoor. The Bayonet's class has no 'knife_' (weapon_bayonet), its kits cu_bayonet_lore….
+  bayonet: knife('weapon_bayonet', 'knife_bayonet', ['bayonet']), skeleton: knife('weapon_knife_skeleton', 'knife_skeleton', ['skeleton']),
+  talon: knife('weapon_knife_widowmaker', 'knife_talon', ['widow', 'widowmaker', 'talon']), flip: knife('weapon_knife_flip', 'knife_flip', ['flip']),
+  nomad: knife('weapon_knife_outdoor', 'knife_outdoor', ['outdoor', 'nomad']),
 };
 export const MODELS = { ...GUNS, ...KNIVES };
 // The finishes every curated import includes (the visual check list, PLAN §8.2) on top of the best-known per gun.

@@ -9,7 +9,7 @@
 //   node tests/gd-fp-forearm-twist.mjs
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 const UA = 'user-assets/', man = existsSync(UA + 'manifest.json') ? JSON.parse(readFileSync(UA + 'manifest.json', 'utf8')) : null, fpg = man?.models?.fpGloves;
-const KNIVES = ['knife', 'knife-t', 'karambit', 'butterfly', 'm9', 'stiletto'].filter(id => existsSync(UA + 'fp/cs2_' + id + '.glb'));
+const KNIVES = ['knife', 'knife-t', 'karambit', 'butterfly', 'm9', 'stiletto', 'bayonet', 'skeleton', 'talon', 'flip', 'nomad'].filter(id => existsSync(UA + 'fp/cs2_' + id + '.glb'));
 if (!fpg || !existsSync(UA + fpg.file) || !KNIVES.length || !existsSync(UA + 'fp/cs2_ak.glb')) { console.log('SKIP: no CS2 first-person arms or knife sets on this computer'); process.exit(0); }
 globalThis.self ??= globalThis; globalThis.createImageBitmap ??= async () => ({ width: 1, height: 1, close() {} });
 globalThis.document ??= { createElementNS: () => ({ addEventListener() {}, removeEventListener() {}, style: {} }), createElement: () => ({ getContext: () => new Proxy({}, { get: () => () => {} }) }), getElementById: () => null };
@@ -52,8 +52,9 @@ for (const id of [...KNIVES, 'ak']) {
 check('the twist bones follow the hand through every clip played (TWIST1 the hand\'s twist, TWIST half; within 0.5°)', gaps.every(x => x < .5), 'worst ' + Math.max(...gaps).toFixed(3) + '°');
 const knife = rows.filter(r => r[0] !== 'ak'), gun = rows.filter(r => r[0] === 'ak');
 // (≥ 90 % on the default knives, M9 and stiletto — before 57–61 %; ≥ 80 % on the karambit and butterfly, whose heavy
-// swing bends the wrist hard — that narrows the ring by itself: karambit heavy 84 %, butterfly light 93 %)
-check('the wrist keeps its width through every knife\'s slash (M1) and stab (M2), CT and T arms (ring ≥ 90 % of the bind pose, karambit / butterfly ≥ 80 %; before 57–61 %)', !fewRing && knife.length === KNIVES.length * 4 && knife.every(r => r[3] >= (/karambit|butterfly/.test(r[0]) ? .8 : .9)),
+// swing bends the wrist hard — that narrows the ring by itself: karambit heavy 84 %, butterfly light 93 %; v53 KNIVES: the
+// Talon, CS2's other reverse-grip claw, the same 84 % in its heavy — the new Bayonet, Skeleton, Flip and Nomad ≥ 92 %)
+check('the wrist keeps its width through every knife\'s slash (M1) and stab (M2), CT and T arms (ring ≥ 90 % of the bind pose, karambit / butterfly / talon ≥ 80 %; before 57–61 %)', !fewRing && knife.length === KNIVES.length * 4 && knife.every(r => r[3] >= (/karambit|butterfly|talon/.test(r[0]) ? .8 : .9)),
   knife.map(r => `${r[0]} ${r[1]} ${r[2]} ${(r[3] * 100).toFixed(0)}%`).join(' · '));
 check('a gun\'s fire unchanged (AK-47: ring ≥ 95 %)', gun.every(r => r[3] >= .95), gun.map(r => `${r[1]} ${(r[3] * 100).toFixed(0)}%`).join(' · '));
 // 3. (KNIFE-fix) Every other first-person set — every gun, grenade and the bomb — and every clip in it (draw, fire,

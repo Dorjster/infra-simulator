@@ -34,11 +34,11 @@ const webpLossy = (w, h) => { const b = Buffer.alloc(40); b.write('RIFF', 0, 'la
   ok(w.type === 'webp' && w.w === 192 && w.h === 144 && l.w === 192 && l.h === 144, 'WebP size (VP8X and lossy VP8)');
   ok(imageSize(Buffer.from('not an image at all, just text')) === null && imageSize(Buffer.alloc(4)) === null, 'anything else: no size'); }
 
-// The game ids the importer knows are the game's own guns (every gun with a CS2 set; the AUG has none) and the four star knives.
+// The game ids the importer knows are the game's own guns (every gun with a CS2 set; the AUG has none) and the nine star knives (v53 KNIVES: + Bayonet, Skeleton, Talon, Flip, Nomad).
 { const guns = WEAPONS.map(w => w.id), missing = guns.filter(id => !GUNS[id]);
   ok(guns.length >= 27 && !Object.keys(GUNS).filter(id => !guns.includes(id)).length, 'every importer gun id is a game gun id');
   ok(missing.join() === 'aug', 'every game gun but the AUG (no CS2 set on this install) has a CS2 model · missing: ' + missing.join(','));
-  ok(Object.keys(KNIVES).join() === 'karambit,butterfly,m9,stiletto' && Object.values(MODELS).every(m => /^weapon_\w+$/.test(m.cls) && /^weapon_\w+$/.test(m.model)), 'four star knives; identifiers only');
+  ok(Object.keys(KNIVES).join() === 'karambit,butterfly,m9,stiletto,bayonet,skeleton,talon,flip,nomad' && Object.values(MODELS).every(m => /^weapon_\w+$/.test(m.cls) && /^weapon_\w+$/.test(m.model)), 'nine star knives; identifiers only');
   ok(Object.values(FAMILY_FB).every(id => FINISHES[id]) && Object.keys(CHECK_KITS).every(id => GUNS[id]), 'old knife ids map onto built-in finishes; the check list names importer guns'); }
 
 // A synthetic baked folder in the §3.4 format.
@@ -129,7 +129,7 @@ function fakeAssets(dir) { mkdirSync(path.join(dir, 'fp'), { recursive: true });
   const fn = path.join(tmp, 'file.txt'); writeFileSync(fn, 'x'); ok(p(fn), 'a file is refused'); }
 
 // The asset-pack importer leaves skins/ out of the manifest hash, the app copy and the pack unless --with-skins.
-{ const src = readFileSync(path.join(root, 'tools', 'import-cs2-models.mjs'), 'utf8');
+{ const src = readFileSync(path.join(root, 'tools', 'import-cs2-models.mjs'), 'utf8') + readFileSync(path.join(root, 'tools', 'asset-pack-files.mjs'), 'utf8');   // (v53 KNIVES final: the pack's file rule — asset-pack-files.mjs, imported by the importer)
   ok(/const SKINS = \/\^skins\(\$\|\[\.\]\)\//.test(src) && /walkAssets\(out\)\.filter/.test(src) && /--with-skins/.test(src), 'import-cs2-models: skins/ skipped in the hash; --with-skins opt-in');
   ok(/'skins-pack\/'/.test(src) && !/walkAssets\(out, withSkins\)/.test(src) && /installSkins\(/.test(src), 'packed finishes go under skins-pack/ (never assets/skins/, which a room would write over in place); the app copy installs them under the back-up rule'); }
 

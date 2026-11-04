@@ -10,6 +10,7 @@ import { prepareSkins, applySkin, fitSkinned, fpLightTick } from './skin-render.
 import { gltfLoader } from './gltf-loader.js';
 import { weaponModel, MUZZLE, VARIANTS, modelFromFile, registerModel, KNIFE_SKINS } from './weapon-models.js';
 import { weaponById, CS_UNITS_PER_UNIT } from './weapons-data.js';
+import { isStarKnife, NEW_KNIVES, INSPECT_DRAW_S, DRAW_RARE } from './gd-knives.js';   // (v53 KNIVES)
 import { userAssets, userAssetURL } from './user-assets.js';
 import { anisotropy } from './texture-quality.js';
 import { FP_LIGHT } from './skin-render.js'; import { GRADE_U, GRADE_PARS } from './cs2-render.js'; import { fitImage, textureSize } from './texture-quality.js';   // (V: the CS2 arms lit and graded as the gun, their pictures at Settings' size)
@@ -113,9 +114,11 @@ const authored = new Map(); let authoredLoading = null;
 // arrives (onFPReady) — only once its shaders are built and its textures are on the GPU (one per frame). Nothing loads
 // while a match is being played (holdFPLoads):
 // menus, loading screens and buy time are enough — the arms already there serve until then.
-const FIRST = ['knife', 'knife-t', 'karambit', 'butterfly', 'stiletto', 'm9', 'pistol', 'usps', 'he', 'flash', 'smoke', 'decoy', 'molotov', 'incendiary', 'c4', 'ak', 'm4', 'm4s', 'deagle', 'sniper', 'p250', 'galil', 'famas', 'mp9', 'mac10'], queue = [], readyFns = new Set(); let ctx = null, busy = false;   // (the utilities and what's bought most, first)
+const gdLater = [];   // (v53 KNIVES final: sets only Global Defensive draws — loadAuthored)
+export const gdOnlySet = id => NEW_KNIVES.includes(id);
+const FIRST = ['knife', 'knife-t', 'karambit', 'butterfly', 'stiletto', 'm9', 'bayonet', 'skeleton', 'talon', 'flip', 'nomad', 'pistol', 'usps', 'he', 'flash', 'smoke', 'decoy', 'molotov', 'incendiary', 'c4', 'ak', 'm4', 'm4s', 'deagle', 'sniper', 'p250', 'galil', 'famas', 'mp9', 'mac10'], queue = [], readyFns = new Set(); let ctx = null, busy = false;   // (the utilities and what's bought most, first)
 export const onFPReady = fn => { readyFns.add(fn); return () => readyFns.delete(fn); };
-export function wantFP(id) { const i = queue.findIndex(q => q[0] === id); if (i > 0) queue.unshift(...queue.splice(i, 1)); }
+export function wantFP(id) { const j = gdLater.findIndex(q => q[0] === id); if (j >= 0) { queue.unshift(...gdLater.splice(j, 1)); pump(); return; } const i = queue.findIndex(q => q[0] === id); if (i > 0) queue.unshift(...queue.splice(i, 1)); }
 let held = () => false;   // (lab.js: true while a match is being played — no loading then, not even a short stall)
 export const holdFPLoads = fn => { held = fn; };
 // Behind a loading card nothing is seen: no pacing (the sets load as fast as they parse — the arena's loading screen
@@ -126,7 +129,7 @@ let drained = null;
 // Every CS2 first-person set's root not in use (lab.js prewarmArena: all of them compiled behind the map's loading
 // card as a match draws them — the C4 used to build its shader on being drawn at the plant, a 70–220 ms frame).
 export const fpSetRoots = () => [...authored.values()].map(s => s.root);
-export function fpSetsReady() { return drained ??= (() => { const p = loadAuthored().then(() => new Promise(res => { const chk = () => (!queue.length && !busy) ? res() : setTimeout(chk, 50); chk(); })).then(() => { p.done = true; }); p.done = false; return p; })(); }
+export function fpSetsReady() { return drained ??= (() => { const p = loadAuthored().then(() => { queue.push(...gdLater.splice(0)); pump(); }).then(() => new Promise(res => { const chk = () => (!queue.length && !busy) ? res() : setTimeout(chk, 50); chk(); })).then(() => { p.done = true; }); p.done = false; return p; })(); }
 const sent = new WeakMap();   // texture → its version when sent to the GPU
 function pump() {
   if (busy || !queue.length || !ctx) return; if (held()) { setTimeout(pump, 400); return; } busy = true; const [id, v] = queue.shift();
@@ -139,11 +142,16 @@ function pump() {
 function loadAuthored() {
   return authoredLoading ??= Promise.all([userAssets(), loadGlove(), loadArms()]).then(([ua, glove, arms]) => { ctx = { ua, glove, arms };
     const sets = Object.entries(ua.models.viewmodels || {}).filter(([k]) => /^cs2_/.test(k)).map(([k, v]) => [k.slice(4), v]);
-    sets.sort((a, b) => (FIRST.indexOf(a[0]) + 1 || 99) - (FIRST.indexOf(b[0]) + 1 || 99)); queue.push(...sets); pump(); }).catch(() => null);
+    sets.sort((a, b) => (FIRST.indexOf(a[0]) + 1 || 99) - (FIRST.indexOf(b[0]) + 1 || 99));
+    // (v53 KNIVES final, GD only: the five v53 knives' sets wait in gdLater until Global Defensive asks — its loading
+    // card, fpSetsReady, or a pick, wantFP — so the other modes load exactly the sets they loaded before v53)
+    for (const q of sets) (gdOnlySet(q[0]) ? gdLater : queue).push(q); pump(); }).catch(() => null);
 }
 // Sets share one glove material (the imported CS2 glove's; a set's own 'cs2_glove' slot carries no textures) and their
 // textures go to the GPU as they load, so a weapon's first appearance costs nothing.
 const FP_GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'shotgun', 'lmg']);
+// (v53 KNIVES final) A knife swing's clip when the set lacks it: the second variant → the first, a hit / backstab → the miss.
+const SWING_FALLBACK = { light2: 'light', lighthit2: 'lighthit', lighthit: 'light', backstab2: 'backstab', backstab: 'lighthit', heavyhit: 'heavy', heavystab: 'heavyhit' };
 // Your own gun's reflections (PLAN §5.5): a studio light box made here, once — dark surroundings, a broad soft light
 // above, a tall key to the left, a rim strip behind on the right, a grey floor and a horizon band: the light weapon
 // pictures are shot in, so chrome and anodized finishes show bright and dark bands instead of a flat grey room.
@@ -153,7 +161,8 @@ const FP_GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'shotgun', 'lm
 // none (the set's own picture and gloss stay).
 const kbases = new Map();
 function knifeBase(id) {
-  if (!['karambit', 'butterfly', 'm9', 'stiletto'].includes(id) || typeof createImageBitmap !== 'function') return Promise.resolve(null); if (kbases.has(id)) return kbases.get(id);
+  if (!isStarKnife(id) || typeof createImageBitmap !== 'function') return Promise.resolve(null);   // (v53 KNIVES: every star knife — gd-knives.js)
+  if (kbases.has(id)) return kbases.get(id);
   const one = (rel, data) => fetch(skinFileURL(rel)).then(r => r.ok ? r.blob() : Promise.reject(Error(r.status + ' ' + rel))).then(b => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: data ? 'none' : 'default' }))
     .then(img => { const t = new THREE.Texture(img); t.flipY = false; t.colorSpace = data ? THREE.NoColorSpace : THREE.SRGBColorSpace; t.anisotropy = anisotropy(); t.userData.shared = true; t.needsUpdate = true; return t; });
   const p = loadSkinManifest().then(man => { const b = man?.base?.[id]; return b?.color && b.orm ? Promise.all([one(b.color, false), one(b.orm, true)]).then(([color, orm]) => ({ color, orm })) : null; }).catch(e => { console.warn('knife base', id, e?.message); return null; });
@@ -239,17 +248,22 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
         const i = textures.indexOf(old); if (i >= 0) textures.splice(i, 1); textures.push(kbase.color, kbase.orm); }
       prepareSkins([m], { model: id, uv: 'cs2', tier: 'fp', M: best ? fitSkinned(best, root) : undefined, hasUv: !!best?.geometry.attributes.uv }); if (env) { m.envMap = env; m.envMapIntensity = 1; } }
     if (a) a.stop(); }
-  let cur = null, until = 0, bobT = 0, bobA = 0, breathT = 0; const hm = new THREE.Matrix4();
+  let cur = null, until = 0, bobT = 0, bobA = 0, breathT = 0, drawnAt = -Infinity; const hm = new THREE.Matrix4(), drawWin = (INSPECT_DRAW_S[id] || 0) * 1000;
   const play = (n, { once = false, fade = .12, ms = 0 } = {}) => { const c = clip(n); if (!c) return 0; const a = mixer.clipAction(c); a.reset(); a.enabled = true; a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat); a.clampWhenFinished = once; a.timeScale = ms ? c.duration * 1000 / ms : 1;
     if (cur && cur !== a && fade > 0) a.crossFadeFrom(cur, fade, false); else if (cur && cur !== a) cur.stop(); a.play(); cur = a; return c.duration * 1000 / a.timeScale; };
   return {
     root, authored: true, vfov, textures, worn, weaponMats: (prepareSkins(weaponMats), weaponMats),
     // gloves: the holder's CS2 gloves (skins record 'gloves') or null — the agent's own; setGloves: a pick or files arriving.
     setGloves(gloves, team = 'ct') { return wearSide(worn, team, gloves || null); },
-    hold(id, { draw = true, team = 'ct', gloves = null } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; wearSide(worn, team, gloves); until = draw && clip('draw') ? now() + play('draw', { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
+    // (v53 KNIVES final: drawClip — the draw CS2 picked, drawPick(): a knife with a draw2 (the Skeleton, the Nomad) plays
+    // its rare draw_<k> 1 time in 9 — viewmodel_knife.vnmgraph DeployOptions, weights [1, 8, 1] over draw, draw2, none)
+    drawPick() { return clip('drawrare') && Math.random() * 9 < DRAW_RARE ? 'drawrare' : 'draw'; },
+    hold(id, { draw = true, team = 'ct', gloves = null, drawClip = 'draw' } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; wearSide(worn, team, gloves); const dn = clip(drawClip) ? drawClip : 'draw'; drawnAt = draw ? now() : -Infinity; until = draw && clip(dn) ? now() + play(dn, { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
     fire() { if (cur === mixer.existingAction(clip('reload'))) return; until = now() + play('fire', { once: true, fade: .03 }); },
-    // Knife swings: the set's own light / heavy clips (else its fire clip).
-    swing(kind) { const n = clip(kind) ? kind : 'fire'; until = now() + play(n, { once: true, fade: .05 }); },
+    // Knife swings: the set's own clip for the swing — CS2's light_miss1 / 2, light_hit1 / 2, light_backstab / 2,
+    // heavy_miss1, heavy_hit1, heavy_backstab (weapons.js picks: SWING_CLIP) — else the one it falls back to (a set built
+    // before v53 has only 'light' and 'heavy'), else its fire clip. Returns the clip played (its sounds: weapons.js).
+    swing(kind) { let n = kind; while (n && !clip(n)) n = SWING_FALLBACK[n]; n = n || 'fire'; until = now() + play(n, { once: true, fade: .05 }); return n; },
     // Grenades: the pin pulled (held at its end until thrown), then the throw (overhand; a short throw underhand).
     prime() { if (!clip('prime')) return this.fire(); play('prime', { once: true, fade: .08 }); until = Infinity; },
     throw(strength) { const n = strength === 'short' && clip('throwlow') ? 'throwlow' : 'throw'; until = clip(n) ? now() + play(n, { once: true, fade: .05 }) : 0; },
@@ -258,7 +272,13 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     reload(ms) { until = now() + play('reload', { once: true, fade: .1, ms }); },
     // A shotgun's shell-by-shell reload broken off by a shot (CS2): back to idle so the shot's own clip can play.
     stopReload() { if (cur === mixer.existingAction(clip('reload'))) { until = 0; play('idle', { fade: .08 }); } },
-    inspect() { if (now() < until && cur !== mixer.existingAction(clip('fire'))) return 0; const ms = play('inspect', { once: true, fade: .15 }); until = now() + ms; return ms; },
+    // (v53 KNIVES: a knife with two CS2 inspects plays lookat01 twice as often as lookat02 — CS2's viewmodel_inspects
+    // graph, option weights [2, 1] over Inspect0 / Inspect1 (gd-knives.js); inspectClip: which one, for its sounds)
+    inspectClip: 'inspect',
+    // (v53 KNIVES final: the Bayonet and the Flip inspect while drawing — CS2's inspects graph 'Draw' state, lookat01_draw,
+    // while their draw clip's WPN_INSPECT_USE_DRAW_VERSION event is on: gd-knives.js INSPECT_DRAW_S)
+    canInspectDraw() { return !!clip('inspectdraw') && now() - drawnAt < drawWin; },
+    inspect() { const dr = this.canInspectDraw(); if (!dr && now() < until && cur !== mixer.existingAction(clip('fire'))) return 0; const n = dr ? 'inspectdraw' : clip('inspect2') && Math.random() * 3 >= 2 ? 'inspect2' : 'inspect'; this.inspectClip = n; const ms = play(n, { once: true, fade: dr ? .05 : .15 }); until = now() + ms; return ms; },
     twirl() {},
     update(dt, speed = 0) {
       if (until && now() >= until) { until = 0; play('idle', { fade: .18 }); }

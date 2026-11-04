@@ -101,7 +101,7 @@ else {
   globalThis.fetch = async u => { const f = local(u); return existsSync(f) ? new Response(readFileSync(f)) : new Response(null, { status: 404 }); };
   const W = await import('../dist/weapon-models.js'), { holdFit } = await import('../dist/cs2-agents.js'); await W.loadRealWeapons(); globalThis.fetch = realFetch; if (!hadDoc) delete globalThis.document;
   useAgents({}, null, { holds: HOLDS, clips: J('holds-clips.json') });
-  const V = a => new THREE.Vector3().fromArray(a), STOCK = new Set(WEAPONS.filter(w => /rifle|sniper|shotgun|lmg/.test(w.kind)).map(w => w.id)), KN = /^(knife|knife-t|karambit|butterfly|stiletto|m9)$/;
+  const V = a => new THREE.Vector3().fromArray(a), STOCK = new Set(WEAPONS.filter(w => /rifle|sniper|shotgun|lmg/.test(w.kind)).map(w => w.id)), KN = /^(knife|knife-t|karambit|butterfly|stiletto|m9|bayonet|skeleton|talon|flip|nomad)$/;   // (v53 KNIVES: + the five new knives)
   const butt = {};   // the model's back end (the centre of its vertices within 1 cm of its rear: +z), game units, its own frame
   const buttOf = (id, gun) => butt[id] ??= (() => { gun.updateMatrixWorld(true); const iv = gun.matrixWorld.clone().invert(), b = new THREE.Box3(), s = new THREE.Vector3(), p = new THREE.Vector3(), all = [];
     gun.traverse(o => { if (!o.isMesh) return; const P = o.geometry.attributes.position, m = iv.clone().multiply(o.matrixWorld); for (let i = 0; i < P.count; i++) { p.fromBufferAttribute(P, i).applyMatrix4(m); b.expandByPoint(p); all.push(p.clone()); } });
@@ -125,10 +125,13 @@ else {
       a.dispose(); }
     // moving and aiming: the hold itself (both hands on the gun as in CS2's hold, its own frame) never changes
     const T = TRUTH[id].stand; if (!T) continue; iw.compose(V(T.wpn.p), new THREE.Quaternion().fromArray(T.wpn.q), new THREE.Vector3(1, 1, 1)).invert(); const tR = V(T.handR).applyMatrix4(iw), tL = V(T.handL).applyMatrix4(iw);
+    // (v53 KNIVES: crouched, against CS2's crouched hold — its own hand ↔ weapon relation differs from the standing one by up
+    // to 3.08 cm (the Bayonet's idle_crouch vs idle, holds-truth.json); the standing truth for crouched moves failed CS2 itself)
+    const TC = TRUTH[id].crouch, iwc = TC ? new THREE.Matrix4().compose(V(TC.wpn.p), new THREE.Quaternion().fromArray(TC.wpn.q), new THREE.Vector3(1, 1, 1)).invert() : null, tRc = TC ? V(TC.handR).applyMatrix4(iwc) : tR, tLc = TC ? V(TC.handL).applyMatrix4(iwc) : tL;
     for (const [st, spd, cr, pitch, jump] of [['walk', 130, false, 0], ['run', 250, false, 0], ['crouch-walk', 85, true, 0], ['aim up', 0, false, .6], ['aim down', 0, false, -.6], ['run aiming up', 250, false, .5], ['jumping', 250, false, 0, 1], ['crouch-jumping', 250, true, 0, 1]]) {   // (jumping: the body thrown up and falling — CS2's 57-HU arc, ~0.66 s — mid-air at the check)
       const a = makeAgent({ name: 'M' }, team); a.setWeapon(id); a.g.rotation.y = 2; const sp = spd * U;
       for (let i = 0; i < 45; i++) { if (jump) { const t = i / 60 % .66; a.g.position.y = 57 * U * 4 * (t / .66) * (1 - t / .66); } a.update(1 / 60, { aim: true, speed: sp, crouch: cr, pitch, vx: -Math.sin(2) * sp, vz: -Math.cos(2) * sp }); } a.g.updateMatrixWorld(true);
-      note('relR', rel(a, 'hand_R', pt).distanceTo(tR), id + ' ' + st); if (T.twoHands) { const ik = holdFit?.(id, gunOf(a))?.ikL; note('relL', rel(a, 'hand_L', pt).distanceTo(ik ? tL.clone().add(ik) : tL), id + ' ' + st); }
+      note('relR', rel(a, 'hand_R', pt).distanceTo(cr ? tRc : tR), id + ' ' + st); if (T.twoHands) { const ik = holdFit?.(id, gunOf(a))?.ikL, l = cr ? tLc : tL; note('relL', rel(a, 'hand_L', pt).distanceTo(ik ? l.clone().add(ik) : l), id + ' ' + st); }
       if (GUNS.has(id)) { const gun = gunOf(a); gun.getWorldQuaternion(tq); const d = new THREE.Vector3(0, 0, -1).applyQuaternion(tq); a.g.getWorldQuaternion(q); f.set(0, 0, -1).applyQuaternion(q);
         if (pitch > 0) note('pitchUp', d.y, id + ' ' + st, false); else if (pitch < 0) note('pitchDown', d.y, id + ' ' + st); else note('fwd', d.clone().setY(0).normalize().dot(f), id + ' ' + st, false); }
       insane ??= bonesSane(a); a.dispose(); } }

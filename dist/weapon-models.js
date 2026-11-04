@@ -8,6 +8,7 @@ import { MTLLoader } from './post/MTLLoader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { decodeJpeg, anisotropy } from './texture-quality.js';
 import { prepareModel, prepareLike } from './skin-render.js';
+import { KNIFE_SKIN_IDS, knifeTitle } from './gd-knives.js';   // (v53 KNIVES)
 
 // Surface textures, drawn once at start (256 px, a few KB of GPU memory each): brushed steel, blued metal with
 // wear on the edges, stippled polymer, walnut grain. Each also drives roughness, so light catches the grain.
@@ -347,7 +348,7 @@ export const modelFromFile = id => fromFile.has(id);
 // The knife a player holds: their chosen CS2 knife (arena-logic.js 'knife': Butterfly, Stiletto, M9 Bayonet — on the
 // knife, the same blade for the rules), else their side's default (the T knife). `fp`: for the first-person view (each
 // has its own CS2 set: model and clips); in third person only when its model is imported, else the side's default.
-export const KNIFE_SKINS = { butterfly: '★ Butterfly Knife', stiletto: '★ Stiletto Knife', m9: '★ M9 Bayonet' };
+export const KNIFE_SKINS = Object.fromEntries(KNIFE_SKIN_IDS.map(k => [k, knifeTitle(k)]));   // (v53 KNIVES: + Bayonet, Skeleton, Talon, Flip, Nomad — gd-knives.js)
 export const knifeFor = (id, team, skin = null, fp = false) => id === 'knife' && skin && KNIFE_SKINS[skin] && (fp || real.has(skin)) ? skin : id === 'knife' && team === 't' && real.has('knife-t') ? 'knife-t' : id;
 export function loadRealWeapons() {
   if (typeof fetch !== 'function' || typeof document === 'undefined') return Promise.resolve(0);

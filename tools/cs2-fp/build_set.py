@@ -120,8 +120,14 @@ if 'weapon-ruby' in TEX:   # CS2's Doppler Ruby: the blade deep candy-apple red 
         if (m.get('name') or '').endswith('viewmodel'): continue
         skin = next((nd.get('skin') for nd in J['nodes'] if nd.get('mesh') == mi), None); jn = [J['nodes'][j].get('name', '') for j in J['skins'][skin]['joints']] if skin is not None else []
         for p in m['primitives']:
-            pos = accf(p['attributes']['POSITION']); blade = None
-            if 'blade' in jn and 'JOINTS_0' in p['attributes']:   # (a knife whose blade is its own bone: the butterfly's, the stiletto's)
+            pos = accf(p['attributes']['POSITION']); blade = None; steel = None
+            if 'blade-mask' in TEX and 'TEXCOORD_0' in p['attributes']:   # (v53 KNIVES: CS2's own paint coverage — knife_mask.py — sampled at each vertex's UV0: 1 the painted blade, 0 the handle CS2 leaves bare)
+                import OpenImageIO as oiio; mk = oiio.ImageBuf(TEX['blade-mask']).get_pixels(oiio.FLOAT)[..., 0]; mh, mw = mk.shape; uv = accf(p['attributes']['TEXCOORD_0'])
+                mk3 = oiio.ImageBuf(TEX['blade-mask']).get_pixels(oiio.FLOAT); yi, xi = np.clip((uv[:, 1] % 1) * mh, 0, mh - 1).astype(int), np.clip((uv[:, 0] % 1) * mw, 0, mw - 1).astype(int)
+                blade = mk[yi, xi].astype(np.float32)
+                # (v53 KNIVES final: the mask's green is CS2's handle — knife_mask.py; neither blade nor handle is bare steel)
+                if mk3.shape[2] > 1: steel = (1 - blade) * (1 - mk3[yi, xi, 1].astype(np.float32))
+            elif 'blade' in jn and 'JOINTS_0' in p['attributes']:   # (a knife whose blade is its own bone: the butterfly's, the stiletto's)
                 jj = accf(p['attributes']['JOINTS_0']).astype(int); ww = accf(p['attributes']['WEIGHTS_0']); bi = jn.index('blade'); blade = ((jj == bi) * ww).sum(1)
             if blade is None:   # else along the knife: past the grip (its origin is in the hand) toward the far end
                 ext = np.abs(pos).max(0); ax = int(np.argmax(pos.max(0) - pos.min(0))); sgn = 1 if pos[:, ax].max() >= -pos[:, ax].min() else -1; t = sgn * pos[:, ax] / max(1e-6, ext[ax])
@@ -129,6 +135,7 @@ if 'weapon-ruby' in TEX:   # CS2's Doppler Ruby: the blade deep candy-apple red 
             q = pos * 60; n = (np.sin(q[:, 0] * 1.7 + np.sin(q[:, 2] * 2.3)) + np.sin(q[:, 1] * 2.1 + q[:, 0] * .7) + 2) / 4   # (marbling)
             deep, bright = np.array([.16, .0, .015]), np.array([.85, .035, .09]); ruby = deep + (bright - deep) * np.clip(.3 + .6 * n, 0, 1)[:, None]
             col = np.ones((len(pos), 4), np.float32); col[:, :3] = (1 - blade[:, None]) * .13 + blade[:, None] * ruby * 1.6   # (the grip black; ×1.6: the pale texture under the ruby darkens it back)
+            if steel is not None: col[:, 1] = np.maximum(col[:, 1], (steel > .5).astype(np.float32))   # (bare steel: green on, red off — skin-render.js keeps CS2's base material there, not the black handle)
             p['attributes']['COLOR_0'] = add_acc(np.clip(col, 0, 1) ** 2.2 * [1, 1, 1, 1] + [0, 0, 0, 0], 'VEC4'); p['material'] = rm
 ox, oy, oz, VFOV = map(float, TEX.get('view', '2.5,2,-1.5,60').split(','))   # CS2 viewmodel_offset_x/y/z (inches) and the vertical field of view
 cam = {'name': 'FPCam', 'camera': 0, 'rotation': [0, 1, 0, 0], 'translation': [ox * .0254, -oz * .0254, -oy * .0254], 'extras': {'metres': True, 'vfov': VFOV}}; J['nodes'].append(cam); J['scenes'][0]['nodes'].append(len(J['nodes']) - 1)

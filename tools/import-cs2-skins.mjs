@@ -18,6 +18,10 @@
 //                        user-assets (it may read the CS2 install into the --work cache: catalog.json, models.json)
 //     --install          check the baked folder, then: user-assets/skins → skins.bak-YYYYMMDD-HHMM (the 2 newest
 //                        backups are kept), the new folder → user-assets/skins. Nothing else under user-assets is touched.
+//     --add              (v53 KNIVES; with --only / --kits) install the partial bake ADDED to the finishes already
+//                        installed (manifest.mjs addSkins: both copied into user-assets/skins.new, merged), then as
+//                        --install. E.g. --only bayonet,skeleton,talon,flip,nomad --add: the new knives' finishes
+//                        without baking the other 425 again.   --keep N  backups kept (default 2)
 //     --blender <exe>  --python <Blender's python3>   (found in /Applications/Blender.app or PATH by default)
 // What is baked, per (model, finish), in the model's first-person UV0: <model>/<kit>_paint.jpg (albedo) and
 // <model>/<kit>_mrw.png (R metal, G rough, B wear rank, A paint coverage); CS2's own star-knife base maps
@@ -28,7 +32,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os'; import path from 'node:path'; import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MODELS, CHECK_KITS, FAMILY_FB } from './cs2-skins/models.mjs';
-import { validateManifest, installSkins, fbIdFor, stageProblem, claimStage, MANIFEST, STAGE_MARK, ICON_W, ICON_H, KNIFE_MODELS } from './cs2-skins/manifest.mjs';
+import { validateManifest, installSkins, addSkins, fbIdFor, stageProblem, claimStage, MANIFEST, STAGE_MARK, ICON_W, ICON_H, KNIFE_MODELS } from './cs2-skins/manifest.mjs';
 import { createHash } from 'node:crypto';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.join(here, '..'), PY = path.join(here, 'cs2-skins');
@@ -37,7 +41,8 @@ const home = os.homedir(), CS2 = path.resolve(opt('--cs2', path.join(home, 'CS2-
 const WORK = path.resolve(opt('--work', process.platform === 'darwin' ? path.join(home, 'Library', 'Caches', 'infra-cs2-skins') : path.join(home, '.cache', 'infra-cs2-skins')));
 const OUT = path.resolve(opt('--out', path.join(WORK, 'stage'))), RES = +opt('--res', 1024), JOBS = Math.max(1, Math.min(4, +opt('--jobs', 2))), TOP = +opt('--top', 12);
 const SET = opt('--set', 'curated'), ONLY = opt('--only') ? new Set(opt('--only').split(',')) : null, KITS = opt('--kits') ? new Set(opt('--kits').split(',')) : null;
-const DRY = flag('--dry-run'), FORCE = flag('--force'), INSTALL = flag('--install'), FP2K = flag('--fp2k');
+const DRY = flag('--dry-run'), FORCE = flag('--force'), ADD = flag('--add'), INSTALL = flag('--install') || ADD, FP2K = flag('--fp2k'), KEEP = Math.max(1, +opt('--keep', 2) || 2);
+if (ADD && !ONLY && !KITS) { console.error('--add takes a partial bake: --only <models> or --kits <kits>'); process.exit(1); }
 const VPK = path.join(CS2, 'game', 'game', 'csgo', 'pak01_dir.vpk'), S2V = path.join(CS2, 'tools', 's2v', 'Source2Viewer-CLI'), EXPORT = path.join(CS2, 'export', 'weapons');
 const die = s => { console.error(s); process.exit(1); };
 if (!['curated', 'all'].includes(SET)) die('--set curated|all');
@@ -86,7 +91,8 @@ if (!Object.keys(models).length) die('--only matches no weapon: ' + [...ONLY].jo
 writeFileSync(path.join(WORK, 'models.json'), JSON.stringify(MODELS));
 const CAT = path.join(WORK, 'catalog.json'), pakStat = statSync(VPK);
 let catalog = existsSync(CAT) ? JSON.parse(readFileSync(CAT, 'utf8')) : null;
-if (!catalog || catalog.pak?.size !== pakStat.size || Math.abs((catalog.pak?.mtime || 0) - pakStat.mtimeMs / 1000) > 1 || statSync(CAT).mtimeMs < statSync(path.join(PY, 'catalog.py')).mtimeMs) {
+// (read again also when a model was added to models.mjs since it was made — v53 KNIVES: the five new star knives)
+if (!catalog || Object.keys(MODELS).some(m => !catalog.weapons?.[m] && !catalog.knives?.[m] && !(catalog.problems || []).some(p => p.startsWith(m + ':'))) || catalog.pak?.size !== pakStat.size || Math.abs((catalog.pak?.mtime || 0) - pakStat.mtimeMs / 1000) > 1 || statSync(CAT).mtimeMs < statSync(path.join(PY, 'catalog.py')).mtimeMs) {
   console.log('Reading the CS2 install (items_game, names, paint materials)…'); const t = Date.now();
   await run(PYTHON, ['-I', '-B', path.join(PY, 'catalog.py'), VPK, S2V, WORK, CAT, path.join(WORK, 'models.json')], { label: 'catalogue' });
   catalog = JSON.parse(readFileSync(CAT, 'utf8')); console.log(`  done in ${((Date.now() - t) / 1000).toFixed(0)} s`);
@@ -231,6 +237,7 @@ if (!v.ok) die('The baked folder does not pass the check:\n  ' + v.errors.join('
 
 // ---- 7. install (back-up rule)
 if (INSTALL) {
-  const r = installSkins({ assets: ASSETS, from: OUT, log: s => console.log('  ' + s) });
+  const from = ADD ? addSkins({ assets: ASSETS, from: OUT, log: s => console.log('  ' + s) }) : OUT;   // (--add: the installed finishes with this bake merged in, as user-assets/skins.new)
+  const r = installSkins({ assets: ASSETS, from, keep: KEEP, log: s => console.log('  ' + s) });
   console.log(r.unchanged ? `→ ${r.installed} already holds this bake: nothing changed.` : `→ installed ${r.installed}${r.backup ? ` (previous finishes kept in ${path.basename(r.backup)})` : ''}. Restart the room to load them.`);
 } else console.log('Check it, then run again with --install (nothing was written to user-assets).');

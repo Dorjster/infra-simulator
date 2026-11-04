@@ -1,4 +1,5 @@
 import { WEAPONS, weaponById } from './weapons-data.js';
+import { KNIFE_IDS as KNIFE_CHOICES } from './gd-knives.js';   // (v53 KNIVES: every knife a player may pick — gd-knives.js)
 // Weapon skins (Global Defensive), as CS2 keeps them: each gun (or knife) of a player's carries a finish (a paint
 // kit), a wear float (0 = Factory New … 1 = Battle-Scarred: scratches show the metal under the paint), a pattern
 // seed (1 … 1000: where on the pattern the gun is cut from — a Case Hardened gun's blue and gold move with it), up
@@ -73,6 +74,11 @@ export function catalogEntry(id, finish) { const f = String(finish || ''), sk = 
   if (f.startsWith('cs2k:')) { const fam = f.slice(5); return sk === 'knife' && KIT_RE.test(fam) && CAT.knives && Object.hasOwn(CAT.knives, fam) ? CAT.knives[fam] : null; }
   if (f.startsWith('cs2:')) { const kit = f.slice(4), fin = sk !== 'knife' && KIT_RE.test(kit) && CAT.weapons && Object.hasOwn(CAT.weapons, sk) ? CAT.weapons[sk]?.finishes : null; return fin && Object.hasOwn(fin, kit) ? fin[kit] : null; }
   return null; }
+// (v53 KNIVES final) A CS2 knife finish CS2 does not make for this star knife (the catalogue's family has models, not
+// this one: the Skeleton, Talon, Nomad and Stiletto have 20 of the 31 families — no Lore, Autotronic, Gamma Doppler,
+// Marked Up, Night, …, as their econ icons in the install). The default knife and a host without the import: never.
+export function knifeLacks(knife, finish) { const f = String(finish || ''); if (!CAT?.knives || !f.startsWith('cs2k:') || !knife || knife === 'default') return false;
+  const e = Object.hasOwn(CAT.knives, f.slice(5)) ? CAT.knives[f.slice(5)] : null; return !!(e?.models && typeof e.models === 'object' && !Object.hasOwn(e.models, knife)); }
 // Old knife skin ids (v51's built-in knife finishes) → the CS2 knife finish of that name (or the nearest), used when the
 // host has it imported; the old id stays the fallback look. Asiimov, Hex, Redline and Gold are no CS2 knife finishes:
 // they stay built-in. (Kit ids are identifiers only.)
@@ -163,7 +169,7 @@ export function takeSkinDelta(arena) { const d = arena?.skinsDirty; if (!d) retu
 export const fullSkins = arena => ({ srev: arena?.srev || 0, full: true, set: arena?.skins || {} });
 // The room's save (lan/gd-skins.json): everyone's skins and knives by player key; read back through cleanSkin (anything
 // invalid, or a CS2 finish this host has not imported, handled as a player's request is).
-export const KNIFE_IDS = ['default', 'butterfly', 'stiletto', 'm9', 'karambit'];
+export const KNIFE_IDS = KNIFE_CHOICES;   // (v53 KNIVES: default, butterfly, stiletto, m9, karambit + bayonet, skeleton, talon, flip, nomad)
 export const skinSave = arena => ({ v: 1, skins: arena?.skins || {}, knives: arena?.knives || {} });
 export function cleanSkinSave(data) { const skins = {}, knives = {}; let dropped = 0; if (!data || typeof data !== 'object' || data.v !== 1) return { skins, knives, dropped };
   const safe = k => typeof k === 'string' && k && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';

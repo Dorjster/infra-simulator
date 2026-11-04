@@ -20,7 +20,7 @@
 // on another computer, install it in one step (the game's Settings → Models and maps → Import asset pack, or drop it in
 // that computer's ~/Desktop/Infra Simulator Assets folder and run this). --no-pack skips writing it.
 import { execFileSync } from 'node:child_process'; import { writeZip } from '../lan/zip.mjs'; import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, mkdtempSync, rmSync, existsSync } from 'node:fs'; import { installSkins, manifestFiles } from './cs2-skins/manifest.mjs'; import { installGloves, manifestFiles as gloveManifestFiles } from './cs2-gloves/manifest.mjs'; import os from 'node:os'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, mkdtempSync, rmSync, existsSync } from 'node:fs'; import { installSkins, manifestFiles } from './cs2-skins/manifest.mjs'; import { installGloves, manifestFiles as gloveManifestFiles } from './cs2-gloves/manifest.mjs'; import { packFiles, SKINS, GLOVES } from './asset-pack-files.mjs'; import os from 'node:os'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.join(here, '..'), DROP = path.join(os.homedir(), 'Desktop', 'Infra Simulator Assets');
 const argv = process.argv.slice(2), opt = k => { const i = argv.indexOf(k); return i >= 0 ? argv.splice(i, 2)[1] : null; }, mapsArg = opt('--maps'), packArg = opt('--pack');
 const args = argv.filter(a => !a.startsWith('--')), noPack = argv.includes('--no-pack'), noApp = argv.includes('--no-app'), withSkins = argv.includes('--with-skins'), withGloves = argv.includes('--with-gloves'), PACK = path.resolve(packArg || path.join(os.homedir(), 'Desktop', 'Infra Simulator Assets.zip'));
@@ -36,11 +36,11 @@ const unpack = (file, dir) => { mkdirSync(dir, { recursive: true }); if (/\.zip$
   for (const f of walk(dir)) if (ARCH.test(f)) unpack(f, f.replace(ARCH, '') + '_unpacked'); };
 // user-assets/skins/ (and its skins.new / skins.bak-* siblings) belong to tools/import-cs2-skins.mjs: hundreds of MB of
 // finish textures the room serves on its own. Left out of the manifest hash, the app copy and the pack unless --with-skins.
-const SKINS = /^skins($|[.])/;
 // user-assets/gloves/ (and gloves.new / gloves.bak-*) belong to tools/import-cs2-gloves.mjs the same way (282 MB on the
 // 2026-10 install): left out of the manifest hash, the app copy and the pack unless --with-gloves (then as gloves-pack/).
-const GLOVES = /^gloves($|[.])/;
-const walkAssets = dir => existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).flatMap(e => SKINS.test(e.name) || GLOVES.test(e.name) ? [] : e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]) : [];
+// (v53 KNIVES final: the rule lives in asset-pack-files.mjs, shared with the tests; it also leaves every importer's
+// *.bak-* back-up out — holds.bak-*, fp.bak-*, icons/killfeed.bak-*, manifest.bak-*.json)
+const walkAssets = packFiles;
 // the files of user-assets/skins/ its skins.json lists (only those are packed / copied)
 const skinFiles = () => { const d = path.join(out, 'skins'); if (!withSkins || !existsSync(path.join(d, 'skins.json'))) return []; return ['skins.json', ...new Set(manifestFiles(JSON.parse(readFileSync(path.join(d, 'skins.json'), 'utf8'))).map(f => f.rel))].map(r => path.join(d, r)); };
 // the files of user-assets/gloves/ its gloves.json lists (only those are packed / copied)

@@ -118,9 +118,13 @@ if (uSkinOn > 0.5) { float lum = dot(skBase, vec3(0.299, 0.587, 0.114)); vec2 su
 // A model's own vertex colours: CS2's star knives carry their finish's mask in them (red: the blade it covers; 0: the
 // handle). uSkinVC 1: multiplied in as they are (the karambit's Ruby, no skin on); 2: a mask — the blade shows its
 // steel or the skin, the handle its own unpainted black (matte); 0: not used (a CS2 bake carries its own handle).
+// (v53 KNIVES final) Green without red: bare steel CS2 leaves unpainted outside its handle (the Bayonet's crossguard,
+// ring and pommel, rivets: build_set.py from CS2's composite masks) — CS2's base material there, never the black-handle
+// rule nor a finish's paint. The sets made before v53 have no green, so they look as before.
 const VCOL = `#if defined( USE_COLOR_ALPHA ) || defined( USE_COLOR )
-  if (uSkinVC > 1.5) { float bm = smoothstep(0.02, 0.3, vColor.r); diffuseColor.rgb = mix(skBase * 0.06, diffuseColor.rgb, bm); skK *= bm; skHnd = 1.0 - bm; }
+  if (uSkinVC > 1.5) { float bm = smoothstep(0.02, 0.3, vColor.r), st = smoothstep(0.3, 0.6, vColor.g - vColor.r); diffuseColor.rgb = mix(mix(skBase * 0.06, diffuseColor.rgb, bm), skBase, st * (1.0 - bm)); skK *= bm; skHnd = (1.0 - bm) * (1.0 - st); }
   else if (uSkinVC > 0.5) diffuseColor.rgb *= vColor.rgb;
+  else if (uSkMode > 2.5) { float st = smoothstep(0.3, 0.6, vColor.g - vColor.r); diffuseColor.rgb = mix(diffuseColor.rgb, skBase, st); skK *= 1.0 - st; }   // (a CS2 bake: it paints all but the blade near-black — bake.py's handle rule — so its bare steel takes the base back here)
 #endif`;
 const ROUGH = '#include <roughnessmap_fragment>\n\troughnessFactor = mix(mix(roughnessFactor, skRgh, skK), 0.7, skHnd);', METAL = '#include <metalnessmap_fragment>\n\tmetalnessFactor = mix(mix(metalnessFactor, skMet, skK), 0.0, skHnd);';
 const PEARL = '#include <normal_fragment_maps>\n\tif (uSkPearl > 0.0 && skK > 0.0) { float ph = uSkPearl * skK * 2.0 * (1.0 - abs(dot(normal, normalize(vViewPosition)))), pc = cos(ph); vec3 ax = vec3(0.57735); diffuseColor.rgb = diffuseColor.rgb * pc + cross(ax, diffuseColor.rgb) * sin(ph) + ax * dot(ax, diffuseColor.rgb) * (1.0 - pc); }';   // (a hue turn at grazing angles: the pearl of Doppler and co., approximate)
