@@ -94,3 +94,62 @@ Every device family module (`dist/device-logic/`) has its own test. Each test co
 - the draw-call budget (under 500 per frame while walking).
 
 External resource failures such as web fonts behind a proxy are listed separately as `networkWarnings`.
+
+## v53 Global Defensive tests
+
+All of these run in `npm test` (node, no browser). Most need nothing from CS2. The lineup tests use the CS2 maps converted on this computer (`user-maps/`) and skip the maps that are missing. No test needs a Valve file in the repository (`tests/no-valve-data.mjs`).
+
+| Test | Coverage |
+| --- | --- |
+| `tests/gd-nade-determinism.mjs` | The same throw lands in the same place at the same moment on the host, the preview and a guest (fixed 1/64 s ticks) |
+| `tests/gd-jumpthrow.mjs` | Jump-throws and the release: eye height, take-off velocity, the 0.104 s throw delay |
+| `tests/gd-practice-console.mjs` | The practice console: `getpos` / `setpos` / `setang` round trip and the host's practice actions |
+| `tests/gd-lineup-library.mjs` | The lineup library: saving, loading and the room's copy |
+| `tests/gd-lan-lineup.mjs` | A guest's lineup over LAN lands where the host's own throw from the same spot does |
+| `tests/gd-lineups.mjs` | The 366 public CS2 smoke and flash lineups thrown with the game's physics on the converted maps (floors per map and kind) |
+| `tests/gd-nade-bounce.mjs` | What a grenade does after its first touch: one reflection a tick, the roll, breakable window panes, glass, body hits (Source's rules) |
+| `tests/gd-kill-emblem.mjs` | The round's kill tally: count, clear at freeze time, headshot variant, card sizes, no allocation per kill |
+| `tests/gd-headshot-audio.mjs` | Headshot and hit sounds: CS2's event mapping, helmet / no helmet, voice limits |
+| `tests/gd-dink.mjs` | The helmet "dink" sparks from CS2's files, only on a helmeted head |
+| `tests/gd-hud-layout.mjs` | The CS2 HUD's boxes at 3 resolutions and HUD scales, against the user's CS2 picture |
+| `tests/gd-hud-alerts.mjs` | CS2's centre-top round messages and their text |
+| `tests/gd-radar-bomb.mjs` | The bomb on the radar: carried, dropped and planted marks |
+| `tests/gd-surface-props.mjs` | The penetration table and wallbangs by surface |
+| `tests/gd-impacts.mjs` | Bullet impacts by surface, with CS2's counts, lifetimes, sizes and radius curves read back from the vpcf files |
+| `tests/gd-fire.mjs` | The molotov and incendiary inferno: spread determinism, damage, smoke and fire, the view's pools |
+| `tests/gd-fire-look.mjs` | The fire's look: 23 CS2 particle systems read back from `particles/inferno_fx`, one draw, a fixed light count, no allocation |
+| `tests/gd-deathcam.mjs` | CS2's death cam before first-person spectating |
+| `tests/gd-ragdoll.mjs` | Physical death ragdolls on CS2 agents and the built-in soldiers |
+| `tests/gd-reload.mjs`, `tests/gd-reload-audio.mjs` | CS2's reload timings and its silent reload |
+| `tests/gd-knives.mjs` | The Bayonet, Skeleton, Talon, Flip and Nomad knives with their skins |
+| `tests/gd-low-preset.mjs` | The GD graphics presets: Auto by renderer string, the v52 keep rule, pixel-ratio caps, texture caps, the draw-call budget (a recorded staged fight) |
+| `tests/gd-perf-overlay.mjs` | The F9 performance overlay: percentiles, texture memory, the preset line |
+| `tests/desktop-flags.mjs` | The desktop app's GPU and throttling flags (read from `desktop/main.mjs`) |
+| `tests/gd-other-modes-untouched.mjs` | Every other mode is unchanged since 52.0.5: 69 modules byte-identical, the other modes' keys, graphics settings and preferences, and every change in a shared file inside a GD branch |
+| `tests/gd-c4-back.mjs` | The C4 on the carrier's back: attach / detach on host and guest, CS2's blink and colour, the attachment, no allocation |
+| `tests/gd-gun-feel.mjs` | The view-model FOV, empty-magazine clips, CS2 muzzle flash and shells in capped pools, ±89° pitch, CS2 sensitivity |
+| `tests/gd-tagging.mjs` | Tagging slowdown by the attacker's weapon |
+| `tests/gd-mix-peak.mjs` | The master mix never clips |
+| `tests/gd-money-rules.mjs` | Defuse money rules: no income on time-out, the defuse award |
+| `tests/gd-look.mjs` | The map look from CS2's data: auto exposure, bloom, the baked map's light slots, SSAO and FXAA passes |
+
+### v53 browser checks (optional, not in `npm test`)
+
+Each runs a real game in Chrome (`node tests/browser/<test> <repo> <out-dir> [args]`). Run them muted (`--mute-audio`) and one at a time. Most write a labelled picture.
+
+| Test | What it checks or shows |
+| --- | --- |
+| `gd-presets.mjs` | fps, frame times and draw calls per graphics preset at the real window size, plus a staged 10-player fight (`SOFT=1`: SwiftShader, no graphics card) |
+| `gd-pacing-nades.mjs` | A 5 v 5 Defuse fight on Dust II with grenades: fps, p95 / p99 / max, shaders built during play |
+| `gd-perf-stress.mjs` | The older GD stress run (now waits for the preset detection) |
+| `gd-c4-back-shots.mjs` | The C4 on the carrier's back, light on and off (`~/Desktop/GD-v53-c4-back.jpg`) |
+| `gd-gun-feel-shots.mjs` | The view model against CS2's picture, muzzle flash and shell close-ups (`--desktop`) |
+| `gd-lineups-bounce-sheet.mjs` | A picture of lineups landing against CS2's points |
+| `gd-look-shots.mjs`, `gd-look-sheet.mjs` | Exposure, bloom and SSAO per map and preset, and the pictures |
+| `gd-emblem-hud-shots.mjs` | Kill-card sizes measured from pixels, the money colour, the fire light slot |
+| `gd-mix-peak.mjs` | The mix's peak in Chrome's own Web Audio |
+| `gd-impacts-shots.mjs` | Impacts, blood, the dink and your own wounds at 0, 8, 60 and 200 ms |
+| `gd-fire-shots.mjs` | The molotov, incendiary and smoke at 0.1, 2 and 6.5 s, CS2 art and fallback |
+| `gd-hud-shots.mjs`, `gd-reload-hud.mjs`, `gd-kill-emblem-shots.mjs`, `gd-kill-emblem-video.mjs` | The CS2 HUD, the radar bomb, the reload HUD and the kill tally (pictures and a video) |
+| `gd-practice-lineups.mjs`, `gd-nade-chord.mjs` | A lineup thrown in practice with the preview; grenade key chords |
+| `gd-death-shots.mjs`, `gd-new-knives-sheet.mjs`, `gd-maps-before-after.mjs`, `gd-impacts-look.mjs` | The death cam and ragdolls, the new knives, the map look before and after |

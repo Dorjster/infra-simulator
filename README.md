@@ -4,6 +4,8 @@ Build a working enterprise from an empty room: receive equipment, rack it, power
 
 Created by **Darja**.
 
+**Latest Global Defensive notes: [UPDATE-v53.0.md](UPDATE-v53.0.md)** (the CS2 pass: lineups and practice tools, kill emblems and headshot feedback, the CS2 HUD, map look and physics, graphics presets for computers without a graphics card, molotovs, the death cam and ragdolls, reloads, new knives, the C4 on the carrier's back, and the CS2 feel audit; what is still not like CS2 is listed at the end). Earlier Global Defensive notes: [UPDATE-v52.0.5.md](UPDATE-v52.0.5.md), [UPDATE-v52.0.md](UPDATE-v52.0.md), [UPDATE-v51.0.md](UPDATE-v51.0.md), [UPDATE-v50.0.md](UPDATE-v50.0.md).
+
 **What's new: [UPDATE-v40.md](UPDATE-v40.md)** (Global Defensive: a CS2-style shooter with deathmatch and defuse, bots and LAN play). Before that: [UPDATE-v36.md](UPDATE-v36.md) (Payday in tögrög, the bar), [UPDATE-v35.md](UPDATE-v35.md) (a real casino: tables that show the live game in 3D, poker, slots, lotto, centre stage), [UPDATE-v34.md](UPDATE-v34.md) (Payday mode with the casino, wallets, salaries and loans; tidy colour-coded cabling; no more flashing racks; a clearer field laptop; Darja's pistol). Earlier: [UPDATE-v33.md](UPDATE-v33.md). The full game guide for Campaign levels 0–10, the start flow, prompts, graphics, desktop app and tests is [UPDATE-v32.md](UPDATE-v32.md).
 
 ## Play

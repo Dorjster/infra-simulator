@@ -1,6 +1,16 @@
-# Infra Simulator 53.0.0 — Global Defensive: CS2 lineups, practice tools, kill emblems and headshot feedback
+# Infra Simulator 53.0.0 — Global Defensive: the CS2 pass
 
-Global Defensive only. This note covers stages 1 to 3 of v53 (batch A) and batch B: stage 4 (the CS2 HUD), stage 5 (map surfaces, wallbangs and impacts), and the user's addenda for molotovs, the death cam and ragdolls, reloads and five new knives. Stage 5's graphics part, stage 6 (smooth without a graphics card), the CS2 feel audit and the docs stage are not done yet and will be added here.
+Global Defensive only. This note covers all of v53:
+- **Batch A:** stages 1 to 3 (deterministic grenades and jump-throws, CS2 practice tools and lineups, kill emblems and
+  headshot feedback).
+- **Batch B:** stage 4 (the CS2 HUD), stage 5 (map surfaces, wallbangs and impacts), and the user's addenda for
+  molotovs, the death cam and ragdolls, reloads and five new knives.
+- **Batch C:** stage 6 (smooth without a graphics card), the C4 on the carrier's back, and the CS2 feel audit's fixes:
+  lineups, gun feel, hits, the map and HUD look, and the molotov's look.
+- **Stage 7:** these notes, the README pointer and `tests/README.md`.
+
+The list of what is **still not like CS2** is at the end. Measurements on this Mac are labelled; anything for computers
+without a graphics card is **emulation on the Mac**, never a Windows measurement.
 
 Other modes are unchanged. A new test, `tests/gd-other-modes-untouched.mjs`, checks this in three ways:
 - 69 modules that belong to the other modes (their scenes, HUD, settings and logic) are byte-identical to 52.0.5's.
@@ -609,6 +619,27 @@ runs (the 4× ones at 1920×1080 at 150 %, before the review fixes). The picture
 - Real Windows laptops (Iris Xe, UHD 620, Vega 8) were not measured; the table's targets for them are not confirmed.
 - No SSAO exists on any preset (spec 4.1 asks for it on High / Ultra). (Package LOOK below adds it on High / Ultra.)
 
+## The CS2 feel audit (batch C, addendum 9)
+
+Six auditors each compared one area of the game with CS2's own files and the user's CS2 pictures, and listed the
+differences with evidence (CS2's value, ours) and a severity:
+- **Movement:** acceleration, friction, stopping, counter-strafing, the jump and the duck all already follow Source's
+  formulas. Found: tagging ignored the attacker's weapon, the Negev's attack speed was missing, the eye height and the
+  ±85.9° pitch were off, and the sensitivity was not CS2's. The weapon-speed acceleration scale, the ladder speed and
+  fall damage rest on CS:GO values that are not in the files.
+- **Guns:** the view model's field of view and size, the pistols' empty-magazine clips (skipped by the exporter), the
+  draw times, the scoped view model, the muzzle flash and shells, the zoom sounds, `NearlyEmpty`, the Negev's pitch.
+- **Hits:** headshot blood covering the screen, missing armour hit sounds, a fixed tagging slowdown, two kill-award
+  differences, damage rounding, your own wound.
+- **Audio:** explosions bypassing the GD sound bank, the flash ring, CS2's mix groups and its final limiter.
+- **UI and timing:** the money rules (no income on a time-out, the defuse award), the buy menu's missing guns and CS2's
+  5 loadout slots.
+- **Look:** exposure, bloom, the kill cards' size, the HUD colours, the molotov (its own package, addendum 14).
+
+The coordinator fixed the high ones in five packages: **LINEUPS, GUNS, HITS, LOOK and FIRELOOK** (below, after stage 6).
+Items that need a CS2 recording, the user's decision, or new content (guns, sleeves, hitboxes) were deferred; they are
+in "Still not like CS2" at the end.
+
 ## Map look and the HUD's look like the CS2 pictures (package LOOK)
 
 Every map's look settings now come from the CS2 install on this computer. `node tools/import-cs2-look.mjs` reads them
@@ -911,6 +942,128 @@ says **ours** or **CS:GO**.
 - **Not like CS2 yet:** CS2's dust sprites cast particle shadows (`m_bParticleShadows`, `m_flShadowDensity` 2), and ours
   do not. So a grey concrete puff on a light wall is real but faint (low contrast).
 
+## The C4 on the carrier's back (package C4)
+
+The player who carries the bomb now wears it on their back, as in CS2 (`dist/gd-c4-back.js`). Everyone who can see the
+carrier sees it: team mates, enemies, spectators and the death cam. You never see it on your own back in first person.
+
+- **Who carries it** is the host's carrier field, which every computer already has (the radar's carrier mark). The bomb
+  leaves the back at once when it is dropped, when it is in the carrier's hands to plant (CS2 plants with the bomb in
+  hand), and when it is planted. It moves to whoever picks it up. A node test checks this on the host and a guest.
+- **Where it hangs:** on CS2 agents, on the agent's own `c4` attachment on `spine_3` (Phoenix and SAS, from the agent
+  files). On the built-in soldiers, on the torso. With CS2's model imported (`user-assets/weapons/c4.bin`) it is CS2's
+  C4. Without it, it is our own CC0 bomb, with its light sitting on the bomb's detonator box.
+  - CS2's own bind pose puts the SAS agent's back 3.0 cm into the brick. That is CS2's data, and a CT never carries the
+    bomb in a match. Phoenix: 0.4 cm at rest, 1.6 cm posed.
+  - **Not in the files:** which point of the C4 the game hangs on the `c4` attachment. We use the model's root.
+    `weapon_holster_center` is 2.3 cm from the root, so hanging it there would only move it along the brick.
+- **The light is CS2's carried-bomb light, `particles/explosions_fx/c4_holstered_light.vpcf`:** one flash a second,
+  1.0 s life with the file's alpha curve, colour 240 230 140 × overbright 1.5 (a warm yellow). The LED itself is the
+  `c4_color` texture's lens colour 220 198 42 × 1.5. Both renderers move 1 unit toward the camera
+  (`m_flCameraBias` 1.0), as in CS2, so the keypad no longer cuts the glow. It is a sprite with an emissive dot, not a
+  real light, so it costs nothing. Pooled, warmed at load, no allocation per frame (100 000 draws: heap −47 KB).
+  - **The spec said a red LED. CS2's carried-bomb light is warm yellow.** Only the planted bomb's light is red
+    (`c4_timer_light.vpcf`, 255 75 75). We followed CS2. Changing to red is one value (`C4_BLINK.color`).
+  - **Ours, not CS2:** the halo's share (0.35, standing in for CS2's bloom-only flare), a minimum core size of 2.5 px at
+    1080 lines (CS2's bloom and 350 lm light carry the flash at a distance), the halo's quarter-quad camera bias, and a
+    fade as the bomb's top turns away (standing in for CS2's occlusion proxy).
+- Measured in the game (Dust II, muted Chrome), the light ON minus OFF in a 24 px box at the LED, out of 255: close 190,
+  whole body 123, 10 m 125 (package run). Integration run: PASS, 12 checks.
+- Tests: `tests/gd-c4-back.mjs` (41 checks), `tests/browser/gd-c4-back-shots.mjs` (the picture,
+  `~/Desktop/GD-v53-c4-back.jpg`: the CS2 agent and the built-in soldier from behind, the CC0 fallback, the real game
+  close, whole body and 10 m, light on and off).
+
+## Gun feel like CS2 (package GUNS)
+
+From the feel audit's gun findings. Every value is from the user's CS2 install (`weapons.vdata`, `items_game.txt`, the
+first-person clips, `particles/weapons/cs_weapon_fx/*.vpcf`) unless it says **ours** or **from memory**.
+
+- **View-model field of view.** CS2's `viewmodel_fov` is a 4:3 horizontal angle. Its default, 68, is a console default
+  and not in a file. 68 on 4:3 is 53.67° vertical, and the game now draws the gun at that (it was 60, the clips' stored
+  `FPCam` value). Measured on the Glock against CS2's picture at 1920 × 1080 (the rear face's width, the slide's top, the rear
+  face's centre): 68 gives 72 px / y 671 / x 1265, against CS2's 105 px / 685 / 1262 (60 gave 84 px / 693 / 1317). The
+  position fits; the gun is still drawn smaller than CS2's. A view-model offset was tried and fitted worse. Other modes keep their own value.
+- **Draw times** from the clips: 1.0 s for knives and grenades, the Bayonet 1.167 s, the C4 1.233 s. The Karambit's
+  own 0.5 s is gone.
+- **Prices and kill rewards** come from `weapons.vdata` for every gun (one table, also used by the buy menu). The buy menu had
+  the MP5-SD at $1500; its file says $1400.
+- **The Negev's attack speed** (`m_flAttackMovespeedFactor` 0.5) slows you while it fires. `m_bHideViewModelWhenZoomed`
+  hides the gun when scoped only for the AWP and SSG 08, as their files say.
+- **Empty magazine:** the pistols' CS2 `fireempty`, `idleempty` and `reloadempty` clips (the slide held open, the
+  reload from empty with its own sounds). Six first-person sets were exported again and installed (back-ups
+  `user-assets/fp.bak-20261104-181053`, `manifest.bak-20261104-181053.json`).
+- **Muzzle flash and shells from CS2's own effects** (`dist/gd-gunfx.js`, imported by `node tools/import-cs2-gunfx.mjs`
+  into `user-assets/gunfx/`): your own shot draws the gun's `_fp` effect (the AK: a vent and 6 glow sprites, 1–2 ms,
+  about one frame), other players' shots the third-person effect. The M4A1-S uses its silenced `_alt` effect. Shells fly
+  at CS2's speeds and gravity (the rifle: 200–250 units/s out, 600 units/s² down, 3 s) and rest on the floor. Pools of 64
+  flashes and 32 shells, one draw each, warmed at load, 0 bytes allocated per frame. The muzzle light now lights the
+  first frame the flash is drawn, then fades in 20 ms. Without the import our own flash and shell are drawn.
+  - No shell for the AWP when CS2's effects are imported: `weapon_shell_casing_50cal` is not in the depot.
+- **Eye and look:** standing eye 64.06, crouched 46.045 units (the crouched value is CS:GO's, not in the files). The look
+  now goes to ±89° (CS2's `cl_pitchup` / `cl_pitchdown`, **from memory**), also for the room and the spectator.
+- **CS2's sensitivity:** a mouse count turns the view sensitivity × 0.022° (`m_yaw` / `m_pitch`, **from memory**), with
+  CS2's default 1.25. The console's `sensitivity` sets and prints it CS2's way, and Settings shows CS2's field only.
+- **Sounds:** first-person draw, inspect and knife clips play at their events' own volumes in GD (they were × 0.9).
+- Tests: the new `tests/gd-gun-feel.mjs` (42 checks), and `gd-fp-sets`, `gd-weapons`, `gd-movement-feel`,
+  `arena-move`, `gd-pose-host`, `gd-spectate`, `gd-tracers` updated. Picture: `~/Desktop/GD-v53-gun-feel.jpg`.
+
+## The molotov and incendiary look like CS2 (package FIRELOOK, addendum 14)
+
+The fire was a low flat smear because v53 FIRE drew only two of CS2's child systems. `dist/gd-fire-view.js` is rebuilt
+from CS2's own particle files (`particles/inferno_fx/`, 155 files, decompiled on this computer): 23 systems with their
+renderers, flipbooks, counts, lifetimes, sizes, colours, speeds and fades. `tests/gd-fire-look.mjs` (89 checks) reads
+each number back from the files.
+
+- **Standing flames:** `molotov_groundfire_filltest`'s main_center and main_fancy (hundreds of camera-facing flame sprites
+  rising from points all over the burning ground), and the outline's licking tongues up to 80 units long from the
+  fire's edge (`C_OP_RenderTrails`), plus the middle's `flame01a` / `flame03a`. Each flame plays its whole flipbook.
+- **The burst** when the bottle breaks, the embers, the floor glow, the scorch after, and **the dark plume.** Not CS2's
+  active tree: `molotov_groundfire_00high` has no emitter in the files, so CS2 makes no plume, embers or glow from it.
+  They are drawn because the spec asks for them, with those child systems' own numbers. **Where the plume stands
+  (60 units up) is ours.**
+- **The light:** CS2's `RenderStandardLight` colour 242 211 147, radius × 2, with its noise (0.6–1), as a pooled
+  flickering point light on High and Medium. It lights the baked CS2 floors through LOOK's fixed light slots. Low and
+  Very Low draw an emissive patch instead.
+- **The incendiary** differs as its own files do: a teal-white gradient.
+- One instanced draw for all fires, a 16 × 16 atlas, warmed at load, no allocation per frame.
+- **Installed on this computer:** `node tools/import-cs2-fire.mjs` (the CS2 flame atlas) and the 27 CS2 fire and smoke
+  sound events (`import-cs2-sounds.mjs --only nade.molotov.*,nade.incendiary.*,nade.fire.*,nade.smoke.*`). Back-ups:
+  `~/CS2-extract/backup/firelook-20261104-1834`, `firelook-final-20261104-2059`, `fire-20261104-2059`.
+- **Not drawn:** the flames that climb walls (`climbingset`: our inferno has no wall flames), the bloom-only renderers
+  (no effects-bloom pass here), depth feathering, and the scorch CS2 projects while the fire burns (ours is laid as each
+  flame dies). CS2's inferno has no heat shimmer either: its only refracting fire system is not used by any tree.
+- **Ours, not in the files:** the overbright scale (0.36 of CS2's), the outline's lean into the fire, reading
+  `VelocityFromNormal` against the ground's normal, and the fallback flipbooks (on CS2's measured red and alpha curve).
+- A 5 v 5 fight with an incendiary (High, real size): 59.1 fps, p95 17.7 ms, no shader built (package run).
+- Picture: `~/Desktop/GD-v53-molotov.jpg` (ground level and 10 m; burst at 0.1 s, full at 2 s, dying at 6.5 s; molotov,
+  incendiary and smoke).
+
+## Batch C together (integration and stage 7)
+
+- All seven packages (PERF, C4, LINEUPS, GUNS, HITS, LOOK, FIRELOOK) were run together in one tree. Nothing was
+  reverted. `npm test` ran entry by entry: 149 of 150 passed on the first run. The one failure was
+  `tests/gd-deathcam.mjs`'s allocation check (105 680 bytes over 2 000 frames) while browser tests loaded the Mac at the
+  same time; it passed 3 of 3 runs on its own. `tests/gd-other-modes-untouched.mjs` and `tests/no-valve-data.mjs` pass.
+- One comment was corrected at integration: `dist/gd-hit-feedback.js`'s header still said the red screen flash stays.
+  CS2 has none, and it is gone in GD (HITS addendum). `combat-hud.js` only runs that code in GD (its update returns
+  early elsewhere), so other modes are unchanged.
+- **Your own wound (HITS addendum), confirmed:** the red flash is gone; CS2's `localfrontenemy` (both edges),
+  `localrearhit` and `lp_spray` are drawn from the file numbers, in one pooled draw, and Settings → Blood off removes
+  them. **Not done:** `localfrontsimple`, `localkillshot` and `lp_mist`, the check of who spawns
+  `screen_blood_splatter`, and the separate picture `~/Desktop/GD-v53-own-wound.jpg`. The front-left and rear hits are
+  in `~/Desktop/GD-v53-impacts.jpg`.
+- **Installed on this computer at integration** (each under its back-up rule): the CS2 HUD icons
+  (`tools/import-cs2-hud.mjs`, 19 icons, a new folder), the blood atlas with HITS' wisp cells (`tools/import-cs2-blood.mjs`,
+  back-up `~/CS2-extract/backup/blood-20261104-2230`), and the fire and smoke sounds again (27 events, all 56 files
+  already there; the manifest was backed up first to `~/CS2-extract/backup/integrate-c-20261104-2229`). The fire atlas,
+  the gun effects, the pistols' empty clips and the map look were installed by their packages. The map importer's
+  `PENS_ONLY` mode was **not** run on `user-maps/`.
+- **The game loads them** (muted Chrome, the integrated tree, the real `user-assets/`): the HUD run (16 checks), the
+  fire run with CS2's atlas and then our fallback (13), the impacts and own-wound run (20), the gun-feel run (8), the
+  mix-peak run (4), the kill-card measure (9), the look run on Dust II and Nuke, High and Low (25: exposure inside each
+  map's range, SSAO on High only, 0 programs linked), and the C4 on the back (12). All passed.
+- **Not checked here:** the Windows desktop build on CI. It needs a push, and pushing was not authorised.
+
 ## Numbers marked (verify) and where they came from
 
 | number | value | source |
@@ -936,6 +1089,22 @@ says **ours** or **CS:GO**.
 | Inferno spread: 16 flames, 42 apart, within 150, gaps 0.02 s × 1.1 up to 0.5 s, children for 3 s, 20 up, 45° lean | | **not in the install**: CS2's server convars (`inferno_*`) are compiled into its server binary. These are CS:GO's published defaults. 150 matches `fire_core.vsnap`'s radius |
 | Smoke into fire, fire into smoke | pops on touching flames; the volume puts out what it covers | **CS2 behaviour as known, not in a file** |
 | Molotov slope and fuse | 30°, 2 s | `weapon_molotov_maxdetonateslope` 30 and `molotov_throw_detonate_time` 2.0 are CS:GO's; **not in the install** |
+| **Batch C** | | |
+| View-model FOV | 68 on a 4:3 width = 53.67° vertical | `viewmodel_fov` 68 is CS2's console default, **not in a file**; the 4:3 rule is CS2's fov rule |
+| Draw times | knives and grenades 1.0 s, Bayonet 1.167 s, C4 1.233 s | the first-person clips' lengths in the user's install |
+| Prices and kill rewards | per gun | `weapons.vdata` (`m_nPrice`, `m_nKillAward`) |
+| Negev attack speed | 0.5 | `m_flAttackMovespeedFactor` in `weapons.vdata` |
+| Muzzle flash, shells | the AK: a vent + 6 glows, 1–2 ms; shells 200–250 u/s, gravity 600, 3 s | `particles/weapons/cs_weapon_fx/weapon_muzzle_flash_assaultrifle_fp.vpcf`, `weapon_shell_casing_rifle.vpcf`; `items_game.txt` for which effect a gun uses |
+| View pitch | ±89° | **from memory** (`cl_pitchup` / `cl_pitchdown`); not in the files |
+| Sensitivity | × 0.022° a count, default 1.25 | **from memory** (`m_yaw` / `m_pitch`); not in the files |
+| Grenade contact | 0.45 elasticity, 0.3 off players, one reflection a tick, 0.4 through glass, 30 u/s stop | **Source SDK rules** (`ResolveFlyCollisionCustom`), not in the CS2 files; measured on 366 public lineups |
+| Window panes | Nuke 8, Anubis 15 | CS2's `collision_properties.txt` (`window` is solid to grenades) and the break pieces in the VPK list; the shape rule that finds them is **fitted** |
+| C4 carried light | 1 flash a second, 1.0 s, 240 230 140 × 1.5, camera bias 1 u | `particles/explosions_fx/c4_holstered_light.vpcf` |
+| C4 attachment | Phoenix / SAS `c4` on `spine_3` | the agents' model files; which point of the C4 hangs there is **not in the files** |
+| Fire light | colour 242 211 147, radius × 2, noise 0.6–1 | `RenderStandardLight` in `particles/inferno_fx/*.vpcf` |
+| Exposure ranges | Dust II 0.925–1.1 … Nuke 1.0 / 0.85 | each map's `post_processing_volume` entity; the target brightness is **ours** (fitted to CS2 footage) |
+| Bloom | Dust II 0.184 SCREEN, Inferno 0.12 ADD, … | each map's `.vpost` `CBloomLayer` |
+| Your own wound | front 5–10 splats by damage, (228,33,33) × 3; rear 10, (249,55,55) × 2; `lp_spray` 3–6 | `particles/blood_impact/blood_impact_localfrontenemy*`, `_localrearhit_splatter`, `_lp_spray`; where they sit on screen is **ours** |
 
 ## Partial, and what is not like CS2 yet
 
@@ -957,17 +1126,17 @@ says **ours** or **CS:GO**.
 - **Inputs during the throw delay:** a jump, stop or crouch in the 0.104 s after release is not applied.
 - **A release before the pin is out** is thrown at the pin-out moment, but with the aim from up to one frame later.
 - **Nuke and Anubis** have 3 flashes each, not 4. No more repeatable public CS2 flash lineups with landing points were found.
-- **The camera eye is still 63.02 units**, while throws use CS2's 64.06. The camera, the hit model and shot origins belong to the HUD and shooting work.
-- **View pitch** is limited to ±85.9°; CS2 allows ±89° (from memory).
+- **The camera eye** is now CS2's 64.06 units standing and 46.045 crouched (fixed in batch C, package GUNS: `EYE_GD` in `dist/arena-move.js`).
+- **View pitch** now goes to ±89° (batch C, package GUNS). The ±89° is CS2's `cl_pitchup` / `cl_pitchdown` from memory, not from a file.
 - **Throw strength:** the first button you let go decides the throw. CS2 eases the strength toward the buttons held, at a rate not in any file.
 - **Our body stands 0.79 units** from CS2's `setpos` spot at Mirage's cart, because of our collision.
 - **The preview picture** draws the scene a second time every other frame. On High at Retina scale this costs 1.2 ms of processor time, with no missed frames (p95 18.6 ms holding against 17.5 ms standing still).
 - **The jump-throw model** follows the spec (the grenade leaves at take-off, plus CS2's measured delay). It has not been checked against a CS2 jump-throw recorded on this computer, because no such recording exists yet.
 
-- **Fire:** there is no heat shimmer yet on High and above. The molotov in first person has no lit wick. Flames are not
-  drawn on walls (CS2's climbing flames). The fire's loop starts silent if you are out of earshot when it starts. The CS2
-  fire textures and sounds are not imported on this computer yet (see below). The air-burst height (128 units) and the
-  inferno numbers are not verified from files.
+- **Fire:** the molotov in first person has no lit wick. Flames are not drawn on walls (CS2's climbing flames). The
+  fire's loop starts silent if you are out of earshot when it starts. The air-burst height (128 units) and the inferno
+  numbers are not verified from files. (Updated in batch C: CS2's inferno has no heat shimmer either, and the CS2 fire
+  pictures and sounds are now installed on this computer; see package FIRELOOK.)
 - **Fire size changed** from v41's "about 4× the area" to CS2's. If the bigger fire was wanted, `INFERNO` in
   `dist/arena-nades.js` holds the numbers.
 
@@ -976,13 +1145,29 @@ says **ours** or **CS:GO**.
 - CS2's kill-tally cards, pips and team logos, and the kill-feed mark icons: `node tools/import-cs2-killfeed.mjs`. It now picks up 65 icons. Without them, our own drawings in the same layout are used.
 - CS2's headshot and helmet sounds: the existing CS2 sound import. Without it, our own made-up stand-ins play.
 - The lineup tests and the practice browser test need the CS2 maps converted on this computer (`user-maps/`). They skip the maps that are missing.
-- CS2's fire pictures: `node tools/import-cs2-fire.mjs` (it backs up first, then writes `user-assets/fire/atlas.png` and
-  `models.fire`). It was tested into a scratch folder. Without it, our own drawn fire is used, in the same layout.
-- CS2's fire sounds: `node tools/import-cs2-sounds.mjs --only nade.molotov.ignite,nade.molotov.smash,nade.molotov.far,nade.incendiary.ignite,nade.incendiary.pop,nade.incendiary.far,nade.molotov.air,nade.incendiary.air,nade.fire.loop,nade.fire.crackle,nade.fire.fade,nade.fire.out,nade.smoke.emit,nade.smoke.far`
+- CS2's fire pictures: `node tools/import-cs2-fire.mjs` (it backs up first, then writes `user-assets/fire/atlas.png`,
+  16 × 16 cells, and `models.fire`). **Installed on this computer** (package FIRELOOK). Without it, our own drawn fire is
+  used, in the same layout.
+- CS2's fire and smoke sounds, 27 events (every `nade.molotov.*`, `nade.incendiary.*`, `nade.fire.*` and `nade.smoke.*`
+  event in `dist/gd-sounds.js`): `node tools/import-cs2-sounds.mjs --only <those ids>`. **Installed on this computer**
+  (FIRELOOK; run again at integration: all 56 files already there, nothing changed).
 - The kill feed's `inferno` flame icon is in `user-assets/icons/killfeed`. The kill-feed import ran again and added it.
 - CS2's HUD icons (per-weapon reserve icons, square agent portraits, the cards' dots, the radar's C4 marks):
-  `node tools/import-cs2-hud.mjs` → `user-assets/icons/hud/`. It was tested into a scratch folder and **not run on this
-  computer yet**; without it our own drawings are used in the same places.
+  `node tools/import-cs2-hud.mjs` → `user-assets/icons/hud/` (19 icons). **Installed on this computer** at batch C's
+  integration (a new folder, so nothing needed backing up). Without it our own drawings are used in the same places.
+- CS2's muzzle flashes and shell ejection: `node tools/import-cs2-gunfx.mjs` → `user-assets/gunfx/` (`models.gunfx`).
+  **Installed** (package GUNS; back-ups in `~/CS2-extract/backup/gunfx-*`). Without it our own flash and shell are drawn.
+- The pistols' empty-magazine clips: `tools/cs2-fp/export_missing.py` (REBUILD) for 6 first-person sets. **Installed**
+  (GUNS; back-ups `user-assets/fp.bak-20261104-181053`, `manifest.bak-20261104-181053.json`).
+- Each map's look (exposure range, bloom, lights): `node tools/import-cs2-look.mjs` → `user-assets/look/look.json`.
+  **Installed** (package LOOK; back-up `~/CS2-extract/backup/look-*`). Without it each map keeps the old fixed look.
+- The blood atlas's new wisp cells (headshot wisps): `node tools/import-cs2-blood.mjs`. **Installed** at integration
+  (back-up `~/CS2-extract/backup/blood-20261104-2230`). Without them the headshot wisps use our own cell.
+- The C4 on the back uses CS2's C4 model and the agents' attachment from the existing model import
+  (`user-assets/weapons/c4.bin`, `user-assets/holds/src/weapon_c4.glb`). Without them our CC0 bomb is used.
+- **The full CS2 game-sound import** (`node tools/import-cs2-sounds.mjs` with no `--only`) **has not been run on this
+  computer.** Only the round sounds and the fire and smoke events are in `models.gdSounds` (35 events). HITS' new hit,
+  armour and death events and the other GD events play through the older sound names or our own stand-ins until it is.
 - CS2's ragdoll: `node tools/import-cs2-ragdoll.mjs` → `user-assets/ragdoll/cs2-ragdoll.json` (installed on this computer).
   Without it our own ragdoll with the same rules is used.
 - CS2's reload numbers are read once by `node tools/import-cs2-reloads.mjs` into `dist/gd-reload-ref.js` (numbers and
@@ -1023,4 +1208,131 @@ says **ours** or **CS:GO**.
   stage 6's work, and this measurement is left for it.
 - The kill-emblem video passes its checks again: H.264 1920 × 1080 at 60 fps, 16.1 s, 968 frames (967 distinct), AAC
   sound at mean −19.8 dB, peak −0.3 dB.
-- **Full `npm test`:** passes (every entry, all 140).
+- **Full `npm test` at batch B:** passed (every entry, all 140).
+
+### Batch C, all packages together (2026-11-04, muted Chrome through the test lock)
+
+On the user's High preset at the real window size: 1470 × 956 at 2× (2940 × 1912 device pixels), drawn at about
+2074 × 1349 by High's pixel-ratio cap. The batch B tree is a copy of commit 73b2829, run in turn with this tree.
+
+- **The presets** (`tests/browser/gd-presets.mjs High,Low`, 16 s, then the staged 10-player fight with 9 of 9 agents in
+  view and an HE), Apple M3, Metal, **not Windows**:
+
+  | preset | fps | p95 | p99 | max | draws p95 | staged fight fps / p95 / draws max | programs linked |
+  |---|---|---|---|---|---|---|---|
+  | High | 60 | 16.8 ms | 17.4 ms | 33.3 ms | 434 | 60 / 17.1 ms / 469 | 0 |
+  | Low | 60.1 | 16.8 ms | 17.5 ms | 17.7 ms | 375 | 60 / 17.3 ms / **366** | 0 |
+
+  Low stays under 400 draw calls. Texture memory (overlay): High 1177 MB, Low 1108 MB.
+- **No graphics card, EMULATION** (`SOFT=1`, SwiftShader on the M3): Auto detected `software` and chose Very Low (no
+  post, 30 fps target), 768 × 432. **2.9 fps**, p95 834 ms, 363 draws. The 30 fps target is not met (stage 6, partial).
+- **A 5 v 5 Defuse fight with grenades** (`tests/browser/gd-pacing-nades.mjs`, Dust II, 9 bots, you strafing and firing,
+  a smoke, an incendiary, an HE and a flash, 24 s), High at real size:
+
+  | tree | CPU | fps | p95 | p99 | max | programs linked |
+  |---|---|---|---|---|---|---|
+  | batch C (this tree), 2 runs | 1× | 60 / 60 | 16.8 / 17.1 ms | 17.3 / 18.3 ms | 17.7 / 18.8 ms | 0 |
+  | batch B, 2 runs | 1× | 60 / 60 | 17.7 / 17.1 ms | 18.5 / 18.3 ms | 18.7 / 18.7 ms | 0 |
+  | batch C, 5 runs | 4× | 45.9 / 50.2 / 49.2 / 46.3 / 50.9 (mean 48.5) | 33.5–34.7 ms | 35.1–35.3 ms | 52–85 ms | 0 |
+  | batch B, 3 runs | 4× | 50.4 / 50.4 / 52.2 (mean 51.0) | 33.6 ms | 35.1–35.2 ms | 35–66 ms | 0 |
+
+  (One 4× run on each tree ran with the CPU profiler on; its maximum of about 1.25 s is the profiler stopping, so it
+  is left out of the max column.) **At full speed batch C is not slower than batch B:** 60 fps, with p95 and
+  p99 the same or better. **With the CPU slowed 4× it is about 2.5 fps (5 %) slower on average,** and its run-to-run
+  spread is wider. Switching off the LOOK passes (SSAO, exposure and bloom) at 4× gave 48.8 and 49.0 fps against 46.3
+  and 50.9 with them, so they are not the cause. A CPU profile of one 4× run each shows the browser's own work
+  (`(program)`) 1.3 s higher and three.js 0.6 s higher over the 24 s in this tree, spread over the new pooled draws
+  (gun effects, the C4, fire, ragdolls, the window panes) rather than one module, while PERF's radar fix removed 2.0 s
+  of `set font`. This is **open** (see "Still not like CS2").
+- A first chain of the same A/B, run straight after the SwiftShader run, measured this tree at 54.5 and 58.3 fps (1×)
+  against batch B's 60 and 60, and 42.8 / 36.6 against 42.8 / 46.4 (4×). The Mac's load average was 4–7 then. Run again
+  on a quieter machine (load about 3), both trees held 60 fps at 1×, as in the table.
+- **Full `npm test`** (the real chained command, once, on the code of the final commit): **passes, exit 0**, all 150
+  entries, including `gd-other-modes-untouched` (69 other-mode modules byte-identical to 52.0.5; every changed region of
+  the shared files inside a GD branch) and `no-valve-data`.
+
+## Still not like CS2
+
+Everything we know still differs from CS2 after v53, in one place. Each package section above has the details and the
+evidence. "Needs a recording" means CS2's files do not hold it and it can only be measured in CS2 itself.
+
+**Shooting and guns**
+- **Spray patterns.** `weapons.vdata` holds only the inputs (`m_nRecoilSeed`, `m_flRecoilAngle` / `Variance`,
+  `Magnitude` / `Variance`). How CS2 builds the pattern from them is engine code. Needs a recording: a 30-bullet spray on
+  a wall from the user's own CS2 (AK, M4A4, M4A1-S, Galil, FAMAS, MP9, MAC-10). The mid-spray punch decay and the shotgun
+  pellet layout (Nova / XM1014 wall shot) need recordings too.
+- **Tracers on every bullet** (the user's own rule). CS2 traces every 3rd bullet of rifles and SMGs and none of the
+  silenced guns (`m_nTracerFrequency`). Batch D makes this a setting with CS2 as the default.
+- **The hit-marker X** is the user's own request. CS2 has none. Batch D makes it a setting, off by default.
+- **The view model still looks smaller than CS2's:** the Glock's rear face is 72 px wide against 105 px in CS2's picture at
+  1920 × 1080 (its top at y 671 against 685, its centre at x 1265 against 1262).
+- **Sensitivity (× 0.022°) and the ±89° pitch** are CS:GO values from memory. The cvars exist in CS2, but their defaults
+  are not in the files.
+- **Buy menu:** Zeus x27, P2000, Dual Berettas, R8, MAG-7, Sawed-Off, SCAR-20 and G3SG1 cannot be bought, and CS2's 5
+  loadout slots are not there. Batch D.
+- **First-person sleeves:** our T arms show bare forearms where CS2 draws the agent's sleeve. Batch D.
+- Per-gun zoom sounds, `Default.NearlyEmpty` and the Negev's pitch shift are missing. Shotguns have no per-shell
+  third-person clip or first-person shell sound. Batch D.
+- **Knife damage and timings** are not in the install's files (knife code).
+
+**Hits and damage**
+- **Hitboxes** are not CS2's posed capsules. The damage numbers are right. Batch D.
+- **Damage rounding** follows CS:GO's server rule (not in CS2's files).
+- **Ragdoll force** is ours (not in the files).
+- **Your own wound:** CS2's `localfrontenemy`, `localrearhit` and `lp_spray` are drawn. `blood_impact_localfrontsimple`,
+  `localkillshot` and `lp_mist` are not, and where the splats sit on the screen is ours (CS2's code places them). There is
+  no separate `~/Desktop/GD-v53-own-wound.jpg` yet; the front and rear hits are in `GD-v53-impacts.jpg`.
+- **Dust has no particle shadows** (`m_bParticleShadows`), so concrete puffs are faint on light walls.
+- **The flash ring** chosen for a blind length, and the $300 defuse award (`cash_player_bomb_defused` is not in the
+  files), are ours / CS:GO's.
+
+**Movement**
+- `sv_accelerate_use_weapon_speed`, the ladder speed (0.78) and the silent ladder walk, fall damage, the duck speed, the
+  air duck and the duck-spam penalty rest on CS:GO values. Needs a recording (`cl_showpos`: an AK from standing, a walk,
+  a timed ladder climb, one drop).
+
+**Grenades and lineups**
+- 157 of the 366 public lineups still miss. 24 of the 52 near-miss smokes end 33–184 units past CS2's point; no Source
+  rule explains it.
+- **CS2's railings** let grenades through (`csgo_railing` excludes `csgo_thrown_grenade`). Ours stop them. Needs a new
+  importer for `world_physics.vmdl_c` triangles, a side file the room sends to every player, and a grenade-only mask.
+- A grenade flies through a broken CS2 window at full speed: **fitted** to CS2's lineups, not in any file. The panes are
+  found by a fitted shape rule.
+- The smoke goes off on the tick it rests (Source checks every 0.2 s).
+- A jump, stop or crouch during the 0.104 s throw delay is not applied, and early-release aim can be one frame late.
+- Nuke and Anubis have 3 public flash lineups each, not 4. The flash blind amount and length are not in the files.
+- Surface elasticity: CS2's `surfaceproperties.vsurf` lists one per surface; Source's grenade code uses 1.0, which fits better.
+
+**Fire, smoke and the C4**
+- The fire's plume, embers and floor glow are drawn although CS2's active tree makes none (the spec asks for them), and the
+  plume's height is ours. No flames climb walls. No projected scorch while it burns (ours comes after).
+- **The planted bomb** has no blinking light (CS2: `c4_timer_light.vpcf`, one red flash per beep), is drawn 1.4 × too big,
+  and its beep schedule follows CS:GO. **The dropped bomb** has no light (`c4_timer_light_dropped.vpcf`, `C4.LightFlash`).
+- The carried bomb's light is CS2's warm yellow, not the red the spec asked for (see the C4 section).
+- The inferno spread numbers and the molotov slope and fuse are CS:GO's (`inferno_*` cvars are in the server binary).
+
+**Look and HUD**
+- No PBR normal / roughness maps and no per-area cube maps on the maps (the converted maps hold none; the cube-map arrays
+  are not converted yet).
+- Sky bloom strength is imported but not used; bloom thresholds are approximate; SSAO is a screen-space pass where CS2
+  uses AO proxies; Medium smooths edges with FXAA where CS2 offers CMAA2.
+- Nuke's white walls are still too bright.
+- The exposure's target brightness is our own calibration from CS2 footage, not CS2 data.
+- The C4 brick looks washed out under Dust II's light.
+
+**Graphics presets and speed**
+- Preset names: CS2 has Low / Medium / High / Very High; ours Auto, Ultra, High, Medium, Low, Very Low. CS2 upscales with
+  FSR; ours uses a fixed 0.8 / 0.6 render scale with a sharpen. CS2's frame cap is a free number, ours a list. No "Boost
+  Player Contrast".
+- Agents are never frustum-culled, which costs vertices on weak and software GPUs.
+- Targets not met (emulation on the Mac, never on Windows): software rendering 2.9 fps against 30, Medium at CPU ×4
+  53 fps against 60. High is about 3 fps behind 52.0.5 at CPU ×4 (stage 6), and the whole of batch C is about
+  2.5 fps behind batch B at CPU ×4 in the 5 v 5 grenade fight (48.5 against 51.0; equal at full speed). No Windows
+  hardware was measured.
+
+**Other**
+- The host's Magazines / Bullets reserve-ammo choice (addendum 13) is batch D. Until then the committed model stays.
+- Physics props are not host-authoritative (their motion is deterministic from the host's records). Batch D.
+- The map importer's exact CS2 bullet surfaces (`PENS_ONLY`) are not run on the user's maps: the user runs it.
+- Smaller items: impact wall traces, wallbang falloff, the remote shot's trace origin, one Overpass snag, the death cam's
+  contrast and Steam avatar, the spectator's reload flag.
