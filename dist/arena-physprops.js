@@ -14,6 +14,7 @@ const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _ax = new THREE
 // same slide, bounce and tip at 30 or 240 fps (the per-frame dt, capped at 50 ms, flew a 30 fps prop differently and a
 // stall slowed it), every frame drawn where it is at that moment — never held for a frame or stepped ahead.
 const STEP = 1 / 128, MAX_STEPS = 16;
+export const MAX_AWAKE = 24;   // (v53: props moving at once, per map)
 
 // props: [{ i, model, mass, breaks, x, z, y, h, rx, rz }] (game units, relative to the map's centre cx, cz);
 // pivots: Map(i → THREE.Group at the prop's foot, its look attached); floorAt(x, z, nearY) → the floor's height (game);
@@ -26,7 +27,17 @@ export function createPhysProps(props, pivots, { cx = 0, cz = 0, floorAt = () =>
   props.forEach((p, k) => { const o = k * 12; S[o] = cx + p.x; S[o + 1] = cz + p.z; S[o + 2] = p.y; home[k * 3] = S[o]; home[k * 3 + 1] = S[o + 1]; home[k * 3 + 2] = S[o + 2];
     R[k] = Math.max(.35, Math.min(4, Math.max(p.rx, p.rz))); H[k] = Math.max(.3, p.h); M[k] = Math.max(.2, Math.min(4, p.mass || 1)) * (/cinder|block|bucket|crate/i.test(p.model) ? 3 : 1); P.push(pivots.get(p.i) || null); });
   // A knock: velocity (units/s) added at the prop, a spin, and a tall thin one tips over away from it when hard enough.
-  function knock(k, vx, vz, vy, hard) { const o = k * 12, m = M[k]; if (!awake[k]) wake(k); S[o + 3] += vx / m; S[o + 4] += vz / m; S[o + 5] = Math.max(S[o + 5], vy / m); S[o + 6] += (Math.random() - .5) * 14 * hard / m; awake[k] = 1;
+  // v53 stage 5: the spin is seeded by the prop and its knock count (not Math.random), so the same shots and blasts — your
+  // own, another player's replayed from their shot record, the host's HE — knock it the same way on every computer; at
+  // most MAX_AWAKE props move at once (a sleeping prop past the cap is not woken: cheap bodies, capped per map).
+  // (v53 MAP fix: only bullets and blasts count toward the seed, and they are never refused by the cap — a body push,
+  // from bodies each computer draws a little differently, neither changes a later knock's spin nor uses up the cap a
+  // shot needs: shots and blasts wake at most MAX_AWAKE props of their own, pushes at most MAX_AWAKE in all. Still each computer's own: the props are not in the host's state — UPDATE-v53.0.md.)
+  const knocks = new Uint32Array(n);
+  const spin01 = k => { let h = Math.imul((k + 1) * 0x9E3779B1 ^ Math.imul(++knocks[k], 0x85EBCA77), 0xC2B2AE3D); h ^= h >>> 15; return (h >>> 0) / 4294967296; };
+  const awakeCount = () => { let c = 0; for (let k = 0; k < n; k++) c += awake[k]; return c; };
+  const byShot = new Uint8Array(n), shotAwake = () => { let c = 0; for (let k = 0; k < n; k++) c += awake[k] & byShot[k]; return c; };   // (woken by a bullet or a blast: their own cap)
+  function knock(k, vx, vz, vy, hard, shot = false) { const o = k * 12, m = M[k]; if (!awake[k]) { if (shot ? shotAwake() >= MAX_AWAKE : awakeCount() >= MAX_AWAKE) return false; wake(k); byShot[k] = shot ? 1 : 0; } S[o + 3] += vx / m; S[o + 4] += vz / m; S[o + 5] = Math.max(S[o + 5], vy / m); S[o + 6] += (shot ? spin01(k) - .5 : 0) * 14 * hard / m; awake[k] = 1;
     if (S[o + 10] === 0 && H[k] > R[k] * 1.4 && hard > .6) { S[o + 10] = 1; S[o + 9] = Math.atan2(vx, vz); } }
   // Drawn a (0…1) of the way from a step ago (PV) to now.
   function place(k, a = 1) { const g = P[k]; if (!g) return; const o = k * 12, v = k * 5, b = 1 - a; g.position.set(PV[v] * b + S[o] * a, PV[v + 2] * b + S[o + 2] * a, PV[v + 1] * b + S[o + 1] * a);
@@ -51,13 +62,13 @@ export function createPhysProps(props, pivots, { cx = 0, cz = 0, floorAt = () =>
         const qx = px - dx * t, qy = py - dy * t, qz = pz - dz * t; if (qx * qx + qy * qy + qz * qz > r * r) continue; best = k; bt = t; }
       if (best < 0) return -1; const k = best, o = k * 12;
       if (props[k].breaks) { wake(k); S[o + 11] = 1; awake[k] = 0; if (P[k]) P[k].visible = false; onBreak(k, S[o], S[o + 2] + H[k] / 2, S[o + 1], R[k]); return k; }
-      knock(k, dx * 55 * power, dz * 55 * power, 6 + Math.max(0, dy) * 20, 1); return k; },
+      knock(k, dx * 55 * power, dz * 55 * power, 6 + Math.max(0, dy) * 20, 1, true); return k; },
     // A grenade's blast at (x, y, z), radius r (game units): everything within is thrown outward (pots break near it).
     blast(x, y, z, r) { for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const dx = S[o] - x, dz = S[o + 1] - z, dy = S[o + 2] - y, d = Math.hypot(dx, dy, dz); if (d > r) continue;
         const f = 1 - d / r; if (props[k].breaks && f > .45) { wake(k); S[o + 11] = 1; if (P[k]) P[k].visible = false; onBreak(k, S[o], S[o + 2] + H[k] / 2, S[o + 1], R[k]); continue; }
-        const u = d > 1e-3 ? 1 / d : 0; knock(k, dx * u * 90 * f, dz * u * 90 * f, 20 * f, 1); } },
+        const u = d > 1e-3 ? 1 / d : 0; knock(k, dx * u * 90 * f, dz * u * 90 * f, 20 * f, 1, true); } },
     // A new round: every prop back where the map put it, whole.
-    reset() { for (let k = 0; k < n; k++) { const o = k * 12; S[o] = home[k * 3]; S[o + 1] = home[k * 3 + 1]; S[o + 2] = home[k * 3 + 2]; for (let j = 3; j < 12; j++) S[o + j] = 0; awake[k] = 0; moved[k] = 0; keep(k); if (P[k]) { P[k].visible = true; place(k); } } clock.acc = 0; },
+    reset() { knocks.fill(0); for (let k = 0; k < n; k++) { const o = k * 12; S[o] = home[k * 3]; S[o + 1] = home[k * 3 + 1]; S[o + 2] = home[k * 3 + 2]; for (let j = 3; j < 12; j++) S[o + j] = 0; awake[k] = 0; moved[k] = 0; keep(k); if (P[k]) { P[k].visible = true; place(k); } } clock.acc = 0; },
     // Is prop k moving (tests)? Its spot (simulated, and drawn: the pivot).
     awake: k => !!awake[k], at: k => [S[k * 12], S[k * 12 + 2], S[k * 12 + 1]], broken: k => !!S[k * 12 + 11], drawn: k => P[k]?.position || null,
   };
@@ -66,7 +77,7 @@ export function createPhysProps(props, pivots, { cx = 0, cz = 0, floorAt = () =>
       for (let b = 0; b < count; b++) { const bx = pos[b * 3], by = pos[b * 3 + 1], bz = pos[b * 3 + 2];
         for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const dx = S[o] - bx, dz = S[o + 1] - bz, r = R[k] + BODY_R; if (dx > r || dx < -r || dz > r || dz < -r) continue;
           if (S[o + 2] > by + 72 * U || S[o + 2] + H[k] < by - .3) continue; const d = Math.hypot(dx, dz); if (d >= r) continue;
-          const ux = d > 1e-4 ? dx / d : Math.random() - .5, uz = d > 1e-4 ? dz / d : Math.random() - .5, push = (r - d) / dt * .6;
+          const ux = d > 1e-4 ? dx / d : .5, uz = d > 1e-4 ? dz / d : .5, push = (r - d) / dt * .6;
           knock(k, ux * push * M[k] * dt * 6, uz * push * M[k] * dt * 6, 0, push / 40); S[o] += ux * (r - d) * .5; S[o + 1] += uz * (r - d) * .5; moved[k] = 1; } }
       for (let k = 0; k < n; k++) { if (!awake[k]) continue; const o = k * 12; moved[k] = 1;
         let vx = S[o + 3], vz = S[o + 4], vy = S[o + 5]; const fl = floorAt(S[o] - cx, S[o + 1] - cz, S[o + 2] + 2), floor = Number.isFinite(fl) ? fl : S[o + 2];

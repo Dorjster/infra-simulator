@@ -23,13 +23,39 @@ const spray = (n, keys) => { const out = []; for (let i = 0; i < n; i++) { let k
 // Semi-automatic kick: each quick follow-up shot climbs `k` degrees, with a small alternating drift.
 const kick = (n, k, drift = .15) => Array.from({ length: n }, (_, i) => [+(k * i * (1 - .03 * i)).toFixed(3), +(i ? (i % 2 ? drift : -drift) * Math.min(1, i / 3) : 0).toFixed(3)]);
 const RECOVER = { rifle: 12, smg: 15, pistol: 5, shotgun: 5, sniper: 4, lmg: 10 };
-// Wallbang budget (arena-maps.js bulletPath): what a bullet can go through. A crate 6 thick costs ~5; a thin
-// plaster wall ~3; a thin brick wall ~6. Rifles and the AWP shoot through crates and thin walls, pistols and SMGs through
-// thin, soft cover, shotgun pellets hardly at all.
+// Wallbang power (arena-maps.js bulletPath, v53): every gun's `pen` is CS2's m_flPenetration (the CS2 table's cpen,
+// weapons.vdata) and a wall costs CS2's damage loss (gd-surface-props.js). The per-gun `pen` literals and this table by
+// kind are the pre-v53 budgets, kept only for a gun the CS2 table lacks.
 const PEN = { rifle: 7, sniper: 11, lmg: 8, smg: 3.5, pistol: 3.5, shotgun: 1.5 };
-// Shotguns load shell by shell (CS2 m_bReloadsSingleShells): the first after reloadStartMs (CS2's no-attack time
-// after a reload starts), then one every SHELL_MS — our approximation of the clip's per-shell time (not in the vdata).
+// Shotguns load shell by shell (CS2 m_bReloadsSingleShells): before v53 the first after reloadStartMs, then one every
+// SHELL_MS (500, a guess). v53 RELOAD replaces both with CS2's clip stages (reloadOf below); kept only for a gun the
+// reference lacks.
 const SHELL_MS = 500;
+// ── v53 RELOAD: reloads and ammo as CS2 has them (spec addendum 4; RELOAD_REF: tools/import-cs2-reloads.mjs from the
+// user's own install — weapons.vdata, the first-person reload clips and animgraphs) ──
+//  · mag = m_iMaxClip1; reserve = m_nPrimaryReserveAmmoMax, which CS2 counts in magazines for every magazine gun
+//    (m_bReserveAmmoAsClips: the AK's 3 = 90 rounds, the Glock's 3 = 60, the AWP's 2 = 10) and in shells for the
+//    shotguns (32). The reserve is kept as a pool of rounds: a reload moves only the missing rounds (the spec's rule —
+//    what CS2's server does with a half-empty magazine is in its code, not in its data files: UPDATE-v53.0.md).
+//  · reloadMs = m_flDisallowAttackAfterReloadStartDuration (no shot for that long; the AK's 2.4667 s).
+//  · magInMs: the clip's WPN_RELOAD_ADD_AMMO — the new magazine seated, the rounds counted (the AK's 1.1 s of 2.4333).
+//    A switch after it keeps the full magazine; before it, nothing changed. magInEmptyMs: the *_empty_* clip's (CS2
+//    plays it when the magazine is at 0: the pistols' slide-locked reloads, the Glock's 1.2667 s). The CZ75-Auto:
+//    magInAltMs / magInAltEmptyMs, its reload2_* clips once the spare front magazine is gone.
+//  · reloadClipMs: the clip's own length (its sounds and the arms play at CS2's speed).
+//  · Shotguns (CS2's WPN_RELOAD_INTRO / LOOP / OUTRO stages): shellIntroMs, then one shell per shellMs, each counted
+//    shellAddMs into its loop (the Nova's 0.3667 + 0.3 = 0.6667 s for the first, then every 0.4333 s), shellOutroMs.
+import { RELOAD_REF } from './gd-reload-ref.js';
+const ms = s => Math.round(s * 1000);
+export function reloadOf(id) { const r = RELOAD_REF[id]; if (!r) return {};
+  const o = { mag: r.clip1, reserve: r.asClips ? r.reserve * r.clip1 : r.reserve, reloadClipMs: ms(r.reload.dur) };
+  if (r.single && r.reload.loop) return { ...o, shellIntroMs: ms(r.reload.intro), shellMs: ms(r.reload.loop), shellAddMs: ms(r.reload.add - r.reload.intro), shellOutroMs: ms(r.reload.outro), reloadMs: ms(r.reload.intro + r.reload.loop + r.reload.outro) };   // (reloadMs: one shell's whole reload — another player's arms)
+  return { ...o, reloadMs: ms(r.rl), magInMs: ms(r.reload.add), magInEmptyMs: ms((r.empty || r.reload).add), ...(r.alt ? { magInAltMs: ms(r.alt.add), magInAltEmptyMs: ms((r.altEmpty || r.alt).add) } : {}) }; }
+// The moment (ms after the start) a reload's rounds count: the gun, its magazine at the start, and whether the CZ75's
+// spare front magazine is still on (front: true while the reserve is untouched — its first reload takes the spare).
+export function magInMs(w, mag, front = true) { if (!w?.magInMs) return w?.reloadMs ? w.reloadMs * .75 : 0; const alt = w.magInAltMs && !front; return mag > 0 ? (alt ? w.magInAltMs : w.magInMs) : (alt ? w.magInAltEmptyMs : w.magInEmptyMs); }
+// The earliest any reload of the gun can seat (the host's check: combat-logic takeReload).
+export const magInMinMs = w => w?.shellMs ? (w.shellIntroMs ?? 0) + (w.shellAddMs ?? 0) : w?.magInMs ? Math.min(w.magInMs, w.magInEmptyMs, w.magInAltMs ?? Infinity, w.magInAltEmptyMs ?? Infinity) : 0;
 
 const G = (o) => ({ team: null, mode: 'semi', pellets: 0, suppressed: false, zoom: null, model: o.id, sound: o.id, ...o, auto: o.mode === 'auto', recover: o.recover ?? RECOVER[o.kind], cat: { rifle: 'Rifle', sniper: 'Sniper rifle', smg: 'SMG', shotgun: 'Shotgun', pistol: 'Pistol', lmg: 'Machine gun' }[o.kind] });
 
@@ -113,13 +139,13 @@ export const WEAPONS = [
   G({ id: 'lmg', name: 'M249', kind: 'lmg', price: 5200, reward: 300, dmg: 32, ap: .8, rangeMod: .97, rateMs: 80, mode: 'auto', mag: 100, reserve: 200, reloadMs: 5700, speed: 195, range: 550, pattern: spray(100, [[0, 0, 0], [1, .45, 0], [6, 3, .4], [12, 4.6, -.8], [20, 5.2, 1.2], [30, 5.6, -1.3], [45, 5.9, 1], [60, 6.1, -.9], [80, 6.3, .8], [99, 6.4, 0]]), desc: '100 rounds of suppressing fire. Slow to move and to reload.' }),
   G({ id: 'negev', name: 'Negev', kind: 'lmg', price: 1700, reward: 300, dmg: 35, ap: .71, rangeMod: .97, rateMs: 75, mode: 'auto', mag: 150, reserve: 300, reloadMs: 5700, speed: 150, range: 550, pattern: spray(150, [[0, 0, 0], [1, .7, 0], [3, 2.4, .8], [6, 4.4, -1], [9, 5.4, 1.2], [12, 5.2, -.4], [16, 4.7, 0], [24, 4.5, 0], [149, 4.5, 0]]), model: 'lmg', desc: '150 rounds: wild for the first shots, then a steady beam that holds a corner. Cheap for a machine gun; very slow to move.' }),
 ].map(w => { const c = CS2[w.id];   // (CS2's own numbers win over the literals above, which match them)
-  return { ...w, usd: w.price, pen: w.pen ?? PEN[w.kind], pattern: w.mode === 'auto' && !w.pellets ? w.pattern.map(([p, y]) => [+(p * SPRAY_SCALE.pitch).toFixed(3), +(y * SPRAY_SCALE.yaw).toFixed(3)]) : w.pattern,
+  return { ...w, usd: w.price, pen: c.cpen ?? w.pen ?? PEN[w.kind], pattern: w.mode === 'auto' && !w.pellets ? w.pattern.map(([p, y]) => [+(p * SPRAY_SCALE.pitch).toFixed(3), +(y * SPRAY_SCALE.yaw).toFixed(3)]) : w.pattern,
     rateMs: Math.round(c.cyc * 1000), dmg: c.dmg, ap: c.ar / 2, rangeMod: c.rmod, reach: c.rng / 6.5, hs: c.hs, deployMs: Math.round(c.dep * 1000), reloadStartMs: Math.round(c.rl * 1000), flinch: c.fl, recoilSeed: c.seed,
     acc: accFrom(c.acc), accZ: accFrom(c.accZ), recoil: recoilFrom(c.acc), recoilZ: recoilFrom(c.accZ), spread: c.acc[0], ...(c.zoom ? { zoom: c.zoom, zoomMs: c.zt.map(s => Math.round(s * 1000)) } : {}),
-    ...(w.kind === 'shotgun' ? { shellMs: SHELL_MS, pelletSpread: c.acc[0] } : {}) }; });
+    ...(w.kind === 'shotgun' ? { shellMs: SHELL_MS, pelletSpread: c.acc[0] } : {}), ...reloadOf(w.id) }; });   // (v53 RELOAD: CS2's magazine, reserve and reload moments win over the literals)
 export const WEAPON_IDS = WEAPONS.map(w => w.id);
 // Darja's chrome hand cannon (old Payday saves only; not used in Global Defensive).
-export const DARJA_GUN = { ...WEAPONS.find(w => w.id === 'deagle'), id: 'cannon', name: "Darja's Hand Cannon", price: 0, reward: 300 };
+export const DARJA_GUN = { ...WEAPONS.find(w => w.id === 'deagle'), id: 'cannon', name: "Darja's Hand Cannon", price: 0, reward: 300, mag: 7, reserve: 35, reloadMs: 2200, magInMs: undefined, magInEmptyMs: undefined };   // (v53 RELOAD: its 52.0.5 rounds and reload, outside Global Defensive)
 // Knives (slot 3): left click a quick slash, right click a slow heavy stab; from behind both are much stronger.
 export const KNIVES = [
   { id: 'knife', name: 'Knife', kind: 'knife', price: 0, reward: 1500, dmg: 40, ap: .85, rangeMod: 1, rateMs: 400, mode: 'semi', range: 9, mag: 0, reserve: 0, reloadMs: 0, spread: 0, pattern: [[0, 0]], move: {}, recover: 1, speed: 250 },

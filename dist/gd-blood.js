@@ -34,8 +34,9 @@
 // files. A third pool (DINK_N trail / sprite quads, ONE additive draw, warmed with the others), written from the same
 // host records, so everyone who can see the head sees the same sparks; a bare head gets the blood only. Not your own
 // head in first person (as the spray). The sparks are not blood: Settings → Blood off leaves them.
-// Not drawn (CS2 children of impact_helmet_headshot left out): impact_generic_smoke_small, ricochet_sparks,
-// impact_metal_sparks_trailing, impact_metal_child_glow2, blood_impact_friendly_flash.
+// Its other CS2 children (impact_generic_smoke_small, ricochet_sparks, impact_metal_sparks_trailing,
+// impact_metal_child_glow2) are drawn by gd-impacts.js (DINK_EXTRA) through onDink — v53 stage 5;
+// blood_impact_friendly_flash is CS2's friendly-fire flash, not drawn.
 import * as THREE from './three.module.js';
 import { HU } from './weapons-data.js';
 import { bulletPath, BulletPath } from './arena-maps.js';
@@ -136,8 +137,8 @@ export function planSpray(rec, out) {
 // at most 1 % of the screen (m_flMaxSize .01). The main trails' own trail length is the engine's default (.1 s).
 export const DINK = {
   trails: { n: 15, xy: [-900, 900], z: [550, 950], sph: 300, noise: 500, life: [.05, .3], r: [.35, .9], rs: .5, grow: [1, 1], alpha: [.5, 1], col: [[103, 255, 242], [82, 216, 255]], grav: -300, drag: .5, tt: [.1, .1], max: 25, fadeIn: .1, ob: 3, fade: 0 },
-  spark: { n: 2, xy: [-900, 900], z: [-1600, -400], sph: 500, noise: 0, life: [.09, .1], r: [4, 6], rs: .5, grow: [4, .5], alpha: [1, 1], col: [[77, 254, 239], [175, 224, 255]], grav: 0, drag: 0, tt: [.0142, .0205], max: 64, fadeIn: .051, ob: 3, fade: 1 },
-  glow: { n: 1, off: 3, life: [.1, .13], r: [2, 3], rs: .5, grow: [.5, 2], alpha: [1, 1], col: [[155, 218, 255], [184, 207, 250]], ob: 8, fade: 2, maxScreen: .01, sprite: 1 },
+  spark: { n: 2, xy: [-900, 900], z: [-1600, -400], sph: 500, noise: 0, life: [.09, .1], r: [4, 6], rs: .5, grow: [4, .5], rb: .95, alpha: [1, 1], col: [[77, 254, 239], [175, 224, 255]], grav: 0, drag: 0, tt: [.0142, .0205], max: 64, fadeIn: .051, ob: 3, fade: 1 },
+  glow: { n: 1, off: 3, life: [.1, .13], r: [2, 3], rs: .5, grow: [.5, 2], rb: .95, alpha: [1, 1], col: [[155, 218, 255], [184, 207, 250]], ob: 8, fade: 2, maxScreen: .01, sprite: 1 },
 };
 export const DK = 24, MAX_DINK = 18, DINK_N = 54; const DINK_PARTS = [DINK.trails, DINK.spark, DINK.glow];
 // Does this record dink? A headshot that met a helmet (host: hm).
@@ -156,10 +157,10 @@ export function planDink(rec, out) {
     const o = n * DK, cr = rnd();
     out[o] = px + zx * ox * HU; out[o + 1] = py + zy * ox * HU; out[o + 2] = pz + zz * ox * HU;
     out[o + 3] = vx * HU; out[o + 4] = vy * HU; out[o + 5] = vz * HU; out[o + 6] = rr(e.life);
-    out[o + 7] = rr(e.r) * e.rs * HU; out[o + 8] = e.grow[0]; out[o + 9] = e.grow[1]; out[o + 10] = (e.grav || 0) * HU; out[o + 11] = Math.max(.02, (e.drag || 0) * 30);
+    out[o + 7] = rr(e.r) * e.rs * HU; out[o + 8] = e.grow[0]; out[o + 9] = e.grow[1]; out[o + 10] = (e.grav || 0) * HU; out[o + 11] = Math.max(.02, e.drag > 0 ? -Math.log(1 - e.drag) * 30 : 0);   // (v53 MAP: Source's drag — (1 − fDrag) of the speed kept per 1/30 s, as gd-impacts.js)
     out[o + 12] = e.tt ? rr(e.tt) : 0; out[o + 13] = (e.max || 0) * HU; out[o + 14] = e.fadeIn || 0;
     out[o + 15] = lin(e.col[0][0] + (e.col[1][0] - e.col[0][0]) * cr) * e.ob; out[o + 16] = lin(e.col[0][1] + (e.col[1][1] - e.col[0][1]) * cr) * e.ob; out[o + 17] = lin(e.col[0][2] + (e.col[1][2] - e.col[0][2]) * cr) * e.ob;
-    out[o + 18] = rr(e.alpha); out[o + 19] = e.sprite ? 1 : 0; out[o + 20] = e.fade; out[o + 21] = e.maxScreen || 0; out[o + 22] = 0; out[o + 23] = 0; n++; } }
+    out[o + 18] = rr(e.alpha); out[o + 19] = e.sprite ? 1 : 0; out[o + 20] = e.fade; out[o + 21] = e.maxScreen || 0; out[o + 22] = 0; out[o + 23] = e.rb || .5; n++; } }   // (23: InterpolateRadius flBias — v53 MAP: Source's Bias(), the spark shrinks from ×4 at once as CS2's)
   return n;
 }
 
@@ -348,7 +349,7 @@ void main() {
   vec3 vt = vec3(0.0, aS.w / k, 0.0);
   vec3 p = aP.xyz + (aV.xyz - vt) * (1.0 - e) / k + vt * age, vel = (aV.xyz - vt) * e + vt;
   vec4 mv = viewMatrix * vec4(p, 1.0); float d = max(0.05, -mv.z), onePx = d * uPx;
-  float rad = aS.x * mix(aS.y, aS.z, n); vec2 c = position.xy * 2.0;
+  float tb = abs(aK.w - 0.5) > 1e-3 && aK.w > 0.0 ? pow(n, log(aK.w) / log(0.5)) : n, rad = aS.x * mix(aS.y, aS.z, tb); vec2 c = position.xy * 2.0;
   if (aK.x < 0.5) {
     vec3 vv = (viewMatrix * vec4(vel, 0.0)).xyz; float sp = length(vel), sl = length(vv.xy);
     vec2 ay = sl > 1e-5 ? vv.xy / sl : vec2(0.0, 1.0), ax = vec2(ay.y, -ay.x);
@@ -362,7 +363,8 @@ void main() {
 }`;
 const DINK_FS = `varying vec2 vQ; varying vec4 vCol; varying float vKind;
 void main() {
-  float a = vKind < 0.5 ? (1.0 - vQ.x * vQ.x) * mix(0.3, 1.0, vQ.y * 0.5 + 0.5) : pow(max(0.0, 1.0 - length(vQ)), 2.0);
+  float s = vQ.y * 0.5 + 0.5, tp = pow(max(0.0, sin(3.14159 * s)), 0.6);   // (v53 MAP: a thin tapered spindle, as sparks.vtex — gd-impacts.js)
+  float a = vKind < 0.5 ? pow(max(0.0, 1.0 - abs(vQ.x) / max(tp, 0.05)), 2.0) * mix(0.3, 1.0, s) : pow(max(0.0, 1.0 - length(vQ)), 2.0);
   a *= vCol.a; if (a < 0.004) discard;
   gl_FragColor = vec4(vCol.rgb, a);
   #include <tonemapping_fragment>
@@ -375,7 +377,7 @@ function quad(n, attrs) { const p = new THREE.PlaneGeometry(1, 1), g = new THREE
 // opts: boxes() → the map's collision boxes (lab.js: the arena's), game() → the game state, me() → your key, watched()
 // → the key you watch in first person (else null), clock() → the host's ms (tests), quiet() → true when a picture may
 // be sent to the GPU now (no live round), assets: false to skip the CS2 import (tests).
-export function createBlood(scene, { boxes = () => null, game = () => null, me = () => '', watched = () => null, clock = () => hostNow(), quiet = null, assets = true } = {}) {
+export function createBlood(scene, { boxes = () => null, game = () => null, me = () => '', watched = () => null, clock = () => hostNow(), quiet = null, assets = true, onDink = null } = {}) {   // (onDink(rec): v53 stage 5 — the dink's other CS2 children, gd-impacts.js)
   const t0 = performance.now();
   const decalTex = dataTexture(builtinDecals(), 512), sprayTex = dataTexture(builtinSpray(), 256);
   const sp = quad(SPRAY_N, [['aP', 4], ['aV', 4], ['aS', 4], ['aM', 4], ['aC', 4], ['aX', 1]]), dc = quad(DECAL_N, [['aC', 4], ['aU', 4], ['aV', 4]]);
@@ -401,11 +403,11 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
       Sz[q] = KB[o + 7]; Sz[q + 1] = KB[o + 8]; Sz[q + 2] = KB[o + 9]; Sz[q + 3] = KB[o + 10];
       M[q] = KB[o + 11]; M[q + 1] = KB[o + 12]; M[q + 2] = KB[o + 13]; M[q + 3] = KB[o + 14];
       Cc[q] = KB[o + 15]; Cc[q + 1] = KB[o + 16]; Cc[q + 2] = KB[o + 17]; Cc[q + 3] = KB[o + 18];
-      K[q] = KB[o + 19]; K[q + 1] = KB[o + 20]; K[q + 2] = KB[o + 21]; K[q + 3] = 0;
+      K[q] = KB[o + 19]; K[q + 1] = KB[o + 20]; K[q + 2] = KB[o + 21]; K[q + 3] = KB[o + 23];
       dinkEnd = Math.max(dinkEnd, t + KB[o + 22] + KB[o + 6]); }
     for (let j = 0; j < KA.length; j++) KA[j].needsUpdate = true; dink.visible = true; dinksN++;
   }
-  function dinkHit(rec, t) { if (!dinks(rec) || !validRecord(rec)) return false; if (rec.v && (rec.v === me() || rec.v === watched())) return false; const n = planDink(rec, KB); if (n) spawnDink(n, t); return n > 0; }
+  function dinkHit(rec, t) { if (!dinks(rec) || !validRecord(rec)) return false; if (rec.v && (rec.v === me() || rec.v === watched())) return false; const n = planDink(rec, KB); if (n) { spawnDink(n, t); onDink?.(rec); } return n > 0; }
   function clearDink() { dk.a.aV.array.fill(0); dk.a.aV.needsUpdate = true; kHead = 0; dinkEnd = -1; dink.visible = false; }
   // particles start with no life: nothing drawn
   const PB = new Float32Array(MAX_PER_HIT * SP), DB = new Float32Array(MAX_DECALS_PER_HIT * DC), cast = mapCast(boxes);

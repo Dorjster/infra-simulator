@@ -50,4 +50,15 @@ if (existsSync(mf)) { const { useMapFile, ARENA_MAPS, mapBoxes } = await import(
     ok(`Mirage: its ${M.physProps.length} physics props are no collision for players`, free.length >= M.physProps.length * .5, `${free.length} free`);
     ok('Mirage: the bullets have their own layer (no player clips) with what walls are made of', boxes.bullets?.length > 0 && boxes.bullets.some(b => b.mat === 'wood') && boxes.bullets.some(b => b.mat === 'metal')); }
   else console.log('(Mirage file from before physics props: skipped)'); }
-console.log(`PASS: physics props · ${n} checks (pushed by a body, slide to a stop, walls, shots, pottery shatters, HE blast, tip over, new round)`);
+// v53 stage 5: the same shots and blasts knock the props the same way on every computer (seeded spins, no Math.random);
+// at most MAX_AWAKE move at once.
+{ const { MAX_AWAKE } = await import('../dist/arena-physprops.js');
+  const many = Array.from({ length: 40 }, (_, i) => ({ i, model: 'chair_stool01a', breaks: false, mass: 1, x: i * 6, z: 0, y: 0, h: 4, rx: 1.2, rz: 1.2 }));
+  const mk = () => createPhysProps(many, new Map(many.map(p => { const g = new THREE.Group(); g.position.set(p.x, p.y, p.z); return [p.i, g]; })), { floorAt: () => 0 });
+  const A = mk(), B = mk(), none = new Float32Array(0), saved = Math.random; Math.random = () => 0;   // (a Math.random left in the knocks would split the two)
+  for (const Q of [A, B]) { if (Q === B) Math.random = () => .999; Q.shot(-5, 2, 0, 1, 0, 0, 30, 1); Q.blast(60, 0, 0, 30); for (let t = 0; t < 30; t++) Q.update(dt, none, 0); }
+  Math.random = saved; let same = true; for (let k = 0; k < 40; k++) { const a = A.at(k), b = B.at(k); if (Math.abs(a[0] - b[0]) > 1e-9 || Math.abs(a[2] - b[2]) > 1e-9) same = false; }
+  ok('the same shots and blasts move the props the same on every computer (seeded, not random)', same);
+  const C = mk(); C.blast(120, 0, 0, 400); let up = 0; for (let k = 0; k < 40; k++) if (C.awake(k)) up++;
+  ok(`at most ${MAX_AWAKE} props move at once (a blast over 40: ${up})`, up === MAX_AWAKE, up); }
+console.log(`PASS: physics props · ${n} checks (pushed by a body, slide to a stop, walls, shots, pottery shatters, HE blast, tip over, new round; v53: the same knocks everywhere, ${'capped'} awake bodies)`);

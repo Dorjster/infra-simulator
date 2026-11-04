@@ -12,6 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'; import path from 'node:path'; import os from 'node:os'; import { fileURLToPath } from 'node:url';
 import { meshSolids } from '../../dist/mesh-solids.js';
 import { surfaceOf, SURFACES } from '../../dist/map-light.js';
+import { surfaceName as cs2Surface, SURFACE_HASH, MAT_SURFACE } from '../../dist/gd-surface-props.js';
 import { radarMask } from './radar-mask.mjs'; import { buildNadeMesh, cs2mBodyEnd } from './nade-mesh.mjs'; import { modeProps } from './mode-props.mjs';
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..'), [id, dir, outDir = path.join(repo, 'user-maps')] = process.argv.slice(2);
 if (!id || !dir) { console.log('usage: node tools/maps/import-cs2-map.mjs <id> <export dir> [out dir]'); process.exit(1); }
@@ -123,10 +124,20 @@ if (process.env.NADE_MESH_ONLY) { const soup = nadeMeshSoup(), target = path.joi
 // marked to pass bullets (chain-link fences, grates), no ladders, sky or glass panes (a pane breaks at the first shot).
 const passBullets = m => /playerclip|npcclip|passbullets|grenadeclip|navclip|window_glass|_glass\b|^physics_group_glass/.test(m.name) || isLadder(m) || isSky(m);
 const bullets = join([...meshes.filter(m => !passBullets(m)), ...solidEnts.filter(m => !passBullets(m))]);
-// What a stretch of it is made of, for wallbangs (arena-maps.js PEN_COST): CS2's surface property, in a few classes.
+// What a stretch of it is made of, for wallbangs, impacts and their sounds (dist/gd-surface-props.js): CS2's own surface
+// property. v53 MAP fix: the exact CS2 name whenever gd-surface-props knows it (a physics group named for a surface
+// property — chainlink, metalgrate, metal_barrel, Plastic_Box, carpet…; or Source2Viewer's vrf_unknown_key_<hash> for a
+// hash it could not name, looked up in SURFACE_HASH from the install's surfaceproperties.vsurf m_nameHash: 2838185980 =
+// metalrailing), appended to header.pens; else the older classes (concrete, wood, crate, metal…, as files made before
+// v53 hold). Before, chainlink and metalgrate (CS2's game material G: 5 % loss, mod 3) were filed as metal, metal_barrel
+// (it stops bullets) as metal, metalrailing as concrete, and plastic / rubber / carpet / computer as crate (Wood_Crate).
 const PENS = ['concrete', 'wood', 'crate', 'metal', 'plaster', 'brick', 'sand', 'stone', 'glass'];
-const penOf = g => { const n = SURF[g] || ''; return PENS.indexOf(/glass/.test(n) ? 'glass' : /wood_crate|wood_basket|cardboard|paper|cloth|upholstery|carpet|rubber|plastic|canister|computer|foliage|leaves/.test(n) ? 'crate' : /wood/.test(n) ? 'wood'
-  : /metal|chainlink|brass|grate|vent|dumpster|vehicle|barrel/.test(n) ? 'metal' : /plaster|tile|pottery|porcelain|clay|drywall/.test(n) ? 'plaster' : /brick/.test(n) ? 'brick' : /sand|dirt|gravel|mud|grass/.test(n) ? 'sand' : /rock|boulder|stone/.test(n) ? 'stone' : 'concrete'); };
+const exactSurface = n => { const h = /vrf_unknown_key_(\d+)/.exec(n), nm = h ? SURFACE_HASH[h[1]] : n; const s = nm ? cs2Surface(nm) : 'default'; return s !== 'default' || /^default$/.test(nm || '') ? s : null; };
+const classOf = n => (/glass/.test(n) ? 'glass' : /wood_crate|wood_basket|cardboard|paper|cloth|upholstery|carpet|rubber|plastic|canister|computer|foliage|leaves/.test(n) ? 'crate' : /wood/.test(n) ? 'wood'
+  : /metal|chainlink|brass|grate|vent|dumpster|vehicle|barrel/.test(n) ? 'metal' : /plaster|tile|pottery|porcelain|clay|drywall/.test(n) ? 'plaster' : /brick/.test(n) ? 'brick' : /sand|dirt|gravel|mud|grass/.test(n) ? 'sand' : /rock|boulder|stone/.test(n) ? 'stone' : 'concrete');
+// (a stretch keeps its old class's name when that class already stands for the exact surface — wood → Wood, rock → stone:
+// older game code, which reads these files too, knows those names)
+const penOf = g => { const n = SURF[g] || '', c = classOf(n), ex = exactSurface(n), nm = !ex || MAT_SURFACE[c] === ex || c === ex ? c : ex; let i = PENS.indexOf(nm); if (i < 0) { i = PENS.length; PENS.push(nm); } return Math.min(254, i); };
 console.log('physics:', meshes.map(m => `${m.name} ${m.idx.length / 3}`).join(' · '));
 // Brush-like entities (models '*N' with their bounds, as a map file's): buy zones, bomb sites, places.
 const models = [null], out = [];
@@ -332,5 +343,18 @@ const header = Buffer.from(JSON.stringify({ id, source: 'Counter-Strike 2 (' + p
 const pad = b => Buffer.concat([b, Buffer.alloc((4 - b.length % 4) % 4)]), u32 = v => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
 const file = Buffer.concat([Buffer.from('CS2M'), u32(1), u32(header.length), pad(header), ...[P, N].flatMap(g => [Buffer.from(g.offs.buffer), pad(Buffer.from(g.vals.buffer))]), pad(Buffer.from(P.surf.buffer)), Buffer.from(B.offs.buffer), pad(Buffer.from(B.vals.buffer)), pad(Buffer.from(B.surf.buffer)), ...(NM ? [NM.buf] : [])]);   // (then the bullets' layer and what each of its stretches is made of: header.pens)   // (then each player stretch's surface: an index into the header's `surfaces`)
 const target = path.join(outDir, id + '.bsp'); mkdirSync(path.dirname(target), { recursive: true });
+// PENS_ONLY=1 (v53 MAP fix): only bring the bullets' surfaces of the map file already there up to the exact CS2 names
+// (header.pens and the byte per bullet stretch) — its grids, header and everything else kept byte for byte; refused
+// unless its bullets' grid is this one's to the byte. The file before goes to ~/CS2-extract/backup/<id>-before-v53-pens.bsp.
+if (process.env.PENS_ONLY) { if (!existsSync(target)) { console.log('no map file at ' + target); process.exit(1); }
+  const old = readFileSync(target), hl = old.readUInt32LE(8), H = JSON.parse(old.subarray(12, 12 + hl).toString()), p4 = n => n + (4 - n % 4) % 4, S = H.sizes;
+  if (old.subarray(0, 4).toString() !== 'CS2M' || !S?.bullets || S.bullets.join() !== [B.offs.length, B.vals.length, B.surf.length].join()) { console.log('the map file\'s bullets differ from this import: run the full import'); process.exit(1); }
+  let o = 12 + p4(hl); o += S.players[0] * 4 + p4(S.players[1] * 2) + S.nades[0] * 4 + p4(S.nades[1] * 2) + p4(S.surfaces || 0);
+  const bo = o, bv = o + S.bullets[0] * 4, bp = bv + p4(S.bullets[1] * 2);
+  if (!old.subarray(bo, bo + S.bullets[0] * 4).equals(Buffer.from(B.offs.buffer)) || !old.subarray(bv, bv + S.bullets[1] * 2).equals(Buffer.from(B.vals.buffer))) { console.log('the map file\'s bullets grid differs from this import: run the full import'); process.exit(1); }
+  const bk = path.join(os.homedir(), 'CS2-extract', 'backup', id + '-before-v53-pens.bsp'); if (!existsSync(bk) && path.resolve(outDir) === path.join(repo, 'user-maps')) { mkdirSync(path.dirname(bk), { recursive: true }); copyFileSync(target, bk); console.log('kept the earlier map file:', bk); }
+  H.pens = PENS; const hb = Buffer.from(JSON.stringify(H)), body = Buffer.from(old.subarray(12 + p4(hl))); Buffer.from(B.surf.buffer).copy(body, bp - (12 + p4(hl)));
+  writeFileSync(target, Buffer.concat([Buffer.from('CS2M'), u32(1), u32(hb.length), pad(hb), body]));
+  console.log(`→ ${target}: bullets' surfaces ${PENS.join(', ')}`); process.exit(0); }
 if (existsSync(target) && readFileSync(target).subarray(0, 4).toString() !== 'CS2M') { const bk = path.join(os.homedir(), 'CS2-extract', 'backup'); mkdirSync(bk, { recursive: true }); const to = path.join(bk, id + '-before-cs2.bsp'); if (!existsSync(to)) { copyFileSync(target, to); console.log('kept the earlier map file:', to); } }
 writeFileSync(target, file); writeFileSync(path.join(dir, 'movers.json'), JSON.stringify(moverLooks.filter(m => m.look || m.physics), null, 1));   /* (for the look: convert_world.py) */ console.log(`→ ${target} (${(file.length / 1048576).toFixed(1)} MB): ${out.filter(e => /^info_player/.test(e.classname)).length} spawns, ${out.filter(e => e.classname === 'func_buyzone').length} buy zones, ${out.filter(e => e.classname === 'func_bomb_target').length} bomb sites, ${out.filter(e => e.classname === 'env_cs_place').length} places`);

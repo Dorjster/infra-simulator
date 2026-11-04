@@ -7,11 +7,13 @@
 // Units, once: 1 Hammer unit (HU, CS2's) = 1 inch = 2.54 cm; 1 game unit = 16.5 cm ≈ 6.5 HU (arena-move.js HU =
 // 2.54 / 16.5 game units per HU). CS2's curves are in HU: a sound `d` game units away is read at d / HU.
 // docs/GD-SOUNDS.md lists every event, its CS2 event and file, and what the local import covers.
+import { surfaceOf } from './gd-surface-props.js';   // (v53: a bullet impact's CS2 sound by surface)
 import { audioCtx, master, uiBus, musicBus, ringBus, reverb, duck, HU_UNITS, listenerFrame, setRanges } from './spatial-audio.js';
 import { want, ready, bufferOf, setSoundRoute, roomSoundNames, sameSource, FX } from './sound-bank.js';
 import { userAssets } from './user-assets.js';
 import { WEAPONS, isFirearm } from './weapons-data.js';
 import { REF } from './gd-sounds-ref.js';
+import { RELOAD_REF, RELOAD_SND } from './gd-reload-ref.js';   // (v53 RELOAD: CS2's reload sound events, the silent reload)
 export const HU = HU_UNITS;
 const take = (n, k = FX[n] || 1) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}`), steps = s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}`);
 const reloadClass = id => { const w = WEAPONS.find(x => x.id === id), k = w?.kind; return ['pistol', 'deagle', 'usps', 'p250', 'fiveseven', 'cz75', 'tec9'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : k === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
@@ -23,7 +25,12 @@ export const NADE_CS2 = { he: 'HEGrenade', flash: 'Flashbang', smoke: 'SmokeGren
 // Surfaces (arena-scene surfaceAt / map-light SURFACES) → CS2's footstep material; a bullets' box material → CS2's
 // bullet-impact family.
 export const STEP_CS2 = { concrete: 'Concrete', metal: 'SolidMetal', wood: 'Wood', grass: 'Grass', carpet: 'Carpet' };
-export const IMPACT_OF = { wood: 'wood', crate: 'wood', door: 'wood', glass: 'glass', plaster: 'plaster', roof: 'plaster', metal: 'metal', 'metal-blue': 'metal', 'metal-green': 'metal', 'metal-red': 'metal', sand: 'sand', adobe: 'concrete', brick: 'concrete', concrete: 'concrete', stone: 'concrete', flesh: 'flesh' };
+// (v53 stage 5: each class's CS2 surface property's own audiosounds.bulletimpact, surfaceproperties.vsurf in the user's
+// install — gd-surface-props.js: plaster's is Concrete.BulletImpact, a tiled roof's Tile.BulletImpact; any other name,
+// a CS2 door's or breakable's own surface property, goes by its event's family: impactFamily)
+export const IMPACT_OF = { wood: 'wood', crate: 'wood', door: 'wood', glass: 'glass', plaster: 'concrete', roof: 'tile', metal: 'metal', 'metal-blue': 'metal', 'metal-green': 'metal', 'metal-red': 'metal', sand: 'sand', adobe: 'concrete', brick: 'concrete', concrete: 'concrete', stone: 'concrete', flesh: 'flesh' };
+const FAMILY = [[/^(SolidMetal|Metal|MetalVehicle|MetalBarrel|MetalGrate|ChainLink|Computer)/, 'metal'], [/^Wood/, 'wood'], [/^Glass/, 'glass'], [/^Sand/, 'sand'], [/^(Dirt|grass|Mud)/, 'dirt'], [/^Tile/, 'tile'], [/^drywall/, 'plaster'], [/^Flesh/, 'flesh']];
+export const impactFamily = mat => { if (IMPACT_OF[mat]) return IMPACT_OF[mat]; const ev = surfaceOf(mat).sound || ''; for (const [re, f] of FAMILY) if (re.test(ev)) return f; return 'concrete'; };
 // Voice categories ("mix"): how many may sound at once, and the whole bank's cap. Full: the quietest of the lowest
 // priority goes (faded over CS2's 0.1 s fadetime), or the new one is dropped if everything sounding outranks it.
 export const MIX = { gun: 14, far: 6, step: 8, impact: 6, foley: 8, boom: 6, bomb: 3, ui: 4, loop: 4, music: 1, radio: 2 };   // (music: one at a time — CS2's stop_music)
@@ -64,10 +71,10 @@ E('nade.smoke.emit', 'BaseSmokeEffect.Sound', take('poof'), { mix: 'boom', pr: 2
 E('nade.smoke.clear', 'SmokeGrenade.Clear', [], { mix: 'foley' });
 E('nade.decoy.pop', null, [], { mix: 'impact', syn: 'pop' });
 E('nade.molotov.ignite', 'Molotov.Start', take('glass'), { mix: 'boom', pr: 3, pv: 1, far: 'nade.molotov.far', with: 'nade.molotov.smash', syn: 'blast' }); E('nade.molotov.far', 'Molotov.StartDistant', [], { mix: 'boom', pr: 1, layer: 1 }); E('nade.molotov.smash', 'Molotov.Smash', [], { mix: 'boom', pr: 2, layer: 1 });
-E('nade.incendiary.ignite', 'IncGrenade.Start', take('glass'), { mix: 'boom', pr: 3, pv: 1, far: 'nade.incendiary.far', with: 'nade.incendiary.pop', syn: 'blast' }); E('nade.incendiary.far', 'IncGrenade.Distant', [], { mix: 'boom', pr: 1, layer: 1 }); E('nade.incendiary.pop', 'IncGrenade.Pop', [], { mix: 'boom', pr: 2, layer: 1 });
-E('nade.molotov.air', 'Molotov.StartFailed', take('glass'), { mix: 'boom', pr: 2, pv: .8 }); E('nade.incendiary.air', 'IncGrenade.StartFailed', take('glass'), { mix: 'boom', pr: 2, pv: .8 });
-E('nade.fire.loop', 'Inferno.Loop', take('fire'), { mix: 'loop', pr: 2, pv: .55, prate: .8 }); E('nade.fire.crackle', 'Inferno.Fire.Ignite', [], { mix: 'foley', pr: 0, syn: 'crackle' });
-E('nade.fire.fade', 'Inferno.FadeOut', [], { mix: 'foley' }); E('nade.fire.out', 'Molotov.Extinguish', [], { mix: 'boom', pr: 2, syn: 'hiss' });
+E('nade.incendiary.ignite', 'IncGrenade.Start', [], { mix: 'boom', pr: 3, pv: 1, far: 'nade.incendiary.far', with: 'nade.incendiary.pop', syn: 'blast' }); E('nade.incendiary.far', 'IncGrenade.Distant', [], { mix: 'boom', pr: 1, layer: 1 }); E('nade.incendiary.pop', 'IncGrenade.Pop', [], { mix: 'boom', pr: 2, layer: 1 });
+E('nade.molotov.air', 'Molotov.StartFailed', take('glass'), { mix: 'boom', pr: 2, pv: .8, far: 'nade.molotov.far' }); E('nade.incendiary.air', 'IncGrenade.StartFailed', [], { mix: 'boom', pr: 2, pv: .8, far: 'nade.incendiary.far' });   // (FIRE final: CS2's StartFailed events carry the distant layer as their soundevent_01 — Molotov.StartDistant / IncGrenade.Distant, game_sounds_weapons.vsndevts; the can's stand-in is no bottle's glass: arena-nades-view's own pop)
+E('nade.fire.loop', 'Inferno.Loop', take('fire'), { mix: 'loop', pr: 2, pv: .55, prate: .8 }); E('nade.fire.crackle', 'Inferno.Fire.Ignite', [], { mix: 'foley', pr: 0, cap: 3, syn: 'crackle' });   // (FIRE final: played as each flame lights — arena-nades-view onFlame; instance_limit 3, volume 0.3: the vsndevts)
+E('nade.fire.fade', 'Inferno.FadeOut', [], { mix: 'foley' }); E('nade.fire.out', 'Molotov.Extinguish', [], { mix: 'boom', pr: 2, syn: 'douse' });   // (FIRE final: its own stand-in id — never the smoke's 'hiss')
 // (steps and landings: CS2's Base.Footstep / Base.Land — reverb_wet 1.0, distance_effect_mix 1.0 / 0.6, the sound 20 HU over the
 // feet: position_offset [0, 0, 20] — STEP_UP)
 for (const [s, M] of Object.entries(STEP_CS2)) { E(`step.${s}`, `CT_${M}.StepLeft`, steps(s), { mix: 'step', pr: 2, pv: .55, wet: 1, dm: 1 }); E(`land.${s}`, `Land_${M}.StepLeft`, take('land'), { mix: 'step', pr: 2, pv: .45, wet: 1, dm: .6 }); }
@@ -272,13 +279,15 @@ export function gdPlay(id, o = NO) {
   let c; try { c = ctx ??= audioCtx(); } catch { return false; }
   const at = r.cat === 'world' ? o.at || null : null, t = c.currentTime + (o.delay || 0) + r.delay; readEar();
   const dx = at ? at.x - ear.x : 0, dy = at ? at.y - ear.y : 0, dz = at ? at.z - ear.z : 0, hu = at ? Math.hypot(dx, dy, dz) / HU : 0;
-  let gain = (o.abs ? 1 : r.vol) * (o.gain ?? 1) * (r.flat ? 1 : curveGain(r.curve, hu));   // (yours: the curve at 0 — CS2 hears your own steps at its first point, .45)
+  let gain = (o.abs ? 1 : r.vol) * (o.gain ?? 1) * (r.flat ? 1 : curveGain(o.curve || r.curve, o.fall ? hu / o.fall : hu));   // (v53 RELOAD: o.curve — a reload take's own CS2 event; o.fall — CS2's suppression_falloff_multiplier, the distances shortened)   // (yours: the curve at 0 — CS2 hears your own steps at its first point, .45)
   // (out of earshot: silent on purpose, decided before any file — a far step whose file is still decoding used to return
   // false here and fall back to the shared bank's Web Audio law, which never reaches silence: heard across the map)
-  if (gain < CULL) { voiceStats.culled++; layers(r, o); return true; }
+  const cull = o.cull ?? CULL;   // (RELOAD final: a suppressed reload is cut at CULL × its suppression_volume_multiplier — the same
+  // relative cut as any event, so its curve is heard out to its own 0: the AK's Clipout to about 218 of CS2's 220 HU, not 86)
+  if (gain < cull) { voiceStats.culled++; layers(r, o); return true; }
   const name = o.name ? (ready(o.name) ? o.name : (want([o.name]), null)) : pick(r), sb = name ? null : synthBuf(r, c); if (!name && !sb) return false;   // (sb: our synthesized stand-in — v53 S3)
-  const occ = at && r.occl > 0 ? occlusionAt(at.x, at.y, at.z, nowMs()) : 0, hrtf = r.pr >= 2 && hu < 1500; let hz = 20000, sh = 0;
-  if (at) { placeCue(dx, dy, dz, hu, occ, r.occl, r.dm, LF, cue, hrtf); gain *= cue.gain; hz = cue.hz; sh = cue.shelf; if (gain < CULL) { voiceStats.culled++; layers(r, o); return true; } }   // (walls, distance, behind: placeCue above)
+  const occl = o.occl ?? r.occl, occ = at && occl > 0 ? occlusionAt(at.x, at.y, at.z, nowMs()) : 0, hrtf = r.pr >= 2 && hu < 1500; let hz = 20000, sh = 0;
+  if (at) { placeCue(dx, dy, dz, hu, occ, occl, r.dm, LF, cue, hrtf); gain *= cue.gain; hz = cue.hz; sh = cue.shelf; if (gain < cull) { voiceStats.culled++; layers(r, o); return true; } }   // (walls, distance, behind: placeCue above)
   const v = acquire(r, o.src ?? (at ? null : 'me'), gain, c.currentTime); if (!v) { layers(r, o); return true; }
   const buf = sb || bufferOf(name); if (!buf) return false;
   try { const s = c.createBufferSource(), g = c.createGain(); s.buffer = buf; s.playbackRate.value = o.rate || (r.plo + Math.random() * (r.phi - r.plo)); g.gain.value = gain; s.connect(g); let head = g, nodes = 2;
@@ -370,7 +379,7 @@ export function gdShot(id, o = NO) { if (!gunHas(id)) return undefined; const at
   return true; }
 const SO = { at: null, src: null, delay: 0 }; const SHOT_OPTS = (at, src, delay) => { SO.at = at; SO.src = src; SO.delay = delay; return SO; };
 const FX_ROUTE = { flesh: 'impact.flesh', knifedraw: 'knife.draw', scope: 'gun.scope', pin: 'nade.he.pin', land: 'land.concrete', death: 'player.death', kill: 'ui.kill', pickup: 'item.pickup', dry: 'gun.dry.rifle' };
-function fxEvent(name, o) { if (name === 'wall') return 'impact.' + (IMPACT_OF[o?.mat] || 'concrete'); if (name === 'slash') return (o?.rate ?? 1) < 1 ? 'knife.slash.heavy' : 'knife.slash'; if (name === 'stab') return (o?.rate ?? 1) < 1 ? 'knife.stab' : 'knife.hit';
+function fxEvent(name, o) { if (name === 'wall') return 'impact.' + impactFamily(o?.mat); if (name === 'slash') return (o?.rate ?? 1) < 1 ? 'knife.slash.heavy' : 'knife.slash'; if (name === 'stab') return (o?.rate ?? 1) < 1 ? 'knife.stab' : 'knife.hit';
   if (name === 'draw') return o?.gid && RES[`gun.${o.gid}.draw`] ? `gun.${o.gid}.draw` : 'gun.ak.draw';
   if (name === 'nadedraw' || name === 'toss' || name === 'pin') { const k = RES[`nade.${o?.gid}.pin`] ? o.gid : 'he'; return `nade.${k}.${name === 'nadedraw' ? 'draw' : name === 'toss' ? 'throw' : 'pin'}`; }
   if (name === 'dry') return WEAPONS.find(w => w.id === o?.gid)?.kind === 'pistol' ? 'gun.dry.pistol' : 'gun.dry.rifle'; if (name === 'glass') return o?.at ? 'world.glass.break' : null; if (name === 'casing') return o?.at ? 'gun.casing' : null; return FX_ROUTE[name] || null; }
@@ -380,12 +389,14 @@ export const ROUTE = {
   fx(name, o = NO) { const ev = fxEvent(name, o); if (!ev) return undefined; FXO.at = o.at || null; FXO.src = o.src ?? null; FXO.delay = o.delay || 0; return gdPlay(ev, FXO) || undefined; },
   // (a reload's stages, tied to its moments by weapons.js / multiplayer.js — magazine out, in, bolt: the gun's own CS2
   // stage when the room has it, else its class's; the event's curve and voices, the bank's stage levels)
-  reload(part, id, at) { const r = RES[`gun.${id}.reload`]; if (!r) return undefined; const cls = reloadClass(id), own = `reload-${id}-${part}`;
-    if (part === 0) gdPlay(r.id, RL(at, `reload-${cls}-grab`, .55, 0));
-    return gdPlay(r.id, RL(at, ready(own) ? own : `reload-${cls}-${part}`, .9, part === 0 ? .12 : 0)) || undefined; },
+  // (v53 RELOAD: someone else's — every stage falls inside CS2's WPN_RELOAD_SILENT window — is suppressed as the gun's
+  // CS2 event is: × suppression_volume_multiplier, distances × suppression_falloff_multiplier)
+  reload(part, id, at) { const r = RES[`gun.${id}.reload`]; if (!r) return undefined; const cls = reloadClass(id), own = `reload-${id}-${part}`, sup = at ? reloadEvent(r.e.cs) : null, k = sup?.[5] ? sup[6] : 1, fall = sup?.[5] ? sup[7] : 1;   // (RELOAD final: without case — the P250's Weapon_P250.Clipout is CS2's Weapon_p250.Clipout)
+    RLO.cull = sup?.[5] ? CULL * k : CULL; if (part === 0) gdPlay(r.id, RL(at, `reload-${cls}-grab`, .55 * k, 0, fall));
+    return gdPlay(r.id, RL(at, ready(own) ? own : `reload-${cls}-${part}`, .9 * k, part === 0 ? .12 : 0, fall)) || undefined; },
   step(surface, at, volume, src) { return gdStep(surface, at, src) || undefined; },
 };
-const RLO = { at: null, name: null, gain: 1, delay: 0, src: null, abs: true }; const RL = (at, name, gain, delay) => { RLO.at = at; RLO.name = name; RLO.gain = gain; RLO.delay = delay; RLO.src = at ? null : 'me'; return RLO; };
+const RLO = { at: null, name: null, gain: 1, delay: 0, src: null, abs: true, fall: 1, cull: CULL }; const RL = (at, name, gain, delay, fall = 1) => { RLO.at = at; RLO.name = name; RLO.gain = gain; RLO.delay = delay; RLO.src = at ? null : 'me'; RLO.fall = fall; return RLO; };
 const STO = { at: null, src: null };
 export function gdStep(surface, at = null, src = null) { STO.at = at; STO.src = src; return gdPlay(RES[`step.${surface}`] ? `step.${surface}` : 'step.concrete', STO); }
 // Someone else's footsteps (multiplayer.js, each remote body each frame — numbers on the body, no object). CS2: a step only
@@ -421,8 +432,40 @@ export function bufSpeed(buf, t, win = 250) { const n = buf?.length || 0; if (n 
 // A first-person clip's sound (fp-sounds.js: CS2's clip event — its own volume and pitch) as the set's event: placed,
 // limited and curved like the rest. The set → the event whose curve carries it.
 const CLIP_EV = s => RES[`gun.${s}.reload`] ? `gun.${s}.reload` : RES[`nade.${s}.pin`] ? `nade.${s}.pin` : s === 'c4' ? 'c4.key' : 'knife.slash';
-const CLO = { at: null, name: null, gain: 1, abs: true, rate: 1, src: null };
-export function gdClip(set, name, vol, rate, at, src = null) { CLO.at = at; CLO.name = name; CLO.gain = vol; CLO.rate = rate; CLO.src = src ?? (at ? null : 'me'); return gdPlay(CLIP_EV(set), CLO); }
+const CLO = { at: null, name: null, gain: 1, abs: true, rate: 1, src: null, curve: null, occl: undefined, fall: 1, cull: CULL };
+// ── v53 RELOAD: reloads heard as CS2 (spec addendum 4, "silent reload like CS2"). Each first-person reload clip's take is
+// its own CS2 sound event (gd-reload-ref.js RELOAD_SND, found by its files' base names: TAKE): its volume, distance curve
+// and occlusion_intensity, exactly — your own at the event's volume, 2D (its curve at 0 HU is 1: CS2's first-person
+// level). Someone else's: placed, through the same occlusion and HRTF as every world sound, and only events CS2 marks
+// display_broadcast (the Nova's and XM1014's shell inserts, the SSG 08's bolt are not: others never hear them — our
+// reading, not verified: the data sets it false on every Draw / WeaponMove / Inspect foley and true on every shot). Every
+// reload sound event has suppression_enable (× 0.07 volume, distances × 0.2: the AK's Clipout, 1 → 0 between 50.3 and
+// 1100 HU, becomes 0.07 → 0 between 10.1 and 220 HU) and every reload clip has CS2's WPN_RELOAD_SILENT window from its
+// start to past its last sound: a reload heard by others inside that window is suppressed — CS2's silent reload (our
+// reading: the code that joins the two is not in CS2's data files). Walking or crouching changes nothing (no such rule
+// in the data). Nothing allocated per sound: TAKE is built once. ──
+// (RELOAD final: a take is found per GUN and per MOMENT, not by its file alone — several guns share CS2 files with
+// different events: magazine_slide_01 is Weapon_AK47.Clipin at 0.3, Weapon_DEagle.Clipin at 1.0, Weapon_GalilAR.Clipin
+// and Weapon_MP9.Clip.Slide at 0.5; de_clipout is Weapon_DEagle.Clipout 0.9 and Weapon_CZ.Clipout2 1.0. TAKES[set]
+// [take] lists [moment s, event] from the gun's own clips' snd (RELOAD_REF[set].reload / empty / alt / altEmpty); the
+// clip's own moment picks among them (nearest). TAKE — the first event in name order — only for a take no clip of the
+// gun lists. Event names are looked up without case: the clips say Weapon_P250.AddAmmo, the vsndevts Weapon_p250.*.)
+const SND_LC = new Map(); for (const [k, ev] of Object.entries(RELOAD_SND)) SND_LC.set(k.toLowerCase(), ev);
+export const reloadEvent = name => (name && (RELOAD_SND[name] || SND_LC.get(String(name).toLowerCase()))) || null;
+const TAKE = new Map(); for (const ev of Object.values(RELOAD_SND)) for (const f of ev[10]) if (!TAKE.has('fp-' + f)) TAKE.set('fp-' + f, ev);
+const TAKES = new Map(); for (const [set, r] of Object.entries(RELOAD_REF)) { const m = new Map(); TAKES.set(set, m);
+  for (const cl of [r.reload, r.empty, r.alt, r.altEmpty]) if (cl) for (const [t, name] of cl.snd) { const ev = reloadEvent(name); if (!ev) continue; for (const f of ev[10]) { const k = 'fp-' + f; if (!m.has(k)) m.set(k, []); m.get(k).push([t, ev]); } } }
+export function reloadTake(name, set = null, t = NaN) { const L = set ? TAKES.get(set)?.get(name) : null; if (!L) return TAKE.get(name) || null; if (L.length === 1 || !Number.isFinite(t)) return L[0][1];
+  let best = L[0], d = Math.abs(L[0][0] - t); for (let i = 1; i < L.length; i++) { const e = Math.abs(L[i][0] - t); if (e < d) { d = e; best = L[i]; } } return best[1]; }
+// A reload sound's level and reach for a listener: [gain, curve, falloff multiplier] — own (heard: true) or someone
+// else's; silent: inside the clip's WPN_RELOAD_SILENT window. null: not a reload event (the caller's own tuning).
+const RLV = [1, null, 1];
+export function reloadLevel(ev, own, silent) { if (!ev) return null; if (!own && !ev[8]) { RLV[0] = 0; RLV[1] = ev[1]; RLV[2] = 1; return RLV; } const sup = !own && silent && ev[5]; RLV[0] = ev[0] * (sup ? ev[6] : 1); RLV[1] = ev[1]; RLV[2] = sup ? ev[7] : 1; return RLV; }
+export const inReloadSilent = (set, t) => { const w = RELOAD_REF[set]?.reload?.silent; return !!w && t >= w[0] && t <= w[1]; };
+export function gdClip(set, name, vol, rate, at, src = null, clip = null, t = 0) { CLO.at = at; CLO.name = name; CLO.gain = vol; CLO.rate = rate; CLO.src = src ?? (at ? null : 'me'); CLO.curve = null; CLO.occl = undefined; CLO.fall = 1; CLO.cull = CULL;
+  const ev = clip === 'reload' ? reloadTake(name, set, t) : null, L = ev ? reloadLevel(ev, !at, inReloadSilent(set, t)) : null;
+  if (L) { if (L[0] <= 0) return true; CLO.gain = L[0]; CLO.curve = L[1]; CLO.fall = L[2]; CLO.occl = ev[2]; CLO.cull = L[2] < 1 ? CULL * ev[6] : CULL; }   // (not broadcast: silent to others on purpose — never the caller's fallback)
+  return gdPlay(CLIP_EV(set), CLO); }
 
 // ── On / off (lab.js, every frame: cheap), and decoding ahead (GD-AUD-13): on entering a match the events of grenades,
 // the bomb, steps, impacts, hits and the UI; a gun's own when it is first seen (yours or someone else's). ──

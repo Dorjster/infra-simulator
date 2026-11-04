@@ -9,11 +9,12 @@
 // arrives first. A hit for a shot fired with an empty magazine is refused. A reload (pose shot.r) only moves rounds
 // from the reserve into the magazine. Clients show their own count and take the host's whenever they are in sync.
 import { skinKeyOf, skinOwner, touchSkin } from './skins.js';
-import { weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H, NADE_ORDER, BODY_R, accOf, shotBase, shotOffsets, offsetDir, rayBody, pelletDamage, HU, JUMP_IMPULSE, FLINCH } from './weapons-data.js';
-import { defuseDamage, defuseKill, defuseHurt, defuseAssist } from './arena-defuse.js';
+import { magInMinMs, weaponById, MAX_HP, RESPAWN_MS, hitDamage, damageFor, HIT_GROUPS, isFirearm, fullAmmo, defaultPistol, KNIFE, EYE, HEAD_KILL_HP, CROUCH_H, NADE_ORDER, BODY_R, accOf, shotBase, shotOffsets, offsetDir, rayBody, pelletDamage, HU, JUMP_IMPULSE, FLINCH } from './weapons-data.js';
+import { defuseDamage, defuseKill, defuseHurt, defuseAssist, pairDamage } from './arena-defuse.js';
 import { ARENA_MAPS, mapBoxes, segmentClear, bulletPath, BulletPath } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
-import { smokeBlocks } from './arena-nades.js';   /* kill-feed mark: shot through smoke (only used at call time: no load-order issue) */
+import { smokeBlocks } from './arena-nades.js';
+import { KNIFE_IDS } from './gd-knives.js';   // (v53 KNIVES: the knives a player may pick)   /* kill-feed mark: shot through smoke (only used at call time: no load-order issue) */
 
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const state = game => game.combat ??= { hp: {}, down: {}, kills: {}, deaths: {}, last: {}, respawns: {}, feed: [] };
@@ -26,7 +27,7 @@ export const isDown = (game, name, now = Date.now()) => (game.combat?.down?.[key
 // order they were bought: key 4 cycles them so), the bomb.
 const DARJA = n => /^darja$/.test(key(n));
 export const teamPistol = (game, name) => defaultPistol(game?.combat?.d?.teams?.[key(name)] || null);
-export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary === undefined ? teamPistol(game, name) : l.secondary, (DARJA(name) && !['default', 'butterfly', 'stiletto', 'm9'].includes(game.arena?.knives?.[key(name)])) || game.arena?.knives?.[key(name)] === 'karambit' ? 'karambit' : 'knife',   /* (Darja's karambit; or one she equipped on you) */ ...(Array.isArray(l.nades) && l.nades.length ? NADE_ORDER.filter(id => l.nades.includes(id)) : []), game.combat?.d?.bomb?.carrier === key(name) ? 'c4' : null].filter(Boolean); }
+export function arenaArsenalOf(game, name) { const l = game.arena?.loadout?.[key(name)] || {}; return [l.primary, l.secondary === undefined ? teamPistol(game, name) : l.secondary, (DARJA(name) && !(KNIFE_IDS.includes(game.arena?.knives?.[key(name)]) && game.arena.knives[key(name)] !== 'karambit'))   /* (v53 KNIVES: Darja's karambit unless she picked another knife — any of gd-knives.js's) */ || game.arena?.knives?.[key(name)] === 'karambit' ? 'karambit' : 'knife',   /* (Darja's karambit; or one she equipped on you) */ ...(Array.isArray(l.nades) && l.nades.length ? NADE_ORDER.filter(id => l.nades.includes(id)) : []), game.combat?.d?.bomb?.carrier === key(name) ? 'c4' : null].filter(Boolean); }
 export const ownedWeapons = (game, name) => game.mode === 'arena' ? arenaArsenalOf(game, name) : [];
 // Guns exist only in Global Defensive (the arena): never in Campaign, Free Build, Challenges or Payday.
 export const combatOn = game => game.mode === 'arena';
@@ -65,20 +66,47 @@ export function takeShots(game, name, n, id, fromHit = false, fromPose = false) 
 }
 // A reload numbered by the client (pose shot.r): moves rounds from the reserve to the magazine, once per number — a
 // magazine fills it; a shotgun (shell by shell, CS2) takes one shell per number.
-export function takeReload(game, name, r, id) {
+// v53 RELOAD — on the host's clock: a reload's start (pose shot.rs, numbered by the client when it presses R) is stamped
+// when the host first sees it (takeReloadStart: s.rsAt, with the gun in hand s.rsW). Its completion counts for that gun
+// only once CS2's mag-in moment has passed on the host's clock since then (weapons-data magInMinMs: the gun's earliest
+// WPN_RELOAD_ADD_AMMO; a shotgun's k-th shell: its first shell's moment + (k − 1) loops), less RELOAD_SLACK_MS — start
+// and completion travel the same ordered pose stream, so the gap the host sees is the client's own up to jitter. Too
+// early: the number is taken (the client stays in step) and nothing moves; the client then takes the host's magazine
+// at its next sync. A guest who switches right after the mag-in has the full magazine on both sides; one who switches
+// before it never sends the completion. No start seen (older clients, bots, direct calls): no check, as before.
+// (RELOAD final: RELOAD_SLACK_MS was 250. Poses go one at a time (multiplayer.js: the next waits for the last one's
+// answer), so a network spike on the pose in flight when R is pressed holds the START back by up to the spike while the
+// completion leaves on time: the host's gap is short by the spike, and a LAN sim refused a fair AK and Glock reload
+// after a single 350 ms spike — the count snapped back. 600 ms takes a spike up to ~600 ms; a modified client could
+// seat a magazine at most that much early. The pose's client clock (ct) would not help: it is the send time, not R's.)
+export const RELOAD_SLACK_MS = 600;
+export function takeReloadStart(game, name, rs, id, now = Date.now()) {
+  const C = state(game), k = key(name), s = (C.shots ??= {})[k] ??= { n: null, r: null, dry: [] }; rs = Math.floor(+rs); if (!Number.isFinite(rs)) return false;
+  if (s.rs == null || rs < s.rs || rs > s.rs + 50) { s.rs = rs; s.rsAt = null; return false; }   // (first contact or a new numbering: synced, nothing stamped)
+  if (rs === s.rs) return false; s.rs = rs; s.rsAt = now; s.rsW = id; s.rsK = 0; return true; }
+export function takeReload(game, name, r, id, now = null) {
   const C = state(game), k = key(name), s = (C.shots ??= {})[k] ??= { n: null, r: null, dry: [] }; r = Math.floor(+r);
   if (!Number.isFinite(r)) return false; if (s.r === null || r < s.r || r > s.r + 50) { s.r = r; return false; }
   if (r === s.r) return false; const steps = r - s.r; s.r = r; const w = weaponById(id); if (!isFirearm(w)) return false;
+  if (now != null && s.rsAt != null && s.rsW === id) { const kk = (s.rsK || 0) + steps, need = w.shellMs ? magInMinMs(w) + (kk - 1) * w.shellMs : magInMinMs(w); s.rsK = kk;
+    if (now - s.rsAt < need - RELOAD_SLACK_MS) { s.early = (s.early || 0) + 1; return false; } }   // (before CS2's mag-in on the host's clock: refused)
   const a = ammoOf(game, name, id), move = Math.min(w.shellMs ? steps : Infinity, w.mag - a[0], a[1]); if (move <= 0) return false; a[0] += move; if (!game.arena?.practice?.ammo) a[1] -= move; setAmmo(game, name, id, a); return true;   // practice: the reserve never runs down
 }
 // The pose stream (room.mjs): shots and reloads since the last pose. They are charged to the gun that fired (shot.w)
 // and the one that reloaded (shot.rw) when the pose names them (a quick switch before the next pose no longer refunds
 // an AWP round or charges an AK's to the pistol: SHOOT-13), else to the gun in hand. Returns true on change.
-export function poseAmmo(game, name, shot, weapon) {
+// (RELOAD final: charged in the client's order: the shots the magazine
+// still covers, then a completion in the same pose, then the rest — a shotgun's shell and the click that cuts its reload
+// share a pose (the shell seats and the click fires in one frame), and charging the click first made it a dry shot on
+// the host: its pellets refused, the shell left in the host's tube.)
+export function poseAmmo(game, name, shot, weapon, now = Date.now()) {
   if (game?.mode !== 'arena' || !shot || isDown(game, name)) return false; const own = ownedWeapons(game, name);
   const sw = own.includes(shot.w) ? shot.w : weapon, rw = own.includes(shot.rw) ? shot.rw : weapon; if (!own.includes(sw) && !own.includes(rw)) return false;
   const C = state(game), k = key(name), snap = () => JSON.stringify([C.ammo?.[k]?.[sw], C.ammo?.[k]?.[rw], C.shots?.[k]?.n, C.shots?.[k]?.r]), before = snap();
-  if (own.includes(sw)) takeShots(game, name, shot.n, sw, false, true); if (own.includes(rw)) takeReload(game, name, shot.r, rw);
+  if (Number.isInteger(shot.rs) && own.includes(weapon)) takeReloadStart(game, name, shot.rs, weapon, now);   // (v53 RELOAD: a reload begun, stamped on the host's clock)
+  const rNow = Number.isInteger(shot.rs) ? now : null, s0 = C.shots?.[k], n = Math.floor(+shot.n), r = Math.floor(+shot.r);
+  if (sw === rw && own.includes(sw) && s0 && s0.n !== null && s0.r !== null && n > s0.n && n <= s0.n + 500 && r > s0.r && r <= s0.r + 50) { const cover = s0.n + ammoOf(game, name, sw)[0]; if (n > cover) { takeShots(game, name, cover, sw, false, true); takeReload(game, name, shot.r, rw, rNow); } }
+  if (own.includes(sw)) takeShots(game, name, shot.n, sw, false, true); if (own.includes(rw)) takeReload(game, name, shot.r, rw, rNow);
   return before !== snap();
 }
 
@@ -106,10 +134,12 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   const before = hpOf(game, targetName), hp = Math.max(0, before - dmg); c.hp[tk] = hp; const nm = c.names ??= {}; nm[me] = String(shooter).slice(0, 40); nm[tk] = String(targetName).slice(0, 40);
   if (me !== tk) { const d = ((c.dmg ??= {})[tk] ??= {}); d[me] = (d[me] || 0) + Math.min(before, dmg); }
   const shown = Math.min(before, dmg);
+  if (game.mode === 'arena' && !c.d && me !== tk) lifeHit(c, me, tk, shown);   // (v53 DEATH: deathmatch's damage between two players this life — deathReport)
   if (c.d && me !== tk) defuseHurt(game, shooter, targetName, shown, wpn, hp <= 0, zone === 'head' && isFirearm(wpn));   // (the round's damage report and head shots: arena-defuse.js)
   if (me !== tk && recording(game) && !friendly(game, shooter, targetName)) { const st = statOf(game, shooter), util = wpn.id === 'he' || wpn.id === 'molotov' || wpn.id === 'incendiary'; st.dmg += shown; if (util) st.util += shown; else if (isFirearm(wpn)) { st.hits++; if (zone === 'head') st.hsHits++; } if (hp <= 0 && zone === 'head' && isFirearm(wpn)) st.hsKills++; }
   if (hp > 0) return { message: 'Hit ' + targetName + ' · −' + shown + ' HP', dmg: shown, hp, zone, head: zone === 'head' };
   c.down[tk] = { until: now + respawnMs(game), by: shooter, weapon: wpn.name, wid: wpn.id, head: zone === 'head', at: now };
+  deathReport(game, c, me, tk, wpn);   // (v53 DEATH: dg / dt on the down record; o: the gun's owner)
   const teamKill = c.d && c.d.teams[me] && c.d.teams[me] === c.d.teams[tk];
   if (me !== tk && !teamKill) { c.kills[me] = (c.kills[me] || 0) + 1; const sk = game.arena && skinOwner(game.arena, me, wpn.id) === me && game.arena.skins?.[me]?.[skinKeyOf(wpn.id)]; if (sk?.st) { sk.kills = (sk.kills | 0) + 1; touchSkin(game.arena, me, skinKeyOf(wpn.id)); } }   /* (StatTrak™: the weapon counts its own kills — only in its owner's hands, CS2's "does not belong to you"; the room sends the new count) */ c.deaths[tk] = (c.deaths[tk] || 0) + 1; if (c.d) defuseKill(game, shooter, targetName, wpn);
   let assist = null; for (const [a, n] of Object.entries(c.dmg?.[tk] || {})) if (a !== me && a !== tk && n >= 41 && !(c.d && c.d.teams[a] === c.d.teams[tk])) { (c.assists ??= {})[a] = (c.assists[a] || 0) + 1; if (c.d) defuseAssist(game, a); assist = c.names?.[a] || a; }
@@ -117,6 +147,16 @@ export function hurt(game, shooter, targetName, wpn, dmg, zone = 'chest', now = 
   c.feed.unshift({ at: now, by: shooter, target: targetName, weapon: wpn.name, wid: wpn.id, head: zone === 'head', assist, ...(how ? { how } : {}) }); c.feed.length = Math.min(c.feed.length, 6);
   return { message: 'Killed ' + targetName + (zone === 'head' ? ' · head shot' : ''), dmg: shown, hp: 0, down: true, zone, head: zone === 'head' };
 }
+// (v53 DEATH) The death panel's "Damage given / taken" (CS2's DeathPanel_DamageGiven / _DamageTaken): between the victim
+// and the one who killed them — this round in Defuse (the round's report: arena-defuse.js pairDamage), this life in
+// deathmatch (counted here, host-side: LIFE, never sent) — as [damage, hits] on the down record: dg (the victim's to the
+// killer), dt (the killer's to the victim). Global Defensive only; two small arrays once per death.
+const LIFE = new WeakMap();
+function lifeHit(c, me, tk, dmg) { let m = LIFE.get(c); if (!m) LIFE.set(c, m = {}); const p = ((m[me] ??= {})[tk] ??= [0, 0]); p[0] += dmg; p[1]++; }
+function deathReport(game, c, me, tk, wpn) { const dn = c.down[tk]; if (!dn || game.mode !== 'arena' || me === tk) return; let g, t;
+  { const o = game.arena && wpn ? skinOwner(game.arena, me, wpn.id) : null; if (o && o !== me) dn.o = o; }   // (v53 DEATH r2: a gun the killer picked up — its owner's key, for CS2's "your own" / "<name>'s" line: gd-death-panel.js)
+  if (c.d) { g = pairDamage(game, tk, me); t = pairDamage(game, me, tk); } else { const m = LIFE.get(c) || {}; g = m[tk]?.[me] || [0, 0]; t = m[me]?.[tk] || [0, 0]; delete m[tk]; for (const k in m) if (m[k]) delete m[k][tk]; }
+  dn.dg = [Math.round(g[0]), g[1] | 0]; dn.dt = [Math.round(t[0]), t[1] | 0]; }
 const friendly = (game, a, b) => { const t = game.combat?.d?.teams; return !!t && key(a) !== key(b) && !!t[key(a)] && t[key(a)] === t[key(b)]; };
 const damageCap = wpn => Math.round((wpn.dmg || 30) * 4);
 // A Global Defensive body's feet (game units): the eye (pose.y) less its height over the feet as the pose told it (ey,
@@ -140,7 +180,8 @@ export function bleed(game, victim, res, px, py, pz, dx, dy, dz, now = Date.now(
   const c = state(game), L = c.bl ??= [], len = Math.hypot(dx, dy, dz); if (!(len > 1e-6)) return null;
   while (L.length && (now - L[0].at > BLEED_MS || L.length >= 12)) L.shift();
   const rec = { i: c.blI = Math.max((c.blI || 0) + 1, now), at: now, v: key(victim), z: res.zone || 'chest', d: Math.round(res.dmg), p: [r2(px), r2(py), r2(pz)], r: [r3(dx / len), r3(dy / len), r3(dz / len)] };
-  if (res.down) rec.k = 1; if (knife) rec.kn = 1; if (res.hm) rec.hm = 1; if (typeof res.sk === 'string') rec.s = res.sk; L.push(rec); return rec;   // (hm, s: v53 S3 — hitMarks)
+  if (res.down) { rec.k = 1; const dn = game.mode === 'arena' ? c.down?.[rec.v] : null; if (dn && Math.abs((dn.at || 0) - now) < 5) { dn.rg = [rec.p[0], rec.p[1], rec.p[2], rec.r[0], rec.r[1], rec.r[2]]; if (rec.z !== 'chest') dn.z = rec.z; } }   // (v53 DEATH: the killing hit's point and direction on the down record — every computer's ragdoll pushed the same way, gd-ragdoll.js)
+  if (knife) rec.kn = 1; if (res.hm) rec.hm = 1; if (typeof res.sk === 'string') rec.s = res.sk; L.push(rec); return rec;   // (hm, s: v53 S3 — hitMarks)
 }
 // From a shooter's eye to a body (its pose: x, z, feet — poseFeet — or fy, crouched / cr) at the hit's zone: the point on
 // the body's near side, along that line (bots' shots, knives, hits without a shot record).
@@ -159,11 +200,11 @@ const boxesOf = game => { const m = game.arena?.map, M = m ? ARENA_MAPS[m] : nul
 // its two edges as the shooter sees it (EDGE of the capsule's radius either side: the client hits the whole capsule,
 // weapons.js rayCapsule, so a shoulder past a corner is a hit the host must see too).
 const LOF = new BulletPath(), EDGE = .8;
-export function lineOfFire(game, from, to, zone = 'chest', pen = 0) {
+export function lineOfFire(game, from, to, zone = 'chest', pen = 0, dmg = 0) {   // (dmg: the gun's damage — CS2's wallbang loss is in hit points, v53)
   const boxes = boxesOf(game); if (!boxes.length || !from || !to) return 1; const feet = poseFeet(to), ey = from.y ?? EYE;
   const hx = to.x - from.x, hz = to.z - from.z, hl = Math.hypot(hx, hz) || 1e-6, px = -hz / hl * BODY_R * EDGE, pz = hx / hl * BODY_R * EDGE;
   let best = 0; for (const z of [zone, 'head', 'chest']) for (let s = 0; s < 3; s++) { const tx = to.x + (s === 1 ? px : s === 2 ? -px : 0), tz = to.z + (s === 1 ? pz : s === 2 ? -pz : 0), ty = feet + (ZONE_Y[z] ?? 7) * (to.crouched ? CROUCH_H : 1), dx = tx - from.x, dy = ty - ey, dz = tz - from.z, L = Math.hypot(dx, dy, dz) || 1e-6;
-    const f = pen > 0 ? bulletPath(boxes, from.x, ey, from.z, dx / L, dy / L, dz / L, L + .01, pen, LOF).factor(L) : segmentClear(boxes, from.x, ey, from.z, tx, ty, tz) ? 1 : 0; if (f > best) best = f; if (best >= 1) return best; }
+    const f = pen > 0 ? bulletPath(boxes, from.x, ey, from.z, dx / L, dy / L, dz / L, L + .01, pen, LOF, false, dmg).factor(L) : segmentClear(boxes, from.x, ey, from.z, tx, ty, tz) ? 1 : 0; if (f > best) best = f; if (best >= 1) return best; }
   return best;
 }
 // Knife: in front of the attacker (within ~70°; up close, anywhere ahead — the hull is wide), within reach (CS2's
@@ -235,7 +276,7 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
     res = pelletDamage(wpn, T.hits, dist, armorOf(game, target.name)); through = T.factor;
   } else {
     const zone = HIT_GROUPS[a.zone] ? a.zone : a.head ? 'head' : 'chest';
-    through = from && to ? lineOfFire(game, from, to, zone, wpn.pen || 0) : 1; if (!through) throw Error('Blocked by a wall');
+    through = from && to ? lineOfFire(game, from, to, zone, wpn.pen || 0, wpn.dmg) : 1; if (!through) throw Error('Blocked by a wall');
     dist = from && to ? Math.hypot(from.x - to.x, from.y - to.y, from.z - to.z) : 0;
     // Shotgun pellets each in their own group (SHOOT-04: one head pellet no longer makes every pellet a head shot).
     const zs = wpn.pellets && a.zones && typeof a.zones === 'object' ? a.zones : { [zone]: wpn.pellets ? Math.floor(Number(a.pellets) || 1) : 1 }, hits = [];
@@ -297,14 +338,18 @@ export function traceShot(game, wpn, a, n, from, to) {
   shotBase(look[0], look[1], pu[0], pu[1], SB); const k = shotOffsets(wpn, n, ia, acc.spread, SO);
   for (let i = 0; i < k; i++) { offsetDir(SB, SO[2 * i], SO[2 * i + 1], SD); const t = rayBody(eye[0], eye[1], eye[2], SD[0], SD[1], SD[2], fx, fy, fz, cr, SHOT_TOL.pad, SZ); if (t < 0 || t > reach) continue;
     if (SD[1] < -1e-6 && -eye[1] / SD[1] < t) continue;   // (the floor plane first: as the shooter's own trace)
-    const f = boxes.length ? bulletPath(boxes, eye[0], eye[1], eye[2], SD[0], SD[1], SD[2], t + .01, wpn.pen || 0, SP).factor(t) : 1; if (!(f > 0)) continue;
+    const f = boxes.length ? bulletPath(boxes, eye[0], eye[1], eye[2], SD[0], SD[1], SD[2], t + .01, wpn.pen || 0, SP, false, wpn.dmg).factor(t) : 1; if (!(f > 0)) continue;
     hits.push({ zone: SZ.zone, f }); if (t < dist) { dist = t; dir[0] = SD[0]; dir[1] = SD[1]; dir[2] = SD[2]; } factor = Math.min(factor, f); }
   if (!hits.length) throw Error('Missed');
   return { hits, dist, factor, at: [eye[0] + dir[0] * dist, eye[1] + dir[1] * dist, eye[2] + dir[2] * dist], dir };   // (at, dir: the nearest bullet's entry on the body — the blood, bleed)
 }
 // Respawn knocked-out players (deathmatch) with full HP and full ammo. Returns true when something changed.
+export const DEATH_DETAIL_MS = 10000;   // (v53 DEATH: longer than the cam (4.1 s) and the ragdoll's limit (8 s) — a body first seen late still gets its push)
 export function combatTick(game, now = Date.now()) {
   const c = game.combat; if (!c) return false; let changed = false;
+  // (v53 DEATH final) a death's details for the cam, the panel and the ragdoll (rg, z, dg, dt) are needed once, at the
+  // death: dropped DEATH_DETAIL_MS after it, so they don't ride every combat frame to every guest for the rest of a round
+  for (const k in c.down) { const d = c.down[k]; if (d.rg !== undefined || d.dg !== undefined) { if (now - (d.at || 0) > DEATH_DETAIL_MS) { delete d.rg; delete d.z; delete d.dg; delete d.dt; delete d.o; changed = true; } } }
   for (const [k, d] of Object.entries(c.down)) if (d.until <= now) { delete c.down[k]; c.hp[k] = MAX_HP; c.respawns[k] = (c.respawns[k] || 0) + 1; (c.respawnedAt ??= {})[k] = now; if (game.mode === 'arena' && !c.d) (c.safe ??= {})[k] = now + SPAWN_SAFE_MS; if (game.mode === 'arena') refillAll(game, c.names?.[k] || k); changed = true; }
   return changed;
 }

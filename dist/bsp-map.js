@@ -5,6 +5,7 @@
 // the map's own entities. Place names (callouts, the radar's labels, the bots' mid) come from the CS:GO navigation
 // data of the same map, matched to this file by aligning the spawns and bomb sites (the community ports are often
 // moved, rotated or scaled). The rest (boxes, navigation, routes, radar) is the classic maps' own (finishMap).
+import { modelSurface } from './gd-surface-props.js';
 import { solidSpans, solidAt, hullSolid, hullSpans, vec, modelOf } from './bsp30.js';
 import { CELL, MAXF, NONE, SITE, STEP } from './cs-columns.js';
 import { finishMap, mergeSegs, U } from './cs-mapbuild.js';
@@ -214,6 +215,7 @@ export function buildBspMap(id, bsp, { T, nav = null } = {}) {
   // −2 down) by their own size less `lip`.
   const movers = [], boxOf = (lo, hi) => { const a = toGame(lo[0], hi[1], lo[2]), c = toGame(hi[0], lo[1], hi[2]); return [a[0], c[0], a[2], c[2], a[1], c[1]].map(v => +v.toFixed(3)); };
   bsp.entities.forEach((e, ei) => { const kind = moverOf(e, bsp.format === 'vbsp' && !bsp.cs2), mi = modelOf(e); if (!kind || mi <= 0 || !bsp.models[mi]) return; const off = e.origin ? vec(e.origin) : [0, 0, 0], b = bounds(bsp.models[mi], off), box = boxOf(b.mins, b.maxs), m = { e: ei, mi, kind, box };
+    if (e.cs2) { const sf = modelSurface(e.cs2); if (sf) m.surf = sf; }   // (v53: what a CS2 door or breakable is made of — its model's own surface property, gd-surface-props.js: bullets and impacts treat it as that)
     if (kind === 'rotdoor') { const h = toGame(off[0], off[1], off[2]), deg = +e.distance || 90; m.hinge = h.map(v => +v.toFixed(3)); m.angle = deg * Math.PI / 180; m.open = {};
       for (const sg of [1, -1]) { const t = sg * m.angle, c = Math.cos(t), sn = Math.sin(t), xs = [], zs = []; for (const x of [box[0], box[1]]) for (const z of [box[2], box[3]]) { const dx = x - h[0], dz = z - h[2]; xs.push(h[0] + dx * c + dz * sn); zs.push(h[2] - dx * sn + dz * c); }
         m.open[sg > 0 ? '+' : '-'] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs), box[4], box[5]].map(v => +v.toFixed(3)); } }

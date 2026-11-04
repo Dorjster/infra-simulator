@@ -48,7 +48,7 @@ assert.throws(() => combatApply(g, { type: 'hit', target: 'b', weapon: 'ak', zon
 takeReload(g, 'Ann', 10, 'ak'); const before = ammoOf(g, 'Ann', 'ak');
 let msg = arenaApply(g, { type: 'loadout', primary: 'm4' }, 'Ann', P, t + 4000); ok('buying a second rifle drops the first', /dropped your AK-47/.test(msg), msg);
 const dropped = g.combat.ground.find(it => it.item === 'ak'); ok('the dropped AK lies at her feet with its rounds', dropped && JSON.stringify(dropped.ammo) === JSON.stringify(before) && Math.hypot(dropped.x - P[0].pose.x, dropped.z - P[0].pose.z) < 1, JSON.stringify(dropped));
-ok('one primary only: the M4A4, full', loadoutOf(g, 'Ann').primary === 'm4' && JSON.stringify(ammoOf(g, 'Ann', 'm4')) === '[30,90]' && arenaArsenalOf(g, 'Ann').filter(id => weaponById(id)?.kind === 'rifle').length === 1);
+ok('one primary only: the M4A4, full', loadoutOf(g, 'Ann').primary === 'm4' && JSON.stringify(ammoOf(g, 'Ann', 'm4')) === '[30,120]'   /* (v53 RELOAD: CS2's M4A4 reserve, 4 magazines — weapons.vdata) */ && arenaArsenalOf(g, 'Ann').filter(id => weaponById(id)?.kind === 'rifle').length === 1);
 arenaApply(g, { type: 'loadout', secondary: 'deagle' }, 'Ann', P, t + 4100); msg = arenaApply(g, { type: 'loadout', secondary: 'p250' }, 'Ann', P, t + 4200);
 ok('buying a second pistol drops the first', /dropped your Desert Eagle/.test(msg) && g.combat.ground.some(it => it.item === 'deagle') && loadoutOf(g, 'Ann').secondary === 'p250');
 ok('the first pistol (Glock) dropped too, not deleted', g.combat.ground.some(it => it.item === 'pistol'));
@@ -72,11 +72,14 @@ msg = arenaApply(g, { type: 'pickup', id: dg.id, swap: true }, 'Bo', P, t + 5200
 
 // ── Wallbangs: through crates and thin walls, not through containers or stone; less damage ──
 { const { bulletPath } = await import('../dist/arena-maps.js');
-  const crate = [{ minX: 10, maxX: 16, minZ: -3, maxZ: 3, y0: 0, y1: 12, mat: 'crate' }], thin = [{ minX: 10, maxX: 12, minZ: -20, maxZ: 20, y0: 0, y1: 24, mat: 'plaster' }], box = [{ minX: 10, maxX: 25, minZ: -20, maxZ: 20, y0: 0, y1: 15, mat: 'metal-red' }], stone = [{ minX: 10, maxX: 11, minZ: -20, maxZ: 20, y0: 0, y1: 24, mat: 'stone' }];
-  const thr = (bx, w) => bulletPath(bx, 0, 8, 0, 1, 0, 0, 40, weaponById(w).pen).factor(30);
-  ok('an AK goes through a crate, weaker', thr(crate, 'ak') > .2 && thr(crate, 'ak') < 1, thr(crate, 'ak')); ok('the AWP through a crate keeps more', thr(crate, 'sniper') > thr(crate, 'ak'));
-  ok('a Glock does not go through a crate', thr(crate, 'pistol') === 0); ok('a Glock goes through a thin plaster wall', thr(thin, 'pistol') > 0);
-  ok('nothing goes through a shipping container', thr(box, 'sniper') === 0); ok('nothing goes through stone', thr(stone, 'sniper') === 0); ok('shotgun pellets stop in a crate', thr(crate, 'shotgun') === 0);
+  // (v53 stage 5: CS2's wallbang — the gun's m_flPenetration and damage, CS2's surface modifiers, gd-surface-props.js
+  // penLoss; a 6-unit crate is 39 Hammer units of Wood_Crate, a 1-unit plaster sheet 6.5 units, a container 97 units)
+  const { penThrough } = await import('../dist/gd-surface-props.js'), HUg = 2.54 / 16.5;
+  const crate = [{ minX: 10, maxX: 16, minZ: -3, maxZ: 3, y0: 0, y1: 12, mat: 'crate' }], thin = [{ minX: 10, maxX: 11, minZ: -20, maxZ: 20, y0: 0, y1: 24, mat: 'plaster' }], box = [{ minX: 10, maxX: 25, minZ: -20, maxZ: 20, y0: 0, y1: 15, mat: 'metal-red' }], stone = [{ minX: 10, maxX: 26, minZ: -20, maxZ: 20, y0: 0, y1: 24, mat: 'stone' }];
+  const thr = (bx, w) => { const W = weaponById(w); return bulletPath(bx, 0, 8, 0, 1, 0, 0, 40, W.pen, null, false, W.dmg).factor(30); };
+  ok('an AK goes through a crate, weaker (CS2: 36 → ' + penThrough(36, 2, [['crate', 6 / HUg]]).toFixed(2) + ')', thr(crate, 'ak') > 0 && thr(crate, 'ak') < 1 && Math.abs(thr(crate, 'ak') - penThrough(36, 2, [['crate', 6 / HUg]]) / 36) < 1e-9, thr(crate, 'ak')); ok('the AWP through a crate keeps more', thr(crate, 'sniper') > thr(crate, 'ak'));
+  ok('a Glock does not go through a crate', thr(crate, 'pistol') === 0); ok('a Glock goes through a thin plaster sheet', thr(thin, 'pistol') > 0, thr(thin, 'pistol'));
+  ok('nothing goes through a shipping container', thr(box, 'sniper') === 0); ok('nothing goes through a thick stone wall', thr(stone, 'sniper') === 0); ok('shotgun pellets stop in a crate', thr(crate, 'shotgun') === 0);
   // Host: a hit through a crate lands with less damage; through a container it is refused.
   // A crate on Dust II that hides a standing body: shooter and target on the floor either side of it (true-scale map: real floor heights).
   const D2 = ARENA_MAPS.dust2, dboxes = mapBoxes(D2, ARENA.cx, ARENA.cz), fl = (x, z) => D2.nav.floorAt(x - ARENA.cx, z - ARENA.cz);

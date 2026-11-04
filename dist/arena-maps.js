@@ -10,6 +10,7 @@ import { THEMES, CS_MAP_IDS, FILE_MAP_IDS } from './cs-maps/themes.js';
 import dust2 from './cs-maps/dust2-nav.js'; import mirage from './cs-maps/mirage-nav.js'; import inferno from './cs-maps/inferno-nav.js'; import nuke from './cs-maps/nuke-nav.js';
 import cache from './cs-maps/cache-nav.js'; import anubis from './cs-maps/anubis-nav.js'; import ancient from './cs-maps/ancient-nav.js';
 import { textureSize } from './texture-quality.js';
+import { penLoss, PEN } from './gd-surface-props.js';   // (v53: CS2's wallbang — bulletPath)
 const NAV = { dust2, mirage, inferno, nuke, cache, anubis, ancient };
 const B = (x, z, w, d, h, m, y0 = 0) => [x, z, w, d, h, m, y0];
 // Windows painted on the face of a solid block (decoration: shutters and frames on a wall you can't enter).
@@ -96,14 +97,14 @@ export function mapBoxes(map, cx, cz) {
   const key = (map.id || '') + '@' + cx + ',' + cz, hit = BOX_CACHE.get(key); if (hit && hit.map === map) return hit.boxes;
   const list = map.solids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: s.prop || null, walk: !!s.walk, mover: null, role: null, off: false }; });
   // Doors and breakables (map files: bsp-map.js movers): a shut / intact box, and the open ones, off until opened.
-  for (const [id, m] of (map.movers || []).entries()) { const flipMs = DOOR_SWING[m.kind] ? 500 / DOOR_SWING[m.kind] : 0, add = (bx, role) => list.push({ minX: cx + bx[0], maxX: cx + bx[1], minZ: cz + bx[2], maxZ: cz + bx[3], y0: bx[4], y1: bx[5], mat: m.glass ? 'glass' : m.kind === 'break' ? 'crate' : 'door', prop: null, walk: false, mover: id, role, off: role !== 'shut', flipMs });
+  for (const [id, m] of (map.movers || []).entries()) { const flipMs = DOOR_SWING[m.kind] ? 500 / DOOR_SWING[m.kind] : 0, add = (bx, role) => list.push({ minX: cx + bx[0], maxX: cx + bx[1], minZ: cz + bx[2], maxZ: cz + bx[3], y0: bx[4], y1: bx[5], mat: m.glass ? 'glass' : m.kind === 'break' ? 'crate' : 'door', surf: m.surf || null, prop: null, walk: false, mover: id, role, off: role !== 'shut', flipMs });
     for (const bx of m.rects || [m.box]) add(bx, 'shut'); for (const [role, bx] of Object.entries(m.open || {})) add(bx, role);   // (rects: a pane's glass as boxes — Cache's Long A doorway)
     // (clip: a window CS2 keeps players out of with its glass gone — cs-maps/cs2-pane-clips.js: a box there for players
     // only, never off; not a mover, so not in the bullets' boxes: shots and sight pass the broken pane)
     if (m.clip) for (const bx of m.rects || [m.box]) list.push({ minX: cx + bx[0], maxX: cx + bx[1], minZ: cz + bx[2], maxZ: cz + bx[3], y0: bx[4], y1: bx[5], mat: 'clip', prop: null, walk: false, mover: null, role: null, off: false }); }
   const boxes = indexBoxes(list); boxes.movers = list.filter(b => b.mover !== null);
   // CS2 maps: what bullets (and sight, knives, smoke) meet — its own boxes, without player clips and the fences bullets
-  // pass, each made of what CS2 says (wallbangs: PEN_COST); the doors and breakables the same objects as above.
+  // pass, each made of what CS2 says (wallbangs: gd-surface-props.js); the doors and breakables the same objects as above.
   if (map.bulletSolids) { const bl = map.bulletSolids.map(s => { const [x, z, w, d, h, mat, y0 = 0] = s; return { minX: cx + x - w / 2, maxX: cx + x + w / 2, minZ: cz + z - d / 2, maxZ: cz + z + d / 2, y0, y1: y0 + h, mat, prop: null, walk: false, mover: null, role: null, off: false, tri: 0 }; });   // (tri: has it sight triangles round it — 0 not looked yet, 1 yes, 2 none: bulletPath's fine phase, hasTri)
     boxes.bullets = indexBoxes(bl.concat(boxes.movers)); }
   if (map.nadeSolid) boxes.nadeSolid = (x, y, z) => map.nadeSolid(x - cx, y, z - cz);   // (map files: grenades by the real shapes, arena-nades.js)
@@ -225,34 +226,39 @@ export function rayBoxes(boxes, ox, oy, oz, dx, dy, dz, far = 2000) {
     const t = fineMeets(F, b, ox, oy, oz, dx, dy, dz, ST0, ST1, 1, best, true); if (t < best) best = t; }
   return best;
 }
-// Bullet penetration (wallbangs): each material costs this much per unit of thickness crossed; Infinity = solid.
-// Crates, wooden doors and thin plaster walls can be shot through; brick and concrete only when thin; stone,
-// shipping containers (steel boxes full of cargo) and the floor never. A gun's `pen` budget (weapons-data.js) is
-// what it can cross in total; damage falls with what it crossed.
-export const PEN_COST = { adobe: 2.6, metal: 1.6, crate: .8, wood: 1, door: .7, plaster: 1.6, roof: 1.2, glass: .3, 'metal-red': 1.6, 'metal-blue': 1.6, 'metal-green': 1.6, metal: 1.6, brick: 3, concrete: 3.2, sand: 3, stone: Infinity };
-const SOLID_THICK = 4;   // thicker than this, only crates and wood are crossed (a 15-unit container is not)
-const costOf = (mat, thick, run = thick) => (mat === 'crate' || mat === 'wood' || mat === 'door' || mat === 'glass' || run <= SOLID_THICK) ? thick * (PEN_COST[mat] ?? 3) : Infinity;   // (what crossing `thick` units of it spends; run: the whole wall it is part of — CS2 maps: solids end to end, one wall built of several hulls)
+// Bullet penetration (wallbangs), v53 stage 5: CS2's — gd-surface-props.js. Each solid the bullet crosses is a CS2
+// surface property (its material class → MAT_SURFACE; a CS2 map's door or breakable: its model's own); the gun's
+// `pen` is its m_flPenetration (weapons.vdata: 1 pistols / SMGs / shotguns, 2 rifles / LMGs / Deagle / R8, 2.5 AWP /
+// autos / Scout, 0 Zeus); crossing T Hammer units costs CS:GO's HandleBulletPenetration loss (penLoss: 16 % of the
+// damage + 3.75 / pen · 3 / mod + T² / 24 / mod), and the bullet stops when under 1 damage is left, at a solid over 90
+// units thick, after 4 solids or past 3000 units. Solids end to end (CS2 maps: one wall of several hulls) are one solid.
+// `dmg` (bulletPath's last argument) is the gun's damage: the loss is in hit points, so factor() is what is left of it.
+// A budget of 1e6 or more crosses everything (the sound's occlusion walk, lab.js).
+const PEN_ALL = 1e6, DMG_DEFAULT = 30;   // (HU_G above: game units per Hammer unit; a caller without the gun's damage: a rifle-like 30)
+const lossOf = (dmg, pen, mat0, thick, mat1) => thick <= 1e-6 ? 0 : penLoss(dmg, pen, mat0, thick / HU_G, mat1);   // (what crossing `thick` game units of it costs, in hit points; Infinity: it stops there)
 const JOIN = .5 * 2.54 / 16.5;   // (CS2 maps: solids closer than this, half a Hammer unit — the mesh's 16-bit corners apart — are one wall)
 // A bullet's way (bulletPath): stop — where it ends (Infinity: nothing within `far`), stopBox and stopNormal (the face it
 // ends on, toward the shooter: impact marks lie on the wall — CS2 maps: the triangle's own), crossed — what it went
-// through ({ t0, t1, mat, spent, b, nx, ny, nz }: entry, exit, material, budget spent by then, the box, the entry face's
-// normal), embedded (below). Hand one in (bulletPath's `res`) to have it refilled: no garbage per shot.
+// through ({ t0, t1, mat, spent, b, nx, ny, nz }: entry, exit, material, hit points lost by then, the box, the entry
+// face's normal), embedded (below). Hand one in (bulletPath's `res`) to have it refilled: no garbage per shot.
 export class BulletPath {
-  constructor() { this.stop = Infinity; this.stopBox = null; this.stopNormal = null; this.crossed = []; this.embedded = null; this.budget = 0; Object.defineProperty(this, 'pool', { value: { n: [0, 0, 0], c: [] } }); }
-  // Damage multiplier for a target at distance t: 1 in the open; less behind each thing the bullet went through.
-  factor(t) { if (t >= this.stop) return 0; let s = 0; for (const c of this.crossed) if (c.t1 <= t + 1e-6) s = c.spent; return s ? Math.max(.15, 1 - s / (this.budget * 1.25)) : 1; }
+  constructor() { this.stop = Infinity; this.stopBox = null; this.stopNormal = null; this.crossed = []; this.embedded = null; this.budget = 0; this.dmg = DMG_DEFAULT; Object.defineProperty(this, 'pool', { value: { n: [0, 0, 0], c: [] } }); }
+  // Damage multiplier for a target at distance t: 1 in the open; what is left of the gun's damage behind each thing the
+  // bullet went through (CS2: the hit points each solid took off, gd-surface-props.js penLoss).
+  factor(t) { if (t >= this.stop) return 0; let s = 0; for (const c of this.crossed) if (c.t1 <= t + 1e-6) s = c.spent; return s ? Math.max(0, 1 - s / this.dmg) : 1; }
 }
 // The line is gathered CHUNK units at a time, nearest first (a bullet stopped by the first wall never looks at the boxes
 // past it: a 2 000-unit shot read every box along the line), into pooled records (no garbage per shot or pellet).
 const CHUNK = 96, BPA = [], HP = [], HL = [], OUT = []; let hpN = 0;
-function hitRec(b, t0, t1, nx, ny, nz) { let h = HP[hpN]; if (!h) HP[hpN] = h = { b: null, t0: 0, t1: 0, mat: '', nx: 0, ny: 0, nz: 0, paid: false }; hpN++; h.b = b; h.t0 = t0; h.t1 = t1; h.mat = b.mat; h.nx = nx; h.ny = ny; h.nz = nz; h.paid = false; return h; }
+function hitRec(b, t0, t1, nx, ny, nz) { let h = HP[hpN]; if (!h) HP[hpN] = h = { b: null, t0: 0, t1: 0, mat: '', nx: 0, ny: 0, nz: 0, paid: false }; hpN++; h.b = b; h.t0 = t0; h.t1 = t1; h.mat = b.surf || b.mat;   /* (v53: a CS2 door's or breakable's own surface — gd-surface-props.js; its mat stays 'door' / 'crate': what it is) */ h.nx = nx; h.ny = ny; h.nz = nz; h.paid = false; return h; }
 function sortFrom(L, k) { for (let i = k + 1; i < L.length; i++) { const h = L[i]; let j = i - 1; while (j >= k && L[j].t0 > h.t0) { L[j + 1] = L[j]; j--; } L[j + 1] = h; } }   // (insertion: a handful a chunk, stable)
 let lastEnd = -Infinity, lastRec = null;   // (the fine walker's last solid and its end: bulletPath's, reset each call — a module function, no closure per shot)
 function emit(b, t0, t1, nx, ny, nz) { OUT.push(lastRec = hitRec(b, t0, t1, nx, ny, nz)); lastEnd = t1; }
 // coarse: boxes only, no fine phase (sound through walls, lab.js: its loss needs no exactness).
-export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0, res = null, coarse = false) {
-  const R = res || new BulletPath(), list = boxes.bullets || boxes, F = coarse ? null : list.fine || null, P = R.pool;
-  R.stop = Infinity; R.stopBox = null; R.stopNormal = null; R.embedded = null; R.budget = budget; R.crossed.length = 0; hpN = 0; HL.length = 0; OUT.length = 0;
+export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0, res = null, coarse = false, dmg = DMG_DEFAULT) {
+  const R = res || new BulletPath(), list = boxes.bullets || boxes, F = coarse ? null : list.fine || null, P = R.pool, ALL = budget >= PEN_ALL;
+  R.stop = Infinity; R.stopBox = null; R.stopNormal = null; R.embedded = null; R.budget = budget; R.dmg = dmg > 0 ? dmg : DMG_DEFAULT; R.crossed.length = 0; hpN = 0; HL.length = 0; OUT.length = 0;
+  let runBase = 0, runMat = '', solids = 0;   // (the wall being paid for: hit points lost before it, what it was entered as; how many solids crossed — CS2's 4)
   // The fine walker (F): done up to wt; inside `depth` solids since s0 (entry normal sn, box sb); eye: nothing entered
   // since the eye (a solid left first is one the eye is in); lastEnd: the last solid's end.
   let spent = 0, i = 0, k = 0, wt = 0, depth = 0, sgn = 1, s0 = 0, snx = 0, sny = 0, snz = 0, sb = null, eye = true, runT0 = 0, runEnd = -Infinity; lastEnd = -Infinity; lastRec = null;   // (sgn −1: a solid whose faces are wound inside out — its entry looks like an exit; run: the wall being paid for, solids end to end)
@@ -296,15 +302,15 @@ export function bulletPath(boxes, ox, oy, oz, dx, dy, dz, far = 2000, budget = 0
     if (last && depth > 0) { emit(sb, s0, far, snx, sny, snz); depth = 0; }   // never left within the line (a one-sided face, or a solid past its end): solid to the end
     // Pay for what is settled (nothing still to come can start before lim), nearest first.
     sortFrom(OUT, k); const lim = last ? Infinity : Math.min(F ? c1 - FINE_PAD : c1, depth > 0 ? s0 : Infinity);
-    // (CS2 maps: solids end to end are one wall — its whole thickness against SOLID_THICK, and a bullet it stops stops on its face)
-    for (; k < OUT.length && OUT[k].t0 < lim; k++) { const h = OUT[k], th = h.t1 - h.t0, wall = !!F && h.b.mover == null; if (!wall || h.t0 - runEnd >= JOIN) runT0 = h.t0; runEnd = wall ? h.t1 : -Infinity;
-      const cost = costOf(h.mat, th, h.t1 - runT0);
-      if (spent + cost > budget) { let s = h; if (runT0 < h.t0) { while (R.crossed.length && R.crossed[R.crossed.length - 1].t0 >= runT0 - 1e-9) s = R.crossed.pop(); spent = R.crossed.length ? R.crossed[R.crossed.length - 1].spent : 0; }
+    // (CS2 maps: solids end to end are one wall — its whole thickness pays CS2's loss once, and a bullet it stops stops on its face)
+    for (; k < OUT.length && OUT[k].t0 < lim; k++) { const h = OUT[k], wall = !!F && h.b.mover == null; if (!wall || h.t0 - runEnd >= JOIN) { runT0 = h.t0; runBase = spent; runMat = h.mat; if (h.t1 - h.t0 > 1e-6) solids++; } runEnd = wall ? h.t1 : -Infinity;
+      const loss = ALL ? 0 : solids > PEN.count || runT0 / HU_G > PEN.range ? Infinity : lossOf(R.dmg - runBase, budget, runMat, h.t1 - runT0, h.mat), cost = runBase + loss - spent;
+      if (cost === Infinity || runBase + loss >= R.dmg) { let s = h; if (runT0 < h.t0) { while (R.crossed.length && R.crossed[R.crossed.length - 1].t0 >= runT0 - 1e-9) s = R.crossed.pop(); spent = R.crossed.length ? R.crossed[R.crossed.length - 1].spent : 0; }
         R.stop = s.t0; R.stopBox = s.b; const n = P.n; if (s.nx || s.ny || s.nz) { n[0] = s.nx; n[1] = s.ny; n[2] = s.nz; } else { n[0] = -dx; n[1] = -dy; n[2] = -dz; } R.stopNormal = n; break; }
       spent += cost; h.paid = true; const c = P.c[R.crossed.length] ??= { t0: 0, t1: 0, mat: '', spent: 0, b: null, nx: 0, ny: 0, nz: 0 }; c.t0 = h.t0; c.t1 = h.t1; c.mat = h.mat; c.spent = spent; c.b = h.b; const z = !(h.nx || h.ny || h.nz); c.nx = z ? -dx : h.nx; c.ny = z ? -dy : h.ny; c.nz = z ? -dz : h.nz; R.crossed.push(c); }
     // Still inside a solid, all before it paid: when what is left cannot cross even the part walked so far, the bullet
     // stops on its face now (a pen-0 shot at once; a thick wall without walking to its far side).
-    if (R.stop === Infinity && depth > 0 && (k === OUT.length || OUT[k].t0 >= s0) && s0 - runEnd >= JOIN && spent + costOf(sb.mat, wt - s0) > budget) { R.stop = s0; R.stopBox = sb; const n = P.n; n[0] = snx; n[1] = sny; n[2] = snz; R.stopNormal = n; } }
+    if (R.stop === Infinity && !ALL && depth > 0 && (k === OUT.length || OUT[k].t0 >= s0) && s0 - runEnd >= JOIN && (solids + 1 > PEN.count || s0 / HU_G > PEN.range || lossOf(R.dmg - spent, budget, sb.mat, wt - s0, sb.mat) === Infinity)) { R.stop = s0; R.stopBox = sb; const n = P.n; n[0] = snx; n[1] = sny; n[2] = snz; R.stopNormal = n; } }
   // A door, vent or pane set into a wall (its collision a 16-unit cell, so the thin mover sits inside the wall's box):
   // reached when it starts within MOVER_SLOP past where the wall stopped the bullet.
   if (R.stopBox && R.stopBox.mover == null) { const MV = list.grid ? boxes.movers : null;

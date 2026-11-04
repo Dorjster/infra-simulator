@@ -91,8 +91,8 @@ export function groundAt(boxes, x, z, feet, r = radiusOf(boxes)) {
 export function blocked(boxes, bounds, x, z, feet, h = MOVE.height, r = radiusOf(boxes)) { const st = Math.min(feet + MOVE.step, STEP_TOP) + EPS;
   if (bounds && (x < bounds.minX + r || x > bounds.maxX - r || z < bounds.minZ + r || z > bounds.maxZ - r)) return true;
   let g = feet, c = Infinity;
-  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, NB)) if (b.y1 > st ? (b.y0 < feet + h || AIR && b.y0 < c) : AIR && b.y1 > g) if (x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) {
-    if (b.y1 <= st) g = b.y1; else if (b.y0 < feet + h) return true; else c = b.y0; }
+  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, NB)) if (b.y1 > st ? (b.y0 < feet + h - EPS || AIR && b.y0 < c) : AIR && b.y1 > g) if (x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) {
+    if (b.y1 <= st) g = b.y1; else if (b.y0 < feet + h - EPS) return true; else c = b.y0; }   // (v53: a ceiling exactly a hull's height over the feet is touched, not entered — Source's trace; under one 72.000 HU up a standing body froze)
   return c < g + h - EPS;
 }
 
@@ -116,7 +116,7 @@ function hullsFor(s, others, h) { let n = 0;
 let climbX = NaN, climbZ = NaN, climbLad = null;
 const blockedClimbing = (boxes, bounds, x, z, feet, h) => { const r = RAD, L = climbLad; if (bounds && (x < bounds.minX + r || x > bounds.maxX - r || z < bounds.minZ + r || z > bounds.maxZ - r)) return true;
   const along = !!L && (L.maxX - L.minX <= L.maxZ - L.minZ ? x === climbX && z !== climbZ : z === climbZ && x !== climbX);
-  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, NB)) if (b.y1 > feet + MOVE.step + EPS && b.y0 < feet + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r && !(climbX > b.minX - r && climbX < b.maxX + r && climbZ > b.minZ - r && climbZ < b.maxZ + r)
+  for (const b of boxesNear(boxes, x - r, z - r, x + r, z + r, NB)) if (b.y1 > feet + MOVE.step + EPS && b.y0 < feet + h - EPS && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r && !(climbX > b.minX - r && climbX < b.maxX + r && climbZ > b.minZ - r && climbZ < b.maxZ + r)
     && !(along && b.minX < L.maxX + r && b.maxX > L.minX - r && b.minZ < L.maxZ + r && b.maxZ > L.minZ - r)) return true;
   return false; };
 const blockedBy = (boxes, nh, bounds, x, z, feet, h) => { if (climbX === climbX ? blockedClimbing(boxes, bounds, x, z, feet, h) : blocked(boxes, bounds, x, z, feet, h, RAD)) return true;
@@ -136,7 +136,7 @@ const groundBy = (boxes, nh, x, z, feet, from = NaN) => { let g = groundAt(boxes
 // A ceiling the head is already in counts too (its bottom anywhere over the feet's step): a step up onto a lip under a
 // low ceiling (Nuke's vents: a 4-unit trim at −596 under the vent's 4-unit roof at −526, 70 units over it) puts the head
 // into the roof's box, and a jump from there went on up through the roof onto it — out of the map into the void.
-const ceilingIn = (list, n, x, z, y, ny, h, lad = null) => { const r = RAD; for (let i = 0; i < n; i++) { const b = list[i]; if (b.y0 > y + MOVE.step + EPS && b.y0 < ny + h && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) {
+const ceilingIn = (list, n, x, z, y, ny, h, lad = null) => { const r = RAD; for (let i = 0; i < n; i++) { const b = list[i]; if (b.y0 > y + MOVE.step + EPS && b.y0 < ny + h - EPS && x > b.minX - r && x < b.maxX + r && z > b.minZ - r && z < b.maxZ + r) {
   if (lad && b.minX < lad.maxX + r && b.maxX > lad.minX - r && b.minZ < lad.maxZ + r && b.maxZ > lad.minZ - r && b.y0 < lad.y1 + 1) continue; return true; } } return false; };
 // Someone over the head (feet in its top step or higher) is a ceiling too: the one below can't jump through them.
 const headIn = (nh, x, z, y, ny, h) => { for (let i = 0; i < nh; i++) { const b = HULLS[i]; if (!b.inside && b.y0 >= y + h - MOVE.step - EPS && b.y0 < ny + h && Math.abs(x - b.cx) < PW && Math.abs(z - b.cz) < PW) return true; } return false; };
