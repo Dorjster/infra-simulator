@@ -1,19 +1,31 @@
 #!/usr/bin/env node
 // Imports Counter-Strike 2's own fire pictures from THIS computer's CS2 install into the game's git-ignored
 // user-assets/fire/ — the atlas dist/gd-fire-view.js draws the molotov's and the incendiary's fire with instead of its
-// built-in one (the same layout: gd-fire-view.js ATLAS, 1024², 8 × 8 cells of 128):
-//   cells  0–15  the molotov's flame flipbook   materials/particle/fire_small_sim/fire_small_sim_b, sequences 0–3 × 4 frames
-//   cells 16–31  the incendiary's flame          materials/particle/fire_small_sim/fire_small_sim_a_v02, sequences 0–3 × 4 frames
-//                (CS2 picks a random sequence per sprite: C_INIT_RandomSequence m_nSequenceMax 7 in both flame01a files)
-//   cells 32–39  fire over the floor             materials/particle/fire_onsurface/fire_onsurface, sequence 0 (30: 8 of them)
-//   cells 40–47  smoke (extinguish swirl, trail) materials/particle/smoke/smokeburst/smokeburst_c_slate, sequence 0 (64: 8)
-//   cells 48–51  the incendiary's sparks         materials/particle/sparks/sparks_burst, sequence 0 (25: 4)
-//   cell  52     glow / ember                    materials/particle/particle_flares/particle_flare_004
-//   cells 53–55  the burning rag in flight       materials/particle/fire_burning_character/fire_burning_character, sequence 0 (12: 3)
-//   cell  56     the scorch                      materials/decaltests/molotovscorch (materials/decals/molotovscorch.vmat's g_tColor)
-//   cell  57     the incendiary's breakup        materials/particle/smoke_wisp_breakup_01/smoke_wisp_breakup_01_tile_inv (in its alpha)
-//   cell  58     the molotov's plume             materials/particle/smoke/smokeburst/smokeloop_i_0, sequence 0, its first frame
-//   cells 60–63  the burst's fireball / gas      materials/particle/fire_gas/fire_gas_batch_a_v2, sequence 0 (15: 4)
+// built-in one (the same layout: gd-fire-view.js ATLAS, 2048², 16 × 16 cells of 128; v53 FIRELOOK: was 1024², 8 × 8, with
+// only 4 of each flame sequence's 32 frames — the flames never showed their full body). Each flipbook keeps 16 frames of
+// a sequence, spread over its whole sheet (CS2 plays the sheet once a life: manual frames, field 38):
+//   cells   0–63   fire_small_sim_b, sequences 0–3 × 16    the molotov's flame01a, main_fancy and outline (b_desat's picture)
+//   cells  64–127  fire_small_sim_a, sequences 0–3 × 16    the molotov's main_center
+//   cells 128–175  fire_small_sim_a_v02, sequences 0–2 × 16 the incendiary's main_center, outline and flame01a (alpha from
+//                  its brightness: MIX_RGBA_RGBALPHA)
+//   cells 176–191  fire_onsurface, sequences 0–1 × 8       snapshot_child_base (fire on the floor)
+//   cells 192–207  fire_gas_batch_a_v2, sequences 0–1 × 8  flame03a, fireball1, the incendiary's sprays
+//   cells 208–215  smokeloop_i_0, sequence 0 × 8           the plume (molotov_smoking_ground_child02)
+//   cells 216–219  vistasmokev1_emods, sequence 0 × 4      the plume's column (molotov_smoking_ground_child01; its first
+//                  texture, materials/particles/smoke/smoke.vtex, is not in the install)
+//   cells 220–227  explosion_fireball_01, sequence 0 × 8   the bottle's flash (molotov_explosion_child_flash)
+//   cells 228–231  fire_gas_batch_b_top_v2, sequence 0 × 4 fireball2
+//   cells 232–235  smokeburst_c_slate, sequence 0 × 4      the extinguish swirl, the can's smoke trail
+//   cells 236–239  sparks_burst, sequence 0 × 4            the incendiary's sparks, sprays and splash, the can in flight
+//   cell  240      materials/effects/yellowflare            the embers (molotov_groundfire_child_embers)
+//   cell  241      particle_flare_004                       the rag's glow, the light's floor stand-in
+//   cells 242–244  fire_burning_character, sequence 0 × 3   the rag in flight, the floor glow (child_base_glow)
+//   cell  245      materials/decaltests/molotovscorch       the scorch (materials/decals/molotovscorch.vmat's g_tColor)
+//   cell  246      smoke_wisp_breakup_01_tile_inv           the incendiary's breakup (in its alpha)
+//   cells 247–250  materials/particle/impact/fleks, sequences 15, 23, 31, 39 (debris: 15–39)   the shards
+//   cells 251–254  spray1 (materials/particle/spray1/normal), sequence 0 × 4   the burning splash (splash07a)
+//   cell  255      wispy_steam_burst (materials/particle/simulated/steam), its sequence 0's middle frame   the bottle-break
+//                  burst's smoke (molotov_explosion_child_fireball4; v53 FIRELOOK final)
 // (which picture each CS2 particle uses: particles/inferno_fx/*.vpcf and particles/weapons/cs_weapon_fx/weapon_molotov_* /
 // weapon_incend_* — their renderers' m_hTexture — decompiled from the same install; gd-fire-view.js's header lists them.)
 // Each flipbook frame is put back where its sheet (VTEX_EXTRA_DATA_SHEET) says it sits in the full frame. Additive
@@ -51,19 +63,27 @@ if (path.resolve(WORK).startsWith(path.resolve(ASSETS) + path.sep)) die('--work 
 //   how: 'add' (an additive picture: alpha from brightness when it has none), 'rgbalpha' (its colour kept, its brightness
 //   its alpha), 'smoke' (grey brought up), 'scorch' (as is)
 export const PLAN = [
-  ['molotov', 'materials/particle/fire_small_sim/fire_small_sim_b', [0, 1, 2, 3], 0, 16, 'add'],
-  ['incendiary', 'materials/particle/fire_small_sim/fire_small_sim_a_v02', [0, 1, 2, 3], 16, 16, 'rgbalpha'],
-  ['ground', 'materials/particle/fire_onsurface/fire_onsurface', 0, 32, 8, 'add'],
-  ['smoke', 'materials/particle/smoke/smokeburst/smokeburst_c_slate', 0, 40, 8, 'smoke'],
-  ['sparks', 'materials/particle/sparks/sparks_burst', 0, 48, 4, 'add'],
-  ['flare', 'materials/particle/particle_flares/particle_flare_004', null, 52, 1, 'add'],
-  ['rag', 'materials/particle/fire_burning_character/fire_burning_character', 0, 53, 3, 'add'],
-  ['scorch', 'materials/decaltests/molotovscorch_tga_1dd246a4', null, 56, 1, 'scorch'],
-  ['breakup', 'materials/particle/smoke_wisp_breakup_01/smoke_wisp_breakup_01_tile_inv', null, 57, 1, 'scorch'],
-  ['plume', 'materials/particle/smoke/smokeburst/smokeloop_i_0', 0, 58, 1, 'smoke'],
-  ['fireball', 'materials/particle/fire_gas/fire_gas_batch_a_v2', 0, 60, 4, 'add'],
+  ['simB', 'materials/particle/fire_small_sim/fire_small_sim_b', [0, 1, 2, 3], 0, 64, 'add'],
+  ['simA', 'materials/particle/fire_small_sim/fire_small_sim_a', [0, 1, 2, 3], 64, 64, 'add'],
+  ['incA', 'materials/particle/fire_small_sim/fire_small_sim_a_v02', [0, 1, 2], 128, 48, 'rgbalpha'],
+  ['surface', 'materials/particle/fire_onsurface/fire_onsurface', [0, 1], 176, 16, 'add'],
+  ['gas', 'materials/particle/fire_gas/fire_gas_batch_a_v2', [0, 1], 192, 16, 'add'],
+  ['plume', 'materials/particle/smoke/smokeburst/smokeloop_i_0', [0], 208, 8, 'smoke'],
+  ['smoke', 'materials/particle/vistasmokev1/vistasmokev1_emods', [0], 216, 4, 'smoke'],
+  ['flash', 'materials/particle/explosion_fireballs/explosion_fireball_01', [0], 220, 8, 'add'],
+  ['gasB', 'materials/particle/fire_gas/fire_gas_batch_b_top_v2', [0], 228, 4, 'add'],
+  ['ext', 'materials/particle/smoke/smokeburst/smokeburst_c_slate', [0], 232, 4, 'smoke'],
+  ['sparks', 'materials/particle/sparks/sparks_burst', [0], 236, 4, 'add'],
+  ['ember', 'materials/effects/yellowflare', null, 240, 1, 'add'],
+  ['flare', 'materials/particle/particle_flares/particle_flare_004', null, 241, 1, 'add'],
+  ['burn', 'materials/particle/fire_burning_character/fire_burning_character', [0], 242, 3, 'add'],
+  ['scorch', 'materials/decaltests/molotovscorch_tga_1dd246a4', null, 245, 1, 'scorch'],
+  ['breakup', 'materials/particle/smoke_wisp_breakup_01/smoke_wisp_breakup_01_tile_inv', null, 246, 1, 'scorch'],
+  ['fleks', 'materials/particle/impact/fleks', [15, 23, 31, 39], 247, 4, 'scorch'],
+  ['splash', 'materials/particle/spray1/normal/spray1', [0], 251, 4, 'add'],
+  ['steam', 'materials/particle/simulated/steam/wispy_steam_burst', [0], 255, 1, 'smoke', 'mid'],   // (one cell: the sheet's middle frame, the puff at its full body)
 ];
-const C = 128, N = 1024, TEX = path.join(WORK, 'tex');
+export const GRID = 16; const C = 128, N = GRID * C, TEX = path.join(WORK, 'tex');
 // (FIRE final: imported — a test reading PLAN — it does nothing; only run as a tool does it export and install)
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
 function main() {
@@ -74,7 +94,8 @@ for (const [what, p] of [['CS2 install (pak01_dir.vpk)', VPK], ['Source2Viewer-C
 const s2v = (args, opts = {}) => execFileSync('nice', ['-n', '10', S2V, '-i', VPK, ...args], { maxBuffer: 64 << 20, encoding: 'utf8', ...opts });
 let s2vVersion = '?'; try { s2vVersion = (execFileSync(S2V, ['--version'], { encoding: 'utf8' }).match(/Version:\s*([\d.]+)/) || [])[1] || '?'; } catch {}
 mkdirSync(TEX, { recursive: true });
-for (const [, f] of PLAN) { const dir = path.join(TEX, path.dirname(f)), base = path.basename(f); if (!FORCE && existsSync(dir) && readdirSync(dir).some(n => n.startsWith(base) && n.endsWith('.png'))) continue;
+for (const [, f] of PLAN) { const dir = path.join(TEX, path.dirname(f)), base = path.basename(f); const mine = new RegExp('^' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(_seq\\d+(_\\d+)?)?\\.png$');   // (FIRELOOK: its own pictures — fire_small_sim_a is not fire_small_sim_a_v02)
+  if (!FORCE && existsSync(dir) && readdirSync(dir).some(n => mine.test(n))) continue;
   console.log('exporting', f); try { s2v(['-f', f + '.vtex_c', '-o', TEX, '-d'], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch (e) { die('Source 2 Viewer could not export ' + f + ': ' + (e.stderr || e.message)); } }
 // A flipbook's sheet (VTEX_EXTRA_DATA_SHEET): where each cropped frame sits in its full frame (as tools/import-cs2-blood.mjs).
 function sheetOf(vtex) {
@@ -92,16 +113,16 @@ function cell(src, idx, how, at = null) {
   if (how === 'rgbalpha') for (let i = 0; i < n; i++) { const o = i * 4; D[o + 3] = Math.round(.299 * D[o] + .587 * D[o + 1] + .114 * D[o + 2]); }   // (its alpha its luminance: our reading of RGBALPHA)
   if (how === 'add' && noAlpha) for (let i = 0; i < n; i++) { const o = i * 4, m = Math.max(D[o], D[o + 1], D[o + 2]); D[o + 3] = m; if (m > 0) { D[o] = Math.round(D[o] * 255 / m); D[o + 1] = Math.round(D[o + 1] * 255 / m); D[o + 2] = Math.round(D[o + 2] * 255 / m); } }
   if (how === 'smoke') { let mx = 1; for (let i = 0; i < n; i++) mx = Math.max(mx, D[i * 4], D[i * 4 + 1], D[i * 4 + 2]); const k = 200 / mx; for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) D[i * 4 + c] = Math.min(255, Math.round(D[i * 4 + c] * k)); }
-  const cx = (idx % 8) * C, cy = Math.floor(idx / 8) * C;
+  const cx = (idx % GRID) * C, cy = Math.floor(idx / GRID) * C;
   if (!at) { const s = C / Math.max(img.width, img.height); drawScaled(atlas, img, cx + (C - img.width * s) / 2, cy + (C - img.height * s) / 2, img.width * s, img.height * s); return; }
   const { crop, full } = at, fw = full[2] - full[0], fh = full[3] - full[1], s = C / Math.max(fw, fh), ox = (C - fw * s) / 2, oy = (C - fh * s) / 2;
   drawScaled(atlas, img, cx + ox + (crop[0] - full[0]) * s, cy + oy + (crop[1] - full[1]) * s, Math.max(1, (crop[2] - crop[0]) * s), Math.max(1, (crop[3] - crop[1]) * s)); }
-for (const [name, f, seq, first, cells, how] of PLAN) {
+for (const [name, f, seq, first, cells, how, pick] of PLAN) {
   const dir = path.join(TEX, path.dirname(f)), base = path.basename(f);
   if (seq === null) { const png = path.join(dir, base + '.png'); if (!existsSync(png)) die('missing ' + png); cell(readPng(readFileSync(png)), first, how); from[name] = { file: f, cells: [first] }; continue; }
   const seqs = Array.isArray(seq) ? seq : [seq], per = cells / seqs.length, sheets = sheetOf(f), took = [], frames = [];
   seqs.forEach((sq, si) => { const sh = sheets[sq]; if (!sh?.length) die(`no sheet for ${f} sequence ${sq}`); frames.push(sh.length);
-    for (let c = 0; c < per; c++) { let fr = Math.floor(c * sh.length / per); const at = k => path.join(dir, `${base}_seq${sq}_${k}.png`);
+    for (let c = 0; c < per; c++) { let fr = Math.floor((c + (pick === 'mid' ? .5 : 0)) * sh.length / per); const at = k => { const one = path.join(dir, `${base}_seq${sq}.png`); return sh.length === 1 && existsSync(one) ? one : path.join(dir, `${base}_seq${sq}_${k}.png`); };   // (a one-frame sequence: Source 2 Viewer names it without the frame)
       while (fr < sh.length - 1 && !existsSync(at(fr))) fr++;   // (an empty frame — Source 2 Viewer writes no picture for it: the next one)
       if (!existsSync(at(fr)) || !sh[fr]) die('missing ' + at(fr)); cell(readPng(readFileSync(at(fr))), first + si * per + c, how, sh[fr]); took.push(sq + ':' + fr); } });
   from[name] = { file: f, sequences: seqs, frames, took, cells: [first, first + cells - 1] }; }
@@ -114,9 +135,9 @@ cpSync(manP, path.join(bak, 'manifest.json')); if (existsSync(path.join(ASSETS, 
 for (const old of readdirSync(backups).filter(n => /^fire-\d{8}-\d{4}$/.test(n)).sort().reverse().slice(2)) rmSync(path.join(backups, old), { recursive: true, force: true });
 const NEW = path.join(ASSETS, 'fire.new'), DST = path.join(ASSETS, 'fire'); rmSync(NEW, { recursive: true, force: true }); mkdirSync(NEW, { recursive: true });
 writeFileSync(path.join(NEW, 'atlas.png'), writePng(atlas));
-writeFileSync(path.join(NEW, 'fire.json'), JSON.stringify({ version: 1, made: new Date().toISOString(), s2v: s2vVersion, grid: 8, cell: C, from }, null, 1));
+writeFileSync(path.join(NEW, 'fire.json'), JSON.stringify({ version: 2, made: new Date().toISOString(), s2v: s2vVersion, grid: GRID, cell: C, from }, null, 1));
 rmSync(DST, { recursive: true, force: true }); renameSync(NEW, DST);
-const man = JSON.parse(readFileSync(manP, 'utf8')); man.models ??= {}; man.models.fire = { atlas: 'fire/atlas.png', grid: 8, from: 'CS2 (this computer): ' + PLAN.length + ' particle pictures' };
+const man = JSON.parse(readFileSync(manP, 'utf8')); man.models ??= {}; man.models.fire = { atlas: 'fire/atlas.png', grid: GRID, from: 'CS2 (this computer): ' + PLAN.length + ' particle pictures' };
 man.hash = (Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).slice(0, 12);   // (clients cache user assets by it: a new import, new URLs)
 const tmp = manP + '.fire-tmp'; writeFileSync(tmp, JSON.stringify(man, null, 1)); renameSync(tmp, manP);   // (written whole, then moved over: a reader never sees half a manifest)
 console.log(`→ ${DST}: atlas.png (${(statSync(path.join(DST, 'atlas.png')).size / 1048576).toFixed(1)} MB), fire.json · manifest models.fire · backup ${bak}`);

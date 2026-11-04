@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { NADES, INFERNO, FIRE, FIRE_AP, infernoFlames, fireEnd, cellLit, inFire, nadesTick, clearFireCache, smokeDensity, holdNades, fireStamp, FL_X, FL_Z, FL_Y, FL_T, FL_END, FL_PARENT } from '../dist/arena-nades.js';
 import { hpOf } from '../dist/combat-logic.js';
 import { MAX_HP } from '../dist/weapons-data.js';
-import { createFireView, INSTANCES, K, MAX_FIRES, LOOK, GRAD, BASE, FLY_PARTS } from '../dist/gd-fire-view.js';
+import { createFireView, INSTANCES, K, MAX_FIRES, SYS, GRAD, BASE, FLY_PARTS, PER_FIRE } from '../dist/gd-fire-view.js';
 import { EVENTS } from '../dist/gd-sounds.js';
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 const HU = 2.54 / 16.5, T0 = 9e9;
@@ -105,10 +105,10 @@ const burn = (kind, armor, who = 'Di', by = 'ann', secs = 2) => { const f = fire
   ok(!inFire([c], c[FL_X], c[FL_Z], INFERNO.height + .1, f, T0 + 100), 'not someone standing above the flame\'s 80 HU'); }
 
 // ── The view: one draw, no allocation per frame ──
-{ const v = createFireView({ hostNow: () => 0, boxes: () => [] }); ok(v.mesh.isMesh && v.mesh.geometry.instanceCount === INSTANCES && !Array.isArray(v.mesh.material), 'every fire is ONE instanced mesh, one material (' + INSTANCES + ' parts)');
+{ const v = createFireView({ hostNow: () => 0, boxes: () => [] }); ok(v.mesh.isMesh && v.mesh.geometry.instanceCount <= INSTANCES && !Array.isArray(v.mesh.material), 'every fire is ONE instanced mesh, one material (' + INSTANCES + ' parts at most)');
   const list = [fire('v1'), { ...fire('v2', 40, 0, 0), kind: 'incendiary' }], clearRanges = () => { for (const k of ['aA', 'aB', 'aC']) v.mesh.geometry.getAttribute(k).clearUpdateRanges(); };
   let t = T0; for (let i = 0; i < 300; i++) { t += 16; v.update(list, t); clearRanges(); }
-  ok(v.stats.fires === 2 && v.mesh.visible, 'two fires drawn');
+  ok(v.stats.fires === 2 && v.mesh.visible && v.mesh.geometry.instanceCount === BASE.fires + 2 * PER_FIRE, 'two fires drawn (only the slots up to the last fire: ' + v.mesh.geometry.instanceCount + ')');
   const inspector = await import('node:inspector'), S = new inspector.Session(); S.connect(); const post = (m, p) => new Promise((res, rej) => S.post(m, p, (e, r) => e ? rej(e) : res(r)));
   const own = async f => { await post('HeapProfiler.startSampling', { samplingInterval: 64 }); f(); const { profile } = await post('HeapProfiler.stopSampling'); let b = 0; const w = nd => { if (/gd-fire-view\.js$|arena-nades\.js$/.test(nd.callFrame.url)) b += nd.selfSize; for (const c of nd.children) w(c); }; w(profile.head); return b; };
   const frames = N => { for (let i = 0; i < N; i++) { t += 16; v.update(list, t); clearRanges(); } };
@@ -126,9 +126,9 @@ const burn = (kind, armor, who = 'Di', by = 'ann', secs = 2) => { const f = fire
   ok(v.lights.every(l => l.color.getHex() === 0xf2d393), 'the fire\'s light in CS2\'s colour (242,211,147: molotov_ / incendiary_groundfire_lighting)');
   S.disconnect(); }
 // ── The molotov and the incendiary: CS2's same colours and sizes, its different flipbook, gradient, blend and breakup ──
-{ ok(LOOK.molotov.half === 0 && LOOK.incendiary.half === 1 && LOOK.molotov.ob === 6 && LOOK.incendiary.ob === 3 && LOOK.molotov.desat === .15 && LOOK.incendiary.desat === .3 && LOOK.incendiary.breakup === .1, 'the renderers\' numbers: ADD vs HALF_BLEND_ADD, overbright 6 / 3, desaturation 0.15 / 0.3, the breakup 0.1');
-  ok(GRAD.molotov[3][0] === .258398 && GRAD.incendiary[3][0] === .669251 && GRAD.incendiary.at(-1).slice(1).join() === '9,0,0', 'CS2\'s two colour lookup gradients (the molotov orange early, the incendiary late)');
-  const VS = readFileSync(new URL('../dist/gd-fire-view.js', import.meta.url), 'utf8'); ok(/0\.470588 \+ 0\.117647/.test(VS) && /28\.0 \+ 17\.0/.test(VS), 'flame alpha 0.47–0.59 and radius 28–45 HU (flame01a InitFloat)'); }
+{ ok(SYS.f01.blend === 'ADD' && SYS.iF01.blend === 'HALF_BLEND_ADD' && SYS.f01.ob === 6 && SYS.iF01.ob === 3 && SYS.f01.desat === .15 && SYS.iF01.desat === .3 && SYS.iF01.breakup === .1, 'the flame01a renderers\' numbers: ADD vs HALF_BLEND_ADD, overbright 6 / 3, desaturation 0.15 / 0.3, the breakup 0.1 (gd-fire-look.mjs reads them all from the vpcf)');
+  ok(GRAD.molotov[3][0] === .258398 && GRAD.incendiary[3][0] === .669251 && GRAD.incendiary.at(-1).slice(1).join() === '9,0,0' && GRAD.incCenter[1].slice(1).join() === '32,203,183', 'CS2\'s colour lookup gradients (the molotov orange early, the incendiary late, its paler fill)');
+  ok(SYS.f01.alpha.join() === '0.470588,0.588235' && SYS.f01.r.join() === '28,45', 'flame alpha 0.47–0.59 and radius 28–45 HU (flame01a InitFloat)'); }
 
 // ── Smoke and molotov are different things (SPEC ADDENDUM 1): no shared effect, no shared sound ──
 { const smokeEv = Object.values(EVENTS).filter(e => /^nade\.smoke\./.test(e.id)), fireEv = Object.values(EVENTS).filter(e => /^nade\.(molotov|incendiary|fire)\./.test(e.id));
