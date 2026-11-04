@@ -45,6 +45,7 @@ const byId = {}; const head = new El('head'), body = new El('body');
 globalThis.document = { head, body, createElement: t => new El(t), getElementById: id => byId[id] || null };
 const origAppend = El.prototype.append; El.prototype.append = function (...k) { for (const c of k) if (c.id) byId[c.id] = c; return origAppend.apply(this, k); };
 
+if (!globalThis.addEventListener) { const et = new EventTarget(); globalThis.addEventListener = et.addEventListener.bind(et); globalThis.dispatchEvent = et.dispatchEvent.bind(et); }   // (v53 stage 4: the HUD options' live event)
 const KE = await import('../dist/gd-kill-emblem.js');
 const { createKillEmblems, createDeathPanel, pipKind, markBits, EMBLEM_CLASS, TIER_CLASS, ROOT_CLASS, FAN, KIND, SLOTS, FLAGS, reduceFlashesNow } = KE;
 
@@ -157,7 +158,14 @@ ok(['.rf .ke-a', '.rf .ke-sp', '.rf .ke-rg', '.rf .ke-gl', '.rf .ke-wh'].every(x
   ok(/\.h~\.ke-bx \.ke-a \.o\{stroke:#ffc23d/.test(css) && /\.ke-a \.o\{fill:none;stroke:#7cc4ff/.test(css), 'arcs: gold / white for a headshot, blue / white for a body kill'); }
 // arcs: 5 drawn per card (each an HTML wrapper); 3 (body) / 4 (headshot) at tier 0, up to 5 when escalated
 ok([...flags()].every(f => f.querySelectorAll('.ke-a').length === 5 && f.querySelectorAll('.ke-a').every(a => a.tagName === 'i') && f.querySelectorAll('.o').length === 5 && f.querySelectorAll('.ke-sp').length === 6), 'each card: 5 lightning arcs (HTML wrappers) and 6 sparks, prebuilt');
-ok(JSON.stringify(E.root.innerHTML.match(/>\d<\/text>/g)) === JSON.stringify(['>1</text>', '>2</text>', '>3</text>', '>4</text>', '>5</text>']) && flags()[5].querySelector('.ke-cn'), 'our own cards carry their kill number 1–5 (the extra card: the count label instead)');
+ok(JSON.stringify(E.root.innerHTML.match(/>\d<\/text>/g)) === JSON.stringify(['>1</text>', '>2</text>', '>3</text>', '>4</text>']) && (E.root.innerHTML.match(/>A<\/text>/g) || []).length === 0 && (E.root.innerHTML.match(/mask="url\(#gd-ke-ace-m\)"/g) || []).length === 1 && flags()[5].querySelector('.ke-cn'), "our own cards carry their kill number 1–4, the 5th is CS2's kill_5 ace (a spade with a skull cut out, no letter: the user's ace picture), the extra card the count label");
+// v53 HUD fix: CS2's card fill and fan geometry (hudhealthammocenter.vcss / kill_5 / the user's pictures)
+{ const css = KE.KILL_EMBLEM_CSS;
+  ok(KE.PIVOT === 42.95 && KE.CARD_CY === 44, 'the fan turns about the card SVG\'s centre, 42.95 px below the card (CS2 layout), cards 44 px above the badge (fitted to both pictures)');
+  ok(/\.ke-bg\{[^}]*backdrop-filter:blur\(2px\) brightness\(\.373\)/.test(css) && /\.ke-bd\{[^}]*backdrop-filter:blur\(2px\) brightness\(\.373\)/.test(css), "cards and badge: CS2's hud-blur-bg-color #000000a0 over the world blurred (gaussian 2) — not see-through");
+  ok(/\.ke-dt\{[^}]*opacity:\.2/.test(css) && flags().every(f => f.querySelector('.ke-dt')), "CS2's dot pattern at 0.2 on every card");
+  ok(/\.gd-ke\.n3 \.ke-f1 \.ke-cd\{display:none\}\.gd-ke\.n3 \.ke-f1 \.ke-cp\{display:block\}/.test(css) && /\.gd-ke\.n3 \.ke-f2 \.ke-cp\{display:block\}/.test(css) && !/\.gd-ke\.n3 \.ke-f3 \.ke-cp/.test(css) && /\.gd-ke\.n5 \.ke-f4 \.ke-cp\{display:block\}/.test(css) && /\.gd-ke\.nx \.ke-f4 \.ke-cp/.test(css), 'older cards show the plain card (skulls only, as both pictures), the newest its number');
+  ok(!/\.ke-f5 \.ke-p\{display:none/.test(css), "the ace card keeps its corner pips (the user's ace picture: skulls in the corners)"); }
 // CS2's pictures: set once, in place (no new nodes); cards as luminance masks (black fill clear)
 { const cd0 = flags()[0].querySelector('.ke-cd'), p1 = flags()[0].querySelectorAll('.ke-p')[1], lg = E.root.querySelectorAll('.ke-lg')[0];
   const files = { card: { 1: 'kill_1', 2: 'kill_2', 3: 'kill_3', 4: 'kill_4', 5: 'kill_5', extra: 'kill_extra', mask: 'kill_mask' }, pip: { default: 'kill_pip_default', headshot: 'kill_pip_headshot' }, logo: { t: 't_logo_1c', ct: 'ct_logo_1c' } };
@@ -198,5 +206,13 @@ ok(JSON.stringify(E.root.innerHTML.match(/>\d<\/text>/g)) === JSON.stringify(['>
   G3.combat.down[me] = { until: 99999, by: '<b>x</b>', weapon: 'x', wid: 'ak', at: 9500 }; P.update(true, G3, me, 9501); ok(!P.el.innerHTML.includes('<b>x</b>'), "the killer's name is escaped");
   delete G3.combat.down[me]; P.update(true, G3, me, 9600); ok(P.el.hidden, 'back: hidden'); }
 
+// v53 stage 4 — the colours (the user's two pictures with csgostyles.vcss): cards = the HUD colour (cl_hud_color, default
+// Team Color), ring = your player colour (your place in your side's join order), logo = your team's colour.
+{ const HP = await import('../dist/gd-hud-prefs.js'), E2 = createKillEmblems(), G4 = { combat: { feed: [], down: {}, d: { round: { id: 'c1', phase: 'live' }, teams: { zed: 'ct', ann: 't', bo: 't' } } } };
+  E2.update(true, G4, 'bo', 5000); E2.update(true, G4, 'bo', 5001);
+  ok(E2.colors.card === '#eabe54' && E2.colors.ring === HP.PLAYER_COLORS[1] && E2.colors.logo === '#eabe54', 'T, 2nd Terrorist: gold cards (t-color, picture 1), purple ring (his player colour), gold logo · ' + JSON.stringify(E2.colors));
+  G4.combat.d.teams = { zed: 'ct', bo: 'ct' }; G4.combat.d.round = { id: 'c2', phase: 'freeze' }; E2.update(true, G4, 'bo', 5002);
+  ok(E2.colors.card === '#96c8fa' && E2.colors.ring === HP.PLAYER_COLORS[1] && E2.colors.logo === '#96c8fa', 'CT: ct-color cards and logo · ' + JSON.stringify(E2.colors));
+  HP.saveHudPrefs({ color: 1 }); ok(E2.colors.card === '#e8e8e8' && E2.colors.ring === HP.PLAYER_COLORS[1], 'HUD colour White: white cards (the ace picture), the ring still the player colour'); HP.saveHudPrefs({}); }
 if (fails) { console.error(`FAIL: gd-kill-emblem · ${fails} of ${n}`); process.exit(1); }
 console.log(`PASS: gd-kill-emblem · ${n} checks (CS2 card fan per count, badge + line, headshot variant, pips, marks, burst / pulse / escalation / ace ring, extra card past 5, cleared at the freeze, deathmatch per life, team logo, reduce flashes, CS2 pictures in place, transform/opacity on HTML only, delayed parts start invisible, no allocation per kill, frame or feed line, death panel)`);

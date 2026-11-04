@@ -13,8 +13,9 @@ import {usdMoney, short} from './money.js';
 import {goalsView, goalsDoneOf} from './casino-logic.js';
 import {notify} from './hud.js';
 import {savePreferences} from './player-preferences.js';
-import { loadCrosshair, saveCrosshair, crosshairEditorHTML, crosshairHTML, CROSSHAIR_DEFAULT } from './gd-crosshair.js';
+import { loadCrosshair, saveCrosshair, crosshairEditorHTML, crosshairHTML, CROSSHAIR_DEFAULT, crosshairCode as gdXhCode, crosshairFromCode as gdXhFromCode } from './gd-crosshair.js';   // (v53 GD HUD: + CS2's crosshair code)
 import { radarEditorHTML, wireRadarEditor } from './gd-radar-prefs.js';   // (Global Defensive's radar options: CS2's five, live)
+import { hudEditorHTML, wireHudEditor } from './gd-hud-prefs.js';   // (v53 stage 4: Global Defensive's HUD options — scale, colour, letters, reduce flashes)
 import { COLLISION_VIEW } from './gd-collision-view.js';
 import { videoSettingsHTML as gdVideoHTML } from './gd-display.js';   // (Global Defensive → Video: CS2's aspect ratio, resolution, scaling, display mode)
 const gdVideoEnv = () => { const d = globalThis.devicePixelRatio || 1, D = globalThis.infraDesktop; return { sw: Math.round((globalThis.screen?.width || innerWidth) * d), sh: Math.round((globalThis.screen?.height || innerHeight) * d), desktop: !!D?.setDisplayMode, mac: D?.platform === 'darwin' }; };
@@ -475,6 +476,7 @@ export function createCampaignUI(ctx) {
      ${gdVideoHTML(p, gdVideoEnv())}
      ${crosshairEditorHTML(loadCrosshair())}
      ${gd ? radarEditorHTML() : ''}
+     ${gd ? hudEditorHTML() : ''}
      <h3>Arena characters</h3><div class="cp-row"><button data-csimp="t">Import Terrorist models…</button><button data-csimp="ct">Import Counter-Terrorist models…</button><button data-csimp="clear">Remove imported</button></div><p class="cp-muted">Counter-Strike 1.6 player models (.mdl, or a .zip with .mdl files inside) from your own computer. They stay on this computer only. Imported now: ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).t} Terrorist · ${(ctx.characters?.counts?.() || { t: 0, ct: 0 }).ct} Counter-Terrorist. The desktop app also finds them by itself in a Steam install of CS 1.6. Without them the arena uses the built-in Terrorist / Counter-Terrorist gear.</p>
      <h3>Models and maps</h3><div class="cp-row"><button data-pack="import">Import asset pack (.zip)…</button></div><p class="cp-muted">Counter-Strike 2 agents, guns, knives and the maps from one asset pack — “Infra Simulator Assets.zip”, made by tools/import-cs2-models.mjs on the computer they were downloaded on. Installed for this room: everyone who joins sees them. They stay on this computer; the game never ships them.</p>
      <h3>Audio</h3><div class="set-grid">${(() => { const v = getVolumes(); return [['master', 'Master'], ['effects', 'Game effects'], ['voice', 'Team voice'], ['music', 'Music'], ['ui', 'Interface']].map(([k, l]) => `<label>${l} · ${Math.round(v[k] * 100)}%<input type="range" data-vol="${k}" id="vol-${k}" min="0" max="1" step=".05" value="${v[k]}"></label>`).join(''); })()}</div>
@@ -497,6 +499,9 @@ export function createCampaignUI(ctx) {
     if (same) { el.querySelectorAll?.('[data-key]').forEach(x => { const v = keep[x.dataset.key]; if (v === undefined) return; if (x.tagName === 'DETAILS') x.open = v; else x.value = v; }); el.scrollTop = scroll; }
   }
   $('campaign-panel').addEventListener('click', e => { if (e.target.closest?.('[data-xh-reset]')) { saveCrosshair({ ...CROSSHAIR_DEFAULT }); render(); return; }
+    /* v53 HUD: CS2's crosshair code — copy yours, import one (CS2's confirm and error words: gd-crosshair.js) */
+    if (e.target.closest?.('[data-xh-copy]')) { const t = gdXhCode(loadCrosshair()); try { navigator.clipboard?.writeText(t).catch(() => {}); } catch {} const m = document.querySelector('#campaign-panel .xh-msg'); if (m) m.textContent = 'Copied'; return; }
+    if (e.target.closest?.('[data-xh-import]')) { const inp = document.querySelector('#campaign-panel [data-xh-paste]'), c = gdXhFromCode(inp?.value, loadCrosshair()), m = document.querySelector('#campaign-panel .xh-msg'); if (!c) { if (m) m.textContent = 'Invalid or old crosshair code'; return; } if (!confirm('Replace current crosshair?')) return; saveCrosshair(c); render(); return; }
     const t = e.target.closest('button'); if (!t) return;
     if (t.dataset.tab) { tab = t.dataset.tab; render(); return; }
     if (t.dataset.adv) { close(); engineering.panel(t.dataset.adv); return; }
@@ -525,6 +530,7 @@ export function createCampaignUI(ctx) {
   $('campaign-panel').addEventListener('change', e => { const v = ctx.voice?.(), t = e.target; if (!v || !t.dataset) return;
     if (t.dataset.vcm === 'mute') v.setMicMuted(t.checked); if (t.dataset.vcsel === 'in') v.setInput(t.value); if (t.dataset.vcsel === 'out') v.setOutput(t.value); });
   wireRadarEditor($('campaign-panel'), () => render());   /* (the radar section: saved and applied at once, its preview redrawn) */
+  wireHudEditor($('campaign-panel'), () => render());   /* (v53 stage 4, Global Defensive's HUD section: saved and applied at once) */
   $('campaign-panel').addEventListener('input', e => { const t = e.target; if (!t.dataset?.vol) return; setVolumes({ [t.dataset.vol]: +t.value }); const lab = t.closest('label'); if (lab) lab.firstChild.textContent = lab.firstChild.textContent.replace(/· \d+%/, '· ' + Math.round(t.value * 100) + '%'); });
   $('campaign-panel').addEventListener('input', e => { const v = ctx.voice?.(), t = e.target; if (!v || !t.dataset?.vcr) return; if (t.dataset.vcr === 'gain') v.setMicGain(t.value); else v.setVolume(t.value); const lab = t.closest('label'); if (lab) lab.firstChild.textContent = (t.dataset.vcr === 'gain' ? 'Microphone volume · ' : 'Team mates’ voices · ') + Math.round(t.value * 100) + '%'; });
   $('campaign-panel').addEventListener('click', e => {

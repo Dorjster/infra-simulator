@@ -89,6 +89,9 @@ export function createConsole({ ctx, isGD, release = () => {}, capture = () => {
   function toggle(on = !open) { if (!el) build(); if (on === open) return; open = on; el.hidden = !on; if (on) { release(); input.focus(); } else { input.blur(); capture(); } }
   const onKey = e => { if (e.code !== 'Backquote' || e.repeat || !isGD() || open) return; if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target?.tagName)) return; e.preventDefault(); e.stopImmediatePropagation(); toggle(true); };
   addEventListener('keydown', onKey, { capture: true });
+  // (v53 HUD) lines other GD modules print here, as CS2's console gets them — the round's damage report (gd-round-panel.js)
+  const onPrint = e => { const L = e?.detail; if (!Array.isArray(L) || !L.length) return; if (!el) build(); for (const t of L) if (typeof t === 'string') print(t); };
+  addEventListener('gd-console-print', onPrint);
   return { get open() { return open; }, toggle, run: line => { if (!el) build(); return run(line); }, print: t => { if (!el) build(); print(t); },
-    dispose() { removeEventListener('keydown', onKey, { capture: true }); el?.remove(); el = null; open = false; } };
+    dispose() { removeEventListener('keydown', onKey, { capture: true }); removeEventListener('gd-console-print', onPrint); el?.remove(); el = null; open = false; } };
 }

@@ -11,7 +11,7 @@ const { hurt } = await import('../dist/combat-logic.js');
 const { ARENA_MAPS } = await import('../dist/arena-maps.js');
 const { ARENA } = await import('../dist/facility-layout.js');
 const { weaponById } = await import('../dist/weapons-data.js');
-const { statsOf, roundPanelHTML, createRoundPanel, boardRows, boardHTML, historyHTML } = await import('../dist/gd-round-panel.js');
+const { statsOf, roundPanelHTML, createRoundPanel, boardRows, boardHTML, historyHTML, damageReportLines } = await import('../dist/gd-round-panel.js');
 let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.error('FAIL:', m); } };
 
 const M = ARENA_MAPS.dust2, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7 + (M.nav ? M.nav.floorAt(x, z) || 0 : 0), z: ARENA.cz + z, yaw: 0 });
@@ -48,9 +48,10 @@ ok(roundPanelHTML(d, g.combat, ms, 'cy').includes('took <b>100</b> in 2 hits'), 
 const list = ['Ann', 'Bo', 'Cy', 'Di', 'BOT Eve'];
 ok(boardRows(d, g.combat, ms, list, 'ct', 't', 'ann', () => false).every(p => p.money === null) && boardRows(d, g.combat, ms, list, 't', 't', 'ann', () => false).every(p => p.money !== null), 'money: your side only');
 ok(boardRows(d, g.combat, ms, list, 't', 't', 'ann', () => false).map(p => p.key).join() === 'ann,bo', 'sorted by kills then damage');
-{ d.teams['bot eve'] = 'ct'; const h = boardHTML({ d, C: g.combat, ms, list, viewerTeam: 't', me: 'ann', isDown: nm => nm === 'Cy' });
+{ d.teams['bot eve'] = 'ct'; const h = boardHTML({ d, C: g.combat, ms, list, viewerTeam: 't', me: 'ann', isDown: nm => nm === 'Cy', ping: nm => nm === 'Ann' ? 23.4 : null });
+  ok(h.includes('<th class="gb-ping">PING</th><th>PLAYER</th>') && h.includes('<td class="gb-ping">23</td><td>Ann'), 'v53: CS2\'s ping cell first (your round trip, ms)');
   ok(h.indexOf('COUNTER-TERRORISTS') < h.indexOf('>TERRORISTS<'), 'CT block above T');
-  ok(h.includes('<span class="gb-bot">BOT</span> Eve') && h.includes('★1') && h.includes('50%') && /class="dead"/.test(h) && /class=" me"/.test(h), 'BOT tag, MVP star, HS%, dead dimmed, you highlighted');
+  ok(h.includes('<td class="gb-ping"><span class="gb-bot">BOT</span></td><td>Eve') && h.includes('★1') && h.includes('50%') && /class="dead"/.test(h) && /class=" me"/.test(h), 'BOT tag (in the ping cell, as CS2), MVP star, HS%, dead dimmed, you highlighted');
   const ctPart = h.slice(h.indexOf('gb ct'), h.indexOf('gb t')); ok(!/\$\d/.test(ctPart), 'no money shown on the other side\'s block'); delete d.teams['bot eve']; }
 // The panel on the page: written once per round end, hidden at the freeze, no allocation per frame.
 const el = { hidden: true, innerHTML: '' }, P = createRoundPanel(el);
@@ -67,4 +68,8 @@ ok(ms2 && ms2 !== ms && Object.keys(ms2.p).length === 0 && ms2.r.length === 0, '
 ok(statsOf(g.combat, ms2, 'ann').k === 0 && statsOf(g.combat, ms2, 'ann').mvp === 0, 'Ann starts the new match at 0');
 
 if (fails) { console.error(`FAIL: gd-round-panel · ${fails} of ${n}`); process.exit(1); }
+// v53 HUD: the console's damage report (CS2's lines), given and taken, from the round's report
+{ const L = damageReportLines({ ann: { g: [['bob', 100, 1], ['cy', 27, 2]], d: 127, t: 40, th: 1 }, bob: { g: [['ann', 40, 1]], d: 40, t: 100, th: 1 }, cy: { g: [], d: 0, t: 27, th: 2 } }, 'ann', { names: { ann: 'Ann', bob: 'Bob', cy: 'Cy' } });
+  ok(L.join('\n') === ['Player: Ann - Damage Given', '-------------------------', 'Damage Given to "Bob" - 100 in 1 hit', 'Damage Given to "Cy" - 27 in 2 hits', 'Player: Ann - Damage Taken', '-------------------------', 'Damage Taken from "Bob" - 40 in 1 hit'].join('\n'), 'v53: the console damage report, CS2\'s lines (given to each, taken from each)', L.join(' / '));
+  ok(damageReportLines(null, 'ann').length === 0, 'no report, no lines'); }
 console.log(`PASS: gd-round-panel · ${n} checks`);

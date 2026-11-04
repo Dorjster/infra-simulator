@@ -17,11 +17,23 @@
 //   5-kill fan and an EXTRA flag (kill_extra, straight up, on top) shows the count (Label.hud-HA__kills__count, 21 px);
 //   on a kill the new flag plays on-kill (0.7 s ease-out, brightness 6 → 6 at 30 % → 1) and its spotlight (a 36 × 100 px
 //   white-to-clear gradient, radius 10 px, opacity 0 → .2 at 1 % → .2 at 30 % → 0, 0.7 s).
-// Measured from the user's pictures (scratchpad v53/ref: cs2-hud.png 739 × 415, cs2-kill-emblem.png): the badge's
-// centre 53 px (at 1080 p) above the picture's bottom; the cards' centres 49 px above the badge's centre, turning about
-// a point 58 px below their centres (fitted to the 3-kill picture: card 3's right edge and card 1's left edge give 53
-// and 64 px; the flag panel's layout is in the compiled vxml, not readable as text); colours:
-// gold #f5cd56 (the cards, numbers, pips, logo, line), the ring light blue #b5dcf0.
+// The turning point (v53 HUD fix): each flag turns about its own centre (panorama's default transform-origin 50 % 50 %),
+// and the 152 px card SVG is centred in it (.kill-flag-svg-size vertical-align center), so the pivot is the SVG's centre
+// (y 63 of 126) — (63 − 27.4) × 152 / 126 = 42.95 px below the card's centre (the kill_mask rect's centre, y 27.4).
+// Measured from the user's pictures (scratchpad v53/ref: cs2-hud.png 739 × 415, cs2-kill-emblem.png 617 × 480, which is
+// stretched 1.105× sideways — its ring measures 268 × 242.5 px —, cs2-kill-emblem-ace.png 161 × 158, not stretched):
+// the badge's centre 53 px (at 1080 p) above the picture's bottom; the cards' centres 44 px above the badge's centre
+// (a fit of the drawn card outlines to the gold / white outline pixels of both pictures: pivot 42.95 and 44 px match
+// 82 % of the outline in the 3-kill picture and 76 % in the ace picture; the old fitted 58 / 49 px matched 57 % / 53 %).
+// Colours: below (the HUD colour, your player colour, the team colour).
+// The card's fill (hudhealthammocenter.vcss .kill-flag-bg-blur): hud-blur-bg-color #000000a0 over the world blurred
+// (world-blur hudWorldBlur = gaussian(2, 2, 2), csgostyles.vcss), cut to kill_mask, and .kill-flag-bg-pattern: CS2's
+// bluedots_large at 0.2 opacity (backgroundDotsSize 360 px). Ours: backdrop-filter blur(2px) brightness(.373) (= the
+// world under 160/255 black) and the dots (CS2's image when tools/import-cs2-hud.mjs imported it, else a dot grid of our
+// own). The badge's disc is the same (.hud-HA-center: hud-blur-bg-color + world-blur, a circle mask). CS2's world blur
+// samples the world only, so an older card under a newer one is hidden; a backdrop filter also sees the older card, so
+// an older card shows its plain card (kill_extra / ours without a number) — its number would be under the newer card in
+// CS2 anyway (the user's pictures: older cards show only their skulls).
 // Everything is laid out in CS2's 1080 p pixels and scaled by the picture's height (gd-display.js gdView; stage 4's HUD
 // scale multiplies through setScale).
 //
@@ -49,9 +61,9 @@
 // string from a table: nothing allocated. The per-frame update() reads the feed and returns at once unless a new entry,
 // a new round, a death or a new screen size is there; names are turned into keys once each (a small cache).
 //
-// Death panel — when you die: who killed you, with what (the kill-feed weapon icon) and the headshot mark, as CS2's
-// death panel; it stays 6 s or until you are back. Built once per death (not per frame).
+// Death panel — when you die: CS2's death panel during the death cam (v53 DEATH: gd-death-panel.js, re-exported at the end).
 import { gdView } from './gd-display.js';
+import { loadHudPrefs, hudColorOf, PLAYER_COLORS, TEAM_COLOR } from './gd-hud-prefs.js';   // (v53 stage 4: CS2's HUD colour, your player colour, the HUD scale)
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -71,7 +83,7 @@ export const FLAG_MS = 200;      // the fan's move (.hud-HA__kill-flag.animate t
 export const ON_KILL_MS = 700;   // CS2's on-kill / on-kill-spotlight (0.7 s ease-out)
 const U = 152 / 126;             // CS2 px per card-SVG unit (126 units drawn 152 px tall)
 export const CARD = { w: 28 * U, h: 38 * U, x0: 10, y0: 8.4 };   // the card inside the 48 × 126 SVG (kill_mask: x 10–38, y 8.4–46.4)
-export const CARD_CY = 49, PIVOT = 58, BADGE = 64, BADGE_BOTTOM = 53;   // px at 1080 p (measured, see the top)
+export const CARD_CY = 44, PIVOT = 42.95, BADGE = 64, BADGE_BOTTOM = 53;   // px at 1080 p (the pivot from CS2's layout, the rest measured: see the top)
 // Kill kinds: which pip a card shows (CS2's .HUD--KillN--<kind> classes).
 export const KIND = { body: 0, head: 1, slash: 2, blast: 3, burn: 4, shock: 5 }; const KIND_N = 6;
 export const PIP_NAMES = ['default', 'headshot', 'slash', 'blast', 'burn', 'shock'];
@@ -110,6 +122,12 @@ const PIP_D = [
 // (CS2's kill_pip_* layout), the number in the middle (CS2's kill_N: x 10.8–17, y 13.3–24 of the card).
 const pipPair = k => `<path fill-rule="evenodd" transform="translate(3 2.6) scale(.8 1)" d="${PIP_D[k]}"/><path fill-rule="evenodd" transform="rotate(180 14 19) translate(3 2.6) scale(.8 1)" d="${PIP_D[k]}"/>`;
 const OWN_CARD = num => `<svg class="ke-svg" viewBox="0 0 28 38" aria-hidden="true"><rect x=".5" y=".5" width="27" height="37" rx="4.3" fill="none" stroke="currentColor" stroke-width="1" stroke-opacity=".82"/>${num ? `<text x="14" y="23.6" text-anchor="middle" font-size="13" font-weight="800" font-family="system-ui,-apple-system,Segoe UI,sans-serif" fill="currentColor">${num}</text>` : ''}</svg>`;
+// The ace (5th kill): CS2's kill_5 is a big spade with a skull cut out of it (the decompiled kill_5.vsvg: the spade from
+// y 14.4 to 36.4 of the 48 × 126 SVG, x 13–35 — in the card's box 3.2–24.8 × 6–28) with the kill's pips in the corners
+// as on every card (the user's ace picture: skulls top left and bottom right, no letter). Ours the same, in the card's
+// 28 × 38 box: the spade scaled up and a skull hole (an SVG mask, one per page: only the 5th flag draws it).
+const SPADE_D = 'M14 9.5c-2.6 3.4-6.6 5.8-6.6 9.2 0 2.2 1.7 3.6 3.5 3.6 1.1 0 2.1-.5 2.6-1.3-.3 1.8-1 3.2-2.3 4.3h5.6c-1.3-1.1-2-2.5-2.3-4.3.5.8 1.5 1.3 2.6 1.3 1.8 0 3.5-1.4 3.5-3.6 0-3.4-4-5.8-6.6-9.2z';
+const OWN_ACE = `<svg class="ke-svg" viewBox="0 0 28 38" aria-hidden="true"><defs><mask id="gd-ke-ace-m" maskUnits="userSpaceOnUse" x="0" y="0" width="28" height="38"><path fill="#fff" transform="translate(14 17.6) scale(1.62 1.34) translate(-14 -17.8)" d="${SPADE_D}"/><path fill="#000" fill-rule="evenodd" transform="translate(10.2 12.6) scale(.76)" d="${SKULL_D}"/></mask></defs><rect x=".5" y=".5" width="27" height="37" rx="4.3" fill="none" stroke="currentColor" stroke-width="1" stroke-opacity=".82"/><rect width="28" height="38" fill="currentColor" mask="url(#gd-ke-ace-m)"/></svg>`;
 export const OWN_PIP = PIP_D.map((_, k) => `<svg class="ke-svg" viewBox="0 0 28 38" aria-hidden="true"><g fill="currentColor">${pipPair(k)}</g></svg>`);
 // The team logos (64 × 64): T — a star over two crossed knives; CT — a shield with a star (ours).
 const KNIFE = 'M0 0C9-4.6 23-6 32-2.6L39 .2 32 1.8C23 3 11 3.4 0 2.4zM-3-2.6h2.4v7.6H-3zM-12 .1h9v2.2h-9z';
@@ -143,15 +161,19 @@ const SPARK_HTML = seed => { let h = ''; for (let i = 0; i < 6; i++) h += `<i cl
 const fanCSS = () => { let s = ''; const tf = ([x, y, r]) => `translate3d(${x}px,${y}px,0) rotate(${r}deg)`;
   for (let n = 1; n <= SLOTS; n++) for (let k = 0; k < n; k++) s += `.gd-ke.n${n} .ke-f${k + 1}${n === SLOTS ? `,.gd-ke.nx .ke-f${k + 1}` : ''}{transform:${tf(FAN[n][k])};visibility:visible}`;
   return s + '.gd-ke.nx .ke-f6{transform:translate3d(0,0,0) rotate(0deg);visibility:visible}'; };
+// Older cards (all but the newest; past five, cards 1–4 under the extra card) show their plain card: see the top.
+const plainCSS = () => { let s = ''; for (let n = 2; n <= SLOTS + 1; n++) for (let k = 0; k < Math.min(n - 1, SLOTS - 1); k++) s += `.gd-ke.${n > SLOTS ? 'nx' : 'n' + n} .ke-f${k + 1} .ke-cd{display:none}.gd-ke.${n > SLOTS ? 'nx' : 'n' + n} .ke-f${k + 1} .ke-cp{display:block}`; return s; };
 const px = v => +v.toFixed(2) + 'px';
 export const KILL_EMBLEM_CSS = `
-.gd-ke{position:fixed;left:0;top:0;width:0;height:0;z-index:36;pointer-events:none;transform-origin:0 0;--g:#f5cd56;--ring:#b5dcf0}.gd-ke[hidden]{display:none}
-.ke-ln{position:absolute;top:-.5px;width:240px;height:1px;opacity:.85}.ke-ln.l{right:0;background:linear-gradient(270deg,var(--g),#f5cd5600)}.ke-ln.r{left:0;background:linear-gradient(90deg,var(--g),#f5cd5600)}
+.gd-ke{position:fixed;left:0;top:0;width:0;height:0;z-index:36;pointer-events:none;transform-origin:0 0;--g:#eabe54;--ring:#88cef5;--tm:#eabe54}.gd-ke[hidden]{display:none}
+.ke-ln{position:absolute;top:-.5px;width:240px;height:1px;opacity:.85}.ke-ln.l{right:0;background:linear-gradient(270deg,var(--g),transparent)}.ke-ln.r{left:0;background:linear-gradient(90deg,var(--g),transparent)}
 .ke-f{position:absolute;left:${px(-CARD.w / 2)};top:${px(-CARD_CY - CARD.h / 2)};width:${px(CARD.w)};height:${px(CARD.h)};transform-origin:50% calc(50% + ${PIVOT}px);transform:translate3d(0,${HIDDEN_Y}px,0) rotate(0deg);visibility:hidden;transition:transform ${FLAG_MS}ms ease-in-out}
 ${fanCSS()}
 .ke-c{position:absolute;inset:0;transform-origin:50% 50%;color:var(--g)}
 .ke-gl{position:absolute;left:-18px;top:-16px;right:-18px;bottom:-16px;border-radius:50%;opacity:0;background:radial-gradient(closest-side,#9fd2ffaa,#5aa8ff55 55%,#5aa8ff00)}.ke-c.h .ke-gl{background:radial-gradient(closest-side,#ffe9a8cc,#ffbf3a66 55%,#ffbf3a00)}
-.ke-bg{position:absolute;inset:0;border-radius:${px(4.8 * U)};background:#07090c;opacity:.4}.ke-bg.ke-mk{border-radius:0;background:#07090c}
+.ke-bg{position:absolute;inset:0;border-radius:${px(4.8 * U)};background:#0000;-webkit-backdrop-filter:blur(2px) brightness(.373);backdrop-filter:blur(2px) brightness(.373)}.ke-bg.ke-mk{border-radius:0;background:#0000}
+.ke-dt{position:absolute;inset:0;border-radius:${px(4.8 * U)};opacity:.2;background-image:var(--dots,radial-gradient(circle,#fff 0 .6px,#fff0 1px));background-size:var(--dots-size,3.4px 3.4px)}
+.ke-cp{display:none}${plainCSS()}
 .ke-svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
 .ke-mk{position:absolute;left:${px(-CARD.x0 * U)};top:${px(-CARD.y0 * U)};width:${px(48 * U)};height:152px;background:var(--g);-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}.ke-mk.lum{mask-mode:luminance}
 .ke-p{position:absolute;inset:0;display:none}.ke-c.k0 .ke-p.k0,.ke-c.k1 .ke-p.k1,.ke-c.k2 .ke-p.k2,.ke-c.k3 .ke-p.k3,.ke-c.k4 .ke-p.k4,.ke-c.k5 .ke-p.k5{display:block}.ke-f6 .ke-p{display:none!important}
@@ -172,8 +194,8 @@ ${fanCSS()}
 .ke-c:not(.h)~.ke-bx:not(.t1):not(.t2):not(.t3) .a4,.ke-bx:not(.t1):not(.t2):not(.t3) .a5,.ke-c:not(.h)~.ke-bx.t1 .a5{display:none}
 .ke-sw{position:absolute;left:0;top:0;width:0;height:0}.ke-sp{position:absolute;left:-1.5px;top:-1.5px;width:3px;height:3px;border-radius:50%;background:#e8f6ff;box-shadow:0 0 4px #8fd0ff;opacity:0}.h~.ke-bx .ke-sp{background:#fff6d0;box-shadow:0 0 4px #ffc23d}
 .ke-rg{position:absolute;left:-26px;top:-26px;width:52px;height:52px;border-radius:50%;box-shadow:0 0 0 2px #ffe08acc,0 0 10px #ffc23d88;opacity:0;display:none}.ke-bx.ace .ke-rg{display:block}
-.ke-bd{position:absolute;left:${-BADGE / 2}px;top:${-BADGE / 2}px;width:${BADGE}px;height:${BADGE}px;border-radius:50%;background:#080a0e6b;box-shadow:inset 0 0 0 3px var(--ring),0 0 2px #0006}
-.ke-lg{position:absolute;inset:9px;color:var(--g)}.ke-lg .ke-mk{left:0;top:0;width:100%;height:100%;mask-mode:alpha}.gd-ke.ct .ke-lg.t,.gd-ke.t .ke-lg.ct{display:none}
+.ke-bd{position:absolute;left:${-BADGE / 2}px;top:${-BADGE / 2}px;width:${BADGE}px;height:${BADGE}px;border-radius:50%;background:#0000;-webkit-backdrop-filter:blur(2px) brightness(.373);backdrop-filter:blur(2px) brightness(.373);box-shadow:inset 0 0 0 3px var(--ring),0 0 2px #0006}
+.ke-lg{position:absolute;inset:9px;color:var(--tm)}.ke-lg .ke-mk{left:0;top:0;width:100%;height:100%;mask-mode:alpha}.gd-ke.ct .ke-lg.t,.gd-ke.t .ke-lg.ct{display:none}
 .nA{animation:ke-pop0 140ms cubic-bezier(.34,1.56,.64,1) both}.nB{animation:ke-pop1 140ms cubic-bezier(.34,1.56,.64,1) both}
 .pA{animation:ke-pu0 260ms ease-out both}.pB{animation:ke-pu1 260ms ease-out both}
 .nA .ke-wh{animation:ke-wh0 ${ON_KILL_MS}ms ease-out both}.nB .ke-wh{animation:ke-wh1 ${ON_KILL_MS}ms ease-out both}
@@ -203,7 +225,7 @@ ${fanCSS()}
 
 // The reduce-flashes choice: the preference (Settings, stage 4: preference key reduceFlashes) or the system's reduced
 // motion. Read on load and on each preferences change — never per kill.
-export function reduceFlashesNow(prefs) { if (prefs && prefs.reduceFlashes === true) return true; try { return !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches; } catch { return false; } }
+export function reduceFlashesNow(prefs) { if (prefs && prefs.reduceFlashes === true) return true; if (loadHudPrefs().reduceFlashes) return true;   /* (stage 4: Settings → HUD → Reduce flashes, gd-hud-prefs.js) */ try { return !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches; } catch { return false; } }
 
 // An imported picture as a gold CSS mask (lum: a luminance mask — CS2's cards: black fill clear, outline / number gold).
 const maskHTML = (url, lum) => { const u = String(url).replace(/["'()\\\s]/g, c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')); return `<i class="ke-mk${lum ? ' lum' : ''}" style="-webkit-mask-image:url('${u}');mask-image:url('${u}')"></i>`; };
@@ -213,7 +235,8 @@ const maskHTML = (url, lum) => { const u = String(url).replace(/["'()\\\s]/g, c 
 // { root, kill(kind, marks), clear(), update(on, G, me, now), setArt(art), setReduce(b), setScale(k), count }.
 export function createKillEmblems({ doc = globalThis.document, parent = doc?.body, art = null, reduce = false } = {}) {
   const url = (g, n) => { try { return art?.url?.(g, n) || null; } catch { return null; } };
-  const cardHTML = i => { const u = url('card', i < SLOTS ? String(i + 1) : 'extra'); return u ? maskHTML(u, true) : OWN_CARD(i < SLOTS ? String(i + 1) : ''); };
+  const cardHTML = i => { const u = url('card', i < SLOTS ? String(i + 1) : 'extra'); return u ? maskHTML(u, true) : i === SLOTS - 1 ? OWN_ACE : OWN_CARD(i < SLOTS ? String(i + 1) : ''); };   // (the 5th: the ace card, CS2's kill_5 — a spade and an A, ours drawn the same way)
+  const plainHTML = () => { const u = url('card', 'extra'); return u ? maskHTML(u, true) : OWN_CARD(''); };   // (an older card: CS2's kill_extra — the card without a number — or ours)
   const pipHTML = k => { const u = url('pip', PIP_NAMES[k]); return u ? maskHTML(u, false) : OWN_PIP[k]; };
   const logoHTML = t => { const u = url('logo', t); return u ? maskHTML(u, false) : OWN_LOGO[t]; };
   const bgHTML = () => { const u = url('card', 'mask'); return u ? maskHTML(u, false).replace('class="ke-mk', 'class="ke-bg ke-mk') : '<i class="ke-bg"></i>'; };   // (CS2's kill_mask: the card's shape; ours the same rect, x 10–38 / y 8.4–46.4, corners 4.8)
@@ -222,14 +245,16 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
   for (let i = 0; i < FLAGS; i++) {
     let ic = ''; for (let k = 0; k < KIND_N; k++) ic += `<span class="ke-p k${k}">${pipHTML(k)}</span>`;
     let mk = ''; for (let b = 0; b < 4; b++) mk += `<span class="ke-m${MARK_CLS[b + 1]}">${markHTML(MARK_KEYS[b])}</span>`;
-    h += `<div class="ke-f ke-f${i + 1}"><div class="${cardClass(0, 0, 0)}"><i class="ke-spot"></i><i class="ke-gl"></i><span class="ke-bw">${bgHTML()}</span><span class="ke-cd">${cardHTML(i)}</span>${ic}${i === SLOTS ? '<b class="ke-cn"></b>' : ''}${mk}<i class="ke-wh"></i><span class="ke-cl"><i class="ke-sh"></i></span></div>`
+    h += `<div class="ke-f ke-f${i + 1}"><div class="${cardClass(0, 0, 0)}"><i class="ke-spot"></i><i class="ke-gl"></i><span class="ke-bw">${bgHTML()}</span><i class="ke-dt"></i><span class="ke-cd">${cardHTML(i)}</span>${i < SLOTS - 1 ? `<span class="ke-cp">${plainHTML()}</span>` : ''}${ic}${i === SLOTS ? '<b class="ke-cn"></b>' : ''}${mk}<i class="ke-wh"></i><span class="ke-cl"><i class="ke-sh"></i></span></div>`
       + `<div class="${TIER_CLASS[0]}"><div class="ke-fw"><i class="ke-fl"></i></div>${arcsHTML(i * 7 + 3)}${SPARK_HTML(i)}<i class="ke-rg"></i></div></div>`; }
   h += `</div><div class="ke-bd"><span class="ke-lg t">${logoHTML('t')}</span><span class="ke-lg ct">${logoHTML('ct')}</span></div>`;
   const root = doc.createElement('div'); root.id = 'gd-ke'; root.className = rootClass(0, reduce, false); root.hidden = true; root.innerHTML = h;
   if (doc.getElementById && !doc.getElementById('gd-ke-css')) { const css = doc.createElement('style'); css.id = 'gd-ke-css'; css.textContent = KILL_EMBLEM_CSS; (doc.head || doc.body).append?.(css); }
   parent?.append?.(root);
+  // CS2's card dots (bluedots_large, tools/import-cs2-hud.mjs → user-assets/icons/hud/hud.json "kill_dots"), once per page.
+  if (typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) fetch('/user-assets/icons/hud/hud.json').then(r => r.ok ? r.json() : null).then(m => { const f = m?.icons?.kill_dots; if (!f) return; setVar('--dots', `url('/user-assets/icons/hud/${encodeURIComponent(f)}?h=${encodeURIComponent(m.hash || '')}')`); setVar('--dots-size', '360px 360px'); }).catch(() => {});
   const F = []; const q = (el, s) => el.querySelector(s);
-  for (let i = 0; i < FLAGS; i++) { const f = q(root, '.ke-f' + (i + 1)); F.push({ f, c: q(f, '.ke-c'), bx: q(f, '.ke-bx'), cd: q(f, '.ke-cd'), bw: q(f, '.ke-bw'), cn: i === SLOTS ? q(f, '.ke-cn') : null, ic: f.querySelectorAll('.ke-p'), mk: f.querySelectorAll('.ke-m'), par: 0 }); }
+  for (let i = 0; i < FLAGS; i++) { const f = q(root, '.ke-f' + (i + 1)); F.push({ f, c: q(f, '.ke-c'), bx: q(f, '.ke-bx'), cd: q(f, '.ke-cd'), cp: q(f, '.ke-cp'), bw: q(f, '.ke-bw'), cn: i === SLOTS ? q(f, '.ke-cn') : null, ic: f.querySelectorAll('.ke-p'), mk: f.querySelectorAll('.ke-m'), par: 0 }); }
   const LG = root.querySelectorAll('.ke-lg');
   // The round's kills: kind and marks of the first five (CS2's flags 1–5 keep theirs) and the newest (the extra card).
   const KK = new Uint8Array(SLOTS), KM = new Uint8Array(SLOTS); let n = 0, rf = !!reduce, ct = false, lastKind = 0, lastMarks = 0;
@@ -244,6 +269,20 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
     const on = !!gdView?.on && gdView.w > 0 && gdView.h > 0, W = on ? gdView.w : (globalThis.innerWidth || 1920), H = on ? gdView.h : (globalThis.innerHeight || 1080), X = on ? gdView.x || 0 : 0, Y = on ? gdView.y || 0 : 0;
     if (!force && W === fitW && H === fitH && X === fitX && Y === fitY) return; fitW = W; fitH = H; fitX = X; fitY = Y;
     const k = H / 1080 * scale; root.style.transform = `translate3d(${(X + W / 2).toFixed(1)}px,${(Y + H - BADGE_BOTTOM * k).toFixed(1)}px,0) scale(${k.toFixed(4)})`; }   // (a string only when the screen changed)
+  // Colours (v53 stage 4, verified against the user's two CS2 pictures with CS2's csgostyles.vcss values): the cards, their
+  // numbers / pips and the line take the HUD colour (cl_hud_color: picture 1 Team Color = t-color #eabe54 — sampled
+  // (228, 188, 88); the ace picture White = color-hud-1 #e8e8e8 — sampled (231, 232, 235)); the badge's RING is your
+  // player colour (picture 1 light blue = color-player-blue rgb(136, 206, 245); the ace picture green =
+  // color-player-green rgb(29, 162, 132) — sampled (79, 149, 133)); the logo is your team's colour (gold in both
+  // pictures). Not a rule per kill count: the same kill count would look the same with the same settings. Written
+  // only when a colour changes (a new round, side or HUD option).
+  let hudPrefs = loadHudPrefs(), colCard = '', colRing = '', colLogo = '', colRound;
+  function colors(ts, me) { colRound = lastRound; let slot = 0, i = 0; const side = ts?.[me] || 't'; if (ts) for (const k in ts) { if (ts[k] !== side) continue; if (k === me) { slot = i; break; } i++; }
+    const c = hudColorOf(hudPrefs, side, slot), r = PLAYER_COLORS[slot % 5], l = side === 'ct' ? TEAM_COLOR.ct : TEAM_COLOR.t;
+    if (c !== colCard) { colCard = c; setVar('--g', c); } if (r !== colRing) { colRing = r; setVar('--ring', r); } if (l !== colLogo) { colLogo = l; setVar('--tm', l); } }
+  const setVar = (k, v) => { const st = root.style; if (typeof st.setProperty === 'function') st.setProperty(k, v); else st[k] = v; };
+  globalThis.addEventListener?.('gd-hud-prefs', e => { hudPrefs = e.detail || loadHudPrefs(); api.setScale(hudPrefs.scale); api.setReduce(reduceFlashesNow(null)); colCard = ''; colors(lastTeams, lastMe); });
+  let lastTeams = null, lastMe = '';
   const setRoot = () => { root.className = rootClass(n, rf, ct); };
   function paint(newest) {   // newest: the flag that bursts (−1: none — a redraw)
     setRoot();
@@ -263,16 +302,17 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
     setReduce(b) { b = !!b; if (b === rf) return; rf = b; setRoot(); },
     // Stage 4's HUD scale (0.8–1.4): multiplies the 1080 p fit.
     setScale(k) { k = Number.isFinite(+k) && +k > 0 ? +k : 1; if (k === scale) return; scale = k; fit(true); },
+    get colors() { return { card: colCard, ring: colRing, logo: colLogo }; },
     // CS2's pictures arrived (or went): the cards, pips, logos and marks rewritten once, in place.
-    setArt(a) { art = a; for (let i = 0; i < FLAGS; i++) { const s = F[i]; s.cd.innerHTML = cardHTML(i); s.bw.innerHTML = bgHTML(); for (let k = 0; k < KIND_N; k++) s.ic[k].innerHTML = pipHTML(k); for (let b = 0; b < 4; b++) s.mk[b].innerHTML = markHTML(MARK_KEYS[b]); }
+    setArt(a) { art = a; for (let i = 0; i < FLAGS; i++) { const s = F[i]; s.cd.innerHTML = cardHTML(i); if (s.cp) s.cp.innerHTML = plainHTML(); s.bw.innerHTML = bgHTML(); for (let k = 0; k < KIND_N; k++) s.ic[k].innerHTML = pipHTML(k); for (let b = 0; b < 4; b++) s.mk[b].innerHTML = markHTML(MARK_KEYS[b]); }
       LG[0].innerHTML = logoHTML('t'); LG[1].innerHTML = logoHTML('ct'); },
     // Every frame (arena-ui.js): on = in a match; G = the game; me = your key; now = the host's clock (ms).
     update(on, G, me, now) {
       if (!on) { if (!root.hidden) root.hidden = true; return; }
       fit(false);
-      const C = G?.combat, D = C?.d, rid = D?.round?.id, ts = D?.teams;
+      const C = G?.combat, D = C?.d, rid = D?.round?.id, ts = D?.teams; lastTeams = ts; lastMe = me;
       if (rid !== lastRound) { if (lastRound !== undefined) api.clear(); lastRound = rid; }   // (a new round: its freeze time starts — spec "clear when the next round's freeze time starts")
-      const side = ts?.[me] === 'ct'; if (side !== ct) { ct = side; setRoot(); }
+      const side = ts?.[me] === 'ct'; if (side !== ct) { ct = side; setRoot(); colors(ts, me); } else if (rid !== colRound) colors(ts, me);
       const dn = C?.down?.[me], down = !!dn && dn.until > now;
       if (!D && wasDown && !down) api.clear();   // (deathmatch has no rounds: the tally is per life)
       wasDown = down;
@@ -288,26 +328,11 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
         api.kill(pipKind(f.wid, !!f.head), markBits(f.how)); }
     },
   };
-  fit(true);
+  fit(true); colors(null, ''); if (hudPrefs.scale !== 1) api.setScale(hudPrefs.scale);
   return api;
 }
 
-// The death panel. art: { gun(wid, knife) → html, mark(key, ours) → html, hs → html } (arena-ui.js kill-feed icons).
-export const DEATH_PANEL_MS = 6000;
-export function createDeathPanel({ doc = globalThis.document, parent = doc?.body, art = null } = {}) {
-  const el = doc.createElement('div'); el.id = 'gd-dp'; el.className = 'gd-dp'; el.hidden = true; parent?.append?.(el);
-  let shownAt = null;
-  return {
-    el,
-    update(on, G, me, now) {
-      const dn = on ? G?.combat?.down?.[me] : null, down = !!dn && dn.until > now;
-      if (!down) { if (!el.hidden) el.hidden = true; shownAt = null; return; }
-      if (dn.at !== shownAt) { shownAt = dn.at;
-        if (!dn.by || dn.by === 'C4' || key(dn.by) === me) { el.hidden = true; return; }   // (the bomb, a fall, your own grenade: no killer to show)
-        const hp = G.combat?.hp?.[key(dn.by)], kn = G.arena?.knives?.[key(dn.by)];
-        el.innerHTML = `<small>KILLED BY</small><b>${esc(dn.by)}</b>${art?.gun ? art.gun(dn.wid, kn) : `<span>${esc(dn.weapon)}</span>`}${dn.head ? (art?.mark ? art.mark('head', art.hs || '') : '<span class="hs">HS</span>') : ''}${Number.isFinite(hp) ? `<span class="hp">✚ ${hp}</span>` : ''}`;
-        el.hidden = false; }
-      if (!el.hidden && now - (dn.at || now) > DEATH_PANEL_MS) el.hidden = true;
-    },
-  };
-}
+// The death panel (v53 DEATH): CS2's own layout, with the death cam — it lives in gd-death-panel.js now (killer, agent,
+// weapon icon, HS / wallbang / no-scope / smoke marks, their health, damage given and taken); the same interface as
+// stage 3's: createDeathPanel({ art }) → { el, update(on, G, me, now) }.
+export { createDeathPanel, DEATH_PANEL_MS } from './gd-death-panel.js';

@@ -21,6 +21,7 @@ import { isQuiet } from './sound-bank.js';
 import { radarImage, locationOf, cs2Picture, cs2RadarIndex } from './gd-radar-art.js';
 import { loadRadarPrefs, saveRadarPrefs, cleanRadarPrefs } from './gd-radar-prefs.js';
 import { hostNow } from './host-clock.js';   // (who is dead, when a decoy fires: the host's clock)
+import { loadHudPrefs, PLAYER_LETTERS } from './gd-hud-prefs.js';   // (v53 stage 4: CS2's colour-blind letters over the player colours)
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const DUCK_EYE = 46 * 2.54 / 16.5;   // CS2's crouched eye, 46 HU (the feet of a crouched pose without fy)
@@ -28,7 +29,10 @@ const FLOOR = 15;   // FLOOR: eye heights this far apart (game units, ~100 Hamme
 // CS2's player colours in slot order (cl_color 0–4: yellow, purple, green, blue, orange), per side, by the host's join
 // order (the order of d.teams, the same on every client). ENEMY: the red of a spotted enemy (v51's #ff4040 kept — the
 // decoy-dot tests in gd-grenade-slots count fills of exactly this colour).
-export const TEAM_COLORS = Object.freeze(['#f2e33a', '#a35bd8', '#35c46b', '#4ba3f2', '#f0902a']); const ENEMY = '#ff4040', NUMS = ['1', '2', '3', '4', '5'];
+// v53 stage 4: CS2's own values (csgostyles.vcss @define color-player-yellow rgb(248,246,45), -purple rgb(192,54,153),
+// -green rgb(29,162,132), -blue rgb(136,206,245), -orange rgb(255,155,37)) — v52's were close guesses.
+export const TEAM_COLORS = Object.freeze(['#f8f62d', '#c03699', '#1da284', '#88cef5', '#ff9b25']); const ENEMY = '#ff4040', NUMS = ['1', '2', '3', '4', '5'];
+let LETTERS = !!loadHudPrefs().letters; globalThis.addEventListener?.('gd-hud-prefs', e => { LETTERS = !!e.detail?.letters; });   // (Settings → HUD → letters: CS2's cl_teammate_colors_show 2)
 // How much of the map the radar shows: ZOOM_K / zoom of the overview picture's width (CS2's cl_radar_scale zooms its
 // overview: 0.7, the default, shows half of it; 0.25 all of it and a margin; 1 about a third). A built-in map's
 // "overview" is its size plus 10 %.
@@ -36,7 +40,9 @@ export const ZOOM_K = .35;
 // The radar panel's size: about a quarter of the game view's height at "Radar HUD size" 1 (CS2's cl_hud_radar_scale 1),
 // 150–270 CSS px, times that size. The game view is the area package A's black bars leave (--gd-view-h, when set), else
 // the window. Published on the page as --gd-radar-h so what sits under the radar (the lobby) can follow it.
-export const radarSizeCSS = size => `calc(clamp(150px, calc(var(--gd-view-h, 100vh) * .25), 270px) * ${+size || 1})`;
+// v53 stage 4: CS2's round radar, 250 px at 1080 p (hudradar.vcss Radar_VisSize_Round) × the HUD scale (--gd-u, gd-hud.js)
+// × "Radar HUD size" — the user's CS2 picture: a 0.229-of-the-height circle centred at (0.078, 0.135) of the screen.
+export const radarSizeCSS = size => `calc(250 * var(--gd-u, calc(var(--gd-view-h, 100vh) / 1080)) * ${+size || 1})`;
 // Your view cone: half of CS2's horizontal field of view at 16:9 (fov 90 at 4:3 → 106°).
 const CONE = 53 * Math.PI / 180;
 // SPOT_CONE (off): spotting only inside an eye's view — within VIEW_COS of where it looks (65°: the 16:9 screen's
@@ -75,9 +81,9 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
   // CS2's HUD radar: a square panel top left (inside the game view: package A's --gd-view-left / --gd-view-top when its
   // black bars are on), the map over a dark see-through backing, a thin light rim; the place name at its foot. Its size
   // is "Radar HUD size" (--gd-radar-h, set from the options); Tab's big map sits beside the scoreboard.
-  const css = document.createElement('style'); css.textContent = `#gd-radar{position:fixed;left:calc(var(--gd-view-left, 0px) + 12px);top:calc(var(--gd-view-top, 0px) + 12px);z-index:36;width:var(--rs);height:var(--rs);border-radius:3px;overflow:hidden;background:rgba(6,9,11,.76);border:1px solid #ffffff3d;box-shadow:0 0 0 1px #0009,0 3px 14px #0008;pointer-events:none;--rs:var(--gd-radar-h, min(210px,26vh))}#gd-radar[hidden]{display:none}#gd-radar.big{--rs:min(60vh,36vw,620px);z-index:47;border-color:#ffffff5c;background:rgba(6,9,11,.86)}body.gd-mapopen #ar-board{padding-left:calc(min(60vh,36vw,620px) + 30px);box-sizing:border-box}body.gd-mapopen #ar-board>div{width:min(1040px,calc(100vw - min(60vh,36vw,620px) - 54px))}#gd-radar .map{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}#gd-radar .map canvas,#gd-radar .map img{display:block;max-width:none}#gd-radar .map.cs2{opacity:.95}#gd-radar>canvas{position:absolute;inset:0;width:100%;height:100%;display:block}#gd-radar small{position:absolute;left:0;right:0;bottom:3px;text-align:center;font:800 11px system-ui;color:#eef3f4;letter-spacing:.08em;text-shadow:0 1px 2px #000,0 0 4px #000}`;
+  const css = document.createElement('style'); css.textContent = `#gd-radar{position:fixed;left:calc(var(--gd-view-left, 0px) + 25 * var(--gd-u, calc(var(--gd-view-h, 100vh) / 1080)));top:calc(var(--gd-view-top, 0px) + 21 * var(--gd-u, calc(var(--gd-view-h, 100vh) / 1080)));z-index:36;width:var(--rs);height:var(--rs);pointer-events:none;--rs:var(--gd-radar-h, min(210px,26vh))}#gd-radar[hidden]{display:none}#gd-radar>.clipc{position:absolute;inset:0;border-radius:50%;overflow:hidden;background:#000000a0;box-shadow:inset 0 0 0 1px #ffffff59,0 0 0 1px #0006}#gd-radar.big{--rs:min(60vh,36vw,620px);z-index:47}#gd-radar.big>.clipc{border-radius:3px;background:rgba(6,9,11,.86);box-shadow:inset 0 0 0 1px #ffffff5c}body.gd-mapopen #ar-board{padding-left:calc(min(60vh,36vw,620px) + 30px);box-sizing:border-box}body.gd-mapopen #ar-board>div{width:min(1040px,calc(100vw - min(60vh,36vw,620px) - 54px))}#gd-radar .map{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}#gd-radar .map canvas,#gd-radar .map img{display:block;max-width:none}#gd-radar .map.cs2{opacity:.95}#gd-radar .clipc>canvas{position:absolute;inset:0;width:100%;height:100%;display:block}#gd-radar small{position:absolute;left:0;right:0;top:calc(100% + 3px);text-align:center;font:800 11px system-ui;color:#eef3f4;letter-spacing:.08em;text-shadow:0 1px 2px #000,0 0 4px #000}`;
   (document.head || document.body).append?.(css);
-  document.body.insertAdjacentHTML('beforeend', '<div id="gd-radar" hidden><div class="map"></div><canvas width="420" height="420"></canvas><small></small></div>');
+  document.body.insertAdjacentHTML('beforeend', '<div id="gd-radar" hidden><div class="clipc"><div class="map"></div><canvas width="420" height="420"></canvas></div><small></small></div>');
   const el = document.getElementById('gd-radar'), mapEl = el.querySelector('.map'), cv = el.querySelector('canvas'), x = cv.getContext('2d'), label = el.querySelector('small');
   cs2RadarIndex();   /* (the CS2 export's index asked for at once: in by the time a map loads) */
   let prefs = loadRadarPrefs();   // CS2's radar options (gd-radar-prefs.js), replaced whenever Settings saves them
@@ -154,10 +160,39 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
   // A team mate: his colour, a black rim, a tick the way he faces, his number on the big map, a C4 beside the carrier.
   const mate = (o, color, n, carrier, rel) => { dot(o.x, o.z, color, 5.5, '#000', rel); x.save(); x.translate(mapX(o.x), mapZ(o.z)); x.scale(q / k, q / k); const fx = -Math.sin(o.yaw || 0), fz = -Math.cos(o.yaw || 0);
     x.beginPath(); x.moveTo(fx * 6.5, fz * 6.5); x.lineTo(fx * 11, fz * 11); x.lineWidth = 2.2; x.strokeStyle = color; x.stroke(); x.rotate(-ang);
-    if (big && n) { x.font = '800 7px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#000'; x.fillText(n, 0, .5); }
-    if (carrier) c4At(9, -7, '#ff4a2a'); x.restore(); };
+    if (LETTERS) { const L = PLAYER_LETTERS[NUMS.indexOf(n)] || ''; x.font = '800 7px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#000'; x.fillText(L, 0, .5); }   /* (colour-blind letters: Y P G B O) */
+    else if (big && n) { x.font = '800 7px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#000'; x.fillText(n, 0, .5); }
+    if (carrier) { if (c4Img?.complete && c4Img.naturalWidth) x.drawImage(c4Img, 9 - 8 * PXU / 2, -7 - 6 * PXU / 2, 8 * PXU, 6 * PXU); else c4At(9, -7, '#ff4a2a'); } x.restore(); };
   const c4At = (ox, oy, fill) => { x.fillStyle = fill; x.fillRect(ox - 5.5, oy - 3.5, 11, 7); x.lineWidth = 1.4; x.strokeStyle = '#000'; x.strokeRect(ox - 5.5, oy - 3.5, 11, 7); x.fillStyle = '#000'; x.fillRect(ox - 3, oy - 1.4, 6, 1.6); };
   const c4 = (wx, wz, fill) => { x.save(); x.translate(mapX(wx), mapZ(wz)); x.scale(q / k, q / k); x.rotate(-ang); c4At(0, 0, fill); x.restore(); };   // (the bomb, upright: dropped, planted)
+  // v53 stage 4 (Addendum 8) — CS2's radar bomb marks (hudradar.vcss, the user's install): a DROPPED bomb gets the C4 icon
+  // (#CreateBombPack 16 × 12 px) inside a ring that grows and fades every 0.75 s (#DroppedBomb: 110 px, 2 px #880000,
+  // DroppedBomb--Animate: scale 0.01 → 0.1 (20 %) → 0.25 (50 %) → 0.4 (75 %) → 0.6, opacity 1, 1, 1, 0.5, 0); the
+  // PLANTED bomb its icon (#BombPlantedIcon 24 px) blinking (RadarBombPlantPulse 0.65 s: opacity 0.1 → 0.6 → 0.8 → 0.6)
+  // inside the same ring at 70 px in #D10000 (#PlantedBomb), with CS2's red glow pulsing on it (.PlantedBombAnimateRed,
+  // 0.65 s: img-shadow 1 px blur, strength 1 → 2 → 3 → 2 → 1, #71060666 → #af0707AA → #d50808EE); the icon fits its 24 × 24
+  // box keeping its shape (panorama's default image scaling: the 55 × 39 c4_sml is drawn 24 × 17). The carrier's C4
+  // rides beside his dot (and your own arrow).
+  // Who sees what: Terrorists always see the carrier, a dropped bomb and the planted bomb; Counter-Terrorists see a
+  // dropped bomb only while one of them has a line of sight to it (CS2's spotted rule), the planted one by ctBombSpotted.
+  // CS2's icons (c4_sml, bomb_c4) when the host imported them (tools/import-cs2-hud.mjs → user-assets/icons/hud/hud.json),
+  // else our C4. Px → radar units: one unit is 0.65 CSS px on CS2's 250 px radar (q above), so 1 CS2 px = 1.54 units.
+  const PXU = 1 / .65, BOMB = { carrier: null, dropped: false, dx: 0, dz: 0, ring: 0, planted: false, lit: 0, ctSees: false, glow: null };
+  let c4Img = null, c4PlantImg = null;
+  let rS = 0, rO = 0; const ringAt = ph => { if (ph < .2) { rS = .01 + ph / .2 * .09; rO = 1; } else if (ph < .5) { rS = .1 + (ph - .2) / .3 * .15; rO = 1; } else if (ph < .75) { rS = .25 + (ph - .5) / .25 * .15; rO = 1 - (ph - .5) / .25 * .5; } else { rS = .4 + (ph - .75) / .25 * .2; rO = .5 - (ph - .75) / .25 * .5; } };   // (DroppedBomb--Animate, linear; into rS / rO: nothing made per frame)
+  const pulseAt = ph => ph < .25 ? .1 + ph / .25 * .5 : ph < .5 ? .6 + (ph - .25) / .25 * .2 : ph < .75 ? .8 - (ph - .5) / .25 * .2 : .6 - (ph - .75) / .25 * .5;   // (RadarBombPlantPulse--Animate, back to 0.1)
+  // The red glow's colour per step of its pulse (PlantedBombAnimateRed keyframes, linear between them): a table of 17
+  // strings made once — a frame only picks one (nothing made per frame).
+  const GLOW = []; { const K = [[0x71, 0x06, 0x06, 0x66, 1], [0xaf, 0x07, 0x07, 0xaa, 2], [0xd5, 0x08, 0x08, 0xee, 3], [0xaf, 0x07, 0x07, 0xaa, 2], [0x71, 0x06, 0x06, 0x66, 1]];
+    for (let i = 0; i <= 16; i++) { const t = i / 16 * 4, a = Math.min(3, Math.floor(t)), f = t - a, A = K[a], B = K[a + 1], m = j => A[j] + (B[j] - A[j]) * f; GLOW.push({ c: `rgba(${m(0) | 0},${m(1) | 0},${m(2) | 0},${(m(3) / 255).toFixed(3)})`, s: m(4) }); } }
+  const glowAt = ph => GLOW[Math.round(((ph % 1) + 1) % 1 * 16)];
+  // fit: keep the picture's shape inside the w × h box (CS2's planted icon); else stretched to w × h (the 16 × 12 pack).
+  const bombIcon = (wx, wz, img, w, h, fill, alpha, ox = 0, oy = 0, fit = false, glow = null) => { x.save(); x.translate(mapX(wx), mapZ(wz)); x.scale(q / k, q / k); x.rotate(-ang); x.globalAlpha = alpha;
+    if (glow) { x.shadowColor = glow.c; x.shadowBlur = (1 + glow.s) * PXU * q / k; }   // (img-shadow: 1 px blur widened by its strength)
+    if (img?.complete && img.naturalWidth) { let dw = w, dh = h; if (fit) { const r = img.naturalWidth / img.naturalHeight; if (r >= w / h) dh = w / r; else dw = h * r; } x.drawImage(img, ox - dw * PXU / 2, oy - dh * PXU / 2, dw * PXU, dh * PXU); if (glow) x.drawImage(img, ox - dw * PXU / 2, oy - dh * PXU / 2, dw * PXU, dh * PXU); } else c4At(ox, oy, fill); x.restore(); };
+  const bombRing = (wx, wz, size, color, ph) => { ringAt(ph); const sc = rS, op = rO; if (op <= 0) return; x.save(); x.translate(mapX(wx), mapZ(wz)); x.scale(q / k, q / k); x.globalAlpha = op; x.lineWidth = 2 * sc * PXU; x.strokeStyle = color; x.beginPath(); x.arc(0, 0, size / 2 * sc * PXU, 0, Math.PI * 2); x.stroke(); x.restore(); };
+  if (typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol) && typeof Image !== 'undefined') fetch('/user-assets/icons/hud/hud.json').then(r => r.ok ? r.json() : null).then(m => { const u = f => `/user-assets/icons/hud/${encodeURIComponent(f)}?h=${encodeURIComponent(m.hash || '')}`;
+    if (m?.icons?.radar_c4) { c4Img = new Image(); c4Img.src = u(m.icons.radar_c4); } if (m?.icons?.radar_c4_planted || m?.icons?.radar_c4) { c4PlantImg = new Image(); c4PlantImg.src = u(m.icons.radar_c4_planted || m.icons.radar_c4); } }).catch(() => {});
   const cross = (wx, wz, color, alpha) => { x.save(); x.translate(mapX(wx), mapZ(wz)); x.scale(q / k, q / k); x.rotate(-ang); x.globalAlpha = alpha; x.lineCap = 'round'; x.strokeStyle = '#000'; x.lineWidth = 4.2; for (let j = 0; j < 2; j++) { x.beginPath(); x.moveTo(-4.5, -4.5); x.lineTo(4.5, 4.5); x.moveTo(4.5, -4.5); x.lineTo(-4.5, 4.5); x.stroke(); x.strokeStyle = color; x.lineWidth = 2.2; } x.restore(); };   // (a death: CS2's ✕)
   applyPrefs();
   return {
@@ -179,6 +214,8 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
     // radar's turn (radians; 0 when north up), the dots' canvas size (device px), how many floor pictures the map layer holds.
     get drawn() { return drawn.slice(0, nd).map(o => ({ ...o })); }, get angle() { return ang; }, get canvasPx() { return W; }, get iconCss() { return q * (cssW || W) / W; }, get pictures() { return imgLow ? 2 : img ? 1 : 0; },
     get bombShown() { return bombShownNow; },
+    // Tests (v53 Addendum 8): the bomb marks drawn in the last frame (a reused record).
+    get bomb() { return BOMB; },
     update() {
       const G = world.operations.game, on = G.mode === 'arena' && !!G.arena && active(); if (el.hidden === on) el.hidden = !on;
       const A = G.arena, m = A && ARENA_MAPS[A.map]; if (!m || m.stub || G.mode !== 'arena') return;   /* (a file-only map's stand-in: its file is still on the way) */
@@ -204,6 +241,9 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
         // flag — taken as CS2's too, not checked against its source); the Terrorists always know where it is.
         const rr = d?.round; if (ctBombSpotted && d && rr?.phase === 'planted' && rr.planted && d.teams?.[me] === 'ct' && bombSpot !== rr.planted.at) { const b = rr.planted, by = (b.y ?? 0) + .6;
           for (let j = 0; j < ne; j++) { const e = eyes[j]; if (Math.hypot(e.x - b.x, e.z - b.z) < reach && inView(e.x, e.z, e.yaw, b.x, b.z) && radarSight(m, boxes, G, e.x, e.y, e.z, b.x, by, b.z, b.y ?? 0, true, tNow, cx, cz)) { bombSpot = b.at; break; } } }
+        // A dropped bomb for the Counter-Terrorists: shown while one of them has a line of sight to it (Addendum 8, CS2).
+        BOMB.ctSees = false; if (d && d.teams?.[me] === 'ct') { const gl = G.combat?.ground; if (gl) for (let i = 0; i < gl.length; i++) { const b = gl[i]; if (b.item !== 'c4') continue; const by = (b.y ?? 0) + .3;
+          for (let j = 0; j < ne; j++) { const e = eyes[j]; if (Math.hypot(e.x - b.x, e.z - b.z) < reach && inView(e.x, e.z, e.yaw, b.x, b.z) && radarSight(m, boxes, G, e.x, e.y, e.z, b.x, by, b.z, b.y ?? 0, true, tNow, cx, cz)) { BOMB.ctSees = true; break; } } break; } }
         const lt = (layer ? 'LOWER · ' : '') + (p ? locationOf(m, p.x - cx, p.z - cz, feet) || '' : '').toUpperCase(); if (label.textContent !== lt) label.textContent = lt; }   /* where you are, by callout (CS) */
       // Every frame: the map layer's place and turn, then the dots.
       // CS2's options: the big map (Tab) the whole map, north up; else "Radar map zoom" of the overview, turned with your
@@ -223,8 +263,10 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
       // Bomb sites on CS2's picture (it has none of its own): CS2's A / B, upright.
       if (sites.length) { x.font = '900 15px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; for (let i = 0; i < sites.length; i++) { const s = sites[i]; if (s.low !== null && s.low !== (imgLayer === 'lower')) continue; x.save(); x.translate(mapX(cx + s.x), mapZ(cz + s.z)); x.scale(q / k, q / k); x.rotate(-ang); x.lineWidth = 3.5; x.strokeStyle = 'rgba(0,0,0,.85)'; x.strokeText(s.L, 0, 0); x.fillStyle = '#f4f4f4'; x.fillText(s.L, 0, 0); x.restore(); } }
       // The bomb: planted (a flashing C4), on the ground (Terrorists see it), carried by a team mate (beside his dot).
-      const r = d?.round; bombShownNow = !!(r?.phase === 'planted' && r.planted && (!ctBombSpotted || myTeam !== 'ct' || bombSpot === r.planted.at)); if (bombShownNow && Math.floor(now / 300) % 2) c4(r.planted.x, r.planted.z, '#ff3030');
-      if (d && myTeam === 't') { const gl = G.combat?.ground; if (gl) for (let i = 0; i < gl.length; i++) if (gl[i].item === 'c4') { c4(gl[i].x, gl[i].z, '#f0a030'); break; } }
+      const r = d?.round; bombShownNow = !!(r?.phase === 'planted' && r.planted && (!ctBombSpotted || myTeam !== 'ct' || bombSpot === r.planted.at));
+      BOMB.planted = bombShownNow; BOMB.lit = 0; BOMB.dropped = false; BOMB.carrier = d?.bomb?.carrier && myTeam === 't' ? d.bomb.carrier : null;
+      if (bombShownNow) { const ph = (now % 750) / 750; BOMB.lit = pulseAt((now % 650) / 650); bombRing(r.planted.x, r.planted.z, 70, '#d10000', ph); BOMB.glow = glowAt((now % 650) / 650); bombIcon(r.planted.x, r.planted.z, c4PlantImg, 24, 24, '#ff3030', BOMB.lit, 0, 0, true, BOMB.glow); }
+      if (d && (myTeam === 't' || BOMB.ctSees)) { const gl = G.combat?.ground; if (gl) for (let i = 0; i < gl.length; i++) if (gl[i].item === 'c4') { const b = gl[i], ph = (now % 750) / 750; BOMB.dropped = true; BOMB.dx = b.x; BOMB.dz = b.z; BOMB.ring = ph; bombRing(b.x, b.z, 110, '#880000', ph); bombIcon(b.x, b.z, c4Img, 16, 12, '#f0a030', 1); break; } }
       nd = 0; for (let i = 0; i < np; i++) { const o = people[i], foe = isFoe(G, me, o.k);
         if (!foe) { const s = slot.get(o.k) ?? 0; if (o.dead) cross(o.x, o.z, TEAM_COLORS[s], .85); else mate(o, TEAM_COLORS[s], NUMS[s], d?.bomb?.carrier === o.k, relOf(o)); continue; }
         if (o.dead) { if (d?.teams?.[o.k]) cross(o.x, o.z, ENEMY, .8); continue; }   /* (an enemy killed: CS2's red ✕ where he fell) */
@@ -247,6 +289,7 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
       for (const pg of pings()) { const t = (now - pg.at) / 3000; x.save(); x.translate(mapX(pg.x), mapZ(pg.z)); x.scale(q / k, q / k); x.strokeStyle = '#ffd65a'; x.globalAlpha = Math.max(0, 1 - t); x.lineWidth = 2.5; for (let j = 0; j < 2; j++) { x.beginPath(); x.arc(0, 0, 6 + ((t * 26) + 13 * j) % 26, 0, Math.PI * 2); x.stroke(); } x.restore(); }
       // You (dead: who you watch) last, on top: centred and pointing up when centred and rotating, else where you are.
       arrow(p.x, p.z, yaw() || 0, colorOf(p.name ? byKey(p.name) : me));
+      if (BOMB.carrier && BOMB.carrier === (p.name ? byKey(p.name) : me)) bombIcon(p.x, p.z, c4Img, 8, 6, '#ff4a2a', 1, 13, -11);   /* (you carry it: the C4 on your own arrow, CS2) */
       x.restore();
     },
   };
