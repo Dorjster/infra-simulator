@@ -7,6 +7,8 @@
 //               blood_spray_top sequence 0 — the splash, blood_spray_high sequence 0 — the streaks, blood_spray_top
 //               sequence 1 — the puffs; each cropped frame put back where its sheet says it sits in the full frame), the
 //               drop (materials/particle/blood_drop), a soft mist (drawn here) and a chunk (blood_splatter/bloodsplatter_light);
+//               (v53 HITS) and at cells 51–62 a 12-frame wisp flipbook: materials/particle/spray1 sequence 0, every
+//               2nd of its 24 frames (headshot_01c and red_01_backspray draw it — gd-blood.js CELL.wisp);
 //   blood.json  what came from where (layout, CS2 file names, Source 2 Viewer version, date).
 // and lists them in user-assets/manifest.json (models.blood: { decals, spray, grid }); the room serves them to everyone in
 // it, tools/import-cs2-models.mjs packs user-assets/ (blood/ included) for other computers. Valve's files stay on this
@@ -38,13 +40,14 @@ if (path.resolve(WORK).startsWith(path.resolve(ASSETS) + path.sep)) die('--work 
 // What goes in (the layout dist/gd-blood.js reads: DECAL_GRID 4 · WALL_CELLS 12 · DROP_CELL0 12; SPRAY_GRID 8 · CELL).
 export const WALL = [['10', 1], ['10', 3], ['10', 9], ['10', 15], ['15', 0], ['15', 8], ['15', 10], ['15', 18], ['22', 1], ['22', 11], ['22', 15], ['22', 25]];
 export const DROPS = [['10', 20], ['10', 28], ['15', 13], ['22', 10]];   // (15_13: CS2's blood_decals_spray_high, 22_10: _spray_low)
+export const WISP = ['wisp', 'materials/particle/spray1/spray1', 0, 51];   // (v53 HITS: 12 of its 24 frames)
 export const FLIP = [['splash', 'materials/particle/fluids/blood/blood_spray_top', 0, 0], ['streak', 'materials/particle/fluids/blood/blood_spray_high', 0, 16], ['puff', 'materials/particle/fluids/blood/blood_spray_top', 1, 32]];
 const TEX = path.join(WORK, 'tex');
 
 // ---- 1. the pictures out of the depot (cached)
 const s2v = (args, opts = {}) => execFileSync('nice', ['-n', '10', S2V, '-i', VPK, ...args], { maxBuffer: 64 << 20, encoding: 'utf8', ...opts });
 let s2vVersion = '?'; try { s2vVersion = (execFileSync(S2V, ['--version'], { encoding: 'utf8' }).match(/Version:\s*([\d.]+)/) || [])[1] || '?'; } catch {}
-const need = ['materials/decals/blood/', 'materials/particle/fluids/blood/', 'materials/particle/blood_splatter/', 'materials/particle/blood_drop.vtex_c'];
+const need = ['materials/decals/blood/', 'materials/particle/fluids/blood/', 'materials/particle/blood_splatter/', 'materials/particle/blood_drop.vtex_c', 'materials/particle/spray1/spray1.vtex_c'];
 mkdirSync(TEX, { recursive: true });
 for (const f of need) { const probe = path.join(TEX, f.endsWith('/') ? f : path.dirname(f)); if (!FORCE && existsSync(probe) && readdirSync(probe).some(n => n.endsWith('.png'))) continue;
   console.log('exporting', f); try { s2v(['-f', f, '-e', 'vtex_c', '-o', TEX, '-d'], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch (e) { die('Source 2 Viewer could not export ' + f + ': ' + (e.stderr || e.message)); } }
@@ -58,7 +61,7 @@ function sheetOf(vtex) {
 }
 
 // ---- 2. the atlases
-const plan = { decals: [...WALL, ...DROPS].map(([s, k]) => `blood_decals_${s}_color.${k}`), spray: FLIP.map(([n, f, s]) => `${n}: ${path.basename(f)} seq ${s} × 16`).concat(['drop: blood_drop', 'mist: (drawn here)', 'chunk: bloodsplatter_light seq 30']) };
+const plan = { decals: [...WALL, ...DROPS].map(([s, k]) => `blood_decals_${s}_color.${k}`), spray: FLIP.map(([n, f, s]) => `${n}: ${path.basename(f)} seq ${s} × 16`).concat(['drop: blood_drop', 'mist: (drawn here)', 'chunk: bloodsplatter_light seq 30', 'wisp: spray1 seq 0 × 12 (every 2nd frame)']) };
 if (DRY) { console.log(JSON.stringify(plan, null, 1)); console.log('→ would write', path.join(ASSETS, 'blood'), '(decals.png, spray.png, blood.json; ~3 MB) and models.blood in manifest.json'); process.exit(0); }
 const decals = blank(1024);
 [...WALL, ...DROPS].forEach(([s, k], cell) => { const src = readPng(readFileSync(decalFile(s, k))); drawScaled(decals, src, (cell % 4) * 256, Math.floor(cell / 4) * 256, 256, 256); });
@@ -66,6 +69,10 @@ const spray = blank(1024), C = 128;
 for (const [name, file, seq, first] of FLIP) { const sh = sheetOf(file)[seq]; if (!sh || sh.length < 16) die(`no sheet for ${file} sequence ${seq}`);
   for (let f = 0; f < 16; f++) { const png = path.join(TEX, `${file}_seq${seq}_${f}.png`); if (!existsSync(png)) die('missing ' + png); const src = readPng(readFileSync(png)), { crop, full } = sh[f];
     const fw = full[2] - full[0], fh = full[3] - full[1], s = C / Math.max(fw, fh), ox = (C - fw * s) / 2, oy = (C - fh * s) / 2, cell = first + f, cx = (cell % 8) * C, cy = Math.floor(cell / 8) * C;
+    drawScaled(spray, src, cx + ox + (crop[0] - full[0]) * s, cy + oy + (crop[1] - full[1]) * s, Math.max(1, (crop[2] - crop[0]) * s), Math.max(1, (crop[3] - crop[1]) * s)); } }
+{ const [, file, seq, first] = WISP, sh = sheetOf(file)[seq]; if (!sh || sh.length < 24) die(`no sheet for ${file} sequence ${seq}`);   // (v53 HITS: the wisps)
+  for (let j = 0; j < 12; j++) { const fi = 2 * j, png = path.join(TEX, `${file}_seq${seq}_${fi}.png`); if (!existsSync(png)) die('missing ' + png); const src = readPng(readFileSync(png)), { crop, full } = sh[fi];
+    const fw = full[2] - full[0], fh = full[3] - full[1], s = C / Math.max(fw, fh), ox = (C - fw * s) / 2, oy = (C - fh * s) / 2, cell = first + j, cx = (cell % 8) * C, cy = Math.floor(cell / 8) * C;
     drawScaled(spray, src, cx + ox + (crop[0] - full[0]) * s, cy + oy + (crop[1] - full[1]) * s, Math.max(1, (crop[2] - crop[0]) * s), Math.max(1, (crop[3] - crop[1]) * s)); } }
 { const drop = readPng(readFileSync(path.join(TEX, 'materials/particle/blood_drop.png'))); drawScaled(spray, drop, (48 % 8) * C, Math.floor(48 / 8) * C, C, C);
   const ch = readPng(readFileSync(path.join(TEX, 'materials/particle/blood_splatter/bloodsplatter_light_seq30.png'))), s = C * .8 / Math.max(ch.width, ch.height); drawScaled(spray, ch, (50 % 8) * C + (C - ch.width * s) / 2, Math.floor(50 / 8) * C + (C - ch.height * s) / 2, ch.width * s, ch.height * s);
@@ -83,7 +90,7 @@ const NEW = path.join(ASSETS, 'blood.new'), DST = path.join(ASSETS, 'blood'); rm
 writeFileSync(path.join(NEW, 'decals.png'), writePng(decals)); writeFileSync(path.join(NEW, 'spray.png'), writePng(spray));
 writeFileSync(path.join(NEW, 'blood.json'), JSON.stringify({ version: 1, made: new Date().toISOString(), s2v: s2vVersion, grid: { decals: 4, spray: 8 }, from: plan }, null, 1));
 rmSync(DST, { recursive: true, force: true }); renameSync(NEW, DST);
-const man = JSON.parse(readFileSync(manP, 'utf8')); man.models ??= {}; man.models.blood = { decals: 'blood/decals.png', spray: 'blood/spray.png', grid: { decals: 4, spray: 8 }, from: 'CS2 (this computer): ' + plan.decals.length + ' decal splats, 3 spray flipbooks' };
+const man = JSON.parse(readFileSync(manP, 'utf8')); man.models ??= {}; man.models.blood = { decals: 'blood/decals.png', spray: 'blood/spray.png', grid: { decals: 4, spray: 8 }, wisp: 1, from: 'CS2 (this computer): ' + plan.decals.length + ' decal splats, 3 spray flipbooks' };
 man.hash = (Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).slice(0, 12);   // (clients cache user assets by it: a new import, new URLs)
 writeFileSync(manP, JSON.stringify(man, null, 1));
 const mb = f => (statSync(path.join(DST, f)).size / 1048576).toFixed(1) + ' MB';

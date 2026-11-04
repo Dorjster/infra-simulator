@@ -41,10 +41,31 @@ for (const [m, k] of Object.entries(want)) ok(impactOf(m) === k, `${m} → ${k} 
   ok(PB[6] >= .025 && PB[6] <= .2 && Math.abs(PB[10] + 300 * HU) < 1e-4 && Math.abs(PB[11] - -Math.log(.75) * 30) < 1e-4 && Math.abs(PB[13] - 32 * HU) < 1e-6 && Math.abs(PB[24] - .1) < 1e-6 && PB[31] === 2, 'the main sparks: life .025–.2 s, gravity −300, drag .25 (Source: ×.75 per 1/30 s), trails up to 32 HU growing in over .1 s (flLengthFadeInTime), their bloom-pass glow ×2 (impact_metal.vpcf)');
   { let short = 0; for (let k = 0; k < 4000; k++) { const u = (k + .5) / 4000; if (.025 + .175 * I.biased(u, -.368421) < .1125) short++; } ok(short / 4000 > .6, `life's EXPONENTIAL bias leans to the short end (${(short / 40).toFixed(0)} % live under the middle)`); }
   { const g = 0; let warmHalo = 0; for (let j = 0; j < c; j++) { const o = j * PK; if (PB[o + 34] < PB[o + 32] * .75) warmHalo++; } ok(warmHalo === c, 'the sparks\' glow turns orange over their life ((238,222,172) → (247,198,114))'); } }
+// (v53 HITS 3rd run) the radius curves reach the shader: concrete's base puff carries RC.base (aB.y 1, aB.z one HU), additive kinds never
+{ const L = [FX.concrete.find(e => e.src === 'impact_concrete_child_base'), FX.metal.find(e => e.src === 'impact_metal')], c = planImpact(L, 0, 0, 0, 0, 0, 1, 0, 0, -1, 77, 2, PB); let base = 0, bad = 0;
+  for (let j = 0; j < c; j++) { const o = j * PK; if (PB[o + 23] === K.puff && PB[o + 33] === 1 && Math.abs(PB[o + 34] - HU) < 1e-6) base++; else if (PB[o + 23] <= K.glow && PB[o + 33] !== 0 && PB[o + 33] > PB[o + 32] * 4) bad++; }
+  ok(base === 1 && bad === 0, 'the concrete base puff swells by CS2\'s radius curve (RC.base: +10.9 HU at .164 s, +19.15 at 1 s), packed for the shader'); }
 { const a = new Float32Array(MAX_HIT * PK), b = new Float32Array(MAX_HIT * PK); planImpact(FX.metal, 1, 2, 3, 1, 0, 0, -1, 0, 0, I.hitSeed(1, 2, 3), 2, a); planImpact(FX.metal, 1, 2, 3, 1, 0, 0, -1, 0, 0, I.hitSeed(1, 2, 3), 2, b);
   const c = new Float32Array(MAX_HIT * PK); planImpact(FX.metal, 1.5, 2, 3, 1, 0, 0, -1, 0, 0, I.hitSeed(1.5, 2, 3), 2, c);
   ok(a.every((v, i) => v === b[i]) && !a.every((v, i) => v === c[i]), 'the same hit point → the same sparks on every computer; another point → others'); }
 ok(decalOf('concrete')[0] === 5.8 && decalOf('metal')[0] === 6.6 && decalOf('wood')[0] === 7.7 && decalOf('glass')[0] === 8.1 && decalOf('sand')[0] === 5.8 && decalOf('plaster')[0] === 9.2 && decalOf('roof')[0] === 11.6 && decalOf('stone')[0] === 8.1, "the holes: CS2's DecalWorldWidth per group (concrete 5.8, metal 6.6, wood 7.7, glass 8.1, dirt 5.8, plaster 9.2, tile 11.6, rock 8.1 HU)");
+
+// ── v53 HITS (H5): concrete as CS2 draws it — the sparse sparks full width, the smoke by control point 6 (the files') ──
+{ const C = FX.concrete, P2 = new Float32Array(MAX_HIT * PK), puffs = c6 => { const n = planImpact([C.find(e => e.src === 'impact_concrete_child_smoke')], 0, 0, 0, 0, 0, 1, 0, 0, -1, 99, 2, P2, MAX_HIT, 1, NaN, c6); return [n, P2[18]]; };   // (the first puff: the same draws at every CP6 — its alpha scales with it)
+  // (v53 HITS final) CP6 = impact_concrete's own C_OP_DistanceBetweenCPsToCP: 1 within 100 HU, 0 from 800 HU (no longer ours)
+  ok(I.cp6At(0) === 1 && I.cp6At(100) === 1 && Math.abs(I.cp6At(450) - .5) < 1e-9 && I.cp6At(800) === 0 && I.cp6At(1500) === 0 && I.cp6Of(null, 50) === 0 && Math.abs(I.cp6Of(I.CP6_OF.dirt, 2000) - .1) < 1e-9, 'CP6 (the files): concrete 100 → 800 HU gives 1 → 0, dirt 1 → .1, metal / tile / wood none (0)');
+  const near6 = (a, b, t = 2e-3) => Math.abs(a - b) <= t;
+  ok(near6(I.curveAt(I.CV.smokeA, 1), .856) && near6(I.curveAt(I.CV.smokeA, 0), I.curveAt(I.CV.smokeA, -.012059) , .01) && near6(I.curveAt(I.CV.smokeA, .874953), .96508) && near6(I.curveAt(I.CV.b2R, 0), 1) && near6(I.curveAt(I.CV.b2R, 1), .5235, .003) && near6(I.curveAt(I.CV.b2L, 0), .5) && I.curveAt(I.CV.b2L, 1) > .97, 'the CP6 curves through their keys (Hermite on the stored slopes): smoke α .856 near / .965 at .875; burst_2 radius 1 far → .52 near, life .5 far → .98 near');
+  const [nNear, aNear] = puffs(I.cp6At(50)), [n300, a300] = puffs(I.cp6At(300)), [nFar, aFar] = puffs(I.cp6At(1500));
+  ok(nNear === 1 && n300 === 2 && nFar === 4 && aNear > aFar * 2.5 && aNear >= .13, `concrete smoke: one bright puff close (${nNear}, α ${aNear.toFixed(2)}), ${n300} at 300 HU (α ${a300.toFixed(2)}), ${nFar} faint ones far (α ${aFar.toFixed(2)}) — CS2's count 4 → 1 and its alpha curve`);
+  { const b2 = [C.find(e => e.src === 'impact_generic_burst_2')], r = c6 => { planImpact(b2, 0, 0, 0, 0, 0, 1, 0, 0, -1, 99, 2, P2, MAX_HIT, 1, NaN, c6); return [P2[7], P2[6]]; }, [rN, lN] = r(1), [rF, lF] = r(0);
+    ok(rF > rN * 1.8 && lN > lF * 1.8, `impact_generic_burst_2: wider far off (${(rF / HU).toFixed(2)} vs ${(rN / HU).toFixed(2)} HU near) and longer-lived near (${lN.toFixed(2)} vs ${lF.toFixed(2)} s) — its CP6 curves' direction`); }
+  { const D = [C.find(e => e.src === 'impact_fx_hit_darken')], a = d => { planImpact(D, 0, 0, 0, 0, 0, 1, 0, 0, -1, 99, 2, P2, MAX_HIT, 1, NaN, 1, d); return P2[18]; };
+    ok(a(0) === 0 && a(I.cp6Of(I.CP6_DARKEN, 200)) > .4, 'impact_fx_hit_darken: its own CP6 (your distance): no darkening under 50 HU, there at 200 HU (its alpha curve)'); }
+  const n = planImpact(C, 0, 0, 0, 0, 0, 1, 0, 0, -1, 99, 2, P2); let sparse = 0, other = 0; for (let j = 0; j < n; j++) { const o = j * PK; if (P2[o + 23] !== K.trail) continue; if (P2[o + 22] === 1 && Math.abs(P2[o + 7] - .5 * HU) < 1e-6) sparse++; else other++; }
+  ok(sparse === 2 && other === 0, 'concrete: its 2 sparse sparks carry the full-width core (effects/spark.vtex), radius .5 HU');
+  const m = planImpact(FX.metal, 0, 0, 0, 0, 0, 1, 0, 0, -1, 99, 2, P2); let thin = true; for (let j = 0; j < m; j++) { const o = j * PK; if (P2[o + 23] === K.trail && P2[o + 22] !== 0) thin = false; }
+  ok(thin, 'metal: its sparks keep sparks.vtex\'s thin bright line (SPARK_CORE)'); }
 
 // ── helmet headshot → dink sparks; bare head → blood only ──
 { const scene = new THREE.Scene(), G = { mode: 'arena', combat: { bl: [], d: { match: 1, n: 1 } }, arena: { map: 'dust2' } };
@@ -130,9 +151,18 @@ if (existsSync(VPK) && existsSync(S2V)) {
       const dev = e.dev || {}, tag = e.src, em = d.m_Emitters || [], init = d.m_Initializers || [], ops = d.m_Operators || [], rend = d.m_Renderers || [];
       // count
       const counts = em.map(x => x.m_nParticlesToEmit).filter(c => c != null), rnds = counts.map(num).filter(Boolean), lod = counts.find(c => c.m_nType === 'PF_TYPE_PARTICLE_DETAIL_LEVEL'), cpc = counts.find(c => c.m_nType === 'PF_TYPE_CONTROL_POINT_COMPONENT');
-      if (cpc) { const mx = cpc.m_nMapType === 'PF_MAP_TYPE_REMAP' ? Math.max(cpc.m_flOutput0, cpc.m_flOutput1) : 1; ok(e.cpn && e.n[0] === mx && e.n[1] === mx, `${tag}: a control point's count — its maximum ${mx} (${JSON.stringify(e.n)})`); }
+      if (cpc) { const mx = /PF_MAP_TYPE_REMAP/.test(cpc.m_nMapType) ? Math.max(cpc.m_flOutput0, cpc.m_flOutput1) : 1; ok(e.cpn && e.n[0] === mx && e.n[1] === mx, `${tag}: a control point's count — its maximum ${mx} (${JSON.stringify(e.n)})`);
+        // (v53 HITS final) the count IS that remap of CP6 (in, out, and REMAP_BIASED's parameter)
+        if (cpc.m_nControlPoint === 6) { const R = e.c6?.n; ok(R && [cpc.m_flInput0, cpc.m_flInput1, cpc.m_flOutput0, cpc.m_flOutput1].every((v, i) => near(v, R[i])) && (cpc.m_nMapType !== 'PF_MAP_TYPE_REMAP_BIASED' || near(e.c6.nb, cpc.m_flBiasParameter)), `${tag}: count = CP6 remap ${cpc.m_flInput0}–${cpc.m_flInput1} → ${cpc.m_flOutput0}–${cpc.m_flOutput1} (${JSON.stringify(R)})`); checked++; } }
       else if (e.n && rnds.length) ok(rng(e.n, rnds[0]), `${tag}: count ${e.n} = CS2 ${JSON.stringify(rnds[0])}`);
       if (e.lod) ok(lod && [lod.m_flLOD0, lod.m_flLOD1, lod.m_flLOD2, lod.m_flLOD3].every((v, i) => v === e.lod[i]), `${tag}: counts per detail level ${e.lod}`);
+      // (v53 HITS final) every CP6 curve (C_INIT_InitFloat of control point 6's x, PF_MAP_TYPE_CURVE, SCALE_INITIAL_VALUE) is
+      // this emitter's c6 curve, key for key with its slopes; and no c6 curve the file lacks
+      { const FN = { 7: 'a', 1: 'life', 3: 'r' }, got = {};
+        for (const x of init) { const v = x.m_InputValue; if (x._class !== 'C_INIT_InitFloat' || v?.m_nType !== 'PF_TYPE_CONTROL_POINT_COMPONENT' || v.m_nControlPoint !== 6) continue;
+          const f = FN[x.m_nOutputField ?? 3], keys = (v.m_Curve?.m_spline || []).flatMap(k => [+k.x, +k.y, +k.m_flSlopeIncoming, +k.m_flSlopeOutgoing]), C = I.CV[e.c6?.[f]]; got[f] = 1;
+          ok(f && v.m_nMapType === 'PF_MAP_TYPE_CURVE' && x.m_nSetMethod === 'PARTICLE_SET_SCALE_INITIAL_VALUE' && v.m_nInputMode === 'PF_INPUT_MODE_CLAMPED' && v.m_flInput0 === 0 && v.m_flInput1 === 1 && C && C.length === keys.length && keys.every((k, i) => near(k, C[i], 1e-5)), `${tag}: CP6 curve on ${f} = CS2's ${keys.length / 4} keys (${e.c6?.[f]})`); checked++; }
+        for (const f of ['a', 'life', 'r']) if (e.c6?.[f] && !got[f]) ok(false, `${tag}: c6.${f} but the file has no CP6 curve there`); }
       // life (and its bias), radius, alpha
       const fl = f => init.find(x => x._class === 'C_INIT_InitFloat' && (x.m_nOutputField ?? 3) === f && num(x.m_InputValue) && !x.m_nSetMethod);
       const life = fl(1); if (life) { const v = life.m_InputValue; ok(rng(e.life, num(v)), `${tag}: life ${e.life} = CS2 ${JSON.stringify(num(v))}`);
@@ -164,6 +194,14 @@ if (existsSync(VPK) && existsSync(S2V)) {
         else ok(!e.wtc, `${tag}: no WorldTraceConstraint in CS2, none here`); }
       const ir = ops.find(x => x._class === 'C_OP_InterpolateRadius'); if (!dev.grow) { const g0 = ir?.m_flStartScale ?? 1, g1 = ir?.m_flEndScale ?? 1, bi = ir?.m_flBias ?? .5, st = ir?.m_flStartTime ?? 0;
         ok(near((e.grow || [1, 1])[0], g0) && near((e.grow || [1, 1])[1], g1) && near(e.rb ?? .5, bi) && near(e.rst || 0, st), `${tag}: radius ×${g0} → ×${g1} (bias ${bi}, from ${st}) = ours ${JSON.stringify(e.grow)} ${e.rb ?? .5} ${e.rst || 0}`); }
+      // (v53 HITS 3rd run) the radius curves: a C_OP_SetFloat on the radius (no output field: the default, ours) with a curve
+      // of the particle's age — scale over the normalized age = grow / rb (ends equal, Bias through the middle key); the others = rc / RC
+      { const rcOp = ops.find(x => x._class === 'C_OP_SetFloat' && (x.m_nOutputField ?? 3) === 3 && x.m_InputValue?.m_nMapType === 'PF_MAP_TYPE_CURVE' && /PARTICLE_AGE/.test(x.m_InputValue?.m_nType || '')), sp = (rcOp?.m_InputValue?.m_Curve?.m_spline || []).map(p => [p.x, p.y]);
+        if (rcOp && rcOp.m_nSetMethod === 'PARTICLE_SET_SCALE_INITIAL_VALUE' && rcOp.m_InputValue.m_nType === 'PF_TYPE_PARTICLE_AGE_NORMALIZED') { const g = e.grow || [1, 1], m = sp[1], pw = Math.log(e.rb ?? .5) / Math.log(.5), mid = g[0] + (g[1] - g[0]) * Math.pow(m[0], pw);
+          ok(near(g[0], sp[0][1], .01) && near(g[1], sp.at(-1)[1], .01) && Math.abs(mid - m[1]) < .05 * m[1], `${tag}: radius × its age curve ${JSON.stringify(sp)} = ours ×${g[0]} → ×${g[1]}, Bias ${e.rb} (${mid.toFixed(3)} at ${m[0]})`); }
+        else if (rcOp) { const R = I.RC[e.rc], add = rcOp.m_nSetMethod === 'PARTICLE_SET_ADD_TO_INITIAL_VALUE', last = sp.at(-1), keyed = R && sp.some(p => near(p[0], R[1], .002) && near(p[1], R[2], .002));
+          ok(!!R && (e.rc === 'dirt') === !add && near(R[0], sp[0][1], .002) && near(R[3], last[0], .002) && near(R[4], last[1], .002) && keyed, `${tag}: the radius curve (${add ? 'added' : 'scaled'}, age in s) ${JSON.stringify(sp)} = RC.${e.rc} ${JSON.stringify(R)}`); }
+        else ok(!e.rc, `${tag}: no radius curve in CS2, none here`); }
       if (!dev.fade) { const fo = ops.find(x => x._class === 'C_OP_FadeOut'), fs = ops.find(x => x._class === 'C_OP_FadeOutSimple'), want = fo ? ((fo.m_flFadeOutTimeMin ?? .25) + (fo.m_flFadeOutTimeMax ?? .25)) / 2 : fs ? fs.m_flFadeOutTime ?? .25 : 0;
         if (!ops.some(x => x._class === 'C_OP_FadeAndKill') && fo?.m_bProportional !== false) ok(near(e.fade || 0, want, .01), `${tag}: fades the last ${e.fade || 0} of its life = CS2 FadeOut ${want}`); }
       // the drawn renderer
@@ -197,6 +235,21 @@ if (existsSync(VPK) && existsSync(S2V)) {
       const m = groups?.[g]?.m_vecOptions?.[0]?.m_hMaterial; if (!m) { ok(false, g + ' in decalgroups.vdata'); continue; }
       execFileSync(S2V, ['-i', VPK, '-f', m + '_c', '-o', tmp, '-d'], { stdio: 'ignore' }); const t = readFileSync(path.join(tmp, m), 'utf8'), w = +(/"DecalWorldWidth"\s*"([\d.]+)"/.exec(t) || [])[1], v = +(/"DecalSizeVariance"\s*"([\d.]+)"/.exec(t) || [])[1];
       ok(I.DECAL_SIZE[g][0] === w && I.DECAL_SIZE[g][1] === v, `${g}: hole ${I.DECAL_SIZE[g][0]} HU ±${I.DECAL_SIZE[g][1]} = CS2 ${m.split('/').pop()} ${w} ±${v}`); checked++; }
+    // v53 HITS (H5): impact_concrete's emitters read back from the install — the sparse sparks' constant radius (drawn at its
+    // full width: core 1) and effects/spark.vtex, the smoke's radius flOpStrength (rsr), and control point 6's reach (c6)
+    { const C = FX.concrete, by = s => C.find(e => e.src === s), sp = by('ricochet_sparks_sparse'), sm = by('impact_concrete_child_smoke'), base = by('impact_concrete_child_base'), b2 = by('impact_generic_burst_2');
+      const dS = file('ricochet_sparks_sparse'), dM = file('impact_concrete_child_smoke'), dB = file('impact_concrete_child_base'), dG = file('impact_generic_burst_2');
+      const R0 = dS?.m_Renderers?.[0], tex = JSON.stringify(R0?.m_vecTexturesInput ?? '');
+      ok(dS && near(dS.m_flConstantRadius, .5) && sp.r[0] === .5 && sp.r[1] === .5 && sp.core === 1 && /effects\/spark\.vtex/.test(tex) && near(lit(R0.m_flMaxLength) ?? R0.m_flMaxLength, sp.tmax) && near(lit(R0.m_flLengthFadeInTime) ?? R0.m_flLengthFadeInTime, sp.tin), 'concrete: ricochet_sparks_sparse — radius .5 (CS2 constant) drawn at its full 1 HU width (effects/spark.vtex, not sparks.vtex), length fade-in .1 s, 20 HU at most');
+      const rI = (dM?.m_Initializers || []).find(x => x._class === 'C_INIT_InitFloat' && (x.m_nOutputField ?? 3) === 3 && x.m_flOpStrength); ok(rI && rng(sm.rsr, num(rI.m_flOpStrength)), `concrete: the smoke's radius × its flOpStrength ${JSON.stringify(num(rI?.m_flOpStrength))} (rsr ${sm.rsr})`);
+      // (v53 HITS final) control point 6 comes from the files: each surface's parent sets it (C_OP_DistanceBetweenCPsToCP from
+      // the hit to CP5, the shot's start) — CP6_OF; the surfaces with no setter have none; impact_fx_hit_darken sets its own
+      const PARENT = { concrete: 'impact_concrete', plaster: 'impact_plaster_high', glass: 'impact_glass', dirt: 'impact_dirt', metal: 'impact_metal', tile: 'impact_tile', wood: 'impact_wood' };
+      for (const [k, src] of Object.entries(PARENT)) { const d = file(src), op = (d?.m_PreEmissionOperators || []).find(x => x._class === 'C_OP_DistanceBetweenCPsToCP' && x.m_nOutputCP === 6), R = I.CP6_OF[k];
+        ok(op ? R && op.m_nEndCP === 5 && (op.m_nStartCP ?? 0) === 0 && [op.m_flInputMin, op.m_flInputMax, op.m_flOutputMin, op.m_flOutputMax].every((v, i) => near(v, R[i])) : !R, `${k}: CP6 ${op ? `= ${src}'s distance to CP5 ${op.m_flInputMin}–${op.m_flInputMax} HU → ${op.m_flOutputMin}–${op.m_flOutputMax}` : 'not set by ' + src + ' (0)'}`); checked++; }
+      { const d = file('impact_fx_hit_darken'), P = d?.m_PreEmissionOperators || [], pl = P.find(x => x._class === 'C_OP_SetControlPointToPlayer'), op = P.find(x => x._class === 'C_OP_DistanceBetweenCPsToCP');
+        ok(pl?.m_nCP1 === 5 && op?.m_nOutputCP === 6 && op.m_nEndCP === 5 && op.m_flInputMin === I.CP6_DARKEN[0] && op.m_flInputMax === I.CP6_DARKEN[1] && op.m_flOutputMin == null && op.m_flOutputMax == null, `impact_fx_hit_darken: its own CP6 — CP5 = the local player, ${op?.m_flInputMin}–${op?.m_flInputMax} HU (output range not in the file: 0 → 1 ours)`); checked++; }
+      { const cnt = dM?.m_Emitters?.[0]?.m_nParticlesToEmit; ok(cnt?.m_nControlPoint === 6 && sm.c6.n.join() === [cnt.m_flInput0, cnt.m_flInput1, cnt.m_flOutput0, cnt.m_flOutput1].join() && base.c6.a && base.c6.life && !base.c6.r && b2.c6.life && b2.c6.r && !b2.c6.a, `concrete: the smoke's count is control point 6's (${cnt?.m_flOutput0} → ${cnt?.m_flOutput1}); base: alpha, life; burst_2: life, radius`); checked++; } }
     verified = `${checked} emitters and holes checked against the user's CS2 install`;
   } catch (e) { ok(false, 'reading the CS2 install: ' + e.message); }
   finally { rmSync(tmp, { recursive: true, force: true }); }

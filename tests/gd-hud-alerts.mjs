@@ -18,6 +18,9 @@ check('match point at the freeze when a side has 12 (MR12, first to 13)', alertF
 check('the last round of the first half (round 12)', alertFor('over', D('freeze', { n: 12, score: { t: 6, ct: 5 } })) === 'lastHalf');
 check('the final round (24)', alertFor('over', D('freeze', { n: 24, score: { t: 11, ct: 11 } })) === 'final');
 check('the match start (after warmup)', alertFor('warmup', D('freeze', { n: 1 })) === 'start');
+{ const OT = (t, ct) => ({ round: { phase: 'freeze' }, n: t + ct + 1, score: { t, ct }, rules: { win: 13, ot: 'mr3' } });   // (v53 HITS, ui-ot-match-point: the audit's probe)
+  check('MR3 overtime: no MATCH POINT at 12–12 (overtime starts)', alertFor('over', OT(12, 12)) === null);
+  check('MR3 overtime: MATCH POINT at 15–14 (the block won at 16)', alertFor('over', OT(15, 14)) === 'matchPoint' && alertFor('over', OT(14, 15)) === 'matchPoint' && alertFor('over', OT(14, 13)) === null); }
 check('an ordinary freeze time: nothing', alertFor('over', D('freeze', { n: 7, score: { t: 3, ct: 3 } })) === null);
 check('the same phase again: nothing', alertFor('planted', D('planted')) === null);
 // on the page
@@ -34,4 +37,4 @@ G.combat.d = D('freeze', { n: 1 }); AL.update(true, G, t += 16); check('warmup o
 AL.update(false, G, t += 16); check('off screen: hidden', el.className === '');
 // CS2's look
 check('CS2 numbers: 300 px wide, 120 px from the top, 18 px text, 2 px side bars, 0.25 s open from scale 0, black .5 fill', /width:calc\(300 \* var\(--gd-u/.test(ALERTS_CSS) && /top:calc\(var\(--gd-view-top,0px\) \+ 120 \* var\(--gd-u/.test(ALERTS_CSS) && /calc\(18 \* var\(--gd-u,1px\)\)/.test(ALERTS_CSS) && /\.sd\{[^}]*width:2px/.test(ALERTS_CSS) && /transform:scaleX\(0\);transition:transform \.25s ease-in/.test(ALERTS_CSS) && /#00000080/.test(ALERTS_CSS));
-console.log(bad ? `FAIL: gd-hud-alerts · ${bad} of ${n}` : `PASS: gd-hud-alerts · ${n} checks (plant, defuse, draw, match point, last round of the half, final round, match start, warmup clock, DOM only on change, CS2's alert bar look)`); if (bad) process.exit(1);
+console.log(bad ? `FAIL: gd-hud-alerts · ${bad} of ${n}` : `PASS: gd-hud-alerts · ${n} checks (plant, defuse, draw, match point (and MR3 overtime's), last round of the half, final round, match start, warmup clock, DOM only on change, CS2's alert bar look)`); if (bad) process.exit(1);

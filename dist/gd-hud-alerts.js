@@ -28,6 +28,13 @@ export const ALERTS_CSS = `
 #gd-alert b{position:relative;display:block;padding:calc(8 * var(--gd-u,1px)) calc(24 * var(--gd-u,1px));text-align:center;font:600 calc(18 * var(--gd-u,1px))/1.25 'GD HUD','Barlow Semi Condensed',system-ui,sans-serif;color:#fff;text-shadow:1px 1px 2px #000000d2;opacity:0;transition:opacity .25s ease-in;white-space:nowrap}
 #gd-alert.on{transform:scaleX(1)}#gd-alert.on .wh{opacity:0;transition-delay:.25s}#gd-alert.on b{opacity:1;transition-delay:.25s}`;
 
+// MATCH POINT (v53 HITS, ui-ot-match-point): a side one round from winning. In regulation that is win − 1 (12 of MR12)
+// while the other side has less (12–12 under MR3 overtime is no match point: it goes to overtime). In MR3 overtime
+// (arena-defuse.js end: blocks of six from (win − 1)–(win − 1), each won at its base + 4) a side on its block's base + 3:
+// 15–14, 15–12 … in the first block, 18–17 in the second. (Sudden death: the next round at (win − 1)–(win − 1) decides.)
+export function matchPoint(d) { const win = d?.rules?.win || 13, s = d?.score || {}, t = s.t | 0, ct = s.ct | 0, reg = 2 * (win - 1), played = t + ct, ot = d?.rules?.ot;
+  if (ot === 'mr3' && t >= win - 1 && ct >= win - 1) { const base = win - 1 + 3 * Math.floor((played - reg) / 6); return Math.max(t, ct) === base + 3; }
+  return t === win - 1 || ct === win - 1; }
 // The alert for a round state (pure: tests): the message key for what just happened, or null.
 // prev: the last phase seen; d: the host's defuse state (d.round, d.n, d.score, d.rules).
 export function alertFor(prev, d) {
@@ -36,7 +43,7 @@ export function alertFor(prev, d) {
   if (r.phase === 'over') return r.reason === 'defuse' ? 'defused' : !r.winner ? 'draw' : null;   // (a win: CS2's win panel says it — gd-round-panel.js)
   if (r.phase === 'freeze') { const win = d.rules?.win || 13, half = win - 1, s = d.score || {}, n = d.n | 0;
     if (prev === 'warmup' || n === 1) return 'start';
-    if ((s.t | 0) === win - 1 || (s.ct | 0) === win - 1) return 'matchPoint';
+    if (matchPoint(d)) return 'matchPoint';
     if (n === half) return 'lastHalf'; if (n === 2 * half) return 'final'; }
   return null; }
 

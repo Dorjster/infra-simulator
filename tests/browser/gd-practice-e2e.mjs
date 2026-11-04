@@ -30,7 +30,7 @@ for (let i = 0; i < 6; i++) { await p.evaluate(() => __infra.lab.pistol.fire());
 await p.waitForTimeout(200);
 const marks = await p.evaluate(() => { const m = __infra.scene.children.find(o => o.isInstancedMesh && o.count === 192); if (!m) return -1; let k = 0; const M = new (m.matrix.constructor)(); for (let i = 0; i < m.count; i++) { m.getMatrixAt(i, M); if (M.elements[13] > -1000) k++; } return k; });
 check('shots leave red impact marks', marks >= 4, marks);
-check('the recoil panel shows the spray', await p.evaluate(() => getComputedStyle(document.getElementById('gd-recoil')).display === 'block'));
+check('no recoil panel (CS2 has none: v53 HITS, open-B#9)', await p.evaluate(() => !document.getElementById('gd-recoil')));
 const res0 = await p.evaluate(() => __infra.lab.pistol.reserve); await p.evaluate(() => __infra.lab.pistol.reload()); await p.waitForTimeout(3200); const res1 = await p.evaluate(() => [__infra.lab.pistol.ammo, __infra.lab.pistol.reserve]);
 check('infinite ammo: a reload fills the magazine, the reserve stays', res1[0] === 30 && res1[1] === res0, JSON.stringify([res0, res1]));
 // A grenade: its flight path.

@@ -24,6 +24,37 @@ function buses(c) {
   worldIn = c.createGain(); duckF = c.createBiquadFilter(); duckF.type = 'lowpass'; duckF.frequency.value = c.sampleRate / 2; duckG = c.createGain();
   const trim = c.createGain(); trim.gain.value = .7; bus = c.createGain(); bus.gain.value = vols.effects; worldIn.connect(duckF).connect(duckG).connect(bus).connect(trim).connect(comp); busUI = c.createGain(); busUI.gain.value = vols.ui; busUI.connect(masterG); busMusic = c.createGain(); busMusic.gain.value = vols.music; busMusic.connect(comp);
 }
+// ── (v53 HITS, open-B #8 and the audio audit) Global Defensive's last stage — only while a GD match is on (gd-sounds.js
+// gdAudio(true) turns it on, leaving turns it off; every other mode never reaches it: the chain ends at the limiter as
+// before). CS2's own last stage is FinalMixGlue (sounds/graphs/__main__.vmix, the user's install): a peak compressor at
+// −6 dB, knee 3.125 dB, 40:1, 4 ms attack, 458 ms release, output 0 dB and NO make-up gain (bAutoMakeupGain false).
+// Web Audio's DynamicsCompressor always adds a make-up gain of its own (Chromium's DynamicsCompressorKernel: (1 / the
+// curve's gain at 0 dBFS)^0.6 — the audit measured the −1 dBFS limiter above peaking at +0.33 dBFS (world ×4) and +1.74
+// (UI ×4) through it). So: the glue (Web Audio's ratio stops at 20: 20:1 for CS2's 40:1), then a gain that takes its
+// make-up back out (compressorMakeup below — the same formula), then a −1 dBFS ceiling for what the 4 ms attack lets
+// through (a WaveShaper: identity to −2.9 dBFS, rounded into −1 dBFS; no oversampling, so no filter rings past it):
+// every sample leaves at or under −1 dBFS.
+export const GD_GLUE = { threshold: -6, knee: 3.125, ratio: 20, attack: .004, release: .458, ceiling: -1 };
+const dbLin = db => Math.pow(10, db / 20), linDb = x => 20 * Math.log10(Math.max(1e-30, x));
+// Chromium's static compression curve (DynamicsCompressorKernel: KneeCurve, Saturate, KAtSlope) → the make-up gain it adds.
+export function compressorMakeup(threshold, knee, ratio) {
+  const lt = dbLin(threshold), slope = 1 / ratio, kneeDb = threshold + knee, kt = dbLin(kneeDb);
+  const kneeCurve = (x, k) => x < lt ? x : lt + (1 - Math.exp(-k * (x - lt))) / k;
+  const slopeAt = (x, k) => { if (x < lt) return 1; const x2 = x * 1.001, xd = linDb(x), x2d = linDb(x2), yd = linDb(kneeCurve(x, k)), y2d = linDb(kneeCurve(x2, k)); return (y2d - yd) / (x2d - xd); };
+  let k = 5; if (knee > 0) { let lo = .1, hi = 10000; for (let i = 0; i < 15; i++) { if (slopeAt(kt, k) < slope) hi = k; else lo = k; k = Math.sqrt(lo * hi); } }
+  const yKneeDb = knee > 0 ? linDb(kneeCurve(kt, k)) : threshold;
+  const sat = x => x < kt && knee > 0 ? kneeCurve(x, k) : dbLin(yKneeDb + slope * (linDb(x) - kneeDb));
+  return Math.pow(1 / sat(1), .6); }
+// The ceiling's curve: y = x up to .8 of the ceiling, then a tanh knee that never passes it.
+export function ceilingCurve(db = GD_GLUE.ceiling, N = 4097) { const L = dbLin(db), a = .8 * L, b = L - a, cv = new Float32Array(N);
+  for (let i = 0; i < N; i++) { const x = i / (N - 1) * 2 - 1, m = Math.abs(x); cv[i] = m <= a ? x : Math.sign(x) * (a + b * Math.tanh((m - a) / b)); } return cv; }
+let gdTail = null, gdTailOn = false;
+export function gdFinalStage(on, c = ctx) { on = !!on; if (!c || on === gdTailOn) return gdTailOn; buses(c);
+  if (!gdTail) { const g = c.createDynamicsCompressor(); g.threshold.value = GD_GLUE.threshold; g.knee.value = GD_GLUE.knee; g.ratio.value = GD_GLUE.ratio; g.attack.value = GD_GLUE.attack; g.release.value = GD_GLUE.release;
+    const trim = c.createGain(); trim.gain.value = 1 / compressorMakeup(GD_GLUE.threshold, GD_GLUE.knee, GD_GLUE.ratio); const ws = c.createWaveShaper(); ws.curve = ceilingCurve(); ws.oversample = 'none';
+    g.connect(trim).connect(ws).connect(c.destination); gdTail = { g, trim, ws }; }
+  try { limiter.disconnect(); } catch {} limiter.connect(on ? gdTail.g : c.destination); gdTailOn = on; return on; }
+export const gdFinalStageOn = () => gdTailOn;   // (tests)
 export function master(c) { buses(c); return worldIn; }
 // The Effects volume's own input after the duck: a sound that must not be muffled by it (a flashbang's ear ring) but
 // still follows the Effects and Master volumes, the compressor and the limiter.
@@ -78,6 +109,8 @@ export function outAt(c, at, kind = 'effect') {
 }
 const fwd = { x: 0, y: 0, z: -1 };
 // The listener's position (for distance-dependent sound: muffling, echo).
+// (v53 HITS) The same, into `out` (nothing made: gd-impacts.js reads it per impact); null when no sound has started yet.
+export const listenerPos = out => { const L = ctx?.listener; if (!L?.positionX) return null; out.x = L.positionX.value; out.y = L.positionY.value; out.z = L.positionZ.value; return out; };
 export const listenerAt = () => { const L = ctx?.listener; return L?.positionX ? { x: L.positionX.value, y: L.positionY.value, z: L.positionZ.value } : null; };
 // (a camera with no parent, or one in the scene root: straight from its position and rotation — this frame's, set by
 // the movement just now; matrixWorld is only refreshed at render, a frame behind. Otherwise its world matrix.)

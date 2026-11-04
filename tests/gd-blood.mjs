@@ -109,7 +109,7 @@ const s1 = blood.stats.sHead; blood.update(); check('the same frame again (list 
 // recycling
 for (let k = 0; k < 30; k++) { send([mk({ z: 'head', d: 100 })]); blood.update(); T += 16; }
 for (let k = 0; k < 8; k++) blood.update();
-const st = blood.stats; check('64 particles, 48 decals at most: recycled oldest first (ring heads wrap)', st.decals === DECAL_N && st.sHead < SPRAY_N && st.dHead < DECAL_N && blood.pools.spray.aP.count === SPRAY_N, JSON.stringify(st));
+const st = blood.stats; check(`${SPRAY_N} particles, ${DECAL_N} decals at most: recycled oldest first (ring heads wrap)`, st.decals === DECAL_N && st.sHead < SPRAY_N && st.dHead < DECAL_N && blood.pools.spray.aP.count === SPRAY_N, JSON.stringify(st));
 { const P = blood.pools.spray.aP.array, newest = (blood.stats.sHead + SPRAY_N - 1) % SPRAY_N, oldest = blood.stats.sHead; check('…the newest particle is the latest born, the next slot to fill the oldest', P[newest * 4 + 3] >= P[oldest * 4 + 3]); }
 // stale and old records
 const h0 = blood.stats.hits; send([{ ...mk(), at: hostT - KEEP_MS - 1 }]); blood.update(); check('a record older than ' + KEEP_MS + ' ms (a join, a stall) is not drawn', blood.stats.hits === h0);
@@ -153,4 +153,61 @@ check('one instanced draw per pool (a quad, 6 indices, N instances)', blood.spra
   check('built-in pictures: decal splats and spray frames drawn (no CS2 files needed)', da > d.length / 4 * .08 && sa > s.length / 4 * .08, da + ' / ' + sa);
   check('the built-in decal atlas is the same each time (every computer)', (() => { const x = B.builtinDecals(128), y = B.builtinDecals(128); return x.length === y.length && x.every((v, k) => v === y[k]); })()); }
 
+// ── v53 HITS (H1, H6): CS2's per-emitter fades and caps, the head shot's own children, your own wounds on your screen ──
+{ const { EMIT, sprayLook, fadeStart, planLocal, LOCAL, LOCAL_N, LK, MAX_LOCAL, hitSide } = B;
+  const listOf = rec => { const L = rec.z === 'head' ? [EMIT.high, EMIT.head] : [EMIT[tierOf(rec)]], out = []; for (const em of L) for (const e of em) for (let k = 0; k < e.n; k++) out.push(e); return out; };
+  const PB2 = new Float32Array(B.MAX_PER_HIT * SP), hr = { ...recAt(4242), z: 'head', d: 100 }, nH = planSpray(hr, PB2), eH = listOf(hr);
+  check(`a head shot plans every one of its ${eH.length} CS2 particles (high + blood_impact_headshot and its children) — under the per-hit cap ${B.MAX_PER_HIT}`, nH === eH.length && nH <= B.MAX_PER_HIT, nH + ' / ' + eH.length);
+  let lanes = true, why = '';
+  for (let k = 0; k < nH; k++) { const e = eH[k], o = k * SP, life = PB2[o + 6], fo = PB2[o + 24];
+    const fOk = e.fs !== undefined ? Math.abs(fo - 10 - e.fs) < 1e-6 : e.fp === 0 ? fo >= 1 - (e.fo?.[1] ?? .25) / life - 1e-4 && fo <= Math.max(0, 1 - (e.fo?.[0] ?? .25) / life) + 1e-4 || fo === 0 : fo >= 1 - (e.fo?.[1] ?? .25) - 1e-4 && fo <= 1 - (e.fo?.[0] ?? .25) + 1e-4;
+    if (Math.abs(PB2[o + 21] - (e.smax || 0)) > 1e-6 || Math.abs(PB2[o + 22] - (e.sf || 0)) > 1e-6 || Math.abs(PB2[o + 23] - (e.ef || 0)) > 1e-6 || Math.abs(PB2[o + 25] - (e.rb || .5)) > 1e-6 || Math.abs(PB2[o + 26] - (e.gs || 0)) > 1e-6 || !fOk) { lanes = false; why = e.src + ' #' + k + ' fo ' + fo; break; } }
+  check('each particle carries its own emitter\'s screen cap / fade (flMaxSize, flStart / EndFadeSize), FadeOut window and radius bias / start time', lanes, why);
+  const kids = [...new Set(EMIT.head.map(e => e.src))];
+  check('the head shot\'s own list is blood_impact_headshot.vpcf and its children (01b, red_01_chunk ×2, red_01_backspray, 01e, 01c, 01d) — no red_01_mist, no drops1', kids.join() === 'blood_impact_headshot,blood_impact_headshot_01b,blood_impact_red_01_chunk,blood_impact_red_01_backspray,blood_impact_headshot_01e,blood_impact_headshot_01c,blood_impact_headshot_01d' && EMIT.head.filter(e => e.src === 'blood_impact_red_01_chunk').length === 2, kids.join());
+  const c01 = EMIT.head.find(e => e.src === 'blood_impact_headshot_01c'), bs = EMIT.head.find(e => e.src === 'blood_impact_red_01_backspray');
+  check('01c: 8 wisps, radius 7–10 × 3, the wispy cell (not the chunk); the backspray 25, radius 2–4 growing × 5 from .25 of its life', c01.n === 8 && c01.r.join() === '7,10' && c01.grow.join() === '3,3' && c01.cell === 'wisp' && bs.n === 25 && bs.r.join() === '2,4' && bs.grow.join() === '1,5' && bs.gs === .25 && bs.rb === .4);
+  // the cap and the fade, as the vertex shader applies them (sprayLook mirrors SPRAY_VS)
+  const p11 = 1 / Math.tan(73.74 / 2 * Math.PI / 180); let capOk = true, fadeOk = true, faded = 0;
+  for (let k = 0; k < nH; k++) { const o = k * SP; for (const t of [.05, .2]) for (const dHU of [20, 64]) { const L = sprayLook(PB2, k, t, dHU * HU, p11); if (!L.a && !L.share) continue; const drawn = L.r * p11 / (dHU * HU);
+      if (PB2[o + 21] > 0 && drawn > PB2[o + 21] + 1e-6) capOk = false; if (PB2[o + 23] > 0 && L.share >= PB2[o + 23] && L.a > 1e-6) fadeOk = false; if (PB2[o + 23] > 0 && L.share > PB2[o + 22]) faded++; } }
+  check('the screen cap: no capped sprite is drawn over its flMaxSize share of the view (20 and 64 HU off)', capOk);
+  check(`the screen fade: a sprite past its flEndFadeSize share is not drawn (${faded} fading close up)`, fadeOk && faded > 0);
+  // Source's Bias on the radius: mist_away (bias .85) grows faster early than a plain line
+  { const e = EMIT.high.find(x => x.src === 'blood_impact_high_mist_away'), r = { ...recAt(77), d: 70 }, P3 = new Float32Array(B.MAX_PER_HIT * SP), m = planSpray(r, P3), L3 = listOf(r); const k = L3.indexOf(e), o = k * SP, life = P3[o + 6];
+    const at = n => sprayLook(P3, k, n * life, 1e4 * HU, p11).r / P3[o + 7], lin = .25 + (3 - .25) * .25; check('InterpolateRadius flBias: high_mist_away (.85) at a quarter of its life is past the straight line (Source\'s Bias)', k >= 0 && at(.25) > lin + .3, at(.25).toFixed(2) + ' vs ' + lin.toFixed(2)); }
+  // CS2's own files: every emitter's numbers read back from particles/blood_impact (the user's install), when it is here
+  { const os = await import('node:os'), fs = await import('node:fs'), cp = await import('node:child_process'), CS2 = path.join(os.homedir(), 'CS2-extract'), VPK = path.join(CS2, 'game', 'game', 'csgo', 'pak01_dir.vpk'), S2V = path.join(CS2, 'tools', 's2v', 'Source2Viewer-CLI');
+    if (fs.existsSync(VPK) && fs.existsSync(S2V)) { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-blood-vpcf-'));
+      try { cp.execFileSync(S2V, ['-i', VPK, '-f', 'particles/blood_impact/', '-e', 'vpcf_c', '-o', tmp, '-d'], { stdio: 'ignore' });
+        const { kv3 } = await import('../tools/cs2-surfaceprops.mjs'); const parse = kv3;
+        const file = n => { const p = path.join(tmp, 'particles', 'blood_impact', n + '.vpcf'); return fs.existsSync(p) ? parse(fs.readFileSync(p, 'utf8')) : null; };
+        const lit = v => v == null ? undefined : typeof v === 'object' ? (v.m_nType === 'PF_TYPE_LITERAL' ? v.m_flLiteralValue : /RANDOM/.test(v.m_nType || '') ? [v.m_flRandomMin, v.m_flRandomMax] : undefined) : v;
+        let bad = [], seen = 0; const all = [...EMIT.low, ...EMIT.med, ...EMIT.high, ...EMIT.head];
+        for (const e of new Set(all)) { const d = file(e.src); if (!d) { bad.push(e.src + ': not in the install'); continue; } seen++;
+          const R = (d.m_Renderers || []).filter(r => !r.m_bOnlyRenderInEffectsBloomPass), rend = e.src === 'blood_impact_low_forw_spray' ? R[1] : R[0];
+          const smax = lit(rend?.m_flMaxSize) ?? 0, sf = lit(rend?.m_flStartFadeSize) ?? 0, ef = lit(rend?.m_flEndFadeSize) ?? 0;
+          if (Math.abs(smax - (e.smax || 0)) > 1e-6 || Math.abs(sf - (e.sf || 0)) > 1e-6 || Math.abs(ef - (e.ef || 0)) > 1e-6) bad.push(`${e.src} fade ${smax}/${sf}/${ef}`);
+          const FO = (d.m_Operators || []).find(o => o._class === 'C_OP_FadeOut'), IR = (d.m_Operators || []).find(o => o._class === 'C_OP_InterpolateRadius');
+          if (FO && e.fs === undefined) { const mn = FO.m_flFadeOutTimeMin ?? .25, mx = FO.m_flFadeOutTimeMax ?? .25, prop = FO.m_bProportional ?? true; if (Math.abs(mn - e.fo[0]) > 1e-6 || Math.abs(mx - e.fo[1]) > 1e-6 || prop !== (e.fp !== 0)) bad.push(`${e.src} FadeOut ${mn}–${mx} ${prop}`); }
+          if (IR && (Math.abs((IR.m_flBias ?? .5) - (e.rb || .5)) > 1e-6 || Math.abs((IR.m_flStartTime ?? 0) - (e.gs || 0)) > 1e-6 || Math.abs((IR.m_flStartScale ?? 1) - e.grow[0]) > 1e-6 || Math.abs((IR.m_flEndScale ?? 1) - e.grow[1]) > 1e-6)) bad.push(`${e.src} InterpolateRadius`);
+          const em = (d.m_Emitters || [])[0]?.m_nParticlesToEmit, cnt = em?.m_nType === 'PF_TYPE_LITERAL' ? em.m_flLiteralValue : em?.m_nType === 'PF_TYPE_PARTICLE_DETAIL_LEVEL' ? em.m_flLOD2 : undefined; if (cnt !== undefined && cnt !== e.n) bad.push(`${e.src} count ${cnt}`); }
+        const head = file('blood_impact_headshot'); const ch = (head?.m_Children || []).map(c => c.m_ChildRef.split('/').pop().replace('.vpcf', ''));
+        check(`CS2's files: ${seen} blood emitters' screen caps / fades, FadeOut, InterpolateRadius and counts (High) match particles/blood_impact`, kv3 && seen >= 15 && !bad.length, bad.join(' | '));
+        check('CS2\'s files: blood_impact_headshot.vpcf\'s children are the ones drawn', kv3 && ch.join() === 'blood_impact_headshot_01b,blood_impact_red_01_chunk,blood_impact_red_01_backspray,blood_impact_red_01_chunk,blood_impact_headshot_01e,blood_impact_headshot_01c,blood_impact_headshot_01d', ch.join()); }
+      finally { fs.rmSync(tmp, { recursive: true, force: true }); } }
+    else console.log('(no CS2 install here: the blood emitters are checked against the shipped numbers only)'); }
+  // your own wounds on your screen (blood_impact_localfrontenemy / localrearhit / lp_spray)
+  const LB = new Float32Array(MAX_LOCAL * LK), lr = (r, d = 40) => ({ ...recAt(31337), v: 'ann', d, r });
+  const front = planLocal(lr([.7, 0, .7]), 0, -1, LB); let left = true; const kF = Math.round(LOCAL.front.n[0] + (LOCAL.front.n[1] - LOCAL.front.n[0]) * (40 - 15) / 50);
+  let right = true, ordered = true; for (let j = 0; j < kF; j++) { if (!(LB[j * LK] < 0)) left = false; if (!(LB[(kF + j) * LK] > 0)) right = false; if (j && !(LB[j * LK + 1] < LB[(j - 1) * LK + 1])) ordered = false; }   // (the shot travels +x +z: it came from −x −z — ahead-left of a view along −z)
+  // (v53 HITS final) both children every front hit — localfrontenemy.vpcf lists _splatter_lft and _splatter_rgt, neither disabled — each laid in order down its path (y .75 → −.375)
+  check(`shot from the front left: CS2's localfrontenemy _lft AND _rgt splatter (${kF} splats each at 40 damage: 15 → 65 remapped to 5 → 10), in order down each path, plus lp_spray`, hitSide(lr([.7, 0, .7]), 0, -1).front && hitSide(lr([.7, 0, .7]), 0, -1).side === -1 && left && right && ordered && Math.abs(LB[1] - B.PATH_Y[0]) < 1e-6 && Math.abs(LB[(kF - 1) * LK + 1] - B.PATH_Y[1]) < 1e-6 && front > 2 * kF);
+  { const big = planLocal(lr([.7, 0, .7], 100), 0, -1, LB); check(`the heaviest front hit fits the per-hit cap: 10 + 10 + lp_spray 6 = ${big} ≤ ${MAX_LOCAL}`, big === 26 && big <= MAX_LOCAL); }
+  const rear = planLocal(lr([0, 0, -1]), 0, -1, LB); check('shot from behind: localrearhit\'s 10 splats (and lp_spray), colour (249,55,55) × 2', !hitSide(lr([0, 0, -1]), 0, -1).front && rear >= 10 && rear <= MAX_LOCAL && Math.abs(LB[7] - Math.min(1, ((249 / 255 + .055) / 1.055) ** 2.4 * 2)) < 1e-4);
+  const fl = new Float32Array(LOCAL_N * 4), sL = new THREE.Scene(), GL = mkGame(), bl2 = createBlood(sL, { game: () => GL, me: () => 'ann', clock: () => hostT, assets: false, view: o => { o.fx = 0; o.fz = -1; return o; } });
+  bl2.update(); let q = 70000; for (let k = 0; k < 12; k++) { GL.combat = { ...GL.combat, bl: [{ ...lr([.7, 0, .7], 60), i: ++q, at: hostT }] }; bl2.update(); }
+  check(`your own wounds: one screen-space pool of ${LOCAL_N} (one draw, warmed, after a smoke), recycled — ${bl2.stats.locals} hits`, sL.children.includes(bl2.local) && bl2.local.userData.warm && bl2.local.userData.fx && bl2.local.geometry.isInstancedBufferGeometry && bl2.local.geometry.index.count === 6 && bl2.pools.local.aP.count === LOCAL_N && bl2.stats.locals === 12 && bl2.stats.lHead < LOCAL_N && bl2.local.visible);
+  const l0 = bl2.stats.locals; GL.combat = { ...GL.combat, bl: [{ ...lr([.7, 0, .7]), v: 'cy', i: ++q, at: hostT }] }; bl2.update(); check('someone else\'s wound: no splatter on your screen', bl2.stats.locals === l0);
+  check('the warm-up has the local pool too', bl2.warmObjects().length === 4); bl2.dispose(); }
 console.log(`\n${ok}/${n} passed`); process.exit(ok === n ? 0 : 1);

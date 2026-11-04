@@ -29,6 +29,13 @@ export const rulesOf = game => game.combat?.d?.rules || game.arena?.rules || DEF
 // Prices come from the weapon table (weapons-data.js); grenades and the kit here.
 export const PRICE = new Proxy({ he: 300, flash: 200, smoke: 300, decoy: 50, molotov: 400, incendiary: 500, kit: 400 }, { get: (o, id) => o[id] ?? weaponById(id)?.price });   // (grenades: weapons.vdata m_nPrice; the Molotov T-only, the Incendiary CT-only — arena-logic buy-nade)
 const WIN = { elim: 3250, time: 3250, bomb: 3500, defuse: 3500 }, LOSS = [1400, 1900, 2400, 2900, 3400];
+// (v53 HITS, the UI audit) CS2's two money rules the files name but do not number: the defuser's own award
+// (Player_Cash_Award_Bomb_Defused " +$%s1 for defusing the C4"; the cvar cash_player_bomb_defused is in the install's
+// whitelist, its value is not — CS:GO's 300, unverified for CS2, as the plant's 300 below) and the Terrorists still alive
+// when the clock runs out unplanted earn nothing (Team_Cash_Award_no_income " +$0 penalty for running out of time":
+// the loss bonus goes only to the ones who died — CS:GO's rule, the string CS2's). Still counted as a loss for the streak.
+export const DEFUSE_AWARD = 300;
+export const noIncome = (C, loser, reason, k) => loser === 't' && reason === 'time' && !C.down?.[k];
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 export const isDefuse = game => game?.mode === 'arena' && game.arena?.kind === 'defuse';
 export const teamOf = (game, name) => game?.combat?.d?.teams?.[key(name)] || null;
@@ -239,7 +246,7 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   if (r.plant) { const p = posOf(r.plant.by); if (!p || (C.down || {})[r.plant.by] || Math.hypot(p.x - r.plant.x, p.z - r.plant.z) > 5 || d.bomb.carrier !== r.plant.by) { r.plant = null; changed = true; }
     else if (now - r.plant.start >= DEFUSE.plantMs && r.phase === 'live') { if (recording(game)) statOf(game, r.plant.by).plants++; r.planted = { x: r.plant.x, z: r.plant.z, y: r.plant.y, site: r.plant.site, at: now, explodeAt: now + DEFUSE.bombMs, by: r.plant.by }; r.phase = 'planted'; d.bomb.carrier = null; gain(d, r.plant.by, 300); r.plant = null; r.defuse = null; changed = true; } }
   if (r.defuse) { const p = posOf(r.defuse.by); if (!p || (C.down || {})[r.defuse.by] || Math.hypot(p.x - r.defuse.x, p.z - r.defuse.z) > 5) { r.defuse = null; changed = true; }
-    else if (now - r.defuse.start >= r.defuse.ms) { if (recording(game)) statOf(game, r.defuse.by).defuses++; end(game, 'ct', 'defuse', now); return true; } }
+    else if (now - r.defuse.start >= r.defuse.ms) { if (recording(game)) statOf(game, r.defuse.by).defuses++; gain(d, r.defuse.by, DEFUSE_AWARD); end(game, 'ct', 'defuse', now); return true; } }
   if (r.phase === 'live' || r.phase === 'planted') {
     if (r.phase === 'planted' && now >= r.planted.explodeAt) { hurtAll(r.planted.x, r.planted.z, r.planted.y, 500, DEFUSE.bombRadius); end(game, 't', 'bomb', now); return true; }
     if (alive('ct') === 0 && members(game, players).some(m => d.teams[m.k] === 'ct')) { end(game, 't', 'elim', now); return true; }
@@ -257,7 +264,7 @@ function end(game, winner, reason, now) {
   if (r.phase !== 'warmup') { const m = msOf(d); if (r.mvp) msRow(m, r.mvp.k)[3]++; m.r.push([winner, reason]); if (m.r.length > 40) m.r.shift(); m.sum = sum; m.sumN = d.n; msTouch(m); }
   r.phase = 'over'; r.winner = winner; r.reason = reason; r.overAt = now; r.plant = null; r.defuse = null;   // (mvp: before the defuse is cleared)
   d.score[winner]++; const loser = other(winner); (d.history ??= []).push({ n: d.n, winner, reason, at: now, score: { ...d.score } }); if (d.history.length > 40) d.history.shift();
-  for (const [k, t] of Object.entries(d.teams)) { if (t === winner) gain(d, k, WIN[reason]); else gain(d, k, LOSS[Math.min(4, d.loss[loser])] + (loser === 't' && r.planted ? 800 : 0)); }
+  for (const [k, t] of Object.entries(d.teams)) { if (t === winner) gain(d, k, WIN[reason]); else if (noIncome(C, loser, reason, k)) gain(d, k, 0); else gain(d, k, LOSS[Math.min(4, d.loss[loser])] + (loser === 't' && r.planted ? 800 : 0)); }
   d.loss[loser]++; d.loss[winner] = Math.max(0, d.loss[winner] - 1);
   // The end: first to `win`; at (win − 1) each: sudden death (the next round decides), a draw, or MR3 overtime blocks.
   const RU = d.rules || DEFAULT_RULES, reg = 2 * (RU.win - 1), played = d.score.t + d.score.ct;

@@ -68,7 +68,7 @@ await want([...gdEvent('step.concrete').files, ...gdEvent('land.concrete').files
 ok(gdEvent('step.concrete').files.every(ready), 'the step files decoded (stand-in)');
 resetVoices(); setGdOcclusion(null);
 const s200 = playAt('step.concrete', ...atHu(200)), s1000 = playAt('step.concrete', ...atHu(1000)), s2000 = playAt('step.concrete', ...atHu(2000));
-ok(s200.r && s200.v && near(s200.v.g, .55 * curveGain(ref[1], 200), 1e-3), `a step 200 HU off plays at the curve's level (${s200.v?.g.toFixed(3)})`);
+ok(s200.r && s200.v && near(s200.v.g, gdEvent('step.concrete').vol * curveGain(ref[1], 200), 1e-3) && near(gdEvent('step.concrete').vol, .55 * .8), `a step 200 HU off plays at the curve's level × CS2's Footsteps mix group .8 (v53 HITS) (${s200.v?.g.toFixed(3)})`);
 ok(s1000.v && dB(s200.v.g, s1000.v.g) >= 18, `1000 HU is ≥ 18 dB under 200 HU (${s1000.v && dB(s200.v.g, s1000.v.g).toFixed(1)} dB)`);
 ok(s2000.r === true && !s2000.v, 'a step 2000 HU off (mid from a site) is silent — handled, no voice');
 ok(.55 * curveGain(ref[1], 1075) > CULL && .55 * curveGain(ref[1], 1099) < CULL, 'the cull sits at the curve\'s edge (~1085 HU for the placeholder\'s level), not earlier');

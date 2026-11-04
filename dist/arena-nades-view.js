@@ -8,13 +8,13 @@ import { smokeHoleBytes, smokeLocalCut, smokeCutsNow, SMOKE_CUTS, TUNNEL as CUT_
 import { flyNade, NADE_DT, GRAVITY as NADE_G } from './arena-nades.js';   // (v53: copies fly the host's own 1/64 s steps)
 import { createSmokePass } from './arena-smoke-pass.js';
 import { createFireView } from './gd-fire-view.js';   // (v53 FIRE: every fire, bottle in flight, burst, extinguish and scorch in one draw)
-import { gdPlay } from './gd-sounds.js';   // (v53 FIRE: CS2's own grenade sound events — Molotov.Start, Inferno.Loop, Molotov.Extinguish, BaseSmokeEffect.Sound … — when the room has them)
+import { gdPlay, gdFlashRing } from './gd-sounds.js';   // (v53 FIRE: CS2's own grenade sound events — Molotov.Start, Inferno.Loop, Molotov.Extinguish, BaseSmokeEffect.Sound … — when the room has them)
 import { flightFrame, frameClock, drawFixed } from './phys-smooth.js';
 // A flight's correction (the host's word on where your copy of it flies) eased out with this time constant (s): ~95 %
 // gone in 150 ms and never faster than the grenade flies (v51's 25 ms pulled a 2-unit correction back at 80 units/s:
 // a grenade flying 100 units/s all but stopped). A resting grenade settles into its lying pose over REST_BLEND s.
 const CORR_TAU = .05, REST_BLEND = .15, FC = { t: undefined };
-import { audioCtx, outAt, reverb, listenerAt } from './spatial-audio.js';
+import { audioCtx, outAt, reverb, listenerAt, ringBus } from './spatial-audio.js';
 import { fx as rec, shotSound } from './sound-bank.js';
 
 const soft = (inner, outer) => { try { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); if (typeof g?.createRadialGradient !== 'function') return null;
@@ -129,7 +129,7 @@ function burst(at, { len = 1.2, decay = 2.5, freq = 900, vol = 1, type = 'lowpas
     if (thump) { const w = c.createGain(); w.gain.value = Math.min(1, vol * .7); g.connect(w).connect(reverb(c)); }   // blasts ring off the walls
     if (thump) { const o = c.createOscillator(), og = c.createGain(); o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(30, t + .5); og.gain.setValueAtTime(thump, t); og.gain.exponentialRampToValueAtTime(.001, t + .6); o.connect(og).connect(out); o.start(t); o.stop(t + .65); } } catch {}
 }
-function ring(secs) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 3200; g.gain.setValueAtTime(.08, t); g.gain.linearRampToValueAtTime(0, t + secs); o.connect(g).connect(c.destination); o.start(t); o.stop(t + secs); } catch {} }
+function ring(secs) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 3200; g.gain.setValueAtTime(.08, t); g.gain.linearRampToValueAtTime(0, t + secs); o.connect(g).connect(ringBus(c));   /* (v53 HITS: through the Effects input after the duck — the limiter and the GD glue hold it — not straight to the speakers) */ o.start(t); o.stop(t + secs); } catch {} }
 const away = at => { const me = listenerAt(); return at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0; }, dull = at => Math.max(900, 18000 * Math.exp(-away(at) / 140));
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
 // (FIRE final) The incendiary's own stand-in when CS2's IncGrenade.Start / .StartFailed isn't imported: a can's pop and
@@ -186,12 +186,12 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
     if (g.phase === 'boom') { globalThis.dispatchEvent?.(new CustomEvent('gd-blast', { detail: { x: g.x, y: g.y, z: g.z, r: NADES.he.radius } }));   // (a CS2 map's pots and cans thrown about: arena-physprops.js)
       const b = new THREE.Sprite(MAT.fire.clone()); b.position.y = 1; fx.add(b); parts.push(b); FXP.fire(g.x, g.y + 1, g.z, 16, { size: 7, grow: 1.7, life: .8, rise: 3.5, spread: 3.5 }); const s = new THREE.Mesh(DISC, MAT.scorch); s.rotation.x = -Math.PI / 2; s.position.y = .05 - g.y + Math.max(0, g.y - .4); s.scale.setScalar(5); fx.add(s); FXP.spark(g.x, g.y + .4, g.z, 46, { speed: 26, up: 10, life: .9 }); FXP.puff(g.x, g.y + 1, g.z, 9, { color: 0x2c2824, size: 4.5, grow: 1.6, life: 3.6, rise: 2.6, spread: 3 }); FXP.puff(g.x, .3, g.z, 6, { color: 0x9a8a70, size: 3, grow: 2.2, life: 1.8, rise: .5, spread: 6, alpha: .55 }); FXP.wave(g.x, Math.max(0, g.y - .4), g.z, 16);
       const core = new THREE.Sprite(MAT.fire.clone()); core.material.color.setHex(0xffffff); core.position.y = 1; fx.add(core); parts.push(core);
-      if (rec('he', { at, kind: 'explosion', volume: 1.5, wet: .9, lowpass: dull(at) })) { rec('low', { at, kind: 'explosion', volume: 1.2 }); burst(at, { len: .6, decay: 3, freq: 400, vol: .4, thump: 1 }); } else burst(at, { len: 1.6, decay: 2.2, freq: 700, vol: 1.3, thump: 1 }); }
-    if (g.phase === 'pop') { const b = new THREE.Mesh(BALL, MAT.boom.clone()); b.material.color.setHex(0xffffff); fx.add(b); parts.push(b); FXP.spark(g.x, g.y, g.z, 22, { speed: 16, up: 4, life: .45, size: .7 }); FXP.puff(g.x, g.y, g.z, 3, { color: 0xc8c8c8, size: 2, grow: 1.2, life: 1.4, rise: 1, spread: .8, alpha: .5 }); if (!rec('flash', { at, kind: 'explosion', volume: 1.1, rate: 1.35, wet: .6, lowpass: dull(at) })) burst(at, { len: .6, decay: 4, freq: 2600, vol: 1, thump: .4 }); else burst(at, { len: .15, decay: 3, freq: 5000, vol: .5, type: 'highpass' });
+      if (snd('nade.he.explode', at)) {} else if (rec('he', { at, kind: 'explosion', volume: 1.5, wet: .9, lowpass: dull(at) })) { rec('low', { at, kind: 'explosion', volume: 1.2 }); burst(at, { len: .6, decay: 3, freq: 400, vol: .4, thump: 1 }); } else burst(at, { len: 1.6, decay: 2.2, freq: 700, vol: 1.3, thump: 1 }); }   /* (v53 HITS: the GD bank's CS2 events first — BaseGrenade.Explode with its .ExplodeDistant layer, placed, walls, CS2's mix and the glue; the old shared-bank sound only while that is still decoding) */
+    if (g.phase === 'pop') { const b = new THREE.Mesh(BALL, MAT.boom.clone()); b.material.color.setHex(0xffffff); fx.add(b); parts.push(b); FXP.spark(g.x, g.y, g.z, 22, { speed: 16, up: 4, life: .45, size: .7 }); FXP.puff(g.x, g.y, g.z, 3, { color: 0xc8c8c8, size: 2, grow: 1.2, life: 1.4, rise: 1, spread: .8, alpha: .5 }); if (snd('nade.flash.explode', at)) {} else if (!rec('flash', { at, kind: 'explosion', volume: 1.1, rate: 1.35, wet: .6, lowpass: dull(at) })) burst(at, { len: .6, decay: 4, freq: 2600, vol: 1, thump: .4 }); else burst(at, { len: .15, decay: 3, freq: 5000, vol: .5, type: 'highpass' });   /* (v53 HITS: Flashbang.Explode + .ExplodeDistant through the GD bank) */
       // Your white-out (arena-nades.js flashBlind: how long by how much reaches you and where you look, how white by the
       // tier), stacked on any you still have — a weaker second flash never shortens or dims a stronger one (stackFlash).
       camera.getWorldDirection(dir); const B = flashBlind(boxes(), g.x, g.y, g.z, camera.position.x, camera.position.y, camera.position.z, dir.x, dir.y, dir.z, world.operations.game, FB);
-      if (B.hold + B.fade > 30) { stackFlash(FL, B, performance.now()); if (B.hold + B.fade > 1900) ring(1 + 2.5 * Math.min(1, (B.hold + B.fade) / 4000)); } }
+      if (B.hold + B.fade > 30) { stackFlash(FL, B, performance.now()); if (B.hold + B.fade > 1900) { const ms = B.hold + B.fade; if (!gdFlashRing(ms)) ring(1 + 2.5 * Math.min(1, ms / 4000)); } } }   /* (v53 HITS: CS2's Flashbang.Ring.Long / .Medium / .Short by how long you are blinded — gd-sounds.js flashRingEvent; our sine only without them) */
     if (g.phase === 'fizz') { FXP.spark(g.x, g.y, g.z, 10, { speed: 6, up: 3, life: .35, size: .5 }); FXP.puff(g.x, g.y, g.z, 3, { color: 0xb8b8b8, size: 1.2, grow: 1.5, life: .9, rise: .8, spread: .5, alpha: .5 }); burst(at, { len: .25, decay: 3, freq: 1500, vol: .35, type: 'bandpass' }); }   // the decoy's end: a small pop
     let slot = -1;
     if (g.phase === 'smoke') { // CS2's volume (a slot of the smoke pass: its cells); without the map's boxes: an opaque core wrapped in soft puffs (fewer on Low)

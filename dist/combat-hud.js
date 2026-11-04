@@ -43,7 +43,7 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {}, onHurt
       if (!on) { if (!E.down.hidden) E.down.hidden = true; return; }
       const hp = hpOf(g, name()); if (hp !== shownHp) { shownHp = hp; E.hpT.textContent = 'HP ' + hp; E.hpN.textContent = hp; E.hp.classList.toggle('low', hp <= 25); }
       if (hp < lastHp && hp > 0) onHurt(lastHp - hp);
-      if (hp < lastHp) { const f = $('cb-flash'); f.style.opacity = .85; setTimeout(() => f.style.opacity = 0, 120); } lastHp = hp;
+      lastHp = hp;   // (no red screen flash: CS2 has none — your wounds are CS2's own local blood splats, gd-blood.js, and its damage indicator, gd-hit-feedback.js)
       const d = g.combat?.down?.[key(name())], down = d && d.until > hostNow(); if (E.down.hidden !== (!down || arena)) E.down.hidden = !down || arena;   // the arena spectates instead (arena-spectate.js)
       if (down && !arena) E.down.innerHTML =`<div>KNOCKED OUT<small>by ${String(d.by).replace(/[<>&]/g, '')} · ${d.weapon} · back in ${Math.max(0, Math.ceil((d.until - hostNow()) / 1000))} s</small></div>`;
       const r = g.combat?.respawns?.[key(name())] || 0; if (lastRespawn !== null && r > lastRespawn) onRespawn(); lastRespawn = r;

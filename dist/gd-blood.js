@@ -4,8 +4,9 @@
 //  · the impact spray (CS2's particles/blood_impact/blood_impact_{low,med,high}): a splash and small puffs back toward
 //    the shooter (vis_spray, low_forw_spray), a red mist and fast streaks out of the exit side (mist_away, spray_away),
 //    and a falling trail whose drops land on the floor (vis_spray_trail → *_ground_decal). The tier follows the damage
-//    (a weak armoured body shot: low, still a small spray); a head shot is high plus CS2's head-shot extras (a bigger,
-//    redder burst, a mist and flying drops: blood_impact_headshot_01c, red_01_mist, drops1);
+//    (a weak armoured body shot: low, still a small spray); a head shot is high plus blood_impact_headshot.vpcf and its
+//    children (v53 HITS: 01b, 01c wisps, 01d, 01e, red_01_chunk ×2, red_01_backspray), each emitter with its own CS2
+//    screen-size cap and fade, FadeOut window and radius curve (EMIT below);
 //  · decals: a splat on the wall or floor behind the victim along the shot line (within CS2's 172 HU, a little noise
 //    per extra splat — CS:GO's TraceBleed), splats where the trail's drops land (CS2's ground decals, placed on the
 //    ground below, turned away from the shooter) and a drip under the wound. They lie on the map's real surface (the
@@ -43,13 +44,15 @@ import { bulletPath, BulletPath } from './arena-maps.js';
 import { live } from './live-settings.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { hostNow } from './host-clock.js';
+import { listenerFrame } from './spatial-audio.js';   // (v53 HITS: your view's forward, as the camera set it this frame — the local splatter's side)
 
-export const SPRAY_N = 64, DECAL_N = 48;
+export const SPRAY_N = 320, DECAL_N = 48;   // (v53 HITS: CS2's head-shot children are ~140 particles a head shot — two at once fit)
 export const KEEP_MS = 1500;   // a record older than this (host ms) is not drawn (a join, a stalled stream): the host keeps them as long
 export const SPRAY_GRID = 8, DECAL_GRID = 4;   // atlas layouts (cells a row), the built-in and the imported alike
 // Spray atlas cells: flipbooks of 16 (CS2: blood_spray_top seq 0 / blood_spray_high / blood_spray_top seq 1), the drop
-// (blood_drop), a mist puff (blood_splatter_light), a chunk.
-export const CELL = { splash: 0, streak: 16, puff: 32, drop: 48, mist: 49, chunk: 50 }, FRAMES = { splash: 16, streak: 16, puff: 16, drop: 1, mist: 1, chunk: 1 };
+// (blood_drop), a mist puff (blood_splatter_light), a chunk, and (v53 HITS) a 12-frame wisp flipbook (CS2's spray1.vtex:
+// a small burst that spreads and thins — its frames cover 48 % → 3 % of their area) for headshot_01c and red_01_backspray.
+export const CELL = { splash: 0, streak: 16, puff: 32, drop: 48, mist: 49, chunk: 50, wisp: 51 }, FRAMES = { splash: 16, streak: 16, puff: 16, drop: 1, mist: 1, chunk: 1, wisp: 12 };
 // Decal atlas cells: 12 wall splats (CS2 blood_decals_10 / 15 / 22) and 4 drip spots.
 export const WALL_CELLS = 12, DROP_CELL0 = 12;
 
@@ -58,26 +61,57 @@ export const WALL_CELLS = 12, DROP_CELL0 = 12;
 // (sideways, sign random when `side`), lz (up), sph (a random direction this fast), up (world up added), r (radius
 // HU), grow (CS2 InterpolateRadius start → end scale), life, alpha, grav (HU/s²), drag (fDrag), col (sRGB 0–255 min,
 // max), st (velocity stretch: the trails).
+// v53 HITS (H1, the CS2 feel audit — every value from particles/blood_impact/*.vpcf, the user's install): each emitter's
+// own fade and size rules, as CS2's renderer and operators apply them —
+//   smax / sf / ef — the renderer's m_flMaxSize / m_flStartFadeSize / m_flEndFadeSize: the share of the screen a sprite
+//     may cover (its projected diameter over the view's height, 2r / (d · 2 tan(fov / 2))), capped at smax, and its alpha
+//     faded out between sf and ef (1 − smoothstep). The fade reads the share before the cap (our reading: CS2's code
+//     isn't in the files). A renderer without them (CS2's defaults: no cap, no fade) has none here (0).
+//   fo — C_OP_FadeOut's flFadeOutTimeMin / Max (a random time per particle; CS2's defaults .25 / .25 where the file
+//     leaves one out), fp: 0 when bProportional is false (seconds, else a share of the life; CS2's default true). The fade
+//     eases in and out (bEaseInAndOut, CS2's default: smoothstep) over that window at the end of the life. fs:
+//     C_OP_FadeOutSimple (a linear fade over that last share of the life) or C_OP_FadeAndKill's fade-out start (.5 of
+//     the life, linear, its defaults).
+//   rb / gs — InterpolateRadius flBias (Source's Bias(t, b) = t^(ln b / ln .5)) and flStartTime (before it, the start
+//     scale; our reading of the window, so nothing jumps).
+//   lb — the life's EXPONENTIAL bias (PF_BIAS_TYPE_EXPONENTIAL, as gd-impacts.js: u^((1 − p) / (1 + p))); fwd / off — a
+//   PositionOffset along the bullet and up (HU); pos — a start sphere's radius [min, max] (HU); ob — the renderer's
+//   flOverbrightFactor; tex — the CS2 texture's own mean tint the colour multiplies (alpha-weighted, measured from the
+//   decompiled .vtex: headshot.vtex sequences 0–2 (119,57,43), 3–6 (67,25,11), 5–9 (79,41,28), spray1 (149,159,105),
+//   particle_pebble_1 (132,136,137)); our built-in pictures are grey, so the tint keeps CS2's colour on them. Only the
+//   coloured texture (headshot.vtex) tints: spray1 and the pebble are neutral (a mask the vertex colour paints —
+//   multiplying their grey in made the wisps black on the picture sheet), their light already in the shader's luminance.
 const RED = [[92, 0, 0], [101, 0, 0]], SPR = [[118, 12, 12], [150, 14, 14]], TRL = [[139, 4, 4], [178, 11, 11]];
-const forw = { cell: 'puff', n: 3, lx: [-150, -250], ly: [-12, 15], lz: [-15, 15], r: [5, 8], grow: [.1, 3], life: [.35, .75], alpha: [.78, .86], grav: 0, drag: .2, col: SPR };   // low_forw_spray (all tiers)
+const HS02 = [119, 57, 43], HS36 = [67, 25, 11], HS59 = [79, 41, 28], SPRAY1 = [149, 159, 105], PEBBLE = [132, 136, 137];
+const forw = { src: 'blood_impact_low_forw_spray', cell: 'puff', n: 3, lx: [-150, -250], ly: [-12, 15], lz: [-15, 15], r: [5, 8], grow: [.1, 3], rb: .65, gs: .3, life: [.35, .75], alpha: [.78, .86], grav: 0, drag: .2, col: SPR, fo: [.25, .25], smax: .1, sf: .354, ef: .75 };   // low_forw_spray (all tiers; its two renderers: max .1, fade .5–1 and .354–.75 — the second, the task's)
 export const EMIT = {
   low: [forw,
-    { cell: 'mist', n: 3, lx: [50, 100], ly: [-50, 50], lz: [-50, 50], sph: [25, 25], up: [50, 50], r: [7, 8], grow: [.25, 2], life: [.5, 1], alpha: [.5, 1], grav: -50, drag: .125, col: RED },   // low_mist_away
-    { cell: 'streak', n: 2, lx: [200, 350], ly: [50, 50], side: 1, sph: [50, 50], up: [25, 50], r: [16, 32], rs: .3, grow: [.25, 1], life: [.5, .65], alpha: [1, 1], grav: -450, drag: .1, col: TRL, st: .06, trail: 1 }],   // low_vis_spray_trail
+    { src: 'blood_impact_low_mist_away', cell: 'mist', n: 3, lx: [50, 100], ly: [-50, 50], lz: [-50, 50], sph: [25, 25], up: [50, 50], r: [7, 8], grow: [.25, 2], rb: .85, life: [.5, 1], alpha: [.5, 1], grav: -50, drag: .125, col: RED, fs: 0, smax: .6, sf: .2, ef: .3 },   // low_mist_away (FadeOutSimple 1)
+    { src: 'blood_impact_low_vis_spray_trail', cell: 'streak', n: 3, lx: [200, 350], ly: [50, 50], side: 1, sph: [50, 50], up: [25, 50], r: [16, 32], rs: .3, grow: [.25, 1], rb: .25, life: [.5, .65], alpha: [1, 1], grav: -450, drag: .1, col: TRL, st: .06, trail: 1, fo: [.125, .25], sf: .1, ef: .2 }],   // low_vis_spray_trail (v53 HITS: 3 — its LOD2 count; it was 2)
   med: [forw,
-    { cell: 'splash', n: 3, lx: [-50, -120], ly: [-12, 15], lz: [-15, 15], r: [11, 16], grow: [.1, 2], life: [.5, .7], alpha: [.78, .86], grav: -250, drag: .05, col: SPR },   // med_vis_spray
-    { cell: 'streak', n: 2, lx: [120, 250], sph: [50, 50], up: [25, 50], r: [14, 20], rs: .3, grow: [.25, 2], life: [.5, .75], alpha: [1, 1], grav: -450, drag: .05, col: TRL, st: .06, trail: 1 },   // med_vis_spray_trail
-    { cell: 'mist', n: 4, lx: [75, 250], ly: [20, 50], side: 1, lz: [-50, 50], sph: [35, 65], up: [30, 50], r: [9, 12], grow: [.25, 3], life: [.5, 1], alpha: [.3, .65], grav: -50, drag: .135, col: RED },   // med_mist_away
-    { cell: 'streak', n: 1, lx: [250, 450], sph: [50, 50], r: [4, 8], grow: [.25, 2], life: [.5, .65], alpha: [1, 1], grav: -450, drag: .05, col: TRL, st: .05 }],   // med_spray_away
+    { src: 'blood_impact_med_vis_spray', cell: 'splash', n: 3, lx: [-50, -120], ly: [-12, 15], lz: [-15, 15], r: [11, 16], grow: [.1, 2], rb: .52, life: [.5, .7], alpha: [.78, .86], grav: -250, drag: .05, col: SPR, fo: [.5, .6], smax: .85, sf: .5, ef: 1 },   // med_vis_spray
+    { src: 'blood_impact_med_vis_spray_trail', cell: 'streak', n: 2, lx: [120, 250], sph: [50, 50], up: [25, 50], r: [14, 20], rs: .3, grow: [.25, 2], life: [.5, .75], alpha: [1, 1], grav: -450, drag: .05, col: TRL, st: .06, trail: 1, fo: [.125, .25], sf: .1, ef: .2 },   // med_vis_spray_trail
+    { src: 'blood_impact_med_mist_away', cell: 'mist', n: 4, lx: [75, 250], ly: [20, 50], side: 1, lz: [-50, 50], sph: [35, 65], up: [30, 50], r: [9, 12], grow: [.25, 3], rb: .75, life: [.5, 1], alpha: [.3, .65], grav: -50, drag: .135, col: RED, fo: [.6, 1], smax: .6, sf: .2, ef: .3 },   // med_mist_away
+    { src: 'blood_impact_med_spray_away', cell: 'streak', n: 1, lx: [250, 450], sph: [50, 50], r: [4, 8], grow: [.25, 2], life: [.5, .65], alpha: [1, 1], grav: -450, drag: .05, col: TRL, st: .05, fo: [.125, .25], sf: .1, ef: .2 }],   // med_spray_away
   high: [forw,
-    { cell: 'splash', n: 2, lx: [-50, -120], r: [14, 20], grow: [.25, 1], life: [.5, .75], alpha: [1, 1], grav: -100, drag: .05, col: SPR },   // high_vis_spray
-    { cell: 'streak', n: 1, lx: [100, 200], ly: [50, 50], side: 1, up: [25, 50], r: [16, 32], rs: .3, grow: [.25, 2], life: [.5, .75], alpha: [1, 1], grav: -550, drag: .05, col: TRL, st: .06, trail: 1 },   // high_vis_spray_trail
-    { cell: 'mist', n: 4, lx: [120, 200], ly: [50, 75], side: 1, lz: [-50, 50], sph: [80, 80], up: [30, 50], r: [10, 15], grow: [.25, 3], life: [.75, 1.25], alpha: [.3, .65], grav: -50, drag: .15, col: RED },   // high_mist_away
-    { cell: 'streak', n: 2, lx: [200, 400], sph: [50, 50], r: [8, 16], rs: .5, grow: [.25, 4], life: [.35, .75], alpha: [1, 1], grav: -450, drag: .05, col: TRL, st: .05 }],   // high_spray_away
-  head: [   // head shots: high plus these
-    { cell: 'chunk', n: 4, lx: [90, 360], ly: [-40, 40], up: [44, 170], sph: [20, 100], r: [7, 10], grow: [1, 1.6], life: [.6, .8], alpha: [.86, 1], grav: -400, drag: .005, col: [[70, 0, 0], [109, 2, 2]] },   // headshot_01c
-    { cell: 'mist', n: 4, lx: [10, 30], ly: [-5, 5], lz: [-5, 5], sph: [3, 15], r: [15, 20], grow: [1, 1.5], life: [.5, .5], alpha: [.2, .31], grav: -75, drag: .125, col: [[26, 0, 0], [85, 1, 1]] },   // red_01_mist
-    { cell: 'drop', n: 6, lx: [100, 300], ly: [-100, 100], lz: [-100, 100], r: [.5, 3], grow: [1, 1], life: [.25, 1], alpha: [.25, 1], grav: -400, drag: .025, col: [[97, 1, 1], [147, 2, 2]], st: .04 }],   // drops1
+    { src: 'blood_impact_high_vis_spray', cell: 'splash', n: 2, lx: [-50, -120], r: [14, 20], grow: [.25, 1], rb: .75, life: [.5, .75], alpha: [1, 1], grav: -100, drag: .05, col: SPR, fo: [.125, .5], smax: .85, sf: .5, ef: 1 },   // high_vis_spray
+    { src: 'blood_impact_high_vis_spray_trail', cell: 'streak', n: 1, lx: [100, 200], ly: [50, 50], side: 1, up: [25, 50], r: [16, 32], rs: .3, grow: [.25, 2], life: [.5, .75], alpha: [1, 1], grav: -550, drag: .05, col: TRL, st: .06, trail: 1, fo: [.125, .25], sf: .1, ef: 1 },   // high_vis_spray_trail
+    { src: 'blood_impact_high_mist_away', cell: 'mist', n: 4, lx: [120, 200], ly: [50, 75], side: 1, lz: [-50, 50], sph: [80, 80], up: [30, 50], r: [10, 15], grow: [.25, 3], rb: .85, life: [.75, 1.25], alpha: [.3, .65], grav: -50, drag: .15, col: RED, fo: [.65, 1], smax: .6, sf: .2, ef: .3 },   // high_mist_away
+    { src: 'blood_impact_high_spray_away', cell: 'streak', n: 2, lx: [200, 400], sph: [50, 50], r: [8, 16], rs: .5, grow: [.25, 4], life: [.35, .75], alpha: [1, 1], grav: -450, drag: .05, col: TRL, st: .05, fo: [.125, .25], sf: .1, ef: .15 }],   // high_spray_away
+  // Head shots: high plus blood_impact_headshot.vpcf's own sprites and its children (01b, red_01_chunk ×2,
+  // red_01_backspray, 01e, 01c, 01d — its m_Children, in that order). Which system CS2's code fires for a head shot is
+  // not in the files (blood_impact_headshot is the one named for it; blood_impact_light_headshot is another): ours.
+  // red_01_mist and drops1 (v53 S3's head-shot extras) are not its children and are gone. VelocityFromCP (control
+  // points 1 / 2: set by the game's code, not in the files) is left out.
+  head: [
+    { src: 'blood_impact_headshot', cell: 'splash', n: 12, lx: [50, 120], up: [80, 170], sph: [0, 50], pos: [0, 4], off: 8, r: [1, 2.5], grow: [1, 1], life: [.5, 1], alpha: [1, 1], grav: -405, drag: .005125, col: [[78, 0, 0], [71, 30, 30]], tex: HS59, fo: [.25, .25], fp: 0 },   // headshot (its own sprites: sequences 5–9)
+    { src: 'blood_impact_headshot_01b', cell: 'splash', n: 16, lx: [50, 90], up: [70, 190], sph: [0, 80], pos: [0, 4], off: 8, r: [.25, 2], grow: [1, 1], life: [.2, 1.4], lb: .5, alpha: [1, 1], grav: -450, drag: .005125, col: [[249, 177, 177], [85, 55, 55]], tex: HS02, fo: [.125, .15], fp: 0 },   // headshot_01b
+    { src: 'blood_impact_red_01_chunk', cell: 'chunk', n: 22, lx: [130, 190], up: [20, 100], sph: [50, 150], fwd: 6, r: [.2, 1.7], grow: [1, 1], life: [.1, .7], alpha: [1, 1], grav: -400, drag: .1, col: [[123, 0, 0], [77, 0, 0]], fs: .5 },   // red_01_chunk (FadeAndKill)
+    { src: 'blood_impact_red_01_backspray', cell: 'wisp', n: 25, lx: [0, 420], ly: [-80, 80], up: [-15, 180], pos: [0, 8], fwd: 4, r: [2, 4], grow: [1, 5], rb: .4, gs: .25, life: [.2, .8], alpha: [.784314, 1], grav: -500, drag: .015, col: [[115, 0, 0], [83, 0, 0]], ob: .5, fo: [.25, .25], fp: 0, smax: .85, sf: .675, ef: .75 },   // red_01_backspray
+    { src: 'blood_impact_red_01_chunk', cell: 'chunk', n: 22, lx: [130, 190], up: [20, 100], sph: [50, 150], fwd: 6, r: [.2, 1.7], grow: [1, 1], life: [.1, .7], alpha: [1, 1], grav: -400, drag: .1, col: [[123, 0, 0], [77, 0, 0]], fs: .5 },   // red_01_chunk (its second copy)
+    { src: 'blood_impact_headshot_01e', cell: 'splash', n: 1, lx: [50, 160], ly: [-35, 35], up: [90, 110], sph: [20, 40], pos: [4, 4], off: 8, r: [5, 6], grow: [1, .9], life: [.9, 1.3], lb: .5, alpha: [1, 1], grav: -405, drag: .015125, col: [[36, 21, 21], [53, 28, 28]], tex: HS36, fo: [.25, .25], fp: 0 },   // headshot_01e
+    { src: 'blood_impact_headshot_01c', cell: 'wisp', n: 8, lx: [115, 385], ly: [-40, 40], up: [44, 170], sph: [20, 100], pos: [5, 7], offr: [0, 16], r: [7, 10], grow: [3, 3], rb: .65, life: [.6, .8], alpha: [.862745, 1], grav: -400, drag: .005, col: [[70, 0, 0], [109, 2, 2]], ob: .5, fo: [.125, .25], fp: 0, smax: .85, sf: .675, ef: .75 },   // headshot_01c (wisps: spray1.vtex — the wispy cell, not the chunk)
+    { src: 'blood_impact_headshot_01d', cell: 'splash', n: 32, lx: [110, 200], ly: [-50, 50], up: [40, 150], sph: [50, 180], pos: [4, 4], off: 8, r: [.5, 1], grow: [1, .5], life: [.2, .7], lb: .5, alpha: [1, 1], grav: -405, drag: .005125, col: [[92, 63, 63], [239, 148, 148]], tex: HS02, fo: [.125, .35], fp: 0 }],   // headshot_01d
 };
 // Decals per tier: behind the victim along the shot (CS:GO TraceBleed: 1 / 2 / more by damage, noise .1 / .2 / .3 on the
 // direction, 172 HU), where the trail lands (CS2 ground decals: radius 20–30 low, 30–40 med / high, warped .4–.75 of the
@@ -106,23 +140,43 @@ export const validRecord = r => !!r && Number.isFinite(+r.i) && fin3(r.p) && fin
 
 // ── the spray: a record → particles (pure) ───────────────────────────────────────────────────────────────────────────
 // Each particle: SP floats — start x y z, velocity x y z, life, radius, grow0, grow1, gravity, drag (/s), rotation,
-// first cell, frames, stretch, r g b (linear), alpha, delay. Returns how many (at most MAX_PER_HIT).
-export const SP = 21, MAX_PER_HIT = 32;
+// first cell, frames, stretch, r g b (linear), alpha, delay; (v53 HITS) 21 the screen cap (smax), 22 / 23 the screen
+// fade (sf, ef), 24 the fade-out's start as a share of the life (+ 10: linear), 25 the radius bias, 26 its start time.
+// Returns how many (at most MAX_PER_HIT).
+export const SP = 28, MAX_PER_HIT = 160;
+// CS2's PF_BIAS_TYPE_EXPONENTIAL (gd-impacts.js biased: our curve) and the fade-out's start for one particle.
+const biased = (u, p) => p ? Math.pow(u, (1 - p) / (1 + p)) : u;
+export function fadeStart(e, life) { if (e.fs !== undefined) return 10 + Math.min(.999, e.fs); const F = e.fo || [.25, .25], t = rr(F);
+  return Math.max(0, Math.min(.999, e.fp === 0 ? 1 - t / Math.max(1e-3, life) : 1 - t)); }
 export function planSpray(rec, out) {
   if (!validRecord(rec)) return 0; frame(rec); seed(recSeed(rec, 0x51)); const list = LISTS[rec.z === 'head' ? 'head' : tierOf(rec)];
   let n = 0; const px = +rec.p[0], py = +rec.p[1], pz = +rec.p[2];
   for (const em of list) for (const e of em) for (let k = 0; k < e.n && n < MAX_PER_HIT; k++) {
     const lx = rr(e.lx), ly = e.ly ? rr(e.ly) * (e.side && rnd() < .5 ? -1 : 1) : 0, lz = e.lz ? rr(e.lz) : 0, sp = e.sph ? rr(e.sph) : 0, up = e.up ? rr(e.up) : 0;
-    let sx = 0, sy = 0, sz = 0; if (sp) { const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2, q = Math.sqrt(1 - u * u); sx = q * Math.cos(a) * sp; sy = u * sp; sz = q * Math.sin(a) * sp; }
-    const o = n * SP, cr = rnd(), r0 = rr(e.r) * (e.rs || 1);
-    out[o] = px + (rnd() - .5) * 2 * HU; out[o + 1] = py + (rnd() - .5) * 2 * HU; out[o + 2] = pz + (rnd() - .5) * 2 * HU;   // (CS2: within 2 HU)
+    let sx = 0, sy = 0, sz = 0, ux = 0, uy = 0, uz = 0; if (sp || e.pos) { const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2, q = Math.sqrt(1 - u * u); ux = q * Math.cos(a); uy = u; uz = q * Math.sin(a); sx = ux * sp; sy = uy * sp; sz = uz * sp; }
+    const o = n * SP, cr = rnd(), r0 = rr(e.r) * (e.rs || 1), pr = e.pos ? rr(e.pos) : 0, f0 = e.fwd || 0, o0 = e.off || (e.offr ? rr(e.offr) : 0);
+    if (e.pos) { out[o] = px + (ux * pr + D[0] * f0) * HU; out[o + 1] = py + (uy * pr + D[1] * f0 + o0) * HU; out[o + 2] = pz + (uz * pr + D[2] * f0) * HU; }   // (v53 HITS: CS2's start sphere and PositionOffset)
+    else { out[o] = px + ((rnd() - .5) * 2 + D[0] * f0) * HU; out[o + 1] = py + ((rnd() - .5) * 2 + D[1] * f0 + o0) * HU; out[o + 2] = pz + ((rnd() - .5) * 2 + D[2] * f0) * HU; }   // (CS2: within 2 HU)
     out[o + 3] = (D[0] * lx + L[0] * ly + sx) * HU; out[o + 4] = (D[1] * lx + lz + up + sy) * HU; out[o + 5] = (D[2] * lx + L[2] * ly + sz) * HU;
-    out[o + 6] = rr(e.life); out[o + 7] = r0 * HU; out[o + 8] = e.grow[0]; out[o + 9] = e.grow[1]; out[o + 10] = e.grav * HU; out[o + 11] = Math.max(.02, e.drag * 30);
+    const life = e.lb ? e.life[0] + (e.life[1] - e.life[0]) * biased(rnd(), e.lb) : rr(e.life); out[o + 6] = life; out[o + 7] = r0 * HU; out[o + 8] = e.grow[0]; out[o + 9] = e.grow[1]; out[o + 10] = e.grav * HU; out[o + 11] = Math.max(.02, e.drag * 30);
     out[o + 12] = rnd() * Math.PI * 2; out[o + 13] = CELL[e.cell]; out[o + 14] = FRAMES[e.cell]; out[o + 15] = e.st || 0;
-    out[o + 16] = lin(e.col[0][0] + (e.col[1][0] - e.col[0][0]) * cr); out[o + 17] = lin(e.col[0][1] + (e.col[1][1] - e.col[0][1]) * cr); out[o + 18] = lin(e.col[0][2] + (e.col[1][2] - e.col[0][2]) * cr);
-    out[o + 19] = rr(e.alpha); out[o + 20] = 0; n++; }
+    const ob = e.ob || 1, T = e.tex; for (let q = 0; q < 3; q++) out[o + 16 + q] = lin(e.col[0][q] + (e.col[1][q] - e.col[0][q]) * cr) * (T ? lin(T[q]) : 1) * ob;
+    out[o + 19] = rr(e.alpha); out[o + 20] = 0;
+    out[o + 21] = e.smax || 0; out[o + 22] = e.sf || 0; out[o + 23] = e.ef || 0; out[o + 24] = fadeStart(e, life); out[o + 25] = e.rb || .5; out[o + 26] = e.gs || 0; out[o + 27] = 0; n++; }
   return n;
 }
+
+// (v53 HITS) The vertex shader's size and alpha for planned particle k at `age` s, `dep` game units from the eye, with
+// the projection's P[1][1] (1 / tan(fov / 2)) — the same rule SPRAY_VS draws (tests and the picture's numbers):
+// out.r the drawn radius (game units), out.share its unclamped share of the view's height, out.a its alpha (0: not drawn).
+export const LOOK = { r: 0, share: 0, a: 0 };
+const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+export function sprayLook(P, k, age, dep, p11, out = LOOK) { const o = k * SP, life = P[o + 6]; out.r = out.share = out.a = 0; if (age < 0 || age >= life) return out;
+  const n = age / life, gs = P[o + 26], rb = P[o + 25]; let tr = Math.max(0, Math.min(1, (n - gs) / Math.max(1e-3, 1 - gs))); if (rb > 0 && Math.abs(rb - .5) > 1e-3) tr = Math.pow(tr, Math.log(rb) / Math.log(.5));
+  let size = P[o + 7] * (P[o + 8] + (P[o + 9] - P[o + 8]) * tr); const d = Math.max(.05, dep), share = size * p11 / d, sf = P[o + 22], ef = P[o + 23], smax = P[o + 21];
+  const sfade = ef > 0 ? 1 - sstep(sf, ef, share) : 1; if (smax > 0) size = Math.min(size, smax * d / p11);
+  const fo = P[o + 24], fade = fo >= 9.5 ? 1 - Math.max(0, Math.min(1, (n - (fo - 10)) / Math.max(1e-3, 11 - fo))) : 1 - sstep(fo, 1, n);
+  out.r = size; out.share = share; out.a = P[o + 19] * fade * sfade; return out; }
 
 // ── the helmet dink: a record → spark particles (pure) ─────────────────────────────────────────────────────────────
 // CS2 (HU, s; local z = the impact's normal, back toward the shooter; x, y across it): [impact_helmet_headshot.vpcf]
@@ -237,6 +291,65 @@ export function mapCast(boxes) {
   };
 }
 
+// ── (v53 HITS, H6) Your own wounds on your screen: CS2's local-player hit splatter ─────────────────────────────────────
+// particles/blood_impact (the user's install): a hit from the front plays blood_impact_localfrontenemy — its children
+// _splatter_lft and _splatter_rgt, each 5–10 splats (nParticlesToEmit: control point 1's x — the damage — 15 → 65 remapped
+// to 5 → 10), life .35–.75 s, FadeOut up to .5 s (min .25: CS2's default; a share of the life), colour (228,33,33) ×
+// overbright 3, alpha 1; a hit from behind blood_impact_localrearhit_splatter — 10 splats, life .5–.75 s, (249,55,55) ×
+// 2; and every hit blood_impact_lp_spray (blood_impact_localplayer's child) — 3–6 splats (the damage 15 → 80), life
+// .75 s, (249,55,55) × 2. Its texture (decals/blood/blood_particle_splatter) is drawn with our decal atlas's splats.
+// A front hit always plays BOTH children (localfrontenemy.vpcf's m_Children: _splatter_lft and _splatter_rgt, neither
+// disabled — v53 HITS final; it was the shot's side only): each lays its splats in order along its own path
+// (C_INIT_CreateSequentialPathV2 between the two points its C_OP_SetSingleControlPointPosition ops place: _lft x = 100,
+// _rgt x = −100, y 100 → −50 in its control points' space) — so two vertical runs, the left and right edges, from high
+// to a little below the middle (y .75 → −.375 of the half-height). OURS (the game's code places those control points on
+// the screen, and is not in the files): that mapping of CP space to the screen edges; from behind → along the bottom and
+// the sides; lp_spray nearer the corner on the side the shot came from (the record's r against your view). Sizes 4.5–12 % of the view's height (lp_spray 9–15 %): a splat fills about half its square.
+// One pool of LOCAL_N splats in screen space (ONE draw, warmed with the others), written from your own records only (and
+// the watched player's, spectating in-eye); Settings → Blood off draws none.
+export const LOCAL_N = 48, LK = 12;
+export const LOCAL = {
+  front: { n: [5, 10], dmg: [15, 65], life: [.35, .75], fo: [.25, .5], col: [228, 33, 33], ob: 3, r: [.045, .12] },   // localfrontenemy_splatter_lft / _rgt
+  rear: { n: [10, 10], life: [.5, .75], fo: [.25, .5], col: [249, 55, 55], ob: 2, r: [.05, .12] },   // localrearhit_splatter
+  spray: { n: [3, 6], dmg: [15, 80], life: [.75, .75], fo: [.25, .5], col: [249, 55, 55], ob: 2, r: [.09, .15] },   // lp_spray
+};
+const countBy = (e, d) => { if (!e.dmg) return e.n[0]; const k = Math.max(0, Math.min(1, (d - e.dmg[0]) / (e.dmg[1] - e.dmg[0]))); return Math.round(e.n[0] + (e.n[1] - e.n[0]) * k); };
+// Where the shot came from in your view (fx, fz: your forward, level): .front (it came from ahead), .side (−1 left, 1 right,
+// 0 straight ahead / behind within 15°).
+export const LSIDE = { front: true, side: 0 };
+export function hitSide(rec, fx, fz, out = LSIDE) { const sx = -(+rec.r[0]), sz = -(+rec.r[2]), fl = Math.sqrt(fx * fx + fz * fz) || 1, ax = fx / fl, az = fz / fl, sl = Math.sqrt(sx * sx + sz * sz) || 1;
+  const ahead = (sx * ax + sz * az) / sl, right = (sx * -az + sz * ax) / sl; out.front = ahead >= 0; out.side = Math.abs(right) < Math.sin(15 * Math.PI / 180) ? 0 : right > 0 ? 1 : -1; return out; }
+// A record → splats (pure): each LK floats — centre x y (the view's height units: y −1 bottom … 1 top, x across × the
+// aspect), radius, life, fade start (share), cell, rotation, r g b (linear × overbright), alpha. Returns how many.
+export const MAX_LOCAL = 26;
+export const PATH_Y = [.75, -.375];   // (the children's path y 100 → −50, as a share of the half-height: ours, the scale)
+export function planLocal(rec, fx, fz, out) {
+  if (!validRecord(rec)) return 0; seed(recSeed(rec, 0x10C)); const S = hitSide(rec, fx, fz), d = +rec.d || 0; let n = 0;
+  const put = (e, x, y) => { if (n >= MAX_LOCAL) return; const o = n * LK, life = rr(e.life); out[o] = x; out[o + 1] = y; out[o + 2] = rr(e.r); out[o + 3] = life; out[o + 4] = Math.max(0, Math.min(.999, 1 - rr(e.fo)));
+    out[o + 5] = Math.floor(rnd() * WALL_CELLS); out[o + 6] = rnd() * Math.PI * 2; for (let q = 0; q < 3; q++) out[o + 7 + q] = Math.min(1, lin(e.col[q]) * e.ob); out[o + 10] = 1; out[o + 11] = 0; n++; };
+  const edge = (e, sd, k) => { for (let j = 0; j < k; j++) put(e, sd * (1.3 + rnd() * .15), PATH_Y[0] + (PATH_Y[1] - PATH_Y[0]) * (k > 1 ? j / (k - 1) : .5)); };   // (x past ±1.3: the side beyond a 4:3 centre, inside any wide view; y along the file's path, in order)
+  if (S.front) { const k = countBy(LOCAL.front, d); edge(LOCAL.front, -1, k); edge(LOCAL.front, 1, k); }   // (both children, each its own 5–10)
+  else for (let j = 0; j < LOCAL.rear.n[0]; j++) { const a = rnd(); if (a < .5) put(LOCAL.rear, (rnd() * 2 - 1) * 1.4, -.8 - rnd() * .2); else put(LOCAL.rear, (a < .75 ? -1 : 1) * (1.2 + rnd() * .5), -.6 + rnd() * 1.2); }
+  { const k = countBy(LOCAL.spray, d), sd = S.side || (rnd() < .5 ? -1 : 1); for (let j = 0; j < k; j++) put(LOCAL.spray, sd * (1.25 + rnd() * .45), (S.front ? .3 : -.5) + (rnd() * 2 - 1) * .35); }
+  return n;
+}
+// Screen-space splats: x scaled by the view's aspect (projectionMatrix), drawn over everything, faded out as CS2's FadeOut.
+const LOCAL_VS = `uniform float uTime; uniform float uCells;
+attribute vec4 aP; attribute vec4 aL; attribute vec4 aC;
+varying vec2 vUv; varying vec4 vCol;
+void main() {
+  float age = uTime - aP.w, life = aL.x;
+  if (age < 0.0 || age >= life) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vUv = vec2(0.0); vCol = vec4(0.0); return; }
+  float n = age / life, asp = projectionMatrix[1][1] / projectionMatrix[0][0], cs = cos(aL.w), sn = sin(aL.w); vec2 c = position.xy * 2.0, q = vec2(c.x * cs - c.y * sn, c.x * sn + c.y * cs) * aP.z;
+  gl_Position = vec4((aP.x + q.x) / asp, aP.y + q.y, -1.0, 1.0);   // (on the near plane: in front of everything, a smoke too)
+  vUv = (vec2(mod(aL.z, uCells), uCells - 1.0 - floor(aL.z / uCells)) + uv) / uCells;
+  vCol = vec4(aC.rgb, aC.a * (1.0 - smoothstep(aL.y, 1.0, n)));
+}`;
+const LOCAL_FS = `uniform sampler2D uMap; varying vec2 vUv; varying vec4 vCol;
+void main() { vec4 t = texture2D(uMap, vUv); float a = t.a * vCol.a; if (a < 0.01) discard; gl_FragColor = vec4(vCol.rgb * (0.55 + 0.7 * t.r), a);
+  #include <colorspace_fragment>
+}`;
+
 // ── built-in pictures (no CS2 files): procedural, the same layout as the import ──────────────────────────────────────
 // Pixels are written top row first into a bottom-up buffer, so v = 1 is the picture's top as for a loaded image.
 function picture(W, cells, draw) {
@@ -249,6 +362,8 @@ function picture(W, cells, draw) {
 // Stamp a soft disc (alpha max, and a value) into a cell's field.
 function disc(A, C, cw, x, y, r, a, v) { const x0 = Math.max(0, Math.floor(x - r - 1)), x1 = Math.min(cw - 1, Math.ceil(x + r + 1)), y0 = Math.max(0, Math.floor(y - r - 1)), y1 = Math.min(cw - 1, Math.ceil(y + r + 1));
   for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) { const d = Math.hypot(i + .5 - x, j + .5 - y), k = Math.max(0, Math.min(1, r + .6 - d)) * a, q = j * cw + i; if (k > A[q]) { C[q] = A[q] > 0 ? Math.min(C[q], v) * (1 - k) + v * k : v; A[q] = k; } } }
+// (v53 HITS) A hole: the alpha in a small disc thinned to a fifth.
+function hole(A, cw, x, y, r) { for (let j = Math.max(0, Math.floor(y - r)); j <= Math.min(cw - 1, Math.ceil(y + r)); j++) for (let i = Math.max(0, Math.floor(x - r)); i <= Math.min(cw - 1, Math.ceil(x + r)); i++) if (Math.hypot(i + .5 - x, j + .5 - y) < r) A[j * cw + i] *= .2; }
 // A streak of discs from (x, y) along angle ang, length len, radius r0 thinning to r1, then a few drops off its end.
 function streak(A, C, cw, x, y, ang, len, r0, r1, a, v) { const n = Math.max(2, Math.ceil(len / Math.max(.6, r1))); for (let k = 0; k <= n; k++) { const t = k / n; disc(A, C, cw, x + Math.sin(ang) * len * t, y - Math.cos(ang) * len * t, r0 + (r1 - r0) * t, a, v); } }
 export function builtinDecals(W = 512) {
@@ -285,13 +400,19 @@ export function builtinSpray(W = 256) {
     if (cell === CELL.drop) { streak(A, C, cw, cx, cy + 8 * s, 0, 14 * s, 3.2 * s, .8 * s, 1, .85); return true; }
     if (cell === CELL.mist) { for (let k = 0; k < 40; k++) { const a = rnd() * Math.PI * 2, d = rnd() * 9 * s; disc(A, C, cw, cx + Math.cos(a) * d, cy + Math.sin(a) * d, (3 + rnd() * 4) * s, .12 + rnd() * .1, .8); } return true; }
     if (cell === CELL.chunk) { for (let k = 0; k < 7; k++) disc(A, C, cw, cx + (rnd() - .5) * 10 * s, cy + (rnd() - .5) * 10 * s, (1.5 + rnd() * 3) * s, 1, .6 + rnd() * .3); return true; }
+    if (cell >= CELL.wisp && cell < CELL.wisp + FRAMES.wisp) {   // (v53 HITS) a wisp, as spray1.vtex: a small dense burst spreading into thin, broken strands (its alpha cover 48 % → 3 %)
+      const f = (cell - CELL.wisp) / (FRAMES.wisp - 1), R = (3 + f * 12) * s, a0 = .9 * (1 - f * .8), ns = 9 + Math.floor(rnd() * 4);
+      for (let k = 0; k < ns; k++) { const ang = rnd() * Math.PI * 2, len = R * (.6 + rnd() * .5), r0 = (1.6 - f * 1.1) * s; streak(A, C, cw, cx + Math.sin(ang) * R * .15, cy - Math.cos(ang) * R * .15, ang, len, r0, r0 * .25, a0 * (.5 + rnd() * .5), .8); }
+      if (f < .4) disc(A, C, cw, cx, cy, R * .45, a0, .7);
+      if (f > .3) for (let k = 0; k < 120 * f; k++) { const x = (rnd() - .5) * 2 * R, y = (rnd() - .5) * 2 * R; hole(A, cw, cx + x, cy + y, (.4 + rnd() * .8) * s); }   // (broken up: holes in it)
+      return true; }
     return false; });
 }
 function dataTexture(data, W) { const t = new THREE.DataTexture(data, W, W, THREE.RGBAFormat); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true; return t; }
 
 // ── shaders ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 const SPRAY_VS = `uniform float uTime; uniform float uCells;
-attribute vec4 aP; attribute vec4 aV; attribute vec4 aS; attribute vec4 aM; attribute vec4 aC; attribute float aX;
+attribute vec4 aP; attribute vec4 aV; attribute vec4 aS; attribute vec4 aM; attribute vec4 aC; attribute vec4 aX; attribute vec4 aF; uniform float uWisp;
 varying vec2 vUv; varying vec4 vCol;
 void main() {
   float age = uTime - aP.w, life = aV.w;
@@ -300,15 +421,21 @@ void main() {
   vec3 vt = vec3(0.0, aS.w / k, 0.0);   // terminal velocity (gravity / drag)
   vec3 p = aP.xyz + (aV.xyz - vt) * (1.0 - e) / k + vt * age, vel = (aV.xyz - vt) * e + vt;
   vec4 mv = viewMatrix * vec4(p, 1.0);
-  float size = aS.x * mix(aS.y, aS.z, n);
+  // (v53 HITS) InterpolateRadius from its start time, with Source's Bias; the renderer's screen cap and fade (the share of the
+  // view's height the sprite's diameter covers: r × P[1][1] / depth)
+  float tr = clamp((n - aX.w) / max(1e-3, 1.0 - aX.w), 0.0, 1.0); if (aX.z > 0.0 && abs(aX.z - 0.5) > 1e-3) tr = pow(tr, log(aX.z) / log(0.5));
+  float size = aS.x * mix(aS.y, aS.z, tr), dep = max(0.05, -mv.z), share = size * projectionMatrix[1][1] / dep;
+  float sfade = aF.z > 0.0 ? 1.0 - smoothstep(aF.y, aF.z, share) : 1.0; if (aX.y > 0.0) size = min(size, aX.y * dep / projectionMatrix[1][1]);
   vec2 ax = vec2(cos(aM.y), sin(aM.y)), ay = vec2(-ax.y, ax.x); float along = 1.0;
-  if (aX > 0.0) { vec2 sv = (viewMatrix * vec4(vel, 0.0)).xy; float sl = length(sv); if (sl > 1e-4) { ay = sv / sl; ax = vec2(ay.y, -ay.x); along = 1.0 + min(sl * aX, 6.0); } }
+  if (aX.x > 0.0) { vec2 sv = (viewMatrix * vec4(vel, 0.0)).xy; float sl = length(sv); if (sl > 1e-4) { ay = sv / sl; ax = vec2(ay.y, -ay.x); along = 1.0 + min(sl * aX.x, 6.0); } }
   vec2 c = position.xy * 2.0;
   mv.xy += ax * c.x * size + ay * c.y * size * along;
   gl_Position = projectionMatrix * mv;
   float fr = min(floor(n * aM.w), aM.w - 1.0), cell = aM.z + fr;
+  if (aM.z > 50.5 && uWisp < 0.5) cell = 32.0 + min(15.0, floor(n * 16.0));   // (an imported atlas without the wisp frames: its puffs)
   vUv = (vec2(mod(cell, uCells), uCells - 1.0 - floor(cell / uCells)) + uv) / uCells;
-  vCol = vec4(aC.rgb, aC.a * (1.0 - smoothstep(0.5, 1.0, n)));
+  float fo = aF.x, fade = fo >= 9.5 ? 1.0 - clamp((n - (fo - 10.0)) / max(1e-3, 11.0 - fo), 0.0, 1.0) : 1.0 - smoothstep(fo, 1.0, n);   // (CS2's FadeOut — eased — or FadeOutSimple / FadeAndKill — linear)
+  vCol = vec4(aC.rgb, aC.a * fade * sfade);
 }`;
 const SPRAY_FS = `uniform sampler2D uMap; uniform float uLight;
 varying vec2 vUv; varying vec4 vCol;
@@ -377,11 +504,11 @@ function quad(n, attrs) { const p = new THREE.PlaneGeometry(1, 1), g = new THREE
 // opts: boxes() → the map's collision boxes (lab.js: the arena's), game() → the game state, me() → your key, watched()
 // → the key you watch in first person (else null), clock() → the host's ms (tests), quiet() → true when a picture may
 // be sent to the GPU now (no live round), assets: false to skip the CS2 import (tests).
-export function createBlood(scene, { boxes = () => null, game = () => null, me = () => '', watched = () => null, clock = () => hostNow(), quiet = null, assets = true, onDink = null } = {}) {   // (onDink(rec): v53 stage 5 — the dink's other CS2 children, gd-impacts.js)
+export function createBlood(scene, { boxes = () => null, game = () => null, me = () => '', watched = () => null, clock = () => hostNow(), quiet = null, assets = true, onDink = null, view = listenerFrame } = {}) {   // (view(out): your forward in out.fx / out.fz — tests)   // (onDink(rec): v53 stage 5 — the dink's other CS2 children, gd-impacts.js)
   const t0 = performance.now();
   const decalTex = dataTexture(builtinDecals(), 512), sprayTex = dataTexture(builtinSpray(), 256);
-  const sp = quad(SPRAY_N, [['aP', 4], ['aV', 4], ['aS', 4], ['aM', 4], ['aC', 4], ['aX', 1]]), dc = quad(DECAL_N, [['aC', 4], ['aU', 4], ['aV', 4]]);
-  const sprayMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uCells: { value: SPRAY_GRID }, uMap: { value: sprayTex }, uLight: { value: .9 } }, vertexShader: SPRAY_VS, fragmentShader: SPRAY_FS, transparent: true, depthWrite: false });
+  const sp = quad(SPRAY_N, [['aP', 4], ['aV', 4], ['aS', 4], ['aM', 4], ['aC', 4], ['aX', 4], ['aF', 4]]), dc = quad(DECAL_N, [['aC', 4], ['aU', 4], ['aV', 4]]);
+  const sprayMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uCells: { value: SPRAY_GRID }, uMap: { value: sprayTex }, uLight: { value: .9 }, uWisp: { value: 1 } }, vertexShader: SPRAY_VS, fragmentShader: SPRAY_FS, transparent: true, depthWrite: false });
   const decalMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uCells: { value: DECAL_GRID }, uMap: { value: decalTex }, uDark: { value: 1.25 } }, vertexShader: DECAL_VS, fragmentShader: DECAL_FS, transparent: true, depthWrite: false,
     blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.DstColorFactor, blendDst: THREE.ZeroFactor, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, toneMapped: false });
   for (const m of [sprayMat, decalMat]) m.userData.shared = true;
@@ -408,6 +535,18 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
     for (let j = 0; j < KA.length; j++) KA[j].needsUpdate = true; dink.visible = true; dinksN++;
   }
   function dinkHit(rec, t) { if (!dinks(rec) || !validRecord(rec)) return false; if (rec.v && (rec.v === me() || rec.v === watched())) return false; const n = planDink(rec, KB); if (n) { spawnDink(n, t); onDink?.(rec); } return n > 0; }
+  // (v53 HITS, H6) your own wounds on your screen: one screen-space pool, one draw, warmed with the others
+  const lc = quad(LOCAL_N, [['aP', 4], ['aL', 4], ['aC', 4]]);
+  const localMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uCells: { value: DECAL_GRID }, uMap: { value: decalTex } }, vertexShader: LOCAL_VS, fragmentShader: LOCAL_FS, transparent: true, depthWrite: false, depthTest: false, toneMapped: false });
+  localMat.userData.shared = true;
+  const local = new THREE.Mesh(lc.g, localMat); local.name = 'gd-blood-local'; local.frustumCulled = false; local.visible = false; local.matrixAutoUpdate = false; local.renderOrder = 999; local.userData.gd = true; local.userData.warm = true; local.userData.noPool = true; local.userData.fx = true; scene?.add(local);   // (fx: drawn after a smoke, so a cloud never covers it)
+  const LB = new Float32Array(MAX_LOCAL * LK), LA = Object.values(lc.a), VF = { fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 }; let lHead = 0, localEnd = -1, locals = 0, lastAt = -1;
+  function localHit(rec, t) { if (!validRecord(rec)) return 0; view(VF); const n = planLocal(rec, VF.fx, VF.fz, LB); const P = lc.a.aP.array, Lf = lc.a.aL.array, Cc = lc.a.aC.array;
+    for (let j = 0; j < n; j++) { const o = j * LK, q = lHead * 4; lHead = (lHead + 1) % LOCAL_N;
+      P[q] = LB[o]; P[q + 1] = LB[o + 1]; P[q + 2] = LB[o + 2]; P[q + 3] = t; Lf[q] = LB[o + 3]; Lf[q + 1] = LB[o + 4]; Lf[q + 2] = LB[o + 5]; Lf[q + 3] = LB[o + 6];
+      Cc[q] = LB[o + 7]; Cc[q + 1] = LB[o + 8]; Cc[q + 2] = LB[o + 9]; Cc[q + 3] = LB[o + 10]; localEnd = Math.max(localEnd, t + LB[o + 3]); }
+    if (n) { for (let j = 0; j < LA.length; j++) LA[j].needsUpdate = true; local.visible = true; locals++; lastAt = t; } return n; }
+  function clearLocal() { lc.a.aL.array.fill(0); lc.a.aL.needsUpdate = true; lHead = 0; localEnd = -1; local.visible = false; }
   function clearDink() { dk.a.aV.array.fill(0); dk.a.aV.needsUpdate = true; kHead = 0; dinkEnd = -1; dink.visible = false; }
   // particles start with no life: nothing drawn
   const PB = new Float32Array(MAX_PER_HIT * SP), DB = new Float32Array(MAX_DECALS_PER_HIT * DC), cast = mapCast(boxes);
@@ -417,13 +556,14 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
   const PEND = new Array(8).fill(null), PENDT = new Float64Array(8); let pHead = 0, pN = 0;
   let held = null; const now = () => held ?? (performance.now() - t0) / 1000;   // (held: the clock stopped — tests' pictures)
   function spawn(n, t) {
-    const P = sp.a.aP.array, V = sp.a.aV.array, Sz = sp.a.aS.array, M = sp.a.aM.array, Cc = sp.a.aC.array, X = sp.a.aX.array;
+    const P = sp.a.aP.array, V = sp.a.aV.array, Sz = sp.a.aS.array, M = sp.a.aM.array, Cc = sp.a.aC.array, X = sp.a.aX.array, Fd = sp.a.aF.array;
     for (let k = 0; k < n; k++) { const i = sHead, o = k * SP, q = i * 4; sHead = (sHead + 1) % SPRAY_N;
       P[q] = PB[o]; P[q + 1] = PB[o + 1]; P[q + 2] = PB[o + 2]; P[q + 3] = t + PB[o + 20];
       V[q] = PB[o + 3]; V[q + 1] = PB[o + 4]; V[q + 2] = PB[o + 5]; V[q + 3] = PB[o + 6];
       Sz[q] = PB[o + 7]; Sz[q + 1] = PB[o + 8]; Sz[q + 2] = PB[o + 9]; Sz[q + 3] = PB[o + 10];
       M[q] = PB[o + 11]; M[q + 1] = PB[o + 12]; M[q + 2] = PB[o + 13]; M[q + 3] = PB[o + 14];
-      Cc[q] = PB[o + 16]; Cc[q + 1] = PB[o + 17]; Cc[q + 2] = PB[o + 18]; Cc[q + 3] = PB[o + 19]; X[i] = PB[o + 15];
+      Cc[q] = PB[o + 16]; Cc[q + 1] = PB[o + 17]; Cc[q + 2] = PB[o + 18]; Cc[q + 3] = PB[o + 19];
+      X[q] = PB[o + 15]; X[q + 1] = PB[o + 21]; X[q + 2] = PB[o + 25]; X[q + 3] = PB[o + 26]; Fd[q] = PB[o + 24]; Fd[q + 1] = PB[o + 22]; Fd[q + 2] = PB[o + 23]; Fd[q + 3] = 0;
       sprayEnd = Math.max(sprayEnd, t + PB[o + 20] + PB[o + 6]); }
     for (let k = 0; k < SA.length; k++) SA[k].needsUpdate = true; spray.visible = true;
   }
@@ -442,7 +582,7 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
   }
   // One host record: its spray now (not on your own body), its decals queued (placed one record a frame).
   function hit(rec, t = now()) {
-    if (!validRecord(rec)) return false; hits++;
+    if (!validRecord(rec)) return false; hits++; lastAt = t;   // (lastAt: the newest record's birth — pictures hold the clock from it)
     const own = rec.v && (rec.v === me() || rec.v === watched());
     if (!own) { const n = planSpray(rec, PB); if (n) spawn(n, t); }
     PEND[(pHead + pN) % 8] = rec; PENDT[(pHead + pN) % 8] = t; if (pN < 8) pN++; else pHead = (pHead + 1) % 8;   // (a full ring: the oldest waiting record's decals are dropped)
@@ -457,40 +597,40 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
   // Pictures: CS2's own (user-assets models.blood) once loaded; sent to the GPU at a quiet moment.
   let pendingTex = null;
   const isQuiet = quiet || (() => { const G = game(), ph = G?.combat?.d?.round?.phase; return G?.mode !== 'arena' || ph === 'freeze' || ph === 'over' || ph === 'warmup' || !!(G?.arena?.lobby && !G.arena.lobby.started); });
-  if (assets && typeof document !== 'undefined') userAssets().then(ua => { const B = ua.models?.blood; if (!B?.decals || !B?.spray) return; const L2 = new THREE.TextureLoader(), got = {};
+  if (assets && typeof document !== 'undefined') userAssets().then(ua => { const B = ua.models?.blood; if (!B?.decals || !B?.spray) return; const L2 = new THREE.TextureLoader(), got = { wisp: !!B.wisp };
     const done = () => { if (got.decals && got.spray) pendingTex = got; };
     for (const k of ['decals', 'spray']) L2.load(userAssetURL(ua, B[k]), t => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; got[k] = t; done(); }, undefined, () => {}); }).catch(() => {});
   let cs2 = null, source = 'builtin';
-  function swapTextures() { if (!pendingTex || !isQuiet()) return; const T = cs2 = pendingTex; pendingTex = null; decalMat.uniforms.uMap.value = T.decals; sprayMat.uniforms.uMap.value = T.spray;
+  function swapTextures() { if (!pendingTex || !isQuiet()) return; const T = cs2 = pendingTex; pendingTex = null; decalMat.uniforms.uMap.value = T.decals; sprayMat.uniforms.uMap.value = T.spray; sprayMat.uniforms.uWisp.value = T.wisp ? 1 : 0;   /* (v53 HITS: an atlas imported before the wisp frames — its puffs instead) */
     const r = globalThis.__infra?.renderer; try { r?.initTexture(T.decals); r?.initTexture(T.spray); } catch {} source = 'cs2'; }
   // Per frame: the clock uniform, new host records, at most one record's decals, quiet-moment texture swap.
   function update() {
-    const t = now(); sprayMat.uniforms.uTime.value = t; decalMat.uniforms.uTime.value = t; dinkMat.uniforms.uTime.value = t;
-    if (spray.visible && t > sprayEnd) spray.visible = false;
+    const t = now(); sprayMat.uniforms.uTime.value = t; decalMat.uniforms.uTime.value = t; dinkMat.uniforms.uTime.value = t; localMat.uniforms.uTime.value = t;
+    if (spray.visible && t > sprayEnd) spray.visible = false; if (local.visible && t > localEnd) local.visible = false;
     if (dink.visible && t > dinkEnd) dink.visible = false;
     if (pendingTex) swapTextures();
     const G = game();
-    if (roundChanged(G)) { if (dCount || spray.visible || pN) clear(); if (dink.visible) clearDink(); lastSeq = 0; }
+    if (roundChanged(G)) { if (dCount || spray.visible || pN) clear(); if (dink.visible) clearDink(); if (local.visible) clearLocal(); lastSeq = 0; }
     const on = live.blood, list = G?.mode === 'arena' ? G.combat?.bl : null;
     // new records (each once, by its rising number; one far below the last — another host — starts the count again)
     // (a client gets a new list each update; a host in this page — practice, solo — changes its own in place: the newest number tells)
     const top = list && list.length ? +list[list.length - 1]?.i : 0;
     if (list && (list !== lastList || top !== lastTop)) { lastList = list; lastTop = top; const hn = clock();
-      for (let j = 0; j < list.length; j++) { const r = list[j], i = +r?.i; if (!(i > lastSeq) && !(i < lastSeq - 6e5)) continue; lastSeq = i; if (hn - r.at <= KEEP_MS) { if (on) hit(r, t); if (r.hm) dinkHit(r, t); } } }   // (the dink: whatever the Blood setting)
-    if (!on) { if (dCount || spray.visible || pN) clear(); return; }
+      for (let j = 0; j < list.length; j++) { const r = list[j], i = +r?.i; if (!(i > lastSeq) && !(i < lastSeq - 6e5)) continue; lastSeq = i; if (hn - r.at <= KEEP_MS) { if (on) { hit(r, t); if (r.v && (r.v === me() || r.v === watched())) localHit(r, t); } if (r.hm) dinkHit(r, t); } } }   // (v53 HITS: your own wound's splatter on your screen)   // (the dink: whatever the Blood setting)
+    if (!on) { if (dCount || spray.visible || pN) clear(); if (local.visible) clearLocal(); return; }
     placeNext();
   }
-  return { spray, decals, dink, update, hit, clear, placeNext, swapTextures, dinkHit, clearDink,
-    get stats() { return { decals: dCount, sprayAlive: spray.visible, pending: pN, hits, source, sHead, dHead, dinks: dinksN, dinkAlive: dink.visible, kHead }; },
+  return { spray, decals, dink, local, update, hit, clear, placeNext, swapTextures, dinkHit, clearDink, localHit, clearLocal,
+    get stats() { return { decals: dCount, sprayAlive: spray.visible, pending: pN, hits, source, sHead, dHead, dinks: dinksN, dinkAlive: dink.visible, kHead, locals, lHead, localAlive: local.visible }; },
     // the dink's one-pixel width: the picture's height in pixels (lab / tests; 1080 until told)
     setViewHeight(h) { if (h > 0) dinkMat.uniforms.uPx.value = 2 / h; },
-    get time() { return now(); },
+    get time() { return now(); }, get lastAt() { return lastAt; },
     // tests and pictures: stop the clock (seconds since this started; null runs it again) · which pictures ('builtin' | 'cs2')
     hold(t) { held = t === null ? null : Number.isFinite(t) ? t : (performance.now() - t0) / 1000; },
-    textures(which) { if (which === 'builtin') { decalMat.uniforms.uMap.value = decalTex; sprayMat.uniforms.uMap.value = sprayTex; source = 'builtin'; } else if (which === 'cs2' && cs2) { decalMat.uniforms.uMap.value = cs2.decals; sprayMat.uniforms.uMap.value = cs2.spray; source = 'cs2'; } return source; },
+    textures(which) { if (which === 'builtin') { decalMat.uniforms.uMap.value = decalTex; sprayMat.uniforms.uMap.value = sprayTex; sprayMat.uniforms.uWisp.value = 1; source = 'builtin'; } else if (which === 'cs2' && cs2) { decalMat.uniforms.uMap.value = cs2.decals; sprayMat.uniforms.uMap.value = cs2.spray; sprayMat.uniforms.uWisp.value = cs2.wisp ? 1 : 0; source = 'cs2'; } return source; },
     // tests: the pools' arrays
-    get pools() { return { spray: sp.a, decals: dc.a, dink: dk.a }; },
+    get pools() { return { spray: sp.a, decals: dc.a, dink: dk.a, local: lc.a }; },
     // one visible sample of each (sharing the pools' materials), for a warm-up that wants its own objects
-    warmObjects() { const a = new THREE.Mesh(sp.g, sprayMat), b = new THREE.Mesh(dc.g, decalMat), c = new THREE.Mesh(dk.g, dinkMat); a.frustumCulled = b.frustumCulled = c.frustumCulled = false; return [a, b, c]; },
-    dispose() { scene?.remove(spray); scene?.remove(decals); scene?.remove(dink); sp.g.dispose(); dc.g.dispose(); dk.g.dispose(); sprayMat.dispose(); decalMat.dispose(); dinkMat.dispose(); decalTex.dispose(); sprayTex.dispose(); } };
+    warmObjects() { const a = new THREE.Mesh(sp.g, sprayMat), b = new THREE.Mesh(dc.g, decalMat), c = new THREE.Mesh(dk.g, dinkMat), d = new THREE.Mesh(lc.g, localMat); a.frustumCulled = b.frustumCulled = c.frustumCulled = d.frustumCulled = false; return [a, b, c, d]; },
+    dispose() { scene?.remove(spray); scene?.remove(decals); scene?.remove(dink); scene?.remove(local); sp.g.dispose(); dc.g.dispose(); dk.g.dispose(); lc.g.dispose(); sprayMat.dispose(); decalMat.dispose(); dinkMat.dispose(); localMat.dispose(); decalTex.dispose(); sprayTex.dispose(); } };
 }

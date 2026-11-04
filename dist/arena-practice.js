@@ -1,7 +1,8 @@
 // Practice (Global Defensive, arena.practice): what the session's settings show, on this screen only —
 //  · impacts: a small red box where each of your bullets stopped, and where it went through a wall, for 4 s (CS2's
 //    sv_showimpacts);
-//  · recoil: your spray, shot by shot, as dots in a small panel beside the crosshair (cleared after a pause);
+//  · recoil: (v53 HITS, open-B#9: the dots panel #gd-recoil is gone — CS2 has no such panel; it was ADDENDUM 11's "stray
+//    dark square" beside the crosshair. The session setting stays and draws nothing);
 //  · paths: the flight of each grenade you throw, drawn for 8 s (sv_grenade_trajectory) — v53 S2: with a mark at each
 //    bounce and a bigger one where it ended (rested / went off);
 //  · collision shapes (Practice menu, this screen only): what bodies, bullets and grenades meet round you, drawn over the
@@ -76,11 +77,11 @@ export function createPractice({ scene, pistol, boxes, bounds = () => null, sett
   spots.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(LINEUPS * 3).fill(1), 3); for (let i = 0; i < LINEUPS; i++) spots.setMatrixAt(i, FAR); spots.renderOrder = 4;
   const tgtMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .95, depthTest: false, side: THREE.DoubleSide }), target = add(new THREE.Mesh(new THREE.RingGeometry(.09, .16, 24), tgtMat)); target.renderOrder = 7; target.position.set(0, -5000, 0);
   target.add(new THREE.Mesh(new THREE.CircleGeometry(.025, 10), tgtMat));
-  // The recoil panel (as before), the lineup card and the picture's frame (DOM).
-  const cv = document.createElement('canvas'); cv.id = 'gd-recoil'; cv.width = cv.height = 150; Object.assign(cv.style, { position: 'fixed', left: 'calc(50% + 110px)', top: 'calc(50% - 75px)', width: '150px', height: '150px', pointerEvents: 'none', zIndex: 30, display: 'none', background: '#0006', borderRadius: '8px' }); document.body.append(cv);
+  // The lineup card and the picture's frame (DOM).
+  // (v53 HITS: no recoil panel — CS2 has none, open-B#9)
   const card = document.createElement('div'); card.id = 'gd-lineup-card'; Object.assign(card.style, { position: 'fixed', left: '50%', top: 'calc(50% + 70px)', transform: 'translateX(-50%)', padding: '6px 12px', background: '#000a', color: '#fff', font: '600 13px/1.4 system-ui, sans-serif', borderRadius: '4px', pointerEvents: 'none', zIndex: 30, display: 'none', textAlign: 'center', maxWidth: 'min(520px, calc(100vw - 32px))' }); document.body.append(card);
   const pipBox = document.createElement('div'); pipBox.id = 'gd-pip'; Object.assign(pipBox.style, { position: 'fixed', right: PIP_RIGHT - 2 + 'px', bottom: PIP_BOTTOM - 2 + 'px', width: PIP_W + 'px', height: PIP_H + 'px', border: '2px solid #ffffffb0', pointerEvents: 'none', zIndex: 29, display: 'none' }); document.body.append(pipBox);
-  const ctx = cv.getContext('2d'), spray = []; let head = 0, pathHead = 0, lastShots = pistol.shots, lastShotAt = 0, first = null;
+  let head = 0, pathHead = 0, lastShots = pistol.shots;
   // ── one flight, written into reused buffers: points (every 3rd step and the last), bounce marks, its end ──
   const FL = createFlightPreview(boxes, bounds), fly = FL.fly;
   // ── after a throw: its path 8 s, bounces, end; kept for sv_rethrow_last_grenade ──
@@ -156,14 +157,10 @@ export function createPractice({ scene, pistol, boxes, bounds = () => null, sett
     update(now = performance.now()) {
       const s = settings() || {};
       if (map() && (map() !== mapId || frame && !frame.cs2 && ARENA_MAPS[mapId]?.hammer)) loadLineups(map());   // (a new map — or its CS2 file arrived after the session started: its own frame)
-      // A new shot: its impacts, and its place in the spray.
+      // A new shot: its impacts.
       if (pistol.shots !== lastShots) { lastShots = pistol.shots; const L = pistol.lastShot;
         if (L && s.impacts) for (const e of L.ends) { if (!e.mark && e.flesh === undefined || e.point.distanceTo(L.origin) > 399) continue;   /* (not a shot into the sky) */ const i = head++ % MARKS; marks.setMatrixAt(i, M.makeTranslation(e.point.x, e.point.y, e.point.z)); born[i] = now; marks.instanceMatrix.needsUpdate = true; }
-        if (L && s.recoil) { const yaw = Math.atan2(-L.dir.x, -L.dir.z), pitch = Math.asin(Math.max(-1, Math.min(1, L.dir.y)));
-          if (!first || now - lastShotAt > 600) { first = [yaw, pitch]; spray.length = 0; }
-          let dy = yaw - first[0]; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); spray.push([-dy * 180 / Math.PI * 9, -(pitch - first[1]) * 180 / Math.PI * 9]); if (spray.length > 40) spray.shift(); drawSpray(); }
-        lastShotAt = now; }
-      cv.style.display = s.recoil && spray.length && now - lastShotAt < 3000 ? 'block' : 'none';
+        }
       // Old marks and paths out of sight.
       for (let i = 0; i < MARKS; i++) if (born[i] && now - born[i] > MARK_MS) { born[i] = 0; marks.setMatrixAt(i, FAR); marks.instanceMatrix.needsUpdate = true; }
       for (let k = 0; k < PATHS; k++) { const P = paths[k]; if (!P.until || now <= P.until) continue; P.until = 0; P.l.geometry.setDrawRange(0, 2); P.l.geometry.attributes.position.array.fill(-5000, 0, 6); P.l.geometry.attributes.position.needsUpdate = true;
@@ -183,8 +180,6 @@ export function createPractice({ scene, pistol, boxes, bounds = () => null, sett
     dispose() { if (!COLLISION_VIEW.dev) COLLISION_VIEW.on = false;   // (the practice menu's collision view ends with the session: never in a match)
       removeEventListener('gd-throw', onThrow); cons.dispose();
       for (const o of own) { scene.remove(o); o.traverse(c => c.geometry?.dispose()); }
-      for (const m of [marks.material, lineMat, bounceMat, endMat, prevLine.material, ring.material, spots.material, tgtMat, quad.material]) m.dispose(); dotGeo.dispose(); quad.geometry.dispose(); rt?.dispose(); cv.remove(); card.remove(); pipBox.remove(); },
+      for (const m of [marks.material, lineMat, bounceMat, endMat, prevLine.material, ring.material, spots.material, tgtMat, quad.material]) m.dispose(); dotGeo.dispose(); quad.geometry.dispose(); rt?.dispose(); card.remove(); pipBox.remove(); },
   };
-  function drawSpray() { ctx.clearRect(0, 0, 150, 150); ctx.strokeStyle = '#ffffff30'; ctx.beginPath(); ctx.moveTo(75, 0); ctx.lineTo(75, 150); ctx.moveTo(0, 130); ctx.lineTo(150, 130); ctx.stroke();
-    spray.forEach(([x, y], i) => { ctx.fillStyle = i ? '#ffd23a' : '#ff5a4a'; ctx.beginPath(); ctx.arc(75 + x, 130 + y, i ? 2.4 : 3.2, 0, Math.PI * 2); ctx.fill(); }); }
 }

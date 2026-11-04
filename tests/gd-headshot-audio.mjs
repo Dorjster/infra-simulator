@@ -76,9 +76,9 @@ ok(map(true, true, true) === 'ui.kill.head.helmet' && map(true, true, false) ===
 setGdOverrides({});
 // victim / onlookers
 ok(hurtEvent('head', true, true) === 'hurt.head.helmet' && hurtEvent('head', false, true) === 'hurt.head' && hurtEvent('chest', false, true) === 'hurt.body', 'the victim: helmet / bare head / body');
-ok(hurtEvent('head', true, false) === 'hurt.head.helmet.onlooker' && hurtEvent('head', false, false) === 'hurt.head.onlooker' && hurtEvent('legs', false, false) === null, 'onlookers: a headshot (helmet ping or not); a body hit adds nothing new');
-ok(hurtEvent('head', true, true, true) === 'hurt.head.helmet.kill' && hurtEvent('head', false, true, true) === 'hurt.head.kill' && hurtEvent('chest', false, true, true) === 'hurt.body', 'a killing headshot, the victim: CS2 Death* (armour / bare); a body kill as before');
-ok(hurtEvent('head', true, false, true) === 'hurt.head.helmet.kill.onlooker' && hurtEvent('head', false, false, true) === 'hurt.head.kill.onlooker' && hurtEvent('chest', false, false, true) === null, 'a killing headshot, onlookers: CS2 Death*.Onlooker');
+ok(hurtEvent('head', true, false) === 'hurt.head.helmet.onlooker' && hurtEvent('head', false, false) === 'hurt.head.onlooker' && hurtEvent('legs', false, false) === 'hurt.body.onlooker', 'onlookers: a headshot (helmet ping or not); a body hit CS2\'s Player.DamageBody.Onlooker (v53 HITS final)');
+ok(hurtEvent('head', true, true, true) === 'hurt.head.helmet.kill' && hurtEvent('head', false, true, true) === 'hurt.head.kill' && hurtEvent('chest', false, true, true) === 'hurt.body.kill', 'a killing headshot, the victim: CS2 Death* (armour / bare); a body kill CS2\'s Player.DeathBody.Victim (v53 HITS final)');
+ok(hurtEvent('head', true, false, true) === 'hurt.head.helmet.kill.onlooker' && hurtEvent('head', false, false, true) === 'hurt.head.kill.onlooker' && hurtEvent('chest', false, false, true) === 'hurt.body.kill.onlooker', 'a killing headshot, onlookers: CS2 Death*.Onlooker; a body kill Player.DeathBody.Onlooker');
 
 // ── 2. Our stand-ins (no CS2) ──
 const power = (d, f, sr = 48000) => { let re = 0, im = 0; for (let i = 0; i < d.length; i++) { const a = 2 * Math.PI * f * i / sr; re += d[i] * Math.cos(a); im += d[i] * Math.sin(a); } return (re * re + im * im) / d.length; };
@@ -98,7 +98,7 @@ const rms = (d, a, b) => { let s = 0; for (let i = a; i < b; i++) s += d[i] * d[
   ok(band(kh, 2300, 2700, 20) > band(k, 2300, 2700, 20), 'helmet headshot kill: the helmet ping in front of the ding');
   ok(b.length / 48000 < .1, 'body hit: a short tick'); }
 // made once, at the load
-{ const before = c.made; const k1 = gdSynthWarm(); const mid = c.made; gdSynthWarm(); ok(k1 >= 5 && mid - before === 5 && c.made === mid, 'the stand-ins are made once at the match\'s load (gdPrewarm → gdSynthWarm), never again');
+{ const before = c.made; const k1 = gdSynthWarm(); const mid = c.made; gdSynthWarm(); ok(k1 >= 5 && mid - before === G.SYNTH_KINDS.length && c.made === mid, 'the stand-ins are made once at the match\'s load (gdPrewarm → gdSynthWarm), never again');
   resetVoices(); const m0 = c.made; for (let i = 0; i < 20; i++) { c.currentTime += .5; gdHitSounds(i % 2 === 0, true, i % 3 === 0); } ok(c.made === m0, '20 hits: no buffer synthesized during play'); }
 
 // ── 3. Playing: the ui bus, the ducked layers, 2 voices of each ──
@@ -146,7 +146,7 @@ resetVoices(); c.currentTime = 300;
   const { HIT_MARKER_CLASS } = await import('../dist/gd-crosshair.js');
   const shot = [], hurt = []; let view = { fx: 0, fz: -1 };
   const root = new El(), F = createHitFeedback({ parent: root, hit: (...a) => shot.push(a), hurt: (...a) => hurt.push([a[0], a[1], a[2], a[3] ? { ...a[3] } : null, a[4], a[5]]), frame: out => { out.fx = view.fx; out.fz = view.fz; return out; } });
-  F.hit(false, true, true); ok(shot[0].join() === 'false,true,true' && (F.marker.el.className === HIT_MARKER_CLASS[2] || F.marker.el.className === HIT_MARKER_CLASS[3]), 'a hit of yours: its sounds and the white marker with the headshot tick');
+  F.hit(false, true, true); ok(shot[0].slice(0, 3).join() === 'false,true,true' && (F.marker.el.className === HIT_MARKER_CLASS[2] || F.marker.el.className === HIT_MARKER_CLASS[3]), 'a hit of yours: its sounds and the white marker with the headshot tick');
   F.hit(true, false, false); ok(/\bk\b/.test(F.marker.el.className) && !/\bh\b/.test(F.marker.el.className), 'a kill: the red marker');
   F.hit(false, false, false); const m1 = F.marker.el.className; F.hit(false, false, false); ok(m1 !== F.marker.el.className && m1.replace(/ [ab]$/, '') === F.marker.el.className.replace(/ [ab]$/, ''), 'the same marker twice: the animation restarts (a / b)');
   ok(HIT_MARKER_CLASS.length === 8 && HIT_MARKER_CLASS.every(s => s.startsWith('gd-hm')), 'the hit marker\'s looks: 8 prebuilt classes (kill × head × restart)');
@@ -164,10 +164,53 @@ resetVoices(); c.currentTime = 300;
   ok(di && di.kids.length === 4 && /^s0\|s1 [ab]\|s2\|s3$/.test(segCls()) && F.stats.seg === 1 && hurt[0][5] === false, "and CS2's damage indicator lights its right segment (the shot came from the right): " + segCls());
   rec('bo', 'head', { s: 'cy' }); F.update(Gm, me, 5000); ok(hurt.length === 2 && hurt[1][2] === false && hurt[1][3].x === 1 && hurt[1][3].z === 3 && hurt[1][1] === false, 'someone else\'s headshot: placed where it happened (bare head)');
   rec('bo', 'head', { s: 'ann', hm: 1 }); F.update(Gm, me, 5000); ok(hurt.length === 2, 'your own headshot on someone: not heard twice (your feedback has it)');
-  rec('bo', 'chest', { s: 'cy' }); F.update(Gm, me, 5000); ok(hurt.length === 2, 'a body hit on someone else: nothing new');
+  rec('bo', 'chest', { s: 'cy' }); F.update(Gm, me, 5000); ok(hurt.length === 3 && hurt[2][0] === 'chest' && hurt[2][2] === false && hurt[2][3].x === 1, 'a body hit on someone else: placed, CS2\'s DamageBody.Onlooker (v53 HITS final — it was silent)'); hurt.pop();
   rec('ann', 'head', { s: 'cy', at: 1000 }); F.update(Gm, me, 5000); ok(hurt.length === 2, 'an old record arriving late: no sound');
   F.update(Gm, me, 5000); F.update(Gm, me, 5000); ok(hurt.length === 2, 'records are taken once');
   rec('ann', 'head', { s: 'cy', k: 1, hm: 1, r: [0, 0, -1] }); F.update(Gm, me, 5000); ok(hurt.length === 3 && hurt[2][5] === true && /s2 [ab]/.test(segCls()), 'killed by a headshot from behind: the Death* sound (kill flag) and the bottom segment');
   rec('bo', 'head', { s: 'cy', k: 1 }); F.update(Gm, me, 5000); ok(hurt.length === 4 && hurt[3][2] === false && hurt[3][5] === true, "an onlooker of a killing headshot: CS2's Death*.Onlooker (kill flag)"); }
 
-console.log(`PASS: gd-headshot-audio · ${n} checks (CS2 event mapping, helmet / bare head, our ping / thud / ding stand-ins made once, 2 voices of each on the ui mix, ducked layers, victim arc, placed onlooker headshots, host records)`);
+// ── 6. (v53 HITS, H2) Body armour and the knife: CS2's *BodyArmor* events, the knife's silent attacker feedback ──
+{ const ARM = { 'ui.hit.armor': 'Player.DamageBodyArmor.AttackerFeedback', 'ui.hit.armor.flesh': 'Player.DamageBodyArmor.AttackerFeedbackFlesh', 'hurt.body.armor': 'Player.DamageBodyArmor.Victim', 'hurt.body.armor.onlooker': 'Player.DamageBodyArmor.Onlooker',
+    'ui.kill.armor': 'Player.DeathBodyArmor.AttackerFeedback', 'ui.kill.armor.flesh': 'Player.DeathBodyArmor.AttackerFeedbackFlesh', 'hurt.body.armor.kill': 'Player.DeathBodyArmor.Victim', 'hurt.body.armor.kill.onlooker': 'Player.DeathBodyArmor.Onlooker', 'ui.hit.knife': 'Player.DamageBody.Knife.AttackerFeedback' };
+  for (const [id, cs] of Object.entries(ARM)) { ok(EVENTS[id]?.cs === cs, `${id} → CS2's ${cs}`); ok(Array.isArray(REF[cs]), `${cs}: CS2's reference values kept`); }
+  const R = REF; ok(R['Player.DamageBodyArmor.AttackerFeedback'][0] === 1.2 && R['Player.DamageBodyArmor.AttackerFeedback'][4] === 1.3 && R['Player.DamageBodyArmor.AttackerFeedback'][2] === 3 && R['Player.DamageBodyArmor.AttackerFeedbackFlesh'][0] === .3 && R['Player.DamageBodyArmor.AttackerFeedbackFlesh'][6] === .1 && R['Player.DamageBodyArmor.Victim'][0] === 1.5 && R['Player.DamageBodyArmor.Onlooker'][0] === .7 && R['Player.DamageBodyArmor.Onlooker'][4] === 1.3 && R['Player.DeathBodyArmor.AttackerFeedback'][0] === 1 && R['Player.DeathBodyArmor.AttackerFeedbackFlesh'][0] === .5,
+    "CS2's armour numbers (game_sounds_player.vsndevts): attacker 1.2 at pitch 1.3, instance limit 3, its flesh child .3 after .1 s; victim 1.5; onlooker .7 at 1.3; the kill 1 with its flesh child .5");
+  ok(EVENTS['ui.hit.armor'].with === 'ui.hit.armor.flesh' && EVENTS['ui.kill.armor'].with === 'ui.kill.armor.flesh' && EVENTS['hurt.body.armor.onlooker'].with === 'hurt.body.armor.onlooker.flesh', 'the armour events play their CS2 child events with them (soundevent_01)');
+  for (const id of ['ui.hit.armor', 'ui.kill.armor', 'hurt.body.armor', 'hurt.body.armor.kill']) ok(EVENTS[id].mix === 'ui' && EVENTS[id].cap === 2 && EVENTS[id].cat !== 'world', `${id}: 2D on the ui mix, 2 voices at most`);
+  for (const id of ['hurt.body.armor.onlooker', 'hurt.body.armor.kill.onlooker']) ok(EVENTS[id].cat === 'world' && EVENTS[id].cap === 2, `${id}: placed, 2 voices at most`);
+  const o2 = [null, null], mp = (k, h, hm, ar, kn) => { const m = hitEvents(k, h, hm, o2, ar, kn); return o2.slice(0, m).join('+'); };
+  ok(mp(false, false, false, true) === 'ui.hit.armor' && mp(false, false, false, false) === 'ui.hit', 'a body hit on kevlar: the kevlar tick (DamageBodyArmor); on flesh: the body tick');
+  ok(mp(true, false, false, true) === 'ui.kill.armor' && mp(true, false, false, false) === 'ui.kill', 'a body kill on kevlar: DeathBodyArmor; on flesh: DeathBody');
+  ok(mp(false, true, true, true) === 'ui.hit.helmet' && mp(false, true, false, true) === 'ui.hit.head', 'a headshot is the head\'s events whatever the vest');
+  ok(mp(false, false, false, true, true) === 'ui.hit.knife' && EVENTS['ui.hit.knife'].silent, "a knife's hit: CS2's Knife.AttackerFeedback — sounds/common/null.vsnd, silent (ours too)");
+  ok(hurtEvent('chest', false, true, false, true) === 'hurt.body.armor' && hurtEvent('stomach', false, true, true, true) === 'hurt.body.armor.kill' && hurtEvent('chest', false, false, false, true) === 'hurt.body.armor.onlooker' && hurtEvent('chest', false, false, true, true) === 'hurt.body.armor.kill.onlooker' && hurtEvent('head', true, true, false, true) === 'hurt.head.helmet', 'the victim and onlookers: the armour events for a body hit on kevlar');
+  ok(synthSamples('hit.armor') instanceof Float32Array && synthSamples('hit.armor').length / 48000 <= .13 && EVENTS['ui.hit.armor'].syn === 'hit.armor', 'our own kevlar tick without CS2 (hit.armor, 120 ms), synthesized once with the others');
+  // voices: a burst of armour hits keeps 2 at most; the knife plays none
+  resetVoices(); const s0 = c.started.length; for (let k = 0; k < 6; k++) gdHitSounds(false, false, false, true); let live = 0; for (const s of c.started.slice(s0)) if (!s.stopped) live++;
+  ok(c.started.length - s0 === 6 && voiceStats.capped >= 4, `6 armour hits in a row: each heard, the 3rd on fading the oldest — at most 2 at once (${voiceStats.capped} given way)`);
+  const s1 = c.started.length; gdHitSounds(false, false, false, false, true); ok(c.started.length === s1, 'a knife hit starts no voice');
+  // the host: ar on the result and the record; w the attacker's gun
+  const CL = await import('../dist/combat-logic.js'), { weaponById } = await import('../dist/weapons-data.js');
+  const g = { mode: 'arena', combat: { hp: { cy: 100, bo: 100 }, down: {}, kills: {}, deaths: {}, feed: [], armor: { cy: { kevlar: 100, helmet: false } } } };
+  const ra = CL.applyHit(g, 'Ann', 'Cy', weaponById('ak'), 'chest', 100), rb = CL.applyHit(g, 'Ann', 'Bo', weaponById('ak'), 'chest', 100), rl = CL.applyHit(g, 'Ann', 'Cy', weaponById('ak'), 'legs', 100);
+  ok(ra.ar === 1 && !('ar' in rb) && !('ar' in rl) && ra.w === 'ak', 'the host: ar 1 for a chest hit on kevlar, none on flesh or the legs; w the attacker\'s gun');
+  const bR = CL.bleed(g, 'Cy', ra, 0, 10, 0, 0, 0, -1, Date.now()); ok(bR && bR.ar === 1 && bR.w === 'ak', 'the blood record carries ar and w (every computer hears the armour)');
+  { const bl = [], Gm = { combat: { bl } }, heard = [], shots = []; class El { constructor() { this.className = ''; this.kids = []; this.style = {}; } append(...k) { this.kids.push(...k); } }
+    globalThis.document = { createElement: () => new El(), getElementById: () => null, head: new El(), body: new El() };
+    const { createHitFeedback } = await import('../dist/gd-hit-feedback.js'); const F = createHitFeedback({ parent: new El(), hit: (...a) => shots.push(a), hurt: (...a) => heard.push(a), frame: out => { out.fx = 0; out.fz = -1; return out; } });
+    F.update(Gm, 'ann', 5000); let i = 900; bl.push({ i: ++i, at: 5000, v: 'cy', z: 'chest', d: 27, p: [1, 2, 3], r: [1, 0, 0], s: 'ann', ar: 1, w: 'ak' }); F.update(Gm, 'ann', 5000); F.hit(false, false, false);
+    ok(shots[0][3] === true && shots[0][4] === false && heard.length === 0, 'your hit on a vest: the shooter\'s sound picks the armour event from your newest record (not heard twice)');
+    F.hit(false, false, false, 1, 'm4a1s'); F.hit(false, false, false, 0, 'knife'); ok(shots[1][3] === true && shots[1][4] === false && shots[2][3] === false && shots[2][4] === true, '(v53 HITS final) the hit result\'s own ar / w, when passed, pick the sound — no record search'); shots.splice(1, 2);
+    bl.push({ i: ++i, at: 5000, v: 'cy', z: 'chest', d: 40, p: [1, 2, 3], r: [1, 0, 0], s: 'ann', w: 'knife' }); F.update(Gm, 'ann', 5000); F.hit(false, false, false); ok(shots[1][4] === true, '…a knife\'s: the knife feedback');
+    bl.push({ i: ++i, at: 5000, v: 'bo', z: 'stomach', d: 25, p: [4, 2, 3], r: [1, 0, 0], s: 'cy', ar: 1 }); F.update(Gm, 'ann', 5000); ok(heard.length === 1 && heard[0][0] === 'stomach' && heard[0][2] === false && heard[0][6] === true, 'someone else\'s body hit on kevlar: placed, the onlooker\'s armour event');
+    bl.push({ i: ++i, at: 5000, v: 'ann', z: 'chest', d: 25, p: [4, 2, 3], r: [1, 0, 0], s: 'cy', ar: 1 }); F.update(Gm, 'ann', 5000); ok(heard.length === 2 && heard[1][2] === true && heard[1][6] === true, 'your own vest hit: the victim\'s armour event'); } }
+
+// (v53 HITS final) CS2's child events: the armour / bare body kills carry Player.DeathBody.Flesh; BaseGrenade.Explode both of its
+{ const ch = { 'hurt.body.kill': ['Player.DeathBody.Victim', 'hurt.body.kill.flesh'], 'hurt.body.armor.kill': ['Player.DeathBodyArmor.Victim', 'hurt.body.kill.flesh'], 'hurt.body.kill.onlooker': ['Player.DeathBody.Onlooker', 'hurt.body.kill.onlooker.flesh'], 'hurt.body.armor.kill.onlooker': ['Player.DeathBodyArmor.Onlooker', 'hurt.body.kill.onlooker.flesh'] };
+  for (const [id, [cs, w]] of Object.entries(ch)) ok(EVENTS[id]?.cs === cs && EVENTS[id].with === w && EVENTS[w]?.cs === 'Player.DeathBody.Flesh' && EVENTS[w].layer && EVENTS[id].cap === 2, `${id}: ${cs} with its child Player.DeathBody.Flesh (enable_child_events), 2 voices`);
+  ok(EVENTS['hurt.body.onlooker'].cs === 'Player.DamageBody.Onlooker' && EVENTS['hurt.body.onlooker'].cap === 2 && EVENTS['hurt.body.onlooker'].cat === 'world', 'the onlookers\' body hit: Player.DamageBody.Onlooker, placed, 2 voices');
+  ok(EVENTS['nade.he.explode'].far === 'nade.he.far' && EVENTS['nade.he.far']?.cs === 'BaseGrenade.ExplodeDistant' && EVENTS['nade.he.explode'].with === 'nade.he.effect' && EVENTS['nade.he.effect'].cs === 'BaseExplosionEffect.Sound' && EVENTS['nade.he.effect'].layer, 'the HE: BaseGrenade.Explode with both its children (.ExplodeDistant and BaseExplosionEffect.Sound)');
+  for (const c of ['Player.DeathBody.Victim', 'Player.DeathBody.Onlooker', 'Player.DeathBody.Flesh']) ok(REF[c], c + ' in CS2\'s reference values (gd-sounds-ref.js)');
+  ok(REF['Player.DeathBody.Victim']?.[0] === 2 && REF['Player.DeathBody.Flesh']?.[0] === 2 && REF['Player.DeathBody.Flesh']?.[6] === .1 && REF['Player.DeathBody.Onlooker']?.[0] === 2, 'their CS2 numbers: DeathBody.Victim / .Onlooker vol 2, .Flesh vol 2 after .1 s (lines 4558 / 4634 / 3851)'); }
+console.log(`PASS: gd-headshot-audio · ${n} checks (CS2 event mapping, helmet / bare head, our ping / thud / ding stand-ins made once, 2 voices of each on the ui mix, ducked layers, victim arc, placed onlooker headshots, host records; v53 HITS: body armour and the knife)`);

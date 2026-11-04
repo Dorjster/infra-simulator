@@ -7,21 +7,28 @@
 //  · the victim and the onlookers — update() reads the room's blood records (combat.bl: one per bullet / knife hit the
 //    host applied, rising i; v victim, z zone, hm helmet, k killed, s shooter, p where, r direction): a hit on YOU
 //    plays your own hurt sound (2D) and lights CS2's damage indicator towards where it came from (the shot's direction
-//    against your view, from the listener the camera set this frame, snapped to one of its four segments); a headshot
+//    against your view, from the listener the camera set this frame, snapped to one of its four segments); a hit
 //    on anyone else plays where it happened (placed: CS2's distance curve, walls, HRTF — gdPlay), unless you fired it
 //    (your own feedback has it). A killing headshot is CS2's Death* event, a wounding one its Damage* (gd-sounds.js
-//    hurtEvent). The red screen flash on losing health stays combat-hud.js's (#cb-flash).
+//    hurtEvent). There is no red screen flash on losing health in GD (CS2 has none: combat-hud.js's #cb-flash was removed
+//    there); your own wound is CS2's local-player blood splatter (gd-blood.js, H6).
 //  · CS2's damage indicator (panorama/styles/hud/huddamageindicator.vcss, decompiled from the user's install):
 //    @define damageIndicatorSize 300px; four .Damage__Segment panels (Top / Right / Bottom / Left: rotateZ 0 / 90 /
 //    180 / 270°, each translate3d(0, −5px, 0)), each a radial gradient — centre 50 % 50 %, radius 49 % — white at
 //    .862–.889 and .920–.999 (a thin and a thick band), clipped to a 90° wedge (clip: radial(50% 50%, 315deg, 90deg)),
 //    wash-color #cc3300. Drawn at the picture's height (300 px at 1080 p). Its fade (950 ms: in 5 %, held, out) is ours —
 //    CS2 drives it from code, not the stylesheet.
+// v53 HITS (H2): body armour — a record's ar (the bullet met kevlar on the chest or stomach, combat-logic.js hitMarks)
+// picks CS2's *BodyArmor* events: for the shooter (hit(): the result's ar / w when passed, else the newest record of yours
+// not yet used — a knife's w: CS2's knife feedback is silent), for the victim (its own) and for onlookers (every hit,
+// placed: flesh, armour or head — v53 HITS final; before, a bare body hit was silent to onlookers).
 // State: the newest record seen (lastI; on the first look everything already there is old news). Every frame: one walk
 // over at most 12 records, nothing allocated; a hit only switches prebuilt class / transform strings.
 import { gdHitSounds, gdHurtSound } from './gd-sounds.js';
 import { createHitMarker } from './gd-crosshair.js';
 import { listenerFrame } from './spatial-audio.js';
+import { weaponById } from './weapons-data.js';
+const knifeId = w => !!w && weaponById(w)?.kind === 'knife';
 
 // Where a hit came from on your screen: the shot travelled along (rx, rz); it came FROM −(rx, rz). Your view looks
 // along (fx, fz) (three.js: −z ahead, +x right of it). Degrees clockwise from ahead, 0 … 360.
@@ -45,21 +52,26 @@ export function createHitFeedback({ parent, doc = globalThis.document, hit = gdH
   // CS2's damage indicator: one box, its four segments built once (a hit switches one segment's class: A / B restart).
   const di = doc.createElement('div'); di.className = 'gd-da'; const segs = [], segPar = new Uint8Array(4);
   for (let k = 0; k < 4; k++) { const e = doc.createElement('i'); e.className = SEG_CLS[k][0]; di.append(e); segs.push(e); } parent?.append?.(di);
-  let lastI = -Infinity, primed = false; const LF = { fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 }, AT = { x: 0, y: 0, z: 0 };
-  const stats = { hits: 0, hurt: 0, onlooker: 0, arcs: 0, seg: -1 };
+  let lastI = -Infinity, primed = false, Gs = null, meS = '', mineI = -Infinity;   /* (Gs / meS: the last update's game and key — hit() reads your newest record) */ const LF = { fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 }, AT = { x: 0, y: 0, z: 0 };
+  const stats = { hits: 0, hurt: 0, onlooker: 0, arcs: 0, seg: -1, armor: 0 };
   function arc(rx, rz) { frame(LF); const k = segmentOf(arcAngle(rx, rz, LF.fx, LF.fz)); segPar[k] ^= 1; segs[k].className = SEG_CLS[k][1 + segPar[k]]; stats.arcs++; stats.seg = k; }
   return {
     marker, stats,
     // A hit of yours the host confirmed.
-    hit(kill, head, helmet) { marker.show(!!kill, !!head); hit(!!kill, !!head, !!helmet); stats.hits++; },
+    // (v53 HITS final) arIn / wIn: the hit result's own ar and w (combat-logic.js hitMarks puts them on it) when the caller
+    // passes them; else your newest unused record's (the host put it in the same state as the reply).
+    hit(kill, head, helmet, arIn, wIn) { marker.show(!!kill, !!head); let ar = false, kn = false; const L = Gs?.combat?.bl;
+      if (arIn !== undefined || wIn !== undefined) { ar = !!arIn; kn = knifeId(wIn); }
+      else if (L) for (let k = L.length - 1; k >= 0; k--) { const r = L[k]; if (r.s === meS && r.i > mineI) { mineI = r.i; ar = !!r.ar; kn = knifeId(r.w); break; } }
+      hit(!!kill, !!head, !!helmet, ar, kn); stats.hits++; if (ar) stats.armor++; },
     // Every frame in a match: G the game, me your key, now the host's clock (ms).
     update(G, me, now) {
-      const L = G?.combat?.bl; if (!L || !L.length) { primed = true; return; }
+      Gs = G; meS = me; const L = G?.combat?.bl; if (!L || !L.length) { primed = true; return; }
       if (!primed) { primed = true; for (let k = 0; k < L.length; k++) if (L[k].i > lastI) lastI = L[k].i; return; }
       for (let k = 0; k < L.length; k++) { const r = L[k]; if (!(r.i > lastI)) continue; lastI = r.i;
         if (now - r.at > 1000) continue;   // (a late frame: an old hit is no news)
-        if (r.v === me) { hurt(r.z, !!r.hm, true, null, null, !!r.k); stats.hurt++; const d = r.r; if (d && Number.isFinite(d[0]) && Number.isFinite(d[2])) arc(d[0], d[2]); }
-        else if (r.s !== me && r.z === 'head' && r.p) { AT.x = r.p[0]; AT.y = r.p[1]; AT.z = r.p[2]; hurt('head', !!r.hm, false, AT, r.v, !!r.k); stats.onlooker++; } }
+        if (r.v === me) { hurt(r.z, !!r.hm, true, null, null, !!r.k, !!r.ar); stats.hurt++; const d = r.r; if (d && Number.isFinite(d[0]) && Number.isFinite(d[2])) arc(d[0], d[2]); }
+        else if (r.s !== me && r.p) { AT.x = r.p[0]; AT.y = r.p[1]; AT.z = r.p[2]; hurt(r.z === 'head' ? 'head' : r.z, !!r.hm, false, AT, r.v, !!r.k, !!r.ar); stats.onlooker++; } }   // (v53 HITS final: every hit you see — CS2's DamageBody / DeathBody .Onlooker for flesh, *BodyArmor* on kevlar, the headshot ones; capped at 2 voices each)
     },
   };
 }

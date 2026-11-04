@@ -113,15 +113,22 @@ export function poseAmmo(game, name, shot, weapon, now = Date.now()) {
 // ── Damage ──────────────────────────────────────────────────────────────────────────────────────────────────
 // Damage one player (or bot) with a weapon hit: armor and the head-shot rule apply (weapons-data.js hitDamage).
 export function applyHit(game, shooter, targetName, wpn, zone, dist, pellets = 1, now = Date.now(), base = null, how = null) {
-  const C = state(game), tk = key(targetName), arm = C.armor?.[tk] || null, r = hitDamage(wpn, zone, dist, pellets, arm, base), helm = zone === 'head' && !!arm?.helmet && arm.kevlar > 0;
+  const C = state(game), tk = key(targetName), arm = C.armor?.[tk] || null, r = hitDamage(wpn, zone, dist, pellets, arm, base), helm = zone === 'head' && !!arm?.helmet && arm.kevlar > 0, kev = (arm?.kevlar || 0) > 0;
   if (arm && r.armor) { arm.kevlar = Math.max(0, arm.kevlar - r.armor); if (!arm.kevlar) arm.helmet = false; }
-  return hitMarks(game, hurt(game, shooter, targetName, wpn, r.hp, zone, now, r.headKill, how), shooter, helm);
+  return hitMarks(game, hurt(game, shooter, targetName, wpn, r.hp, zone, now, r.headKill, how), shooter, helm, wpn, kev, tk, now);
 }
 // (v53 S3) Who hit (sk: the shooter's key) and whether the bullet met a helmet (hm: the victim wore one as it struck the
 // head) on a hit's result — the shooter's headshot sound (gd-sounds.js hitEvents) — and so on its blood record (bleed:
 // s, hm), from which the victim and the onlookers hear the right headshot (gd-hit-feedback.js). Additive fields only,
 // Global Defensive only (other modes' hit results stay as in 52.0.5 — v53 integration, tests/gd-other-modes-untouched.mjs).
-function hitMarks(game, out, shooter, helm) { if (game?.mode === 'arena' && out && out.dmg > 0) { out.sk = key(shooter); if (helm && out.zone === 'head') out.hm = 1; } return out; }
+// (v53 HITS) Two more, as small: w — the attacker's weapon id (the victim's tagging: its weapons.vdata flinch, hitTag below) —
+// and ar 1 when the bullet met body armour (kevlar > 0 before the hit, on the chest or stomach: CS2's
+// Player.DamageBodyArmor / DeathBodyArmor events instead of the flesh ones — gd-sounds.js). An HE's hit makes no blood
+// record: it stamps hx (victim key → the host's clock of their newest HE hit, ms — v53 HITS final: a count could be read
+// as new by a page that just joined), so the victim's computer tags it with the HE's own flinch.
+function hitMarks(game, out, shooter, helm, wpn = null, kev = false, tk = null, now = Date.now()) { if (game?.mode === 'arena' && out && out.dmg > 0) { out.sk = key(shooter); if (helm && out.zone === 'head') out.hm = 1;
+    if (wpn?.id) out.w = String(wpn.id).slice(0, 16); if (kev && (out.zone === 'chest' || out.zone === 'stomach')) out.ar = 1;
+    if (wpn?.id === 'he' && tk) { const hx = state(game).hx ??= {}, t = Math.round(Number.isFinite(+now) ? +now : Date.now()); hx[tk] = t > (hx[tk] || 0) ? t : (hx[tk] || 0) + 1; } } return out; }   // (two HEs in one ms: still a new stamp)
 // Take `dmg` HP (grenades and fire pass their own damage); knocks out at 0 with a kill-feed line; assists for
 // anyone else who did 41+ damage to the victim in this life (CS2).
 // `how`: CS2 kill-feed marks { wallbang, smoke, noscope, air, blind, far (metres) }.
@@ -162,7 +169,7 @@ const damageCap = wpn => Math.round((wpn.dmg || 30) * 4);
 // A Global Defensive body's feet (game units): the eye (pose.y) less its height over the feet as the pose told it (ey,
 // from the client's true feet fy: lan/room.mjs; a pose rewound for a hit, lag-comp.js, keeps its own y), else less
 // CS2's eye — 64 HU standing, 46 crouched (bots, which send no feet, never crouch).
-const DUCK_EYE = 46 * 2.54 / 16.5;   // (arena-move.js EYE_GD.duck)
+const DUCK_EYE = 46.045 * 2.54 / 16.5;   // (arena-move.js EYE_GD.duck: 46.045 HU — v53 HITS, as the GUNS package's eye)
 export const poseFeet = q => Math.max(0, (q.y ?? EYE) - (Number.isFinite(q.ey) ? q.ey : q.crouched ? DUCK_EYE : EYE));
 
 // Line of fire: shooter's eye to the target point is clear of the map's walls and crates (3D). Lenient: refused only
@@ -171,9 +178,32 @@ const ZONE_Y = { head: 10.2, chest: 7.9, stomach: 5.8, legs: 2.7 };   // (the mi
 // Blood (gd-blood.js): each bullet or knife hit the host applies leaves a small record on the combat state, combat.bl —
 // the last BLEED_MS of hits, 12 at most: { i (rising: max(last + 1, host ms)), at (host ms), v (the victim's key), z
 // (zone), d (damage taken), k (1: it killed), kn (1: a knife), p (where it met the body, units, 2 decimals), r (its
-// direction, 3 decimals) }. Every computer draws the same blood from it (seeded by i); clients only draw. A page
+// direction, 3 decimals), s (the shooter's key), hm (1: a helmet), w (the attacker's weapon id), ar (1: body armour met —
+// v53 HITS) }. Every computer draws the same blood from it (seeded by i); clients only draw. A page
 // without gd-blood.js ignores the field (gd-52 unchanged: nothing it sends or checks moved).
 export const BLEED_MS = 1500;
+// (v53 HITS, mv-tagging-per-weapon) Tagging — being hit slows you (arena-move.js tag: velMod, back by 0.4 a second — CS:GO's,
+// not in CS2's files). How much: the ATTACKER'S weapon's weapons.vdata m_flFlinchVelocityModifierLarge / Small
+// (weapons-data.js flinch; the knife .3 / .3, weapon_hegrenade .3 / .1). The rule is CS:GO's, UNVERIFIED for CS2 (its code
+// is not in the install): the first hit while velMod ≈ 1 takes you to Large; a hit while still slowed to
+// min(velMod, velMod × Small). A 0 (every SMG's vdata: Large and Small 0.0) is not explained by the files: read as
+// "no value", our TAG_FALLBACK .5 (labelled, until a CS2 clip says otherwise).
+export const FLINCH_HE = [.3, .1], FLINCH_KNIFE = [.3, .3], TAG_FALLBACK = .5;   // (weapon_hegrenade, weapon_knife: weapons.vdata)
+export function flinchTag(cur, fl) { const v = Number.isFinite(cur) ? cur : 1, L = fl?.[0], S = fl?.[1];
+  if (!(L > 0)) return Math.min(v, TAG_FALLBACK);
+  return v >= .999 ? Math.min(v, L) : Math.min(v, v * (S > 0 ? S : L)); }
+// Your newest hit (lab.js onHurt, once per HP drop): its blood record (combat.bl, v your key, newer than seen.i) → the
+// attacker's gun's flinch; and an HE stamp on hx newer than seen.hx → the HE's too (both in one drop: both, in turn);
+// neither: null (fall damage, the bomb, fire: the caller's own rule). now (the host's clock, ms): a record or stamp older
+// than HIT_FRESH ms is no news — a page that just joined never takes an old one (v53 HITS final; seen.hx is kept up to
+// date on every call, so an HE read with a bullet is not read again later). seen: the caller's small memory (i, hx).
+// Nothing allocated.
+export const HIT_FRESH = 1500;
+export function hitTag(game, me, cur, seen, now = NaN) { const C = game?.combat, k = key(me), L = C?.bl, fresh = t => !Number.isFinite(now) || !(now - t > HIT_FRESH); let rec = null, v = cur, any = false;
+  if (L) for (let j = L.length - 1; j >= 0; j--) { const r = L[j]; if (r && r.v === k && !(+r.i <= (seen.i ?? -Infinity))) { rec = r; break; } }
+  if (rec) { seen.i = +rec.i; if (fresh(+rec.at)) { const w = weaponById(rec.w); v = flinchTag(v, rec.w === 'he' ? FLINCH_HE : w?.kind === 'knife' ? FLINCH_KNIFE : w?.flinch); any = true; } }
+  const hx = +(C?.hx?.[k]) || 0; if (hx > (seen.hx ?? 0)) { seen.hx = hx; if (fresh(hx)) { v = flinchTag(v, FLINCH_HE); any = true; } }
+  return any ? v : null; }
 const r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
 export function bleed(game, victim, res, px, py, pz, dx, dy, dz, now = Date.now(), knife = false) {
   if (!res || typeof res !== 'object' || !(res.dmg > 0) || !combatOn(game) || ![px, py, pz, dx, dy, dz].every(Number.isFinite)) return null;
@@ -181,7 +211,7 @@ export function bleed(game, victim, res, px, py, pz, dx, dy, dz, now = Date.now(
   while (L.length && (now - L[0].at > BLEED_MS || L.length >= 12)) L.shift();
   const rec = { i: c.blI = Math.max((c.blI || 0) + 1, now), at: now, v: key(victim), z: res.zone || 'chest', d: Math.round(res.dmg), p: [r2(px), r2(py), r2(pz)], r: [r3(dx / len), r3(dy / len), r3(dz / len)] };
   if (res.down) { rec.k = 1; const dn = game.mode === 'arena' ? c.down?.[rec.v] : null; if (dn && Math.abs((dn.at || 0) - now) < 5) { dn.rg = [rec.p[0], rec.p[1], rec.p[2], rec.r[0], rec.r[1], rec.r[2]]; if (rec.z !== 'chest') dn.z = rec.z; } }   // (v53 DEATH: the killing hit's point and direction on the down record — every computer's ragdoll pushed the same way, gd-ragdoll.js)
-  if (knife) rec.kn = 1; if (res.hm) rec.hm = 1; if (typeof res.sk === 'string') rec.s = res.sk; L.push(rec); return rec;   // (hm, s: v53 S3 — hitMarks)
+  if (knife) rec.kn = 1; if (res.hm) rec.hm = 1; if (typeof res.sk === 'string') rec.s = res.sk; if (typeof res.w === 'string') rec.w = res.w; if (res.ar) rec.ar = 1; L.push(rec); return rec;   // (hm, s: v53 S3 — hitMarks; w, ar: v53 HITS)
 }
 // From a shooter's eye to a body (its pose: x, z, feet — poseFeet — or fy, crouched / cr) at the hit's zone: the point on
 // the body's near side, along that line (bots' shots, knives, hits without a shot record).
@@ -287,8 +317,8 @@ export function combatApply(game, a, name, players = [], actor = null, now = Dat
   // Damage is computed here from the real distance and what the bullet went through, never trusted from the shooter.
   // Kill-feed marks: wallbang and through smoke are the host's own findings; no-scope, airborne and blind come from the shooter.
   const eyeA = from ? (from.y ?? 9.7) : 0, eyeB = to ? (to.y ?? 9.7) - 1.5 : 0, how = { wallbang: through < 1, smoke: !!(from && to && smokeBlocks(game, from.x, eyeA, from.z, to.x, eyeB, to.z, now)), noscope: !!a.noscope && !!wpn.zoom, air: !!a.air, blind: !!a.blind, far: Math.round(dist * .165) };
-  const arm = c.armor?.[tk], helm = !!arm?.helmet && arm.kevlar > 0; if (arm && res.armor) { arm.kevlar = Math.max(0, arm.kevlar - res.armor); if (!arm.kevlar) arm.helmet = false; }
-  const out = hitMarks(game, hurt(game, name, target.name, wpn, res.hp, res.zone, now, false, how), name, helm);
+  const arm = c.armor?.[tk], helm = !!arm?.helmet && arm.kevlar > 0, kev0 = (arm?.kevlar || 0) > 0; if (arm && res.armor) { arm.kevlar = Math.max(0, arm.kevlar - res.armor); if (!arm.kevlar) arm.helmet = false; }
+  const out = hitMarks(game, hurt(game, name, target.name, wpn, res.hp, res.zone, now, false, how), name, helm, wpn, kev0, tk, now);
   if (wound) bleed(game, target.name, out, wound.at[0], wound.at[1], wound.at[2], wound.dir[0], wound.dir[1], wound.dir[2], now);
   else if (from && to) bleedFrom(game, target.name, out, from.x, from.y ?? EYE, from.z, to, now);
   return out;

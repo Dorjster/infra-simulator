@@ -34,7 +34,7 @@ tick(1500); assert.equal(d.round.phase, 'live', 'not yet'); tick(1800); assert.e
 assert.throws(() => arenaApply(g, { type: 'defuse', hold: true }, 'Cy', players, t), /closer/);
 players[1].pose = { ...players[0].pose, x: players[0].pose.x + 2 }; arenaApply(g, { type: 'defuse', hold: true }, 'Cy', players, t);
 tick(4000); assert.equal(d.round.phase, 'planted'); tick(1200); assert.equal(d.round.phase, 'over'); assert.equal(d.round.winner, 'ct'); assert.equal(d.round.reason, 'defuse');
-assert.deepEqual(d.score, { t: 0, ct: 1 }); assert.equal(d.money.cy, 400 + 3500, 'CT win $3,500'); assert.equal(d.money.ann, 100 + 300 + 1400 + 800, 'plant $300, loss $1,400, planted-but-lost $800');
+assert.deepEqual(d.score, { t: 0, ct: 1 }); assert.equal(d.money.cy, 400 + 300 + 3500, 'the defuser $300 (v53 HITS: Player_Cash_Award_Bomb_Defused, CS:GO\'s 300) and the CT win $3,500'); assert.equal(d.money.ann, 100 + 300 + 1400 + 800, 'plant $300, loss $1,400, planted-but-lost $800');
 // Next round after the round-end pause; survivors keep their gear.
 tick(DEFUSE.overMs + 100); assert.equal(d.round.phase, 'freeze'); assert.equal(d.n, 2); assert.equal(g.arena.loadout.ann.secondary, 'deagle', 'survivor keeps the Deagle');
 assert(g.combat.spawnTo.ann && g.combat.spawnTo.cy, 'spawn orders for both');
