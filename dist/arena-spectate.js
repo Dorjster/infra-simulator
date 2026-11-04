@@ -23,12 +23,16 @@ const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'e
 const NO_P = [];
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // CS2's eye over the feet: 64 HU standing, 46 crouched (16.5 HU per game unit · 2.54: the game's inch-based units).
-export const EYE_STAND = 9.7, EYE_CROUCH = 46 * 2.54 / 16.5;
+// (v53 GUNS final: the same eye as your own — arena-move.js EYE_GD, 64.0626 HU standing from CS2's getpos, 46.045 HU
+// crouched, CS:GO's VEC_DUCK_VIEW, unverified in CS2 — where 9.7 / 46 HU were before.)
+export const EYE_STAND = 64.0626 * 2.54 / 16.5, EYE_CROUCH = 46.045 * 2.54 / 16.5;
 // The watched player's eye over their feet: the interpolated one (multiplayer.js place: m.iey), else their pose's
 // (lan/room.mjs ey), else CS2's standing / crouched eye.
 export const eyeOf = (iey, ey, crouched) => Number.isFinite(iey) ? iey : Number.isFinite(ey) ? ey : crouched ? EYE_CROUCH : EYE_STAND;
 // The way they look: yaw (0 = −z, as the game's own camera) and pitch (up +), clamped as the host clamps it.
-export const clampPitch = p => Number.isFinite(p) ? Math.max(-1.5, Math.min(1.5, p)) : 0;
+// (v53 GUNS final: ±89° — arena-move.js PITCH_GD, CS2's cl_pitchup / cl_pitchdown, as Global Defensive's look and the host now clamp it)
+export const PITCH_SPEC = 89 * Math.PI / 180;
+export const clampPitch = p => Number.isFinite(p) ? Math.max(-PITCH_SPEC, Math.min(PITCH_SPEC, p)) : 0;
 // Their eye's spot and look on the camera (one Euler, refilled: nothing made per frame). The same 'YXZ' order the
 // player's own camera uses (lab.js), so what you see is exactly what they see (their view punch aside).
 const E = new THREE.Euler(0, 0, 0, 'YXZ');

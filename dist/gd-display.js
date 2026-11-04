@@ -18,6 +18,27 @@
 // Defaults: Native ratio, Auto resolution (the window at the Graphics mode's pixel density — exactly v51's sizing), black
 // bars, display mode left as it is. Other modes never read these settings.
 
+// v53 GUNS (mv-mouse-sensitivity-scale): CS2's mouse. One count of the mouse turns the view sensitivity × m_yaw degrees
+// sideways and sensitivity × m_pitch up and down (m_yaw = m_pitch = 0.022, sensitivity 1.25 by default — CS2's console
+// defaults, FROM MEMORY: the install holds the cvar names only, not their values); scoped, ×zoom_sensitivity_ratio's
+// factor as before (lab.js). Global Defensive only (lab.js mouse look: inArena()); the other modes keep .0021 rad × the
+// Settings look slider. Set with the console's `sensitivity` (gd-console.js) or Settings → Global Defensive → Mouse;
+// saved in the preferences (gdSens). A browser's movementX is the system's pointer pixels, not raw counts.
+import { loadPreferences, savePreferences } from './player-preferences.js';
+export const M_YAW = .022, M_PITCH = .022, SENS_DEFAULT = 1.25, SENS_RANGE = [.01, 10];
+export const sensOf = p => { const v = +p?.gdSens; return Number.isFinite(v) && v > 0 ? Math.max(SENS_RANGE[0], Math.min(SENS_RANGE[1], v)) : SENS_DEFAULT; };
+// Radians the view turns per mouse count (yaw: m = M_YAW, pitch: M_PITCH).
+export const lookStep = (sens, m = M_YAW) => sens * m * Math.PI / 180;
+// The live value lab.js reads every mouse event (no preferences read per event): kept current on every change.
+export const gdSens = { v: sensOf(loadPreferences()), yaw: 0, pitch: 0 };
+const syncSens = v => { gdSens.v = v; gdSens.yaw = lookStep(v, M_YAW); gdSens.pitch = lookStep(v, M_PITCH); return v; };
+syncSens(gdSens.v); globalThis.addEventListener?.('infra-preferences', e => syncSens(sensOf(e.detail || loadPreferences())));
+// The game's live preferences object (lab.js `settings`: the Settings panel saves it whole on every change) — bound
+// once, so the console's value is in it too and the next Settings change doesn't put the old one back (final review).
+let LIVE = null; export function bindSensPrefs(p) { if (p && typeof p === 'object') LIVE = p; return p; }
+// The console's `sensitivity v`: clamped to SENS_RANGE, saved, live at once. Returns the value now in use.
+export function setSensitivity(v) { const n = +v; if (!Number.isFinite(n) || n <= 0) return gdSens.v; const p = loadPreferences(); p.gdSens = sensOf({ gdSens: n }); if (LIVE) LIVE.gdSens = p.gdSens; syncSens(p.gdSens); savePreferences(LIVE ? { ...p, ...LIVE } : p); return gdSens.v; }
+
 export const GD_VFOV = 2 * Math.atan(Math.tan(Math.PI / 4) * .75) * 180 / Math.PI;   // 73.7397…: CS2's fov 90 on 4:3, up and down
 export const hfovOf = (vfov, aspect) => 2 * Math.atan(Math.tan(vfov * Math.PI / 360) * aspect) * 180 / Math.PI;
 export const vfovOf = (hfov, aspect) => 2 * Math.atan(Math.tan(hfov * Math.PI / 360) / aspect) * 180 / Math.PI;
@@ -115,5 +136,7 @@ export function videoSettingsHTML(p, env) {
     + `<label title="The picture's real pixels (the dynamic resolution scales this, not the window)">Resolution<select data-set="gdRes">${opt('auto', 'Auto (the window · Graphics mode)', cur)}${res.map(([w, h]) => opt(resKey(w, h), w + ' × ' + h, cur)).join('')}</select></label>`
     + `<label title="A ratio that isn't the screen's: black bars keep the picture's shape; stretched fills the screen (the 4:3 stretched look)">Scaling<select data-set="gdScale"${n.aspect === 'native' ? ' disabled' : ''}>${opt('bars', 'Black bars', n.scale)}${opt('stretched', 'Stretched', n.scale)}</select></label>`
     + `<label>Display mode<select data-set="gdDisplay">${modes.map(([v, t]) => opt(v, t, n.mode)).join('')}</select></label>`
-    + `</div><p class="cp-muted">Field of view as CS2: ${hfovOf(GD_VFOV, A).toFixed(1)}° across × ${GD_VFOV.toFixed(1)}° up and down at this ratio. Saved on this computer; takes effect at once in a match.</p>`;
+    + `</div><p class="cp-muted">Field of view as CS2: ${hfovOf(GD_VFOV, A).toFixed(1)}° across × ${GD_VFOV.toFixed(1)}° up and down at this ratio. Saved on this computer; takes effect at once in a match.</p>`
+    // (v53 GUNS: CS2's sensitivity — the console's `sensitivity` too; Global Defensive only)
+    + `<h3>Mouse</h3><div class="set-grid gd-mouse"><label title="CS2's sensitivity: each mouse count turns the view sensitivity × 0.022° (m_yaw / m_pitch); CS2's default 1.25. The console's sensitivity command sets the same value">Sensitivity (CS2)<input data-set="gdSens" type="number" min="${SENS_RANGE[0]}" max="${SENS_RANGE[1]}" step="0.01" value="${sensOf(p)}"></label></div>`;
 }

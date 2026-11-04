@@ -15,12 +15,14 @@
 //                               → the grenade in hand thrown from where you stand now, kept in your lineups for this map
 //                                  (the button / move as said, else your last throw's — v53 S2 review)
 //   lineups / clear / help / echo
+//   sensitivity [v]             → CS2's mouse sensitivity (v53 GUNS: any match; gd-display.js; no value prints it)
 // Practice-only commands answer "practice only" outside a Practice session (CS2: sv_cheats). Nothing per frame: the
 // console does work only on a key or a command. No per-frame allocation, no shader (plain DOM).
 import { formatPos, parsePos, fromLook, toLook, EYE_HU } from './gd-lineups.js';
+import { gdSens, setSensitivity, SENS_DEFAULT } from './gd-display.js';   // (v53 GUNS: CS2's sensitivity)
 
 const PRACTICE_ONLY = new Set(['setpos', 'setpos_exact', 'setang', 'setang_exact', 'noclip', 'god', 'sv_infinite_ammo', 'bot_kick', 'mp_roundtime', 'mp_freezetime', 'sv_rethrow_last_grenade', 'lineup_save']);
-export const COMMANDS = ['getpos', 'getpos_exact', ...PRACTICE_ONLY, 'lineups', 'clear', 'help', 'echo'];
+export const COMMANDS = ['getpos', 'getpos_exact', ...PRACTICE_ONLY, 'lineups', 'clear', 'help', 'echo', 'sensitivity'];   // (sensitivity: v53 GUNS — any match, not a cheat in CS2)
 const LIMITS = { mp_roundtime: [0, 60], mp_freezetime: [0, 60] };   // (minutes / seconds; CS2's own ranges are wider — a practice clock needs no more)
 
 // The player's getpos, CS2's numbers: ctx.me() = { x, y (feet), z, duck (0…1), pitch, yaw (game radians) } and
@@ -50,9 +52,11 @@ export function runCommand(line, ctx) {
     case 'sv_rethrow_last_grenade': { const r = ctx.rethrow(); return typeof r === 'string' && r ? { lines: [r] } : err('sv_rethrow_last_grenade: no grenade thrown yet'); }
     case 'lineup_save': { const g = getpos(ctx); if (!g) return err('lineup_save: not in the map'); return pend(ctx.saveLineup(args.join(' '), g), null); }
     case 'lineups': return { lines: ctx.lineups?.() || [] };
+    // (v53 GUNS) sensitivity [v]: CS2's mouse sensitivity (the view turns v × 0.022° a count — gd-display.js); no value: the current one, CS2's way
+    case 'sensitivity': { if (!args.length) return { lines: [`"sensitivity" = "${gdSens.v}" ( def. "${SENS_DEFAULT}" )`] }; const v = +args[0]; if (!Number.isFinite(v) || v <= 0) return err('sensitivity: a number above 0'); return { lines: [`sensitivity ${setSensitivity(v)}`] }; }
     case 'echo': return { lines: [args.join(' ')] };
     case 'clear': return { lines: [], clear: true };
-    case 'help': return { lines: ['getpos · setpos x y z;setang pitch yaw · setang pitch yaw · noclip · god · sv_infinite_ammo 0/1/2 · bot_kick [name] · mp_roundtime min · mp_freezetime s · sv_rethrow_last_grenade · lineup_save [name] [left|right|both] [stand|crouch|jump|runjump|walk] · lineups · clear'] };
+    case 'help': return { lines: ['getpos · setpos x y z;setang pitch yaw · setang pitch yaw · noclip · god · sv_infinite_ammo 0/1/2 · bot_kick [name] · mp_roundtime min · mp_freezetime s · sv_rethrow_last_grenade · lineup_save [name] [left|right|both] [stand|crouch|jump|runjump|walk] · lineups · clear · sensitivity [v]'] };
   }
   return err('?');
 }

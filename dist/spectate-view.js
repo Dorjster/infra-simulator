@@ -33,6 +33,7 @@ export function createSpectateView({ camera, scene }) {
   let glovesSeen = null, gloveVSeen = -1;   // (the watched player's CS2 gloves as worn — their skins record 'gloves' — and glove-assets' version then)
   let knifeSeen = null, shotN = null, reloadN = null, reloadUntil = 0, actSeen = 0, holds = 0, fires = 0, reloads = 0, throws = 0;
   const now = () => performance.now();
+  // (v53 GUNS G1: set.vfov / VIEWMODEL.fov are CS2's viewmodel_fov preset converted to vertical — weapons-data vmVfov: 60 → 46.8°)
   const fit = () => { const vf = set?.vfov || VIEWMODEL.fov, k = vf > 0 && camera.fov > vf ? Math.tan(camera.fov * Math.PI / 360) / Math.tan(vf * Math.PI / 360) : 1; hand.scale.set(live.leftHand ? -k : k, k, 1); };
   function drop() { if (set && set.root.parent === view) view.remove(set.root); if (plain) { plain.removeFromParent(); plain = null; } set = null; }
   // Hold `id` for the watched player (draw: they switched to it — CS2 shows the draw; a new target: shown held at once).

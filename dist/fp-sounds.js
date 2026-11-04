@@ -24,7 +24,10 @@ export function clipReady(c) { for (let i = 0; i < c.ev.length; i++) { const N =
 const readyClip = (set, clip) => { const c = clipSounds(set, clip); if (!c) return null; if (clipReady(c)) return c; wantSet(set); return null; };
 // (clip: which clip it belongs to — v53 RELOAD: Global Defensive plays a reload's takes as their own CS2 events, and
 // someone else's inside CS2's WPN_RELOAD_SILENT window suppressed: gd-sounds.js gdClip, with e[0] its moment in the clip)
-function fire(e, at, set = null, src = null, clip = null) { const names = e[1], n = names.length > 1 ? names[Math.random() * names.length | 0] : names[0], vol = Math.min(1.4, e[2]) * .9, rate = e[3] * (1 + (Math.random() * 2 - 1) * e[4]);
+// (v53 GUNS, open-B#11: in Global Defensive a non-reload clip's sound — draw, inspect, a knife's swing, a pin — plays at its
+// own CS2 event's volume e[2] (fp_sounds.py: the event's `volume`), not ×0.9 of it; a reload's takes get their events'
+// level in gdClip — reload_empty's too (final review: CS2's empty reload is a reload). Outside Global Defensive the ×0.9 as before.)
+function fire(e, at, set = null, src = null, clip = null) { const names = e[1], n = names.length > 1 ? names[Math.random() * names.length | 0] : names[0], vol = Math.min(1.4, e[2]) * (gdOn() && clip !== 'reload' && clip !== 'reloadempty' ? 1 : .9), rate = e[3] * (1 + (Math.random() * 2 - 1) * e[4]);
   if (gdOn() && gdClip(set, n, vol, rate, at, src, clip, e[0])) return;
   play(n, { at, volume: vol, rate, kind: 'handling' }); }
 // Your own weapon: one clip's sounds at a time, stepped every frame (no allocation); a new clip or stop() cuts the rest

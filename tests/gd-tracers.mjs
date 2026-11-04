@@ -65,7 +65,7 @@ check('short streak (user: about 8 m, runs to the landing spot), not a long CS2 
 P.clear();
 
 // 3 · the effects: your shots and others' (fun-pistol), no meshes made per shot.
-const s2 = new THREE.Scene(), fx = createPistolEffects(s2, { camera: () => cam }), kids = () => s2.children.length;
+const s2 = new THREE.Scene(), fx = createPistolEffects(s2, { camera: () => cam }), gfxPool = o => o === fx.gunfx?.mesh || o === fx.gunfx?.shells, kids = () => s2.children.filter(o => !gfxPool(o)).length;   // (v53 GUNS: the two fixed CS2 flash / shell pools, made with the effects — gd-gunfx.js — are not per-shot meshes)
 const end = (x, z) => ({ point: new THREE.Vector3(x, 9, z), normal: null, flesh: false });
 fx.update(0); const before = kids(), muzzle = new THREE.Vector3(.5, 8, -1);
 let drawnBy = id => { fx.tracers.clear(); let c = 0; for (let k = 1; k <= 9; k++) { fx.shootAt(muzzle, [end(0, -100)], { id, n: k }); c += fx.tracers.active; fx.tracers.clear(); } return c; };
@@ -74,7 +74,7 @@ check('your own pistol / AWP shots: a tracer every shot', drawnBy('pistol') === 
 check('your silenced M4A1-S / USP-S / MP5-SD shots draw every bullet', drawnBy('m4s') === 9 && drawnBy('usps') === 9 && drawnBy('smg') === 9);
 fx.tracers.clear(); fx.shootAt(muzzle, Array.from({ length: 9 }, (_, i) => end(i - 4, -60)), { id: 'shotgun', n: 1 });
 check('your own Nova shot: 9 pellet streaks (every pellet)', fx.tracers.active === 9, fx.tracers.active); fx.tracers.clear();
-const meshes = () => s2.children.filter(o => o.isMesh && o.geometry.type !== 'CircleGeometry').length;   // (pooled flashes are sprites, pooled holes circles)
+const meshes = () => s2.children.filter(o => o.isMesh && !gfxPool(o) && o.geometry.type !== 'CircleGeometry').length;   // (pooled flashes are sprites, pooled holes circles)
 check('no meshes made per shot (only the one tracer mesh, after 60 shots)', meshes() === 1 && before <= 2, [before, meshes()]);
 fx.shootAt(muzzle, [{ point: new THREE.Vector3(0, 9, -30), normal: new THREE.Vector3(0, 0, 1), mark: true }, end(0, -100)], { id: 'pistol', n: 1 });
 check('holes on the way are not tracers (one streak to the stop)', fx.tracers.active === 1); fx.tracers.clear();

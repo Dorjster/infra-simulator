@@ -176,7 +176,11 @@ const reach = (hHU, duck, fps) => { const top = hHU * HU, box = { minX: -50, max
   check('…letting go in the air: the feet go back down 9 HU (room below), standing again', !s.ducked && Math.abs(back / HU - 9) < 1e-9, (back / HU).toFixed(2) + ' HU'); }
 { const s = at(); let t = 0; while (!s.ducked && t < 1) { moveStep(s, { ...idle, duck: true }, open, T); t += T; }
   const p = at(); for (let i = 0; i < 4; i++) { ticks(p, { ...idle, duck: true }, open, 13); ticks(p, idle, open, 13); } let t2 = 0; while (!p.ducked && t2 < 2) { moveStep(p, { ...idle, duck: true }, open, T); t2 += T; }
-  check('Ducking takes 1/8 s (approximation: CS:GO\'s duck speed 8); the eye goes 64 → 46 HU with it', Math.abs(t - .125) <= .02 && Math.abs(eyeAt(0) - EYE_GD.stand) < 1e-9 && Math.abs(eyeAt(1) / HU - 46) < 1e-9, t.toFixed(3) + ' s');
+  check('Ducking takes 1/8 s (approximation: CS:GO\'s duck speed 8); the eye goes 64.0626 → 46.045 HU with it (v53 GUNS: CS2\'s view offset, measured on Mirage; crouched CS:GO\'s VEC_DUCK_VIEW, unverified)', Math.abs(t - .125) <= .02 && Math.abs(eyeAt(0) / HU - 64.0626) < 1e-9 && Math.abs(eyeAt(1) / HU - 46.045) < 1e-9, t.toFixed(3) + ' s');
+  // (v53 GUNS) CS2's m_flAttackMovespeedFactor: the Negev at 0.5 only while input.firing; the AK (1.0) and a still player unchanged
+  { const run = (weapon, firing, wish = [0, -1]) => { const q = createMoveState(); q.x = q.z = 0; for (let i = 0; i < 256; i++) moveStep(q, { wish, weapon, firing }, { boxes: [], bounds: null }, TICK); return Math.hypot(q.vx, q.vz) / HU; };
+    const a = run('negev', true), b = run('negev', false), c = run('ak', true), d = run('negev', true, [0, 0]);
+    check('Negev firing: wishspeed × 0.5 (CS2 weapons.vdata m_flAttackMovespeedFactor) — 75 HU/s; not firing 150; the AK unchanged; standing still stays still', Math.abs(a - 75) < .75 && Math.abs(b - 150) < 1.5 && Math.abs(c - run('ak', false)) < 1e-9 && d === 0, [a, b, c, d].map(v => v.toFixed(2)).join(' / ')); }
   check('Crouch spam: a fifth press within a second takes at least twice as long to get down', t2 >= 2 * t, t2.toFixed(3) + ' s'); }
 { const ceil = { minX: -10, maxX: 10, minZ: -10, maxZ: 10, y0: 60 * HU, y1: 100 * HU }, s = at(); ticks(s, { ...idle, duck: true }, { boxes: [ceil] }, 32); ticks(s, idle, { boxes: [ceil] }, 64);
   check('Under a 60 HU ceiling, letting go of crouch keeps you down', s.ducked && s.duck === 1); }

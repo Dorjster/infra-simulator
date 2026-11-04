@@ -11,7 +11,7 @@
 #   (the molotov: the world model only — its set was made with the others; CS2's bottle without the lighter or flame card)
 # Never written over an existing file (each name is new). --install puts them in <assets> and lists them in its
 # manifest.json (the old one kept first as <assets>/manifest.bak-<stamp>.json), with a new hash so browsers fetch them.
-# --replace (knives only): a knife set already installed is moved to <assets>/fp.bak-<stamp>/ first, then the new one
+# --replace (knives, and v53 GUNS' rebuilt pistol sets): a set already installed is moved to <assets>/fp.bak-<stamp>/ first, then the new one
 # goes in (the back-up rule: nothing deleted; the asset pack leaves the *.bak-* copies out).
 # The AUG's model is from CS2's October 2026 update (KV3 node types 26 / 27) which Source 2 Viewer 20.0 cannot read:
 # kv3_compat.py rewrites a scratch copy first. Valve's files: they stay on this computer, never shipped.
@@ -43,9 +43,25 @@ ITEMS = {
  'flip': ('weapons/models/knife/knife_flip/weapon_knife_flip', 'knife/knife_flip', K, 'knife', None),
  'nomad': ('weapons/models/knife/knife_outdoor/weapon_knife_outdoor', 'knife/knife_outdoor', K, 'knife', None),
 }
+# v53 GUNS (G7, open-B#12): the six pistols whose CS2 animgraph has an empty magazine's clips (gd-reload-ref.js RELOAD_REF
+# .empty: the Glock-18, USP-S, P250, Five-SeveN, CZ75-Auto, Desert Eagle) — their sets REBUILT (kind 'gunset'; the USP-S
+# 'uspset': CS2's silencer-on draw) as build_all.py made them (the same exported weapon model, textures and clips) plus
+# CS2's fireempty (shoot_empty_*: the last shot, the slide locking back), idleempty (idle_slide_back_*: held open) and
+# reloadempty (reload_empty_*). Set only, no world model; installed with --install --replace (the old set moved to
+# <assets>/fp.bak-<stamp>/ first). REBUILD: (the exported weapon glb's name, the weapon texture args build_all.py gave).
+UA_W = os.path.join(HERE, '..', '..', 'user-assets', 'weapons')
+REBUILD = {'pistol': ('weapon_pist_glock18', [UA_W + '/pistol-main-base.jpg']), 'usps': ('weapon_pist_usp_silencer', [UA_W + '/usps-main-base.jpg', UA_W + '/usps-main-normal.jpg']),
+           'p250': ('weapon_pist_p250', [H + '/tex/wj/p250_color.jpg', H + '/tex/wj/p250_normal.jpg']), 'fiveseven': ('weapon_pist_fiveseven', [UA_W + '/fiveseven-main-base.jpg', UA_W + '/fiveseven-main-normal.jpg']),
+           'cz75': ('weapon_pist_cz75a', [UA_W + '/cz75-main-base.jpg', UA_W + '/cz75-main-normal.jpg']), 'deagle': ('weapon_pist_deagle', [UA_W + '/deagle-main-base.jpg', UA_W + '/deagle-main-normal.jpg'])}
+P = 'pistol/_default_pistol'
+ITEMS.update({'pistol': (None, 'pistol/pistol_glock18', P, 'gunset', None), 'usps': (None, None, P, 'uspset', None), 'p250': (None, 'pistol/pistol_p250', P, 'gunset', None),
+              'fiveseven': (None, 'pistol/pistol_fiveseven', P, 'gunset', None), 'cz75': (None, 'pistol/pistol_cz75a', P, 'gunset', None), 'deagle': (None, 'pistol/pistol_deagle', P, 'gunset', None)})
 WORLD_ARGS = {'molotov': ['--drop-joints', 'lighter,lighter_flame,lighter_hinge,lighter_lever', '--drop-mats', 'flame']}
 # The clips each kind plays (build_all.py's WANT: the game's clip name, CS2's file prefix, prefixes left out)
 WANT = {'gun': [('idle', 'idle', ('slide_back', 'idle2', 'from_activity')), ('draw', 'draw', ('lookat', 'crouch', 'silenced')), ('fire', 'shoot1', ()), ('reload', 'reload', ('empty',)), ('inspect', 'lookat01', ('draw', 'transfix', 'lgcy'))],
+        # (v53 GUNS: a gun's empty magazine, where CS2 has the clips — the pistols: shoot_empty_* the last shot into slide
+        # lock, idle_slide_back_* held open, reload_empty_* the slide-locked reload; reload2_empty is the CZ75's other)
+        'gunset': None, 'uspset': None,
         'nade': [('idle', 'idle', ()), ('draw', 'draw', ()), ('prime', 'pullpin', ()), ('throw', 'throw_overhand', ()), ('throwlow', 'throw_underhand', ()), ('inspect', 'lookat01', ())],
         # (v53 KNIVES: CS2's own knife clips, as viewmodel_knife.vnmgraph+<knife> plays them (decompiled with s2v):
         #  draw    — 'DeployOptions': a Parameterized Clip Selector on deploy_variation, option weights [1, 8, 1] over
@@ -64,6 +80,9 @@ WANT = {'gun': [('idle', 'idle', ('slide_back', 'idle2', 'from_activity')), ('dr
                   ('backstab', 'light_backstab', ('backstab2',)), ('backstab2', 'light_backstab2', ()),
                   ('heavy', 'heavy_miss1', ()), ('heavyhit', 'heavy_hit1', ()), ('heavystab', 'heavy_backstab', ()),
                   ('inspect', 'lookat01', ('lookat01_draw',)), ('inspect2', 'lookat02', (), 'own'), ('inspectdraw', 'lookat01_draw', (), 'own')]}
+EMPTY = [('fireempty', 'shoot_empty', ()), ('idleempty', 'idle_slide_back', ()), ('reloadempty', 'reload_empty', ())]
+WANT['gun'] = WANT['gun'] + EMPTY   # (a gun without them — every rifle — just has none)
+WANT['gunset'] = WANT['gun']; WANT['uspset'] = [('draw', 'draw_silenced', ())] + [w for w in WANT['gun'] if w[0] != 'draw']   # (build_all.py's WANT['usp'])
 def pick(dirs, prefix, exclude=()):
     for pre in (prefix if isinstance(prefix, tuple) else (prefix,)):
         for d in dirs:
@@ -98,8 +117,14 @@ def new(path):   # never over an existing file
     if os.path.exists(path): sys.exit(f'{path} exists: not written over (move it away first if it is to be rebuilt)')
     return path
 made = {}
-for gid in (ids or ITEMS):
-    model, own, dflt, kind, tex = ITEMS[gid]; glb, d = export(gid, model); png = lambda n: os.path.join(d, n + '.png')
+for gid in (ids or [k for k in ITEMS if ITEMS[k][3] not in ('gunset', 'uspset')]):   # (v53 GUNS: the rebuilt pistol sets only when named)
+    model, own, dflt, kind, tex = ITEMS[gid]
+    if kind in ('gunset', 'uspset'):   # (v53 GUNS: build_all.py's set again, with the empty clips; no world model)
+        wglb, wtex = REBUILD[gid]; d = os.path.join(WORK, gid); os.makedirs(d, exist_ok=True); clips = [f'{name}={p}' for name, p in clip_list(gid)]
+        fp = os.path.join(d, f'cs2_{gid}.glb'); rc, log = run([BPY, '-I', os.path.join(HERE, 'build_set.py'), '--glove-shared', '1', '--weapon-tex', ','.join(t for t in wtex if os.path.exists(t)), fp, GLOVE, f'{H}/export/weapons/{wglb}.glb'] + clips)
+        if rc: sys.exit(f'{gid}: first-person set failed\n{log[-1500:]}')
+        print(gid, 'set', ' '.join(c.split('=')[0] + ':' + os.path.basename(c.split('=')[1]) for c in clips), os.path.getsize(fp) // 1024, 'KB'); made[gid] = (fp, None, None, None, [c.split('=')[0] for c in clips]); continue
+    glb, d = export(gid, model); png = lambda n: os.path.join(d, n + '.png')
     if tex is None:   # (by suffix: the export's own texture names)
         fs = sorted(os.listdir(d)); by = lambda k: next((f[:-4] for f in fs if f.endswith('.png') and f'_{k}_' in f and not f.startswith('physics')), None)
         tex = (by('color'), by('normal') or 'default_normal_tga_4fc2d3dd', by('rough'), by('ao'))
@@ -131,7 +156,7 @@ if INSTALL:
     mp = os.path.join(ASSETS, 'manifest.json'); m = json.load(open(mp)); bak = os.path.join(ASSETS, f'manifest.bak-{STAMP}.json'); shutil.copyfile(mp, new(bak)); shutil.copyfile(mp, os.path.join(WORK, f'manifest.before-{STAMP}.json')); print('manifest kept as', bak)
     for gid, (fp, wb, jobs, info, clips) in made.items():
         dst = os.path.join(ASSETS, 'fp', f'cs2_{gid}.glb')
-        if fp and REPLACE and ITEMS[gid][3] == 'knife' and os.path.exists(dst):   # (--replace, a knife set made by this script before: the old one moved to <assets>/fp.bak-<stamp>/ first, never deleted)
+        if fp and REPLACE and ITEMS[gid][3] in ('knife', 'gunset', 'uspset') and os.path.exists(dst):   # (v53 GUNS: a rebuilt pistol set too)   # (--replace, a knife set made by this script before: the old one moved to <assets>/fp.bak-<stamp>/ first, never deleted)
             kd = os.path.join(ASSETS, f'fp.bak-{STAMP}'); os.makedirs(kd, exist_ok=True); shutil.move(dst, new(os.path.join(kd, f'cs2_{gid}.glb'))); print('old set kept as', os.path.join(kd, f'cs2_{gid}.glb'))
         if fp: shutil.copyfile(fp, new(dst))
         if fp: m['models'].setdefault('viewmodels', {})[f'cs2_{gid}'] = {'file': f'fp/cs2_{gid}.glb', 'from': f'CS2: its own view-model clips, Driver Gloves and {gid} model (Steam depot, converted on this computer)', 'bytes': os.path.getsize(fp), 'clips': clips}

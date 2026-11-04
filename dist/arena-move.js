@@ -18,11 +18,17 @@ export const HU = 2.54 / 16.5;
 // community-measured CS numbers; not checked against CS2's code). bhop: CS:GO's no-bunny-hop cap (1.1 × max speed).
 // accelScale: the ground acceleration is figured on at least 250 HU/s (CS:GO's Accelerate: max(250, wishspeed)).
 export const MOVE = { friction: 5.2, stopspeed: 80 * HU, accelerate: 5.5, airaccelerate: 12, aircap: 30 * HU, gravity: 800 * HU, jump: 301.993 * HU, walk: .52, duck: .34, step: 18 * HU, height: 72 * HU, duckHeight: 54 * HU, radius: 1.3, bhop: 1.1, hull: 16 * HU, lift: 9 * HU, accelScale: 250 * HU };
-// Eye heights in Global Defensive (game units): standing 9.7 (63 HU: the hit model and the host's shot origin are built on
-// it; CS2's view offset is 64.06) and crouched CS2's 46 HU (view offset 46.04), in between with the duck. The hall and
-// the office keep their own (lab.js).
-export const EYE_GD = { stand: 9.7, duck: 46 * HU };
+// Eye heights in Global Defensive (game units), in between with the duck. v53 GUNS (mv-eye-height, C6, H12): CS2's view
+// offset — standing 64.0626 HU (MEASURED: CS2's own getpos lines on Mirage minus the floor under them, 64.062 / 64.063:
+// tests/gd-lineups.mjs; the throws' NADE_EYE uses the same), crouched 46.045 HU (CS:GO's VEC_DUCK_VIEW 46.044968 —
+// UNVERIFIED against a CS2 file: no crouched getpos line or data file holds it; gd-console prints 46.04). Before v53
+// GUNS: 9.7 units (63.01 HU) and 46 HU. The host's shot origin is the pose's eye (weapons-data EYE, the same 64.0626).
+// The hall and the office keep their own (lab.js).
+export const EYE_GD = { stand: 64.0626 * HU, duck: 46.045 * HU };
 const STOP_SNAP = HU;   // (v53: Source's WalkMove stop — under 1 u/s on the ground is standing still; moveStep)
+// v53 GUNS (mv-pitch-clamp): the look's pitch limit in Global Defensive, CS2's ±89° (cl_pitchup / cl_pitchdown 89, from
+// memory: the install's files hold no cvar values); lab.js mouse look and the practice look / teleport. Other modes ±1.5 rad.
+export const PITCH_GD = 89 * Math.PI / 180;
 export const eyeAt = duck => EYE_GD.stand + (EYE_GD.duck - EYE_GD.stand) * duck;
 // Max running speed (HU/s) with each weapon drawn: CS2's m_flMaxSpeed (weapons.vdata), kept per weapon in weapons-data.js
 // (knife 250, Glock 240, AK 215, Negev 150, grenades 245, bomb 250…); scoped, its second value (AUG and SG 553 150, AWP 100,
@@ -213,6 +219,7 @@ export function moveStep(s, input, world, dt) {
   const height = s.ducked ? MOVE.duckHeight : MOVE.height;
   const W = input.wish; let wx = W ? +W[0] || 0 : 0, wz = W ? +W[1] || 0 : 0; const wl = Math.hypot(wx, wz); if (wl > 1e-6) { wx /= wl; wz /= wl; } else wx = wz = 0;
   let wishspeed = wl > 1e-6 ? maxSpeed(input.weapon, input.scoped) : 0;
+  if (input.firing && wishspeed) wishspeed *= weaponById(input.weapon)?.atkMove ?? 1;   // (v53 GUNS: CS2's m_flAttackMovespeedFactor while the trigger is held and the gun fires — only the Negev's 0.5: 150 → 75 HU/s; how long CS2 keeps it after a shot is not in the files)
   wishspeed *= Math.min(input.walk ? MOVE.walk : 1, 1 + (MOVE.duck - 1) * (s.onGround ? s.duck || 0 : 0));   // crouching (as far down as you are) or walking: the slower
   if ((s.velMod ?? 1) < 1) { s.velMod = Math.min(1, s.velMod + TAG.recover * dt); wishspeed *= s.velMod; if (s.onGround) { const top = maxSpeed(input.weapon, input.scoped) * s.velMod, sp = Math.hypot(s.vx, s.vz); if (sp > top) { s.vx *= top / sp; s.vz *= top / sp; } } }   // tagged: slower, and no faster than that on the ground
   // Jumping: a fresh press only (CS2's sv_autobunnyhopping 0: holding the key never jumps again).

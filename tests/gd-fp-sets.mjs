@@ -126,4 +126,14 @@ if (['cs2_ct.glb', 'cs2_anims.glb'].every(f => existsSync(AG + f)) && existsSync
     check(`${id} in another player's hands where CS2 holds its own model (bounds within 1.5 cm of CS2's, the weapon bone's frame: ${(off * 100).toFixed(1)} cm off)`, off < .015, ref ? `drawn ${cm(P.box)} · CS2 ${cm(ref)} cm` : 'the CS2 export has no weapon bone: its frame is not CS2\'s'); }
   if (rows.aug && rows.famas) check(`AUG: the right hand on it as on the FAMAS (wrist to the gun ${(rows.aug.near * 100).toFixed(1)} cm, the FAMAS's ${(rows.famas.near * 100).toFixed(1)})`, rows.aug.near < rows.famas.near + .015); }
 else console.log('SKIP (third person): no CS2 agents / holds exports on this computer');
+// 6. v53 GUNS (G7, open-B#12): the pistols' CS2 empty-magazine clips, where imported (tools/cs2-fp/export_missing.py
+// <ids> --install --replace): fireempty (shoot_empty_*), idleempty (idle_slide_back_*), reloadempty (reload_empty_*) in the
+// set, and the set plays them — the last shot locks the slide, it idles held open, a reload from 0 is the empty one, and a
+// filled magazine idles closed again.
+for (const id of ['pistol', 'usps', 'p250', 'fiveseven', 'cz75', 'deagle']) { const e = VM['cs2_' + id]; if (!e?.clips?.includes('reloadempty')) { console.log(`SKIP (empty clips): ${id} — its set has none yet (export_missing.py ${id} --install --replace)`); continue; }
+  const g = await parse('user-assets/' + e.file), names = g.animations.map(a => a.name), set = F.buildAuthored(g, null, id), seq = [], pn = performance.now; let T = pn.call(performance); performance.now = () => T;   // (the set's clock: moved by hand)
+  set.hold(id, { draw: false }); set.update(0); seq.push(set.clipNow); set.fire(true); set.update(0); seq.push(set.clipNow);
+  const fe = g.animations.find(a => a.name === 'fireempty').duration; T += fe * 1000 + 50; set.update(fe + .05); set.update(.01); seq.push(set.clipNow);
+  const rc = set.reload(2000, true); set.update(0); seq.push(set.clipNow); set.stopReload(); set.setEmpty(false); set.update(.01); seq.push(set.clipNow); performance.now = pn;
+  check(`${id}: CS2's empty clips in the set and played — last shot ${seq[1]}, held open ${seq[2]}, reload from 0 ${rc}, refilled ${seq[4]}`, ['fireempty', 'idleempty', 'reloadempty'].every(c => names.includes(c)) && seq[0] === 'idle' && seq[1] === 'fireempty' && seq[2] === 'idleempty' && rc === 'reloadempty' && seq[3] === 'reloadempty' && seq[4] === 'idle', seq.join(' → ')); }
 console.log(`${fail ? 'FAIL' : 'PASS'}: first-person sets · ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

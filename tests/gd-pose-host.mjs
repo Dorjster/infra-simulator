@@ -34,9 +34,9 @@ const mine = async p => { await wait(120); return roster.find(q => q.id === p.id
 let r = await send(ann, { fy: fl, tp: 1 }); let q = await mine(ann);
 ok('the feet a client sends (fy) reach everyone, with the eye over them (ey)', r.status === 200 && Math.abs(q?.fy - fl) < 1e-6 && Math.abs(q?.ey - 9.7) < 1e-6, JSON.stringify(q && { fy: q.fy, ey: q.ey, fl }));
 await send(ann, { y: fl + EYE_GD.duck, fy: fl, crouched: true, tp: 1 }); q = await mine(ann);
-ok('crouched (the hull, held down too): the eye 46 HU over the feet, and the host\'s hit boxes stand on them', q?.crouched === true && Math.abs(q.ey - 46 * HU) < 1e-6 && Math.abs(poseFeet(q) - fl) < 1e-6, JSON.stringify({ ey: q?.ey, feet: q && poseFeet(q) }));
+ok('crouched (the hull, held down too): the eye 46.045 HU over the feet, and the host\'s hit boxes stand on them', q?.crouched === true && Math.abs(q.ey - 46.045 * HU) < 1e-6 && Math.abs(poseFeet(q) - fl) < 1e-6 /* (v53 GUNS: CS2's crouched view offset 46.045 HU — arena-move EYE_GD.duck) */, JSON.stringify({ ey: q?.ey, feet: q && poseFeet(q) }));
 ok('…a pose rewound for a hit (lag-comp.js: its own y) keeps the eye over its feet', Math.abs(poseFeet({ ...q, y: q.y + 3 }) - (fl + 3)) < 1e-6);
-ok('…with no feet sent (bots): the eye less CS2\'s 64 / 46 HU (46: 7.08 units, not the hall\'s 5.9)', Math.abs(poseFeet({ y: fl + 9.7, crouched: false }) - fl) < 1e-6 && Math.abs(poseFeet({ y: fl + EYE_GD.duck, crouched: true }) - fl) < 1e-6);
+ok('…with no feet sent (bots): the eye less CS2\'s 64 / 46 HU (46: 7.08 units, not the hall\'s 5.9)', Math.abs(poseFeet({ y: fl + EYE_GD.stand, crouched: false }) - fl) < 1e-6 && Math.abs(poseFeet({ y: fl + EYE_GD.duck, crouched: true }) - fl) < .01);   // (v53 GUNS: the standing eye CS2's 64.0626 HU = weapons-data EYE; crouched within 0.07 HU — combat-logic's DUCK_EYE is the HITS package's, 46 → 46.045)
 await send(ann, { x: -3, z: 11, y: 9.7, fy: 3 }); q = await mine(ann);
 ok('…a pose outside the arena (the hall, the office) keeps no feet: theirs stay the eye less 5.9 / 9.7 (multiplayer.js)', q && q.z === 11 && q.fy === undefined && q.ey === undefined, JSON.stringify(q && { z: q.z, fy: q.fy }));
 // Standing on a team mate's head: 72 HU up, same spot.

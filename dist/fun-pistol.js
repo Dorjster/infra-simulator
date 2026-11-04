@@ -7,6 +7,7 @@ import * as THREE from './three.module.js';
 import { shotSound, fx as rec } from './sound-bank.js';
 import { audioCtx, outAt } from './spatial-audio.js';
 import { createTracers, tracerShot, tracerPellet, TRACER } from './gd-tracers.js';
+import { createGunFx } from './gd-gunfx.js'; import { gdOn } from './gd-sounds.js';   // (v53 GUNS: CS2's muzzle flashes and shell casings in Global Defensive)
 
 export const isDarja = name => /^\s*darja\s*$/i.test(String(name || ''));
 
@@ -78,11 +79,21 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
   }
   // One muzzle light for every shot, always in the scene (adding and removing lights recompiles every shader).
   const light = new THREE.PointLight(0xffc06a, 0, 9); light.userData.noPool = true; light.userData.gd = true; scene.add(light); let lightT = 1;
+  // v53 GUNS (G5, G6): in Global Defensive (gdOn: a match's audio and effects on) each shot draws CS2's own first-person
+  // muzzle flash and throws a shell case (gd-gunfx.js: two pooled instanced draws, made and warmed now); the light is
+  // cut to the flash's time (≈20 ms, LIGHT_GD) instead of our ~66 ms. The other modes keep the sprite below.
+  // (final review: the GD light is at full on the first frame the flash is drawn — gunfx.renders — and only then fades,
+  // so a slow frame never loses it; your own / the watched player's in-eye shots draw the first-person effect, other
+  // players' their third-person one; a shell lands on the map's ground under the port — gunfx.floorAt, lab.js — else
+  // about the shooter's feet: the eye height below the muzzle.)
+  const gunfx = createGunFx(scene); gunfx.load(); let lightGD = false, lightAt = -1; const LIGHT_GD = 300, FEET_BELOW = 9.3;   // (intensity 6 → 0 in 20 ms; FEET_BELOW: ≈ CS2's 64 HU eye less the muzzle's drop, game units)
   // Pools: muzzle flashes and bullet marks are reused, never created or disposed per shot (creating and disposing
   // a material makes the GPU rebuild its shader, a visible hitch on every shot).
   const flashPool = Array.from({ length: 6 }, () => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); sp.visible = false; return sp; }); let flashAt = 0;
   const markPool = Array.from({ length: 60 }, () => { const m = new THREE.Mesh(markGeo, markMat.clone()); m.visible = false; return m; }); let markAt = 0;
-  function flash(at, dir, size = 1.1) {
+  function flash(at, dir, size = 1.1, id = null /* (v53 GUNS, GD: the gun — CS2's own flash for it in Global Defensive) */, own = true /* (GD: first person — yours, or the player watched in-eye) */) {
+    if (id && gdOn()) { const made = gunfx.flash(at, dir, id, own); gunfx.eject(at, dir, id, at.y - FEET_BELOW); light.position.copy(at); light.intensity = 6; lightT = 0; lightAt = made ? gunfx.renders : -1; lightGD = true; return; }
+    lightGD = false;
     const s = flashPool[flashAt++ % flashPool.length]; s.material.opacity = 1; s.visible = true;      // reused: no new material, no shader rebuild
     s.position.copy(at).addScaledVector(dir, .25); s.scale.setScalar(size); if (!s.parent) { s.userData.gd = true; s.userData.fx = true; scene.add(s); }   // (fx: drawn after a Global Defensive smoke — arena-smoke-pass.js — so a muzzle flash in front of one isn't covered by it; nothing else reads it)
     light.position.copy(s.position); lightT = 0;
@@ -92,7 +103,7 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
   // n: the shot's number (the gun's own count: which shots draw a tracer, CS2's frequency); src: who fired.
   function shoot(origin, dir, { count = 1, spread = .008, volume = .5, pitch = 1, flashSize = 1.1, dirs = null, at = null, id = null, src = null, delay = 0, n = null } = {}) {
     if (src != null && muzzleFor?.(src, MZ)) origin = MZ;   // (spectating them: from their first-person barrel)
-    flash(origin, dir, flashSize); if (!(id && shotSound(id, { at, volume: .8, src, delay }))) bang(volume, pitch, at);   // recorded shot (sound-bank.js), else synthesized (src, delay: Global Defensive's bank — who fired, a replayed shot's place in its burst)
+    flash(origin, dir, flashSize, id /* GD: the gun's id */, src == null || origin === MZ /* GD: the first-person flash yours, or in-eye — else their third-person one */); if (!(id && shotSound(id, { at, volume: .8, src, delay }))) bang(volume, pitch, at);   // recorded shot (sound-bank.js), else synthesized (src, delay: Global Defensive's bank — who fired, a replayed shot's place in its burst)
     if (onShot) { if (dirs) for (const d of dirs) onShot(origin, d); else onShot(origin, dir); }
     const traced = tracerShot(id, n);
     if (dirs) { let i = 0; for (const d of dirs) { const tr = trace ? trace(origin, d, src) : null, hit = tr ? { point: origin.clone().addScaledVector(d, tr.t), normal: tr.flesh || !tr.n ? null : new THREE.Vector3(tr.n[0], tr.n[1], tr.n[2]), mat: tr.mat || null, silent: !!tr.flesh || !tr.n } : hitPoint(origin, d), dist = hit.point.distanceTo(origin);
@@ -110,7 +121,7 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
   // n: your shot's number (which shots draw a tracer: CS2's frequency per gun, gd-tracers.js).
   const fleshMat = new THREE.MeshBasicMaterial({ color: 0x9a1010 });
   function shootAt(origin, ends, { volume = .5, pitch = 1, flashSize = 1.1, at = null, id = null, n = null } = {}) {
-    flash(origin, ends.at(-1) ? ends.at(-1).point.clone().sub(origin).normalize() : new THREE.Vector3(0, 0, -1), flashSize); if (!(id && shotSound(id, { at, volume: volume / .5 * .8 }))) bang(volume, pitch, at);
+    flash(origin, ends.at(-1) ? ends.at(-1).point.clone().sub(origin).normalize() : new THREE.Vector3(0, 0, -1), flashSize, id /* GD: the gun's id */); if (!(id && shotSound(id, { at, volume: volume / .5 * .8 }))) bang(volume, pitch, at);
     tracers.shot(origin, ends, id, n);
     for (const e of ends) { if (e.mark) { impact({ point: e.point, normal: e.normal, mat: e.mat }); continue; } const d = e.point.clone().sub(origin), dist = d.length(); if (dist < 1e-3) continue; d.divideScalar(dist);
       pellets.push({ from: origin.clone(), dir: d, dist, travelled: 0, hit: e.flesh ? { point: e.point, normal: null, flesh: true } : { point: e.point, normal: e.normal, mat: e.mat } }); }
@@ -131,11 +142,11 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
     for (let i = sparks.length - 1; i >= 0; i--) { const s = sparks[i]; s.t += dt; s.v.y -= 30 * dt; s.m.position.addScaledVector(s.v, dt); s.m.scale.setScalar(Math.max(.01, 1 - s.t * 2.5)); if (s.t > .4) { scene.remove(s.m); sparks.splice(i, 1); } }
     for (let i = marks.length - 1; i >= 0; i--) { const k = marks[i]; k.t += dt; if (k.t > 6) k.m.material.opacity = Math.max(0, .8 - (k.t - 6) * .4); if (k.t > 8) { k.m.visible = false; marks.splice(i, 1); } }
     for (let i = flashes.length - 1; i >= 0; i--) { const f = flashes[i]; f.t += dt; f.s.material.opacity = Math.max(0, 1 - f.t * 14); if (f.t > .08) { f.s.visible = false; flashes.splice(i, 1); } }
-    lightT += dt; light.intensity = Math.max(0, 6 - lightT * 90);
+    if (lightGD && gunfx.renders === lightAt) light.intensity = 6; else { lightT += dt; light.intensity = Math.max(0, 6 - lightT * (lightGD ? LIGHT_GD : 90)); } gunfx.update(dt);   // (v53 GUNS: the GD light cut to the flash)
   }
   // One of each effect object, for warming up the GPU before the first shot (see graphics.prewarm).
-  function samples() { const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); return [tracers.sample(), new THREE.Mesh(sparkGeo, sparkMat), new THREE.Mesh(markGeo, markMat.clone()), fl]; }
-  return { shoot, shootAt, update, hitPoint, samples, tracers, get active() { return pellets.length + sparks.length + marks.length + tracers.active; } };
+  function samples() { const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); return [tracers.sample(), new THREE.Mesh(sparkGeo, sparkMat), new THREE.Mesh(markGeo, markMat.clone()), fl, ...gunfx.samples() /* GD: CS2's flash and shell pools' stand-ins */]; }   // (v53 GUNS, GD: the flash and shell pools stay in the scene; their stand-ins warm the shaders)
+  return { shoot, shootAt, update, hitPoint, samples, tracers, gunfx /* GD: CS2's muzzle flashes and shells (tests, pictures) */, get active() { return pellets.length + sparks.length + marks.length + tracers.active; } };
 }
 
 // The local player's pistol: a first-person view model on the camera, recoil and a fire-rate limit.

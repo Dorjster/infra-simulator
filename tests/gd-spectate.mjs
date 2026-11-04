@@ -25,12 +25,12 @@ const { createSpectator, eyeOf, cycleTarget, createBodyHider, eyeCamera, EYE_STA
 // ── pure parts ──────────────────────────────────────────────────────────────────────────────────────────────────
 check('exports the first-person helpers (eyeOf, eyeCamera, cycleTarget, createBodyHider)', [eyeOf, eyeCamera, cycleTarget, createBodyHider].every(f => typeof f === 'function'));
 if (typeof eyeOf === 'function') {
-  check('eye: the interpolated eye first, then the pose\'s, then CS2\'s 64 / 46 HU', eyeOf(8.1, 9.7, false) === 8.1 && eyeOf(undefined, 7.5, false) === 7.5 && eyeOf(undefined, undefined, false) === EYE_STAND && eyeOf(NaN, undefined, true) === EYE_CROUCH && Math.abs(EYE_CROUCH - 46 * 2.54 / 16.5) < 1e-12);
+  check('eye: the interpolated eye first, then the pose\'s, then CS2\'s 64 / 46 HU', eyeOf(8.1, 9.7, false) === 8.1 && eyeOf(undefined, 7.5, false) === 7.5 && eyeOf(undefined, undefined, false) === EYE_STAND && eyeOf(NaN, undefined, true) === EYE_CROUCH && Math.abs(EYE_CROUCH - 46.045 * 2.54 / 16.5) < 1e-12 && Math.abs(EYE_STAND - 64.0626 * 2.54 / 16.5) < 1e-12);   // (v53 GUNS final: arena-move EYE_GD's eye)
   const L = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
   check('cycling: next / previous wrap round; nobody watched yet → the first', cycleTarget(L, 'a', 1) === 'b' && cycleTarget(L, 'c', 1) === 'a' && cycleTarget(L, 'a', -1) === 'c' && cycleTarget(L, null, 1) === 'a' && cycleTarget([], 'a', 1) === null);
   const cam = new THREE.PerspectiveCamera(); eyeCamera(cam, 10, 2, -5, 9.7, .7, .4); const f = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
   check('eye camera: at feet + eye, looking along yaw and pitch (YXZ, as the player\'s own camera)', cam.position.distanceTo(new THREE.Vector3(10, 11.7, -5)) < 1e-9 && Math.abs(Math.asin(f.y) - .4) < 1e-9 && Math.abs(Math.atan2(-f.x, -f.z) - .7) < 1e-9, JSON.stringify(f));
-  eyeCamera(cam, 0, 0, 0, 9.7, 0, 3); check('pitch clamped as the host clamps it (±1.5)', Math.abs(Math.asin(new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion).y) - 1.5) < 1e-9);
+  eyeCamera(cam, 0, 0, 0, 9.7, 0, 3); check('pitch clamped as the host clamps it in Global Defensive (±89°, v53 GUNS final)', Math.abs(Math.asin(new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion).y) - 89 * Math.PI / 180) < 1e-9);
   // body-hide bookkeeping
   const mk = name => { const g = new THREE.Group(), label = new THREE.Object3D(), cs = { g: new THREE.Group() }; g.add(label); g.add(cs.g); return { name, g, label, cs }; };
   const A = mk('A'), B = mk('B'), H = createBodyHider();

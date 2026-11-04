@@ -19,6 +19,7 @@
 // shots and reloads, its numbers are taken (new round, pickup, purchase…).
 import * as THREE from './three.module.js';
 import { audioCtx, outAt } from './spatial-audio.js';
+import { vmVfov } from './weapons-data.js';   // (v53 GUNS G1)
 import { magInMs, weaponById, EYE, BODY_R, BODY_H, HEAD_Y, CROUCH_H, zoneAt, HIT_GROUPS, isFirearm, pelletPattern, KNIFE, fullAmmo, THROW, RECOIL, accOf, accFloor, createAim, accuracyDecay, inaccuracyOf, nextFireAt, recoilShot, recoilRest, flinchRest, restAfterMs, viewKick, shotOffsets, shotBase, offsetDir, rayBody, zoomVfov, zoomSens, flinchPunch } from './weapons-data.js';
 import { loadSounds, reloadSound, fx as rec } from './sound-bank.js';
 import { loadFP, fpFor, onFPReady, wantFP, hasFP } from './fp-view.js'; import { gloveVersion } from './glove-assets.js';
@@ -26,17 +27,21 @@ import { createClipChannel } from './fp-sounds.js';
 import { synthWhoosh } from './gd-sounds.js';
 import { applySkin, skinObject, unskinObject } from './skin-render.js';
 import { live } from './live-settings.js';
-// The view model's own field of view (vertical degrees; 0: the world's), as CS2's viewmodel_fov 68 (4:3 horizontal ≈ 54 vertical).
-export const VIEWMODEL = { fov: 58 };
+// The view model's own field of view (vertical degrees; 0: the world's). v53 GUNS G1: in Global Defensive CS2's
+// viewmodel_fov preset (weapons-data VM_FOV, 4:3 horizontal → vertical: 60 → 46.8°) for every view, a CS2 set or our
+// plain model; the other modes keep their 58 (PLAIN_VFOV) and the sets' stored 60.
+const PLAIN_VFOV = 58;
+export const VIEWMODEL = { get fov() { return vmVfov(); } };
 import { weaponModel, loadRealWeapons, MUZZLE, VIEW, VIEW_ROT, knifeFor } from './weapon-models.js';
 import { rayBoxes, bulletPath, BulletPath } from './arena-maps.js';
 const PATH = new BulletPath();   // (each pellet's way, refilled: no garbage per shot)
 
-// Draw (deploy) time: it swings up from below; no shooting until it's up. Guns: CS2's m_flDeployDuration (deployMs:
-// 1 s for most, the CZ75-Auto 1.83 s, the AWP 1.27 s…); knives, grenades and the bomb our own.
-const DRAW_BY_KIND = { pistol: 600, smg: 750, rifle: 900, sniper: 1050, shotgun: 850, lmg: 1100, knife: 450, nade: 500, bomb: 600 };
+// Draw (deploy) time: it swings up from below; no shooting until it's up. CS2's m_flDeployDuration (deployMs: 1 s for
+// most guns, the CZ75-Auto 1.83 s, the AWP 1.27 s…; v53 GUNS: every knife and grenade 1.0 s, the bomb 1.233 s — their
+// own weapons.vdata values replace our 450 / 500 / 600 and the karambit's 500). DRAW_BY_KIND only for an id without one.
+const DRAW_BY_KIND = { pistol: 600, smg: 750, rifle: 900, sniper: 1050, shotgun: 850, lmg: 1100 };
 const GUN_FP_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'shotgun', 'lmg']);   // (guns: their arms may have an inspect animation)
-export const DRAW_MS = new Proxy({ karambit: 500 }, { get: (o, id) => o[id] ?? weaponById(id)?.deployMs ?? DRAW_BY_KIND[weaponById(id)?.kind] ?? 600 });
+export const DRAW_MS = new Proxy({}, { get: (o, id) => o[id] ?? weaponById(id)?.deployMs ?? DRAW_BY_KIND[weaponById(id)?.kind] ?? 600 });
 const AXES = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
 const LOUD = { pistol: [.5, 1], smg: [.32, 1.3], shotgun: [.75, .62], rifle: [.5, 1], sniper: [.85, .7], lmg: [.45, .9] };
 export const shotFx = (wpn) => { const [volume, pitch] = LOUD[wpn.kind] || LOUD.pistol; return { id: wpn.id, volume: wpn.suppressed ? volume * .4 : volume, pitch, flashSize: wpn.suppressed ? .35 : wpn.kind === 'pistol' ? 1.1 : wpn.kind === 'shotgun' || wpn.kind === 'lmg' ? 1.8 : 1.5 }; };
@@ -137,7 +142,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // the same as stretching them sideways and up from the eye by tan(world / 2) / tan(view model / 2) — so a long gun
   // doesn't swing steeply in from the corner (VIEWMODEL.fov, vertical degrees; the packs' poses sit further out to match).
   const hand = new THREE.Group(); hand.name = 'gun-hand';
-  const fitHand = () => { const vf = fp?.vfov || VIEWMODEL.fov, k = vf > 0 && camera.fov > vf ? Math.tan(camera.fov * Math.PI / 360) / Math.tan(vf * Math.PI / 360) : 1;   /* (a CS2-data set: CS2's own view-model field of view) */ hand.scale.set(live.leftHand ? -k : k, k, 1); };
+  const fitHand = () => { const gd = team() != null, vf = (gd ? fp?.vfov : fp?.rawVfov ?? fp?.vfov) || (gd ? VIEWMODEL.fov : PLAIN_VFOV), k =   /* (v53 GUNS G1: gd — Global Defensive, where team() is your side) */ vf > 0 && camera.fov > vf ? Math.tan(camera.fov * Math.PI / 360) / Math.tan(vf * Math.PI / 360) : 1;   /* (a CS2-data set: CS2's own view-model field of view) */ hand.scale.set(live.leftHand ? -k : k, k, 1); };
   const sideView = v => { fitHand(); hand.add(v); if (!hand.parent) camera.add(hand); };
   let knifeSeen = null;   // (the chosen knife the view shows: a new choice swaps it while you hold it)
   // With no skin on every knife is its plain CS2 steel, the karambit too (v52: its vertex colours are the blade mask —
@@ -168,7 +173,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
   // (reloadStarts → pose shot.rs): the host stamps it on its own clock (combat-logic takeReload) and others start their
   // view of it then, not at the mag-in.
   let magInAt = 0, magIn = false, reloadMs = 1, reloadStarts = 1000 + Math.floor(Math.random() * 1e6);
-  function stopReload() { reloadUntil = 0; reloadId = null; magIn = false; if (shell) { shell = null; fp?.stopReload?.(); } if (chanKind === 'reload') { clipSnd.stop(); chanKind = ''; } }   // (broken off: its sounds still to come stay quiet)
+  function stopReload() { reloadUntil = 0; reloadId = null; magIn = false; if (shell) { shell = null; fp?.stopReload?.(); } if (chanKind === 'reload' || chanKind === 'reloadempty') { clipSnd.stop(); chanKind = ''; } }   // (broken off: its sounds still to come stay quiet — v53 GUNS final: the empty reload's too)
   function seatMag() { const id = reloadId, wpn = weaponById(id); if (!wpn || magIn) return; magIn = true; const [mag, res] = left(id), move = Math.min(wpn.mag - mag, res); ammo.set(id, [mag + move, practiceAmmo() ? res : res - move]); reloads++; lastReloaded = id; }
   function seatShells(t) { const w = weaponById(shell.id); while (shell && t >= shell.next) { const [mag, res] = left(shell.id); if (mag >= w.mag || res <= 0) break; ammo.set(shell.id, [mag + 1, practiceAmmo() ? res : res - 1]); reloads++; lastReloaded = shell.id; shell.next += w.shellMs; }
     const [mag, res] = left(shell.id); if (mag >= w.mag || res <= 0) { shell = null; reloadId = null; reloadUntil = 0; } }
@@ -186,11 +191,11 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     if (current.shellMs) shell = { id, start: t0, next: t0 + (cs2Shells ? current.shellIntroMs + current.shellAddMs : current.reloadStartMs) };
     reloadUntil = t0 + reloadMs; reloadId = id; magIn = false; magInAt = t0 + magInMs(current, mag, res >= current.reserve); reloadStarts++; heldLeft = false; wantShot = false; scope = 0;
     // The arms and CS2's reload sounds (magazine out, in, bolt…) at the clip's own speed (a shotgun's over its shells).
-    const clipMs = current.shellMs ? reloadMs : current.reloadClipMs || reloadMs; fp?.reload(clipMs);
-    const own = clipStart('reload', clipMs); if (!own) { sounds.magOut(null, id); setTimeout(() => { if (reloadId === id && current?.id === id) sounds.magIn(null, id); }, Math.max(0, magInAt - t0 - 30)); }
+    const clipMs = current.shellMs ? reloadMs : current.reloadClipMs || reloadMs; const rc = fp?.reload(clipMs, mag === 0) || 'reload';   // (v53 GUNS: from 0 CS2's reload_empty clip, where the set has it — its count still changes at magInEmptyMs)
+    const own = (rc !== 'reload' && clipStart(rc, clipMs)) || clipStart('reload', clipMs); if (!own) { sounds.magOut(null, id); setTimeout(() => { if (reloadId === id && current?.id === id) sounds.magIn(null, id); }, Math.max(0, magInAt - t0 - 30)); }
     return true;
   }
-  function finishReload() { const id = reloadId, own = chanKind === 'reload'; if (!weaponById(id)) { stopReload(); return; } seatMag(); reloadId = null; reloadUntil = 0; magIn = false; if (!own) setTimeout(() => current?.id === id && sounds.bolt(null, id), 120); }
+  function finishReload() { const id = reloadId, own = chanKind === 'reload' || chanKind === 'reloadempty';   /* (v53 GUNS final: CS2's empty reload clip has its own slide sound — no extra bolt) */ if (!weaponById(id)) { stopReload(); return; } seatMag(); reloadId = null; reloadUntil = 0; magIn = false; if (!own) setTimeout(() => current?.id === id && sounds.bolt(null, id), 120); }
   // Knife (CS2, KNIFE): left = quick slash, right = slow heavy stab; either locks both buttons for its time. The hit is
   // decided the moment you click (hitMs 0: the swing animation follows), along your aim, within reach, not through walls.
   // A slash that follows another attack (within chainMs of its end) is the weaker follow-up (chain).
@@ -277,7 +282,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     // CS2's inaccuracy now (penalty + movement), its visual view punch, then the ray: from the eye along the raw look +
     // the aim punch (spray + flinch) + the shot's seeded offset — the host recomputes exactly this (combat-logic.js).
     const zs = scopedMode(), acc = accOf(current, zs), ia = inacc = inaccuracyOf(acc, A, MV);
-    viewKick(current, shots, zs, KICK); shake.pitch += KICK.pitch * D2R; shake.yaw += KICK.yaw * D2R; ammo.set(id, [practiceMag() ? mag : mag - 1, res]); fp?.fire();
+    viewKick(current, shots, zs, KICK); shake.pitch += KICK.pitch * D2R; shake.yaw += KICK.yaw * D2R; ammo.set(id, [practiceMag() ? mag : mag - 1, res]); fp?.fire(!practiceMag() && mag - 1 <= 0);   // (v53 GUNS: the last round — CS2's shoot_empty, the slide locked: fp-view.js)
     const a = aim(), o = camera.getWorldPosition(origin), m = MV, puP = A.aimP + A.flP, puY = A.aimY + A.flY, reach = current.reach ?? current.range;
     shotBase(a.pitch, a.yaw, puP, puY, B3); base.set(B3[0], B3[1], B3[2]); const np = shotOffsets(current, shots, ia, acc.spread, OFFS), dirs = [];
     for (let k = 0; k < np; k++) { offsetDir(B3, OFFS[2 * k], OFFS[2 * k + 1], D3); dirs.push(new THREE.Vector3(D3[0], D3[1], D3[2])); }
@@ -320,6 +325,9 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
     get scopeFov() { return scope && current?.zoom ? zoomVfov(current.zoom[scope - 1]) : 0; }, get scopeSens() { return scope && current?.zoom ? zoomSens(current.zoom[scope - 1]) : 1; },
     // The inaccuracy a shot would have now (tangent units: the crosshair's gap) and the aim state (tests).
     get inaccuracy() { return inacc; }, get aimState() { return A; }, get lastFired() { return lastFired; },
+    // (v53 GUNS) Firing: the trigger held and the gun firing (its last shot within one cycle, +50 ms of frame slack) —
+    // lab.js AM_IN.firing, arena-move's CS2 m_flAttackMovespeedFactor (the Negev's 0.5 'while firing').
+    get firing() { return heldLeft && !!current && isFirearm(current) && now() - A.lastShot <= current.rateMs + 50; },
     // The pose's shot record (lab.js → room → other players' tracers, the host's ammo): numbers, the newest shot's look,
     // punch and inaccuracy, and which gun fired the last shot (w) and reloaded last (rw) — the host charges those (SHOOT-13).
     // (pitch stays the live look pitch — flash facing, the spectator camera, smoke tunnels read it; sp / yaw: the newest shot's look)
@@ -379,6 +387,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       wasGround = m.onGround || m.ladder; lastLandAgo = m.landedAgo;
       if (gun && heldLeft && (current.auto || wantShot)) for (let k = 0; k < 4; k++) { const due = Math.max(A.nextAt, drawAt + drawMs, A.t); if (due > T) break; advance(due); if (!fire(due)) break; if (!current.auto) { wantShot = false; break; } }
       advance(T); inacc = gun ? inaccuracyOf(accOf(current, scopedMode()), A, MV) : 0;
+      if (fp?.setEmpty && current) { const am = isFirearm(current) ? ammo.get(current.id) : null; fp.setEmpty(!!am && am[0] === 0 && !practiceMag()); }   // (v53 GUNS: an empty magazine held open — CS2's idle_slide_back; no allocation: the stored pair)
       if (fp && view?.visible) fp.update(dt, moveSpeed());
       punch.pitch = (A.aimP + A.flP) * D2R; punch.yaw = (A.aimY + A.flY) * D2R;   // (the camera follows RECOIL.view of it: lab.js)
       if (knife && !knife.done && now() >= knife.hitAt) { knife.done = true; if (canFire()) knifeHit(); }
@@ -427,7 +436,7 @@ export function createWeapons({ scene, camera, effects, arsenal, targets, report
       view.rotation.set(kick * .35 * k - rl * .6 - dr * .9 + rx + nr, .04 + ry, rl * .4 + dr * .35 + spin + rz);
       // Swings, inspect and planting turn round the hand (not the eye), so the weapon twists in place on screen.
       if (fp && (rx || ry || rz)) { fp.handIn(view, PIVOT); pivR.setFromEuler(pivE.set(rx, ry, rz)); view.position.add(pivA.copy(PIVOT).sub(pivB.copy(PIVOT).applyQuaternion(pivR))); }
-      if (scope && view) view.visible = false;
+      if (scope && view && current?.hideZoomed) view.visible = false;   // (v53 GUNS: CS2's m_bHideViewModelWhenZoomed — only the AWP and SSG 08; the AUG and SG 553 keep their view model drawn when scoped)
     }
   };
 }
