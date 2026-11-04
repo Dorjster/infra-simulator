@@ -12,8 +12,9 @@
 //  · Smoke: blooms once it rests (1.5 s at the earliest, 12 s at the latest) · an 18 s cloud no one sees through.
 //  · Decoy: once it rests, sounds like the thrower's gun in bursts for 15 s (and shows on the enemies' radar while it
 //    fires), then pops.
-//  · Molotov (T) / Incendiary (CT): bursts on a floor it hits (or after 2 s) · 7 s of fire over up to 37 units around,
-//    spreading only over the floor it landed on (walls and drops stop it); burns anyone standing in it.
+//  · Molotov (T) / Incendiary (CT): bursts on a floor it hits flat enough (or after 2 s in the air) · CS2's inferno: up
+//    to 16 flames 42 HU apart within 150 HU, spreading over floors, down stairs and slopes, stopped by walls, each burning
+//    7 s; smoke puts out the flames it covers; burns anyone in it (v53 FIRE: INFERNO below).
 // Deterministic flight (v53, SPEC 1.2 — lineups land where CS2's do, on every computer, at every tick and frame rate):
 //  · Every grenade has its own clock: g.at (its throw, host ms), g.n (whole 1/64 s steps flown — CS2's 64 Hz tick) and
 //    g.acc (the time since its last step, s). However long the host's tick (15–100 ms, late or early), the flight
@@ -28,7 +29,7 @@
 //    angles, with the movement's velocity at the release tick (arena-move.js pressThrow: sub-tick fraction; a jump and a
 //    release on the same tick → a jump-throw at the take-off velocity). Sent unrounded (JSON doubles); the host uses it
 //    as sent (LAN trust) on the same nadeMesh (both build it with mapBoxes from the same map file).
-import { EYE, weaponById, defaultPistol } from './weapons-data.js';
+import { EYE, weaponById, defaultPistol, hitDamage } from './weapons-data.js';
 import { hurt, applyHit, isDown, recording, statOf } from './combat-logic.js';
 import { lineOfSight, segmentClear, ARENA_MAPS, floorAt } from './arena-maps.js';
 import { ARENA } from './facility-layout.js';
@@ -46,9 +47,11 @@ export const NADES = {
   smoke: { id: 'smoke', name: 'Smoke Grenade', kind: 'nade', price: 300, fuse: 1500, radius: 164 * HU, lasts: 18000, maxAir: 12000 },   // (CS2's cloud is 144 units round, about 150 high; here 30 % more ground (164 round) and 30 % more height, as asked)
   // Decoy ($50, m_nPrice): goes off once it rests like a smoke (12 s at the latest), then DECOY below.
   decoy: { id: 'decoy', name: 'Decoy Grenade', kind: 'nade', price: 50, fuse: 1500, maxAir: 12000 },
-  molotov: { id: 'molotov', name: 'Molotov', kind: 'nade', team: 't', price: 400, fuse: 2000, radius: 37, lasts: 7000, dps: 40, airburst: 128 * HU },
+  // (v53 FIRE: radius — the fire's reach, INFERNO.range + a flame's half width, 180 HU; it was 37 units = 240 HU of
+  // flooded cells, ~3× CS2's area. lasts: each flame's 7 s, inferno_flame_lifetime; the whole fire: g.fe)
+  molotov: { id: 'molotov', name: 'Molotov', kind: 'nade', team: 't', price: 400, fuse: 2000, radius: 180 * HU, lasts: 7000, dps: 40, airburst: 128 * HU },
   // The Counter-Terrorists' fire grenade (m_nPrice 500, m_nDamage 40 like the molotov's): the same fire, its own id.
-  incendiary: { id: 'incendiary', name: 'Incendiary Grenade', kind: 'nade', team: 'ct', price: 500, fuse: 2000, radius: 37, lasts: 7000, dps: 40, airburst: 128 * HU },
+  incendiary: { id: 'incendiary', name: 'Incendiary Grenade', kind: 'nade', team: 'ct', price: 500, fuse: 2000, radius: 180 * HU, lasts: 7000, dps: 40, airburst: 128 * HU },
 };
 export const NADE_IDS = Object.keys(NADES), MAX_NADES = 4, MAX_FLASH = 2;
 // The fire grenades (one burning rule set; a player carries one of them at a time — CS2's AMMO_TYPE_MOLOTOV).
@@ -672,61 +675,135 @@ export function smokeUp(game) { const N = game?.combat?.nades; if (N) for (let i
 const smoked = (game, ax, az, bx, bz, y = 8, now = hostNow(game)) => smokeBlocks(game, ax, y, az, bx, y, bz, now);
 // Is the line between two points (at chest height) clear of walls and smoke?
 export function clearView(game, boxes, ax, az, bx, bz, y = 8, now = hostNow(game)) { return lineOfSight(boxes, ax, az, bx, bz, y) && !smoked(game, ax, az, bx, bz, y, now); }
-// Fire and smoke (CS2): a smoke whose volume reaches burning flames puts the whole fire out (also while it is still
-// spreading); a molotov that breaks inside smoke fizzles. A put-out fire stays in the state as 'out' briefly (steam),
-// then leaves; nothing re-ignites it. An HE doesn't touch fire.
+// Fire and smoke: see INFERNO below. smokedAt: a point a little over a floor inside smoke (the density the screen draws).
+// putOut: the whole fire over — 'out' briefly (the extinguish look and sound: g.ext), then gone; nothing re-ignites it.
 const smokedAt = (game, x, y, z, now) => smokeDensity(game, x, y + 2, z, now) > .35;
-export function putOut(f, now) { f.phase = 'out'; f.outAt = now; f.firedAt = now; }
-// Where a molotov burns (CS2's inferno): flames spread from where it broke over FIRE.spread ms — across the floor, down
-// stairs and slopes (a step up of FIRE.up at most, down FIRE.down), never up a wall or through one — to the cells
-// within its radius. Each cell: [x, z, y, d] (d: how far along the spread, 0 … 1). Near the end the flames die out
-// one by one (each cell's own moment in the last FIRE.die ms). Deterministic, so every client draws the host's fire.
-// On a CS2 map the fire goes by CS2's own surfaces (boxes.nadeMesh): each cell's floor is the first surface straight down
-// from a step over the floor it spread from (to a stair's drop below it), and fire passes from cell to cell only where
-// nothing stands between them a little over the higher floor (a wall, a doorframe, a shut door) — never through a wall,
-// never to a floor above or below (stacked floors: Nuke's, Overpass'). Elsewhere by the map's boxes; a molotov that
-// lies against a wall starts from the nearest open cell round it (the old start, inside the wall's margin, burned nothing).
-export const FIRE = { cell: 3, spread: 1100, up: 1.5, down: 3.2, die: 1500, hit: 200, ramp: 8, rest: 600, lift: .6 };
-const fireCache = new Map(); let F_SEEN = new Uint8Array(0), F_ASK = new Float64Array(0), F_GOT = new Float64Array(0), F_Q = new Float64Array(0);
-export function fireCells(boxes, x, z, y = 0) {
-  const k = [x.toFixed(1), z.toFixed(1), y.toFixed(1), boxes.length].join(); if (fireCache.has(k)) return fireCache.get(k);
-  const S = FIRE.cell, R = NADES.molotov.radius, Rn = Math.ceil(R / S), M = boxes.nadeMesh;
-  // The floor under (px, pz) near height ref: the highest top a step up or a stair down from it (the map's ground: 0).
-  const floorNear = M ? (px, pz, ref) => { const a = ref + FIRE.up, w = meshFirst(M, px, a, pz, px, ref - FIRE.down, pz); let top = w <= 1 ? a - (FIRE.up + FIRE.down) * w : -Infinity;
-      for (const b of doors) if (px > b.minX && px < b.maxX && pz > b.minZ && pz < b.maxZ && b.y1 <= ref + FIRE.up && b.y1 >= ref - FIRE.down && b.y1 > top) top = b.y1; return top; }
-    : (px, pz, ref) => { let top = -Infinity; for (const b of boxesNear(boxes, px, pz, px, pz, FA)) if (px > b.minX && px < b.maxX && pz > b.minZ && pz < b.maxZ && b.y1 <= ref + FIRE.up && b.y1 >= ref - FIRE.down && b.y1 > top) top = b.y1;
-      if (top === -Infinity && 0 <= ref + FIRE.up && 0 >= ref - FIRE.down) top = 0; return top; };
-  const blocked = M ? () => false : (px, pz, fy) => boxesNear(boxes, px - .5, pz - .5, px + .5, pz + .5, FB).some(b => !b.off && px > b.minX - .5 && px < b.maxX + .5 && pz > b.minZ - .5 && pz < b.maxZ + .5 && b.y0 < fy + 2 && b.y1 > fy + FIRE.up);   // a wall or crate standing on this floor
-  const doors = M ? (boxes.movers || NONE).filter(b => !b.off && b.mat !== 'glass' && b.maxX > x - R - S && b.minX < x + R + S && b.maxZ > z - R - S && b.minZ < z + R + S) : NONE;   // (the shut doors and whole crates within its reach: once)
-  const linked = M ? (ax, az, ay, bx, bz, by) => { const h = Math.max(ay, by) + FIRE.lift; return meshFirst(M, ax, h, az, bx, h, bz) > 1 && moverFirst(doors, ax, h, az, bx, h, bz, false) > 1 && (ay >= by || meshFirst(M, ax, ay + FIRE.lift, az, ax, h, az) > 1); } : () => true;   // (nothing between two cells a little over the higher floor; a step up: nothing over the lower one either)
-  // Where it starts: the cell it lies in, else the nearest open one round it (within two cells) on the same floor.
-  let si = 0, sj = 0, sy = floorNear(x, z, y + .5); if (!Number.isFinite(sy)) sy = y;
-  if (blocked(x, z, sy)) { let best = Infinity; for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) { const d = i * i + j * j; if (!d || d >= best) continue; const f = floorNear(x + i * S, z + j * S, sy + .5); if (Number.isFinite(f) && !blocked(x + i * S, z + j * S, f)) { best = d; si = i; sj = j; sy = f; } } }
-  // The flood (nearest first): the grid's cells by index into reused typed arrays — seen, the floor last asked for
-  // (from which height, and what it was: a cell a wall kept out is asked again from its other sides) and the queue —
-  // no string keys, no Map, no array per step (a new fire's work is mostly its rays then; the result is the same).
-  const Wd = 2 * Rn + 1, n2 = Wd * Wd; if (F_SEEN.length < n2) { F_SEEN = new Uint8Array(n2); F_ASK = new Float64Array(n2); F_GOT = new Float64Array(n2); F_Q = new Float64Array(n2 * 4); }
-  F_SEEN.fill(0, 0, n2); F_ASK.fill(NaN, 0, n2); const out = []; let qn = 1, far = 1; F_Q[0] = si; F_Q[1] = sj; F_Q[2] = sy; F_Q[3] = 0; F_SEEN[(si + Rn) * Wd + sj + Rn] = 1;
-  for (let h = 0; h < qn; h++) { const i = F_Q[h * 4], j = F_Q[h * 4 + 1], fy = F_Q[h * 4 + 2], steps = F_Q[h * 4 + 3], px = x + i * S, pz = z + j * S; if (blocked(px, pz, fy)) continue; out.push([+px.toFixed(2), +pz.toFixed(2), +fy.toFixed(2), steps]); if (steps > far) far = steps;
-    for (let d = 0; d < 4; d++) { const ii = d === 0 ? i + 1 : d === 1 ? i - 1 : i, jj = d === 2 ? j + 1 : d === 3 ? j - 1 : j; if (Math.abs(ii) > Rn || Math.abs(jj) > Rn || Math.hypot(ii, jj) * S > R) continue; const kk = (ii + Rn) * Wd + jj + Rn; if (F_SEEN[kk]) continue;
-      let ny; if (F_ASK[kk] === fy) ny = F_GOT[kk]; else { ny = floorNear(x + ii * S, z + jj * S, fy); F_ASK[kk] = fy; F_GOT[kk] = ny; }
-      if (!Number.isFinite(ny) || !linked(px, pz, fy, x + ii * S, z + jj * S, ny)) continue; F_SEEN[kk] = 1; const o = qn * 4; F_Q[o] = ii; F_Q[o + 1] = jj; F_Q[o + 2] = ny; F_Q[o + 3] = steps + 1; qn++; } }
-  for (const c of out) c[3] = +(c[3] / far).toFixed(3);
-  if (fireCache.size > 64) fireCache.clear(); fireCache.set(k, out); return out;
-}
-// A map's first fire, ahead of time (at map load, beside warmSmoke: one flood at a spawn) — so the match's first
-// molotov does not pay the cold cost on the frame it lands (measured on the user's CS2 maps, a loaded machine: the
-// first flood ~40–100 ms, the next ones 2–12 ms).
-export function warmFire(boxes, x, z, y = 0) { if (boxes && Number.isFinite(x + z + y)) fireCells(boxes, x, z, y); }
-// Is a cell of fire `g` burning at `now` (host clock)? Lit once the spread reaches it, out at its own moment near the end.
-export const cellEnd = c => NADES.molotov.lasts - FIRE.die * (((Math.sin(c[0] * 12.9898 + c[1] * 78.233) * 43758.5453) % 1 + 1) % 1);   // when a cell's flame dies (ms after the fire started)
-export const cellLit = (g, c, now) => { const t = now - (g.firedAt || now); return t >= c[3] * FIRE.spread && t < cellEnd(c); };
-// Someone at (x, z), feet at y, standing in the flames? (Without g: any cell, as it stands.)
-export const inFire = (cells, x, z, y = null, g = null, now = 0) => cells.some(c => Math.abs(c[0] - x) < 2.2 && Math.abs(c[1] - z) < 2.2 && (y === null || Math.abs((c[2] ?? 0) - y) < 3) && (!g || cellLit(g, c, now)));
+export function putOut(f, now, ext = true) { f.phase = 'out'; f.outAt = now; f.firedAt = now; if (ext) f.ext = 1; }
+// ── Fire (v53 FIRE, SPEC ADDENDUM 1): CS2's inferno ──
+// THE RULE. A molotov or an incendiary that bursts on a floor starts an inferno: at most INFERNO.max flames, the first
+// where it broke, each later one INFERNO.spacing from a flame already burning (picked at random — seeded, so every
+// computer grows the same fire), in a random direction — or, as often as INFERNO.velFactor × the grenade's speed when
+// it burst (HU/s; less by INFERNO.velDecay each generation, at most 0.8: our reading of the two cvars), within
+// INFERNO.angle (inferno_spawn_angle 45°) of the way it was moving — never further than INFERNO.range from the
+// first, never closer than half a spacing to another, only onto a floor a step up (INFERNO.up) or a drop down
+// (INFERNO.down) from its parent's and only where nothing stands between the two a little over the higher floor (a
+// wall, a doorframe, a shut door: CS2's own triangles on a CS2 map, the boxes elsewhere) — so it runs over floors, down
+// stairs and slopes and stops at walls. A new flame is tried every gap (INFERNO.first, × INFERNO.mult after each try, at
+// most INFERNO.maxGap); a flame only spawns children for INFERNO.perFlame after its own start; a try that fails (a wall,
+// too far, too close) is tried again up to TRIES times in its slot (ours), then the slot is lost. Each flame burns
+// INFERNO.life from its own start; the whole fire is over when its last flame is (g.fe: the host's end, ms after the
+// burst). Measured here on open ground: all 16 flames within 0.6–0.9 s, 105–145 HU from the first (+30 HU half width).
+// STATE (host → every client, small): g.bv — the grenade's horizontal velocity when it burst (units/s, 1 decimal: the
+// spread's lean) — g.xm, a 16-bit mask of the flames put out (by smoke) — and g.mv, the open / broken doors and panes
+// within its reach when it burst (fireStamp: usually ''). The flames themselves are never sent: every computer works them
+// out from the same map, spot, g.id + the spot (the seed: a pause doesn't change it), g.bv and g.mv (infernoFlames, cached).
+// SMOKE (CS2): a smoke grenade flying into burning flames goes off there and then; a smoke's volume (smokeDensity, the
+// same the screen draws) puts out every flame it covers — each on its own, the rest burn on — and a flame due to start
+// inside smoke, or whose parent is already out, never lights (fire can't spread into smoke). A molotov that breaks
+// inside smoke fizzles. Once every flame is out the fire is 'out' (g.ext: put out, for its sound and look).
+// DAMAGE: a hit every FIRE.hit ms to everyone whose body box (CS2's 32-unit-wide hull) overlaps a lit flame's box
+// (INFERNO.half each side, INFERNO.height tall), ramping 1 → FIRE.ramp per hit (40 a second: weapons.vdata m_nDamage 40),
+// through kevlar by the grenade's own m_flArmorRatio (molotov 1.8, incendiary 1.475 — weapons.vdata; half of it reaches
+// the body, as every gun's `ap`). The thrower burns in his own fire; team mates by the existing friendly-fire rule.
+// SOURCES. weapons.vdata (the user's install, scripts/weapons.vdata): m_nDamage 40, m_flArmorRatio 1.8 / 1.475. The
+// particle files (particles/inferno_fx, decompiled): molotov_groundfire.vpcf's preview control point 3 = [12, 60, 80]
+// (the flame's 60 width and 80 height the inferno passes to the effect), fire_core.vsnap's radius 150 (the range),
+// molotov_groundfire_main_center's ContinuousEmitter 7.0 s (the burn). NOT IN THE INSTALL: the spread's own numbers are
+// server convars compiled into CS2's server binary (the Mac depot has only the .vpk files) — inferno_max_flames 16,
+// inferno_flame_spacing 42, inferno_max_range 150, inferno_flame_lifetime 7, inferno_initial_spawn_interval 0.02,
+// inferno_child_spawn_interval_multiplier 1.1, inferno_max_child_spawn_interval 0.5, inferno_per_flame_spawn_duration 3,
+// inferno_surface_offset 20, inferno_velocity_factor 0.003, inferno_velocity_decay_factor 0.2, inferno_spawn_angle 45 are CS:GO's published
+// defaults, which CS2 kept as far as public cvar lists show: used here, unverified from files. INFERNO.down (32 HU: a 37° stair over one spacing, short of a
+// 39 HU crate's side — a fire on a crate stays on it), TRIES, the
+// half-spacing minimum gap and the damage ramp are ours.
+export const INFERNO = { max: 16, spacing: 42 * HU, range: 150 * HU, life: 7000, first: 20, mult: 1.1, maxGap: 500, perFlame: 3000, half: 30 * HU, height: 80 * HU, up: 20 * HU, down: 32 * HU, velFactor: .003, velDecay: .2, angle: 45 * Math.PI / 180, body: 16 * HU };
+export const FIRE = { hit: 200, ramp: 8, rest: 600, lift: .6, fade: 450, grow: 300 };   // (fade / grow: a flame's last / first ms on screen)
+// A flame: [x, z, y (its floor), start (ms after the burst), end, parent (−1: the first), generation, its index].
+export const FL_X = 0, FL_Z = 1, FL_Y = 2, FL_T = 3, FL_END = 4, FL_PARENT = 5, FL_I = 7;
+// (FIRE final, review R1: the seed is the fire's id and where it burst — never g.at, which a pause moves on (holdNades):
+// a fire mid-spread through a pause, or a client computing after one, grew a different fire with a stale g.fe)
+const TRIES = 3, fireCache = new Map(), seedOf = (g, x, z) => { const s = String(g?.id ?? '') + ':' + num(x).toFixed(2) + ',' + num(z).toFixed(2); let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+// (FIRE final, review R2: the doors and panes a fire spreads round are those of the moment it burst — the host stamps the
+// open / broken ones within its reach into g.mv (as a smoke's s.mv: 'mover:role' sorted), every later spread — a client's,
+// a late joiner's, a cache miss — reads that stamp, not the doors as they are now; without a stamp (an older state, tests,
+// the warm-up): the doors as they are)
+const FMV = [];
+export function fireStamp(boxes, x, z, y = 0) { const M = boxes?.movers; if (!M?.length) return ''; const R = INFERNO.range + INFERNO.spacing + INFERNO.half, y0 = y - INFERNO.down * 4 - INFERNO.height, y1 = y + INFERNO.up * 4 + INFERNO.height; FMV.length = 0;
+  for (const b of M) if (b.off && b.maxX > x - R && b.minX < x + R && b.maxZ > z - R && b.minZ < z + R && b.y1 > y0 && b.y0 < y1) FMV.push(b.mover + ':' + b.role);
+  return FMV.sort().join('|'); }
+const rng32 = s => () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };   // (mulberry32: the same numbers on every computer)
+// The flames of fire `g` (or, without g, of a fire at x, z, y with no seed or lean: tests, the warm-up) on these boxes.
+// Cached per fire; allocation only when a fire is new.
+export function infernoFlames(boxes, x, z, y = 0, g = null) {
+  const bvx = num(g?.bv?.[0]), bvz = num(g?.bv?.[1]), seed = g ? seedOf(g, x, z) : 1, mv = typeof g?.mv === 'string' ? g.mv : null;
+  const k = x.toFixed(2) + ',' + z.toFixed(2) + ',' + y.toFixed(2) + ',' + seed + ',' + bvx + ',' + bvz + ',' + (boxes?.length || 0) + (boxes?.nadeMesh ? 'm' : '') + (mv === null ? '' : '|' + mv); const hit = fireCache.get(k); if (hit) return hit;
+  boxes ||= NONE; const M = boxes.nadeMesh, I = INFERNO, reach = I.range + I.spacing;
+  const stamp = mv === null ? null : new Set(mv ? mv.split('|') : NONE), off = stamp ? b => b.mover != null ? stamp.has(b.mover + ':' + b.role) : !!b.off : b => !!b.off;   // (g.mv: the doors as they were at the burst — once per new fire)
+  const doors = M ? (boxes.movers || NONE).filter(b => !off(b) && b.mat !== 'glass' && b.maxX > x - reach && b.minX < x + reach && b.maxZ > z - reach && b.minZ < z + reach) : NONE;   // (the shut doors and whole crates within its reach: once)
+  // The floor under (px, pz) near height ref: the highest top a step up or a drop down from it (the built maps' ground: 0).
+  const floorNear = M ? (px, pz, ref) => { const a = ref + I.up, w = meshFirst(M, px, a, pz, px, ref - I.down, pz); let top = w <= 1 ? a - (I.up + I.down) * w : -Infinity;
+      for (const b of doors) if (px > b.minX && px < b.maxX && pz > b.minZ && pz < b.maxZ && b.y1 <= ref + I.up && b.y1 >= ref - I.down && b.y1 > top) top = b.y1; return top; }
+    : (px, pz, ref) => { let top = -Infinity; for (const b of boxesNear(boxes, px, pz, px, pz, FA)) if (!off(b) && px > b.minX && px < b.maxX && pz > b.minZ && pz < b.maxZ && b.y1 <= ref + I.up && b.y1 >= ref - I.down && b.y1 > top) top = b.y1;
+      if (top === -Infinity && 0 <= ref + I.up && 0 >= ref - I.down) top = 0; return top; };
+  // Nothing between two flames a little over the higher floor (a step up: nothing over the lower one either); on the
+  // built maps a box standing on the way (a wall, a crate) — sampled along it.
+  const linked = M ? (ax, az, ay, bx, bz, by) => { const h = Math.max(ay, by) + FIRE.lift; return meshFirst(M, ax, h, az, bx, h, bz) > 1 && moverFirst(doors, ax, h, az, bx, h, bz, false) > 1 && (ay >= by || meshFirst(M, ax, ay + FIRE.lift, az, ax, h, az) > 1); }
+    : (ax, az, ay, bx, bz, by) => { const h = Math.max(ay, by) + FIRE.lift; for (let s = 1; s <= 6; s++) { const px = ax + (bx - ax) * s / 6, pz = az + (bz - az) * s / 6; for (const b of boxesNear(boxes, px - .3, pz - .3, px + .3, pz + .3, FB)) if (!off(b) && px > b.minX - .3 && px < b.maxX + .3 && pz > b.minZ - .3 && pz < b.maxZ + .3 && b.y0 < h && b.y1 > h) return false; } return true; };
+  const rnd = rng32(seed), out = []; let sy = floorNear(x, z, y + .5); if (!Number.isFinite(sy)) sy = y;
+  out.push([+x.toFixed(2), +z.toFixed(2), +sy.toFixed(2), 0, I.life, -1, 0, 0]);
+  const sp = Math.hypot(bvx, bvz) / HU, lx = sp > 1e-6 ? bvx / (sp * HU) : 0, lz = sp > 1e-6 ? bvz / (sp * HU) : 0, minGap = I.spacing * .5;
+  for (let t = 0, gap = I.first; out.length < I.max; ) {
+    t += gap; gap = Math.min(I.maxGap, gap * I.mult);
+    let live = 0; for (const f of out) if (t - f[FL_T] <= I.perFlame) live++; if (!live) break;
+    for (let tryN = 0; tryN < TRIES; tryN++) {   // (a slot: up to TRIES picks — ours; a slot that finds no room is lost)
+      let pick = Math.floor(rnd() * live), p = null; for (const f of out) if (t - f[FL_T] <= I.perFlame && pick-- === 0) { p = f; break; }
+      const lean = Math.min(.8, I.velFactor * sp * Math.pow(1 - I.velDecay, p[6])), fwd = rnd() < lean, a = fwd ? Math.atan2(lz, lx) + (rnd() * 2 - 1) * I.angle : rnd() * Math.PI * 2, dx = Math.cos(a), dz = Math.sin(a);   // (leaning: within inferno_spawn_angle of its way, that often)
+      const cx = p[FL_X] + dx * I.spacing, cz = p[FL_Z] + dz * I.spacing; if (Math.hypot(cx - x, cz - z) > I.range) continue;
+      const cy = floorNear(cx, cz, p[FL_Y]); if (!Number.isFinite(cy)) continue;
+      let near = false; for (const f of out) if (Math.hypot(f[FL_X] - cx, f[FL_Z] - cz) < minGap && Math.abs(f[FL_Y] - cy) < I.height) { near = true; break; } if (near) continue;
+      if (!linked(p[FL_X], p[FL_Z], p[FL_Y], cx, cz, cy)) continue;
+      out.push([+cx.toFixed(2), +cz.toFixed(2), +cy.toFixed(2), Math.round(t), Math.round(t) + I.life, p[FL_I], p[6] + 1, out.length]); break; } }
+  if (fireCache.size > 64) fireCache.delete(fireCache.keys().next().value); fireCache.set(k, out); return out; }
+export const clearFireCache = () => fireCache.clear();   // (tests: the next call works every flame out afresh)
+// The flames of a fire in the state (its own seed and lean): what the host burns and every client draws.
+export const fireCells = (boxes, x, z, y = 0, g = null) => infernoFlames(boxes, x, z, y, g);
+// When the fire is over (ms after the burst): its last flame's end.
+export const fireEnd = flames => { let e = 0; for (const f of flames) if (f[FL_END] > e) e = f[FL_END]; return e; };
+// A map's first fire, ahead of time (at map load, beside warmSmoke: one spread at a spawn) — so the match's first
+// molotov does not pay the cold cost on the frame it lands.
+export function warmFire(boxes, x, z, y = 0) { if (boxes && Number.isFinite(x + z + y)) infernoFlames(boxes, x, z, y, { id: '~warm', at: 0, bv: [3, 1] }); }
+// Is flame i of fire g burning at `now` (host clock)? Started, not over, not put out.
+export const cellEnd = c => c[FL_END];
+export const flameOut = (g, i) => ((+g?.xm || 0) >>> i & 1) === 1;
+export const cellLit = (g, c, now) => { const t = now - (g.firedAt || now); return t >= c[FL_T] && t < c[FL_END] && !flameOut(g, c[FL_I]); };
+// Someone at (x, z), feet at y, in the flames? Their body box (INFERNO.body each side, a standing player's height) over a
+// lit flame's box (INFERNO.half each side, INFERNO.height from its floor). Without g: any flame, as it stands.
+export function inFire(cells, x, z, y = null, g = null, now = 0) { const r = INFERNO.half + INFERNO.body;
+  for (let i = 0; i < cells.length; i++) { const c = cells[i]; if (Math.abs(c[FL_X] - x) >= r || Math.abs(c[FL_Z] - z) >= r) continue; if (y !== null && (y > c[FL_Y] + INFERNO.height || y < c[FL_Y] - 72 * HU)) continue;
+    if (!g || cellLit(g, c, now)) return true; } return false; }
+// Host: a smoke's volume over the flames of fire g at `now` — each flame it covers goes out, a flame due within the next
+// LOOK ms inside smoke or under a parent already out never lights. Returns true when the mask changed.
+const LOOK = 300;
+function smotherFlames(game, g, flames, now) { const t = now - (g.firedAt || now); let m = +g.xm || 0; const m0 = m;
+  for (let i = 0; i < flames.length; i++) { if ((m >>> i) & 1) continue; const f = flames[i]; if (f[FL_T] > t + LOOK || t >= f[FL_END]) continue;
+    if (smokedAt(game, f[FL_X], f[FL_Y], f[FL_Z], now)) m |= 1 << i; }
+  g.xm = orphans(flames, m, t); return g.xm !== m0; }
+// Flames not started yet whose parent is out never light (parents come before their children in the list): the mask with them.
+function orphans(flames, m, t) { for (let i = 1; i < flames.length; i++) { const p = flames[i][FL_PARENT]; if (!((m >>> i) & 1) && flames[i][FL_T] > t && p >= 0 && (m >>> p) & 1) m |= 1 << i; } return m >>> 0; }
+// Host: are all of fire g's flames over or out?
+function allOut(g, flames, now) { const t = now - (g.firedAt || now); for (let i = 0; i < flames.length; i++) if (!flameOut(g, i) && t < flames[i][FL_END]) return false; return true; }
+// Is (x, y, z) inside a lit flame's box of any fire? (a smoke grenade flying into the fire goes off there)
+function inFlames(game, boxes, x, y, z, now) { for (const f of game.combat?.nades || NONE) { if (f.phase !== 'fire' || Math.hypot(f.x - x, f.z - z) > INFERNO.range + INFERNO.half * 2) continue; const F = infernoFlames(boxes, f.x, f.z, f.y, f);
+    for (let i = 0; i < F.length; i++) { const c = F[i]; if (Math.abs(c[FL_X] - x) < INFERNO.half && Math.abs(c[FL_Z] - z) < INFERNO.half && y >= c[FL_Y] - R && y <= c[FL_Y] + INFERNO.height && cellLit(f, c, now)) return true; } } return false; }
+// The fire areas now, for bots and the radar: each burning fire's lit flames' boxes into `out` as [x, z, y, half]
+// (reused arrays; returns how many). Allocation-free once out has grown.
+export function fireAreas(game, boxes, now, out) { let n = 0; for (const f of game?.combat?.nades || NONE) { if (f.phase !== 'fire') continue; const F = infernoFlames(boxes, f.x, f.z, f.y, f);
+    for (let i = 0; i < F.length; i++) { if (!cellLit(f, F[i], now)) continue; const o = out[n] ??= [0, 0, 0, 0]; o[0] = F[i][FL_X]; o[1] = F[i][FL_Z]; o[2] = F[i][FL_Y]; o[3] = INFERNO.half; n++; } } return n; }
 // One host tick: move, bounce, set off, burn, clean up. Returns true when anything changed.
 export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } = {}, onBlast = null, onGlass = null) {   // onBlast(x, y, z, radius, dmg): an HE went off there (arena-logic.js: doors and breakables take it)
   const C = game.combat; if (C) C.clock = now; if (C && players?.length) cutShots(game, players, now);   // (the players' new shots through a smoke cut its tunnels on the host — counted every tick, smoke or not)
   if (!C?.nades?.length) return false; let changed = false; const bodies = C.nades.some(g => g.phase === 'air') ? people(game, players) : null;   // (the living, for grenades in flight to bounce off)
+  let fireUp = false; for (const f of C.nades) if (f.phase === 'fire') { fireUp = true; break; }   // (v53 FIRE: a smoke flying into burning flames goes off there — inFlames)
   for (const g of C.nades) {
     const N = NADES[g.kind]; if (!N) { g.phase = 'gone'; continue; }
     if (g.phase === 'air') {
@@ -736,7 +813,7 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
       // used for the flight any more: a 15 ms tick and a 100 ms one fly the same steps.
       if (!Number.isFinite(g.n)) g.n = Math.max(0, Math.floor((now - g.at) / NADE_MS + 1e-6) - 1);   // (a grenade with no clock of its own — an older state, a hand-made one: it is where it is now, one step due)
       const due = Math.min(g.n + NADE_MAX_STEPS, Math.floor((now - g.at) / NADE_MS + 1e-6)); let hitFloor = false, off = false;
-      while ((g.n || 0) < due) { hitFloor = nadeStep(g, boxes, bounds, bodies); traceStep(g); if (g.void || g.bad) break; if (goesOff(g, hitFloor, g.n * NADE_MS)) { off = true; break; } }
+      while ((g.n || 0) < due) { hitFloor = nadeStep(g, boxes, bounds, bodies); traceStep(g); if (g.void || g.bad) break; if (goesOff(g, hitFloor, g.n * NADE_MS) || (fireUp && g.kind === 'smoke' && inFlames(game, boxes, g.x, g.y, g.z, g.at + g.n * NADE_MS))) { off = true; break; } }
       g.n ||= 0; g.acc = Math.max(0, (now - g.at) / 1000 - g.n * NADE_DT); changed = true; const age = g.n * NADE_MS;
       if (g.glass?.length) { for (const id of g.glass) onGlass?.(id); g.glass = null; }   // (panes it broke on the way: broken for everyone)
       // Out of the world (a lob over an outer wall falls past CS2's lowest surface: a deliberate removal, logged — or,
@@ -744,14 +821,16 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
       // the air past any fuse): removed at once.
       if (g.void || g.bad || age > AIR_MAX) { logNade(game, g, g.void ? voidWhy(boxes, g) : g.bad ? 'not finite' : 'too long in the air', now); g.phase = 'gone'; continue; }
       if (!off) continue;
+      if (isFire(g.kind)) g.bv = [Math.round(g.vx * 10) / 10, Math.round(g.vz * 10) / 10];   // (v53 FIRE: its lean when it burst — the inferno's spread, every computer's)
       g.phase = { he: 'boom', flash: 'pop', smoke: 'smoke', decoy: 'decoy', molotov: 'fire', incendiary: 'fire' }[g.kind]; g.firedAt = g.at + age; g.vx = g.vy = g.vz = 0;   // (firedAt: the step it went off on, not the tick that saw it)
       if (isFire(g.kind) || g.kind === 'smoke') { const fy = groundUnder(boxes, g.x, g.z, g.y);   // (the surface it lies on: CS2's triangles on a CS2 map — beside a wall, on a roof or a stair as they are)
         if (fy === null && !isFire(g.kind)) { logNade(game, g, 'out of the world', now); g.phase = 'gone'; continue; }   // (no surface under it at all: out of the world)
         if (isFire(g.kind) && (fy === null || (!(hitFloor && lastNy >= FIRE_SLOPE_NY) && g.y - fy > N.airburst))) { g.phase = 'out'; g.airburst = true; }   // timed out high in the air (or over nothing at all): it bursts there, no fire (CS2)
         else g.y = fy; }
       if (g.phase === 'smoke') smokeVoxels(game, g);   // its cells now, once, where it lies (every sightline after reads them)
-      if (isFire(g.kind) && g.phase === 'fire' && smokedAt(game, g.x, g.y, g.z, now)) putOut(g, now);   // into smoke: it fizzles
-      if (g.kind === 'smoke') for (const f of C.nades) if (f.phase === 'fire' && fireCells(boxes, f.x, f.z, f.y).some(c => cellLit(f, c, now) && Math.hypot(c[0] - g.x, c[1] - g.z) < NADES.smoke.radius * .35 && Math.abs(c[2] - g.y) < 6)) putOut(f, now);   // popping in the flames: out at once (then its volume reaches the rest)
+      if (isFire(g.kind) && g.phase === 'fire') { g.xm = 0; g.mv = fireStamp(boxes, g.x, g.z, g.y); g.fe = fireEnd(infernoFlames(boxes, g.x, g.z, g.y, g)); if (smokedAt(game, g.x, g.y, g.z, now)) putOut(g, now); }   // (its end: the last flame's; into smoke: it fizzles)
+      if (g.kind === 'smoke') for (const f of C.nades) { if (f.phase !== 'fire') continue; const F = infernoFlames(boxes, f.x, f.z, f.y, f); let m = +f.xm || 0;   // popping in the flames: those round it out at once (then its volume reaches the rest)
+        for (let i = 0; i < F.length; i++) if (Math.hypot(F[i][FL_X] - g.x, F[i][FL_Z] - g.z) < NADES.smoke.radius * .35 && Math.abs(F[i][FL_Y] - g.y) < 6) m |= 1 << i; f.xm = orphans(F, m, now - (f.firedAt || now)); if (allOut(f, F, now)) putOut(f, now); }   // popping in the flames: out at once (then its volume reaches the rest)
       if (g.kind === 'he') for (const s of C.nades) { const h = s.phase === 'smoke' && blastHole(game, s, g.x, g.y, g.z, now); if (h) s.holes = [...(s.holes || []), h].slice(-3); }   // a blast clears the smoke round it for a moment
       if (g.kind === 'he') onBlast?.(g.x, g.y, g.z, N.radius, N.dmg);
       if (g.kind === 'he') for (const t of people(game, players)) { const base = heDamage(boxes, g.x, g.y + HU, g.z, t); if (base > 0) applyHit(game, g.by, t.name, { id: 'he', name: N.name, ap: N.ap }, 'chest', Math.hypot(t.x - g.x, t.z - g.z), 1, now, base); }   // (kevlar: applyHit takes `ap` of it through, as a gun's)
@@ -763,18 +842,20 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
           if (t.bot) t.bot.blindUntil = Math.max(t.bot.blindUntil || 0, now + B.hold + B.fade * .5);
           if (rec && tm[key(t.name)] && tm[key(t.name)] !== mine && ms >= 1960) { const st = statOf(game, g.by); st.flashed++; st.blindMs += Math.round(ms); } } }
     } else if (g.phase === 'fire') {
-      // Burning (CS2): a hit every FIRE.hit ms to everyone standing in lit flames, 1 damage the first hit, one more each
-      // hit up to FIRE.ramp (then 40 a second — weapons.vdata m_nDamage 40 for the molotov and the incendiary; the
-      // ramp from 1 and the 200 ms beat are ours, an approximation of CS2's build-up); out of the flames a moment and
-      // it starts again at 1. Armor doesn't help (CS:GO's burn damage skips kevlar; CS2 assumed the same).
-      // Two fires overlapping both burn. A smoke reaching the flames puts the whole fire out. The hits keep their own
-      // 200 ms beat on the host's clock whatever its tick (the next one is due a beat after the last was due, not after
-      // the tick that happened to run it: at 40–60 ms ticks the old way burned ~35 a second); after a stall it starts
-      // again from now.
-      if (now - (g.burnAt || 0) >= FIRE.hit) { g.burnAt = g.burnAt && now - g.burnAt < 2 * FIRE.hit ? g.burnAt + FIRE.hit : now; const cells = fireCells(boxes, g.x, g.z, g.y), heat = g.heat ??= {};
-        if (C.nades.some(s => s.phase === 'smoke')) { for (let i = 0; i < cells.length; i += 4) if (cellLit(g, cells[i], now) && smokedAt(game, cells[i][0], cells[i][2], cells[i][1], now)) { putOut(g, now); changed = true; break; } if (g.phase !== 'fire') continue; }
+      // Burning (INFERNO above): a hit every FIRE.hit ms to everyone in lit flames, 1 damage the first hit, one more each
+      // hit up to FIRE.ramp (then 40 a second — weapons.vdata m_nDamage 40; the ramp from 1 and the 200 ms beat are ours,
+      // an approximation of CS2's build-up — the damage code is in the server binary); out of the flames a moment and it
+      // starts again at 1. Through kevlar by the grenade's m_flArmorRatio (FIRE_AP: half of it reaches the body; the
+      // vest wears down by half of what it stops, as a gun's hit — weapons-data.js hitDamage). Two fires overlapping both
+      // burn. A smoke's volume puts out the flames it covers (smotherFlames); every flame out: the fire is out. The hits
+      // keep their own 200 ms beat on the host's clock whatever its tick; after a stall it starts again from now.
+      if (now - (g.burnAt || 0) >= FIRE.hit) { g.burnAt = g.burnAt && now - g.burnAt < 2 * FIRE.hit ? g.burnAt + FIRE.hit : now; const cells = infernoFlames(boxes, g.x, g.z, g.y, g), heat = g.heat ??= {};
+        if (C.nades.some(s => s.phase === 'smoke') && smotherFlames(game, g, cells, now)) changed = true;
+        if (allOut(g, cells, now) && now - g.firedAt < (g.fe ?? NADES.molotov.lasts) - FIRE.hit) { putOut(g, now); changed = true; continue; }   // (put out — not simply burnt out)
         for (const t of people(game, players)) { const k = key(t.name); if (!inFire(cells, t.x, t.z, t.y, g, now)) continue;
-          const h = heat[k], n = h && now - h.at < FIRE.rest ? Math.min(FIRE.ramp, h.n + 1) : 1; heat[k] = { n, at: now }; const r = hurt(game, g.by, t.name, { id: g.kind, name: N.name }, n, 'legs', now); changed = true;
+          const h = heat[k], n = h && now - h.at < FIRE.rest ? Math.min(FIRE.ramp, h.n + 1) : 1; heat[k] = { n, at: now };
+          const arm = C.armor?.[k] || null, ar = hitDamage(FIRE_WPN[g.kind] || FIRE_WPN.molotov, 'chest', 0, 1, arm, n); if (arm && ar.armor) { arm.kevlar = Math.max(0, arm.kevlar - ar.armor); if (!arm.kevlar) arm.helmet = false; }   // (kevlar: the generic hit group is covered)
+          const r = hurt(game, g.by, t.name, { id: g.kind, name: N.name }, ar.hp, 'legs', now); changed = true;
           if (r?.dmg > 0) { const b = (C.burns ??= {})[k] ??= { d: 0, f: 1, at: 0 }; b.d = (b.d + r.dmg) % 1e9; b.f = FIRE_FLINCH[g.kind] ?? 1; b.at = now; } } }   // (each body's running burn total, sent with its HP: a client tags a drop by it — burnTag)
     } else if (g.phase === 'decoy' && now - g.firedAt >= DECOY.lasts) {
       // The decoy's end: a small pop (ours: up to DECOY.dmg HP within DECOY.radius, through the air only).
@@ -783,7 +864,7 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
     }
   }
   const n = C.nades.length;
-  C.nades = C.nades.filter(g => g.phase === 'air' || now - g.firedAt < ({ boom: 1200, pop: 1200, smoke: NADES.smoke.lasts, fire: NADES.molotov.lasts, out: 900, decoy: DECOY.lasts + 1000, fizz: DECOY.pop }[g.phase] || 0));
+  C.nades = C.nades.filter(g => g.phase === 'air' || now - g.firedAt < ({ boom: 1200, pop: 1200, smoke: NADES.smoke.lasts, fire: g.fe ?? NADES.molotov.lasts, out: 900, decoy: DECOY.lasts + 1000, fizz: DECOY.pop }[g.phase] || 0));
   if (C.nades.length !== n) for (const id of TRACE.keys()) if (!C.nades.some(g => g.id === id)) TRACE.delete(id);
   return changed || C.nades.length !== n;
 }
@@ -892,6 +973,9 @@ export function decoyBlip(g, now) { const i = decoyShotAt(g, now); return i >= 0
 // a burn tick is our assumption). For someone at (x, z), feet y: standing in lit flames → the lowest flinch of the fires
 // they stand in (1: none), else null (not fire: an ordinary hit's tagging).
 export const FIRE_FLINCH = { molotov: 1, incendiary: .8 };
+// Kevlar against a burn (v53 FIRE): weapons.vdata m_flArmorRatio — weapon_molotov 1.8, weapon_incgrenade 1.475 — as every
+// gun's `ap` (half the ratio reaches the body: 0.9 / 0.7375).
+export const FIRE_AP = { molotov: .9, incendiary: .7375 }; const FIRE_WPN = { molotov: { ap: FIRE_AP.molotov }, incendiary: { ap: FIRE_AP.incendiary } };
 // How a client tags a drop of `drop` HP it just saw (lab.js onHurt) — by the damage's source, not its size: the host
 // keeps each body's running burn total with its HP (combat.burns[k] = { d, f: the flinch of the fire that burned last,
 // at }); `seen` ({ d: 0 } at first, the caller's, kept) is the total at the last look. All of the drop is burn (and the
@@ -901,7 +985,7 @@ export function burnTag(game, name, drop, seen, now) { const b = game?.combat?.b
   return b && burnt > 0 && drop <= burnt && now - b.at < 1000 ? b.f : null; }
 export function fireFlinch(game, boxes, x, y, z, now) { let f = null;
   for (const g of game?.combat?.nades || NONE) { if (g.phase !== 'fire' || !isFire(g.kind) || Math.hypot(g.x - x, g.z - z) > NADES.molotov.radius + 3) continue;
-    if (inFire(fireCells(boxes || NONE, g.x, g.z, g.y), x, z, y, g, now)) f = Math.min(f ?? 1, FIRE_FLINCH[g.kind] ?? 1); }
+    if (inFire(infernoFlames(boxes || NONE, g.x, g.z, g.y, g), x, z, y, g, now)) f = Math.min(f ?? 1, FIRE_FLINCH[g.kind] ?? 1); }
   return f; }
 // ── A paused match (arena-logic.js): the grenades stand still ──
 // Every time a grenade keeps moves on with the pause, a tick at a time (no flight step meanwhile), so fuses, smokes,

@@ -7,6 +7,8 @@ import { NADES, stepNade, throwStart, launch, cs2Release, THROW_DELAY, flashBlin
 import { smokeHoleBytes, smokeLocalCut, smokeCutsNow, SMOKE_CUTS, TUNNEL as CUT_RULES, BILLOW, R as NADE_R } from './arena-nades.js';
 import { flyNade, NADE_DT, GRAVITY as NADE_G } from './arena-nades.js';   // (v53: copies fly the host's own 1/64 s steps)
 import { createSmokePass } from './arena-smoke-pass.js';
+import { createFireView } from './gd-fire-view.js';   // (v53 FIRE: every fire, bottle in flight, burst, extinguish and scorch in one draw)
+import { gdPlay } from './gd-sounds.js';   // (v53 FIRE: CS2's own grenade sound events — Molotov.Start, Inferno.Loop, Molotov.Extinguish, BaseSmokeEffect.Sound … — when the room has them)
 import { flightFrame, frameClock, drawFixed } from './phys-smooth.js';
 // A flight's correction (the host's word on where your copy of it flies) eased out with this time constant (s): ~95 %
 // gone in 150 ms and never faster than the grenade flies (v51's 25 ms pulled a 2-unit correction back at 80 units/s:
@@ -130,6 +132,9 @@ function burst(at, { len = 1.2, decay = 2.5, freq = 900, vol = 1, type = 'lowpas
 function ring(secs) { try { const c = audioCtx(), t = c.currentTime, o = c.createOscillator(), g = c.createGain(); o.frequency.value = 3200; g.gain.setValueAtTime(.08, t); g.gain.linearRampToValueAtTime(0, t + secs); o.connect(g).connect(c.destination); o.start(t); o.stop(t + secs); } catch {} }
 const away = at => { const me = listenerAt(); return at && me ? Math.hypot(at.x - me.x, at.y - me.y, at.z - me.z) : 0; }, dull = at => Math.max(900, 18000 * Math.exp(-away(at) / 140));
 export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, vol: .25, type: 'bandpass' });
+// (FIRE final) The incendiary's own stand-in when CS2's IncGrenade.Start / .StartFailed isn't imported: a can's pop and
+// the fire's whoosh — never the bottle's glass (two of the warmed noise shapes)
+const canPop = at => { burst(at, { len: .25, decay: 1.5, freq: 1400, vol: .6, type: 'bandpass', thump: .5 }); burst(at, { len: 1.2, decay: 1.5, freq: 700, vol: .55 }); };
 // A grenade come to rest (a decoy at work, a smoke smoking, a fire burning): lying on the floor as CS2's do — on its
 // largest face (weapon-models groundRest: a can on its side), its lowest point on the floor — not frozen mid-tumble
 // half in the ground. The floor: a smoke's or a fire's g.y (arena-nades.js puts it on the surface it lies on), else
@@ -138,6 +143,7 @@ export const throwSound = () => burst(null, { len: .25, decay: 1.5, freq: 1800, 
 // Which grenades stay drawn once they go off (liesAfter): a decoy at work and a smoke smoking lie there; an incendiary
 // or a molotov is gone into its fire, as an HE or a flash into its blast — CS2 removes the projectile when it detonates
 // (v52 M: the can lay intact in its own flames).
+const BOUNCE_EV = { he: 'nade.he.bounce', flash: 'nade.flash.bounce', smoke: 'nade.smoke.bounce', decoy: 'nade.decoy.bounce', molotov: 'nade.molotov.bounce', incendiary: 'nade.incendiary.bounce' };
 export const liesAfter = phase => phase === 'decoy' || phase === 'smoke';
 export function restNade(model, kind, g) { const r = groundRest(kind), s = model.scale.x || 1, id = parseInt(String(g.id).replace(/\D/g, ''), 10) || 0, floor = g.phase === 'smoke' || g.phase === 'fire' ? g.y : g.y - NADE_R;
   model.rotation.set(r.x, (id * 2.39996) % (2 * Math.PI), r.z, 'YXZ'); model.position.set(g.x, floor + r.lift * s, g.z); return model; }
@@ -147,10 +153,17 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
   // The effects (fire, flames, sparks, puffs, blast balls) on their own top-level group, flagged fx: while a smoke is up
   // they are drawn after it (arena-smoke-pass.js), so a fire in front of a cloud isn't painted over by it.
   const fxg = new THREE.Group(); fxg.name = 'nadeFx'; fxg.userData.gd = true; fxg.userData.fx = true; scene.add(fxg); const FXP = FXS = createFxSystem(fxg, quality);
+  // v53 FIRE: the fires (gd-fire-view.js) — a top-level mesh of its own (userData.gd + warm + fx: compiled behind the
+  // loading card, drawn after the smoke); a bottle in flight burns where this view draws it.
+  // (FIRE final: each flame as it lights — CS2's Inferno.Fire.Ignite, placed at the flame; one reused spot, nothing made)
+  const IGN = { x: 0, y: 0, z: 0 }, onFlame = (x, y, z) => { IGN.x = x; IGN.y = y + .3; IGN.z = z; snd('nade.fire.crackle', IGN); };
+  const live = new Map(), fire = createFireView({ scene, quality, hostNow, boxes, onFlame, drawnAt: id => { const v = live.get(id); return v && v.model.visible !== false ? v.model.position : null; } });
+  // Sounds (v53 FIRE): an event of CS2's (gd-sounds.js, placed, with walls and distance) when the room has it, else ours.
+  const SO = { at: null, src: null, loop: 0, key: null }, snd = (id, at, o = null) => { SO.at = at; SO.src = null; SO.loop = o?.loop || 0; SO.key = o?.key || null; try { return gdPlay(id, SO); } catch { return false; } };
   let pass = null; const smokes = () => pass ??= (() => { const renderer = globalThis.__infra?.renderer; if (!renderer) return null; const p = createSmokePass({ renderer, scene, camera, quality }); scene.userData.gdSmoke = p; return p; })();   // (made once a renderer is there)
   cutClock = hostNow; cutGame = () => world?.operations?.game;
   const FM = new THREE.Matrix4(), FQ = new THREE.Quaternion(), FV = new THREE.Vector3(), FS = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
-  const live = new Map(), dir = new THREE.Vector3(), FL = { peak: 0, holdUntil: 0, fadeEnd: 0 }, FB = { s: 0, peak: 0, hold: 0, fade: 0 }; let path = null, landRing = null;   // (FL: your stacked flashes — arena-nades.js stackFlash; FB: one flash's white-out, reused)
+  const dir = new THREE.Vector3(), FL = { peak: 0, holdUntil: 0, fadeEnd: 0 }, FB = { s: 0, peak: 0, hold: 0, fade: 0 }; let path = null, landRing = null;   // (FL: your stacked flashes — arena-nades.js stackFlash; FB: one flash's white-out, reused)
   // Your own throw, drawn the moment you let go: from the hand, with the start and launch the host uses (arena-nades.js
   // throwStart / launch), flown here as a copy (view: it never touches collision) until the host's grenade by you of
   // that kind arrives a round trip later — that one then takes over this model, the gap eased out like any correction.
@@ -169,7 +182,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
   const white = document.getElementById('gd-flash') || { style: {} };
   // (inside a smoke: the pass's own march from your eye — thick smoke in front of you is opaque, no screen veil)
   function effect(g) {
-    const fx = new THREE.Group(); fx.position.set(g.x, g.y, g.z); fxg.add(fx); const at = { x: g.x, y: g.y, z: g.z }, parts = []; let fireLoop = null;
+    const fx = new THREE.Group(); fx.position.set(g.x, g.y, g.z); fxg.add(fx); const at = { x: g.x, y: g.y, z: g.z }, parts = []; let fireLoop = null, loopCulled = false;
     if (g.phase === 'boom') { globalThis.dispatchEvent?.(new CustomEvent('gd-blast', { detail: { x: g.x, y: g.y, z: g.z, r: NADES.he.radius } }));   // (a CS2 map's pots and cans thrown about: arena-physprops.js)
       const b = new THREE.Sprite(MAT.fire.clone()); b.position.y = 1; fx.add(b); parts.push(b); FXP.fire(g.x, g.y + 1, g.z, 16, { size: 7, grow: 1.7, life: .8, rise: 3.5, spread: 3.5 }); const s = new THREE.Mesh(DISC, MAT.scorch); s.rotation.x = -Math.PI / 2; s.position.y = .05 - g.y + Math.max(0, g.y - .4); s.scale.setScalar(5); fx.add(s); FXP.spark(g.x, g.y + .4, g.z, 46, { speed: 26, up: 10, life: .9 }); FXP.puff(g.x, g.y + 1, g.z, 9, { color: 0x2c2824, size: 4.5, grow: 1.6, life: 3.6, rise: 2.6, spread: 3 }); FXP.puff(g.x, .3, g.z, 6, { color: 0x9a8a70, size: 3, grow: 2.2, life: 1.8, rise: .5, spread: 6, alpha: .55 }); FXP.wave(g.x, Math.max(0, g.y - .4), g.z, 16);
       const core = new THREE.Sprite(MAT.fire.clone()); core.material.color.setHex(0xffffff); core.position.y = 1; fx.add(core); parts.push(core);
@@ -185,20 +198,19 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
       const v = smokeVoxels(world.operations.game, g), P = v && smokes(); slot = P ? P.add(v) : -1;
       if (slot < 0) { const R = NADES.smoke.radius, core = new THREE.Mesh(CORE, MAT.core.clone()); core.userData.core = true; core.scale.set(R * .58, R * .44, R * .58); core.position.y = R * .12; fx.add(core); parts.push(core);
       const n = quality() === 'Low' ? 20 : quality() === 'Medium' ? 34 : 48; for (let i = 0; i < n; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), y = 1 - (i + .5) / n * 1.15, rr = Math.sqrt(Math.max(0, 1 - y * y)), a = i * 2.39996, f = .62 + (i % 3) * .1; sp.position.set(Math.cos(a) * rr * R * f, Math.max(1.2, R * .12 + y * R * .5 * f), Math.sin(a) * rr * R * f); sp.userData.size = R * (.5 + (i % 4) * .07); fx.add(sp); parts.push(sp); } }   // a shell of soft puffs around the core: a fluffy outline
-      FXP.puff(g.x, g.y + .3, g.z, 8, { color: 0x9a9da1, size: 3, grow: 3, life: 1.6, rise: 1.5, spread: 1.5, alpha: .8 }); if (rec('poof', { at, volume: .9, wet: .3 })) rec('smoke', { at, volume: .7, delay: .05 }); else burst(at, { len: 2.5, decay: .8, freq: 3000, vol: .35, type: 'highpass' }); }
-    if (g.phase === 'fire') { // exactly where the host burns (fireCells, on each cell's own floor): a glowing floor and flames, lit as the spread reaches them
-      const cells = fireCells(boxes(), g.x, g.z, g.y), flames = new THREE.InstancedMesh(FLAME, MAT.flame, Math.max(1, cells.length)), glow = new THREE.InstancedMesh(CELL, MAT.glow, Math.max(1, cells.length)), m4 = new THREE.Matrix4().makeScale(0, 0, 0);
-      for (let i = 0; i < cells.length; i++) { flames.setMatrixAt(i, m4); glow.setMatrixAt(i, m4); }   // (none lit yet)
-      flames.count = glow.count = cells.length; fx.userData.cells = cells; fx.userData.flames = flames; fx.userData.glow = glow; fx.userData.rot = cells.map((_, i) => (i * 2.4) % 6.28); fx.userData.h = cells.map((_, i) => ((i * 7919) % 17) % 3 === 0 ? 0 : (.8 + ((i * 7919) % 13) / 13 * 1) * (((i * 4253) % 11) === 0 ? 1.6 : 1)); fx.userData.jx = cells.map((_, i) => (((i * 3571) % 23) / 23 - .5) * 2.4); fx.userData.jz = cells.map((_, i) => (((i * 1663) % 19) / 19 - .5) * 2.4); fx.userData.end = cells.map(cellEnd);   /* (h 0: this cell only glows)*/
-      flames.frustumCulled = glow.frustumCulled = false; glow.userData.gd = true; fx.add(glow, flames); parts.push(flames); F_CELLS.set(fx, cells.length);   // (gd: not one of the hall's far-away signs — render-optimizer's detail culler leaves it drawn at any distance)
-      if (rec('glass', { at, volume: 1, wet: .3 })) { rec('glass', { at, volume: .6, rate: .8, delay: .05 }); burst(at, { len: .9, decay: 1.2, freq: 600, vol: .5, thump: .25 }); } else burst(at, { len: 1.2, decay: 1.5, freq: 1200, vol: .7, thump: .3 });
-      FXP.spark(g.x, g.y + .3, g.z, 30, { speed: 9, up: 6, life: 1.2, size: .8, gravity: 8 });
-      fireLoop = rec('fire', { at, volume: .55, rate: .8, lowpass: 2600, loop: NADES.molotov.lasts / 1000 }) || null; }
-    if (g.phase === 'out' && g.airburst) { FXP.fire(g.x, g.y, g.z, 14, { size: 5, grow: 1.5, life: .7, rise: 2, spread: 2.5 }); FXP.spark(g.x, g.y, g.z, 30, { speed: 18, up: 6, life: .8 }); rec('glass', { at, volume: .8 }); }   // a molotov that burst high in the air: glass and a fireball, no fire below
-    else if (g.phase === 'out') { // put out by smoke: a puff of steam and a hiss where the fire was
-      for (let i = 0; i < 10; i++) { const sp = new THREE.Sprite(MAT.smoke.clone()), a = i * 2.4; sp.position.set(Math.cos(a) * 5 * (i % 3) / 2, 1 + (i % 4), Math.sin(a) * 5 * (i % 3) / 2); sp.userData.size = 5 + (i % 3) * 2; fx.add(sp); parts.push(sp); }
-      FXP.puff(g.x, g.y + .5, g.z, 8, { color: 0xe4e6e8, size: 4, grow: 2, life: 2, rise: 4, spread: 4, alpha: .6 }); burst(at, { len: 1, decay: 2.5, freq: 4200, vol: .45, type: 'highpass' }); }
-    return { fx, parts, start: performance.now(), phase: g.phase, crackle: 0, loop: fireLoop, slot, holeAt: [null, null], holeX: [null, null], v: slot >= 0 ? smokeVoxels(world.operations.game, g) : null };
+      FXP.puff(g.x, g.y + .3, g.z, 8, { color: 0x9a9da1, size: 3, grow: 3, life: 1.6, rise: 1.5, spread: 1.5, alpha: .8 }); if (snd('nade.smoke.emit', at, { key: 'se:' + g.id })) {} else if (rec('poof', { at, volume: .9, wet: .3 })) rec('smoke', { at, volume: .7, delay: .05 }); else burst(at, { len: 2.5, decay: .8, freq: 3000, vol: .35, type: 'highpass' }); }   // (v53 FIRE: CS2's BaseSmokeEffect.Sound — never a fire sound)
+    if (g.phase === 'fire') { // v53 FIRE: drawn by gd-fire-view.js (the host's flames); here its sounds — CS2's Molotov.Start / IncGrenade.Start
+      // (with Molotov.Smash / IncGrenade.Pop and the distant layer: gd-sounds.js) and the Inferno.Loop while it burns
+      const inc = g.kind === 'incendiary', left = Math.max(.5, ((g.fe ?? NADES.molotov.lasts) - (hostNow() - (g.firedAt || hostNow()))) / 1000);
+      if (!snd(inc ? 'nade.incendiary.ignite' : 'nade.molotov.ignite', at, { key: 'fi:' + g.id })) { if (inc) canPop(at); else if (rec('glass', { at, volume: 1, wet: .3 })) { rec('glass', { at, volume: .6, rate: .8, delay: .05 }); burst(at, { len: .9, decay: 1.2, freq: 600, vol: .5, thump: .25 }); } else burst(at, { len: 1.2, decay: 1.5, freq: 1200, vol: .7, thump: .3 }); }   // (the can: our pop and whoosh — CS2's IncGrenade.Start is inc_grenade_detonate_1–3, no glass)
+      FXP.spark(g.x, g.y + .3, g.z, inc ? 40 : 24, { speed: inc ? 14 : 9, up: 6, life: inc ? .9 : 1.2, size: .8, gravity: 8 });   // (the incendiary's burst throws sparks: incendiary_explosion's splash, sparks_burst)
+      SO.at = at; SO.src = null; SO.key = null; SO.loop = left; let lp = null; try { lp = gdPlay('nade.fire.loop', SO); } catch {} SO.loop = 0;
+      fireLoop = lp && typeof lp === 'object' ? lp : lp ? null : rec('fire', { at, volume: .55, rate: .8, lowpass: 2600, loop: left }) || null; loopCulled = lp === true; }   // (lp true: out of earshot — tried again as you come closer: the update below)
+    if (g.phase === 'out' && g.airburst) { if (!snd(g.kind === 'incendiary' ? 'nade.incendiary.air' : 'nade.molotov.air', at, { key: 'fa:' + g.id })) { if (g.kind === 'incendiary') canPop(at); else rec('glass', { at, volume: .8 }); } FXP.spark(g.x, g.y, g.z, 30, { speed: 18, up: 6, life: .8 }); }   // a molotov that burst high in the air: CS2's Molotov.StartFailed, its fireball (gd-fire-view), no fire below
+    else if (g.phase === 'out') { // put out by smoke (or broke inside it): CS2's Molotov.Extinguish, its dark swirl and embers (gd-fire-view.js) — never the smoke grenade's look or sound
+      if (!snd('nade.fire.out', at, { key: 'fo:' + g.id })) { burst(at, { len: .5, decay: 3.5, freq: 900, vol: .4, type: 'lowpass' }); burst(at, { len: .3, decay: 4, freq: 2400, vol: .2, type: 'bandpass' }); }   // (ours: a dull wet thud and sizzle — the smoke's own hiss is a long bright highpass)
+      FXP.spark(g.x, g.y + .4, g.z, 16, { speed: 5, up: 7, life: 1.1, size: .6, gravity: 6 }); }
+    return { fx, parts, start: performance.now(), phase: g.phase, crackle: 0, loop: fireLoop, loopCulled, loopTry: 0, at, slot, holeAt: [null, null], holeX: [null, null], v: slot >= 0 ? smokeVoxels(world.operations.game, g) : null };
   }
   return {
     group,
@@ -216,7 +228,7 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
           v = c ? { model: c.model, fx: null, sim: c.sim, ox: 0, oy: 0, oz: 0, fresh: true, slow: .45, exact: true } : { model: weaponModel(g.kind, 1.4), fx: null, ox: 0, oy: 0, oz: 0, fresh: false, slow: 0, exact: true }; if (!c) { v.model.position.set(g.x, g.y, g.z); group.add(v.model); } live.set(g.id, v); }   // (exact: flown in the host's own steps — phys-smooth.js flightFrame; fresh: its copy already flown this frame — the loop above)
         if (g.phase === 'air') { const isNew = g.x !== v.hx || g.y !== v.hy || g.z !== v.hz; if (isNew) { // a new host position: a sharp turn in its path is a bounce
           if (v.hx !== undefined) { const vx = g.x - v.hx, vy = g.y - v.hy, vz = g.z - v.hz, m = Math.hypot(vx, vy, vz), pm = Math.hypot(v.vx, v.vy, v.vz);
-            if (m > .05 && pm > .05 && (vx * v.vx + vy * v.vy + vz * v.vz) / (m * pm) < .55 && now - (v.bounced || 0) > 120) { v.bounced = now; rec('bounce', { at: { x: g.x, y: g.y, z: g.z }, volume: Math.min(.8, .25 + pm * .15), rate: g.kind === 'molotov' ? .8 : .95 + Math.random() * .15, kind: 'step' }); }
+            if (m > .05 && pm > .05 && (vx * v.vx + vy * v.vy + vz * v.vz) / (m * pm) < .55 && now - (v.bounced || 0) > 120) { v.bounced = now; const bat = { x: g.x, y: g.y, z: g.z }; if (!snd(BOUNCE_EV[g.kind] || 'nade.he.bounce', bat)) rec('bounce', { at: bat, volume: Math.min(.8, .25 + pm * .15), rate: g.kind === 'molotov' ? .8 : .95 + Math.random() * .15, kind: 'step' }); }   // (v53 FIRE: each grenade's own CS2 bounce — Molotov.Bounce, IncGrenade.Bounce, SmokeGrenade.Bounce …)
             v.vx = vx; v.vy = vy; v.vz = vz; } else v.vx = v.vy = v.vz = 0;
           v.hx = g.x; v.hy = g.y; v.hz = g.z; }
           // The flight flown here too, as the host flies it (the same physics on the same map: arena-nades.js stepNade),
@@ -255,22 +267,19 @@ export function createNadeView({ scene, camera, world, boxes = () => [], bounds 
           for (const sp of F.parts) { if (sp.userData.core) { sp.scale.set(NADES.smoke.radius * .58 * k, NADES.smoke.radius * .44 * k, NADES.smoke.radius * .58 * k); sp.material.opacity = Math.max(0, Math.min(1, (t - .7) / .8)) * S.dens * (1 - coreCut * .9); sp.visible = sp.material.opacity > .02; continue; }
             const cut = g.holes?.length ? holeOpen(G, g, g.x + sp.position.x * k, g.y + sp.position.y, g.z + sp.position.z * k, hn) : 0; sp.position.multiplyScalar(1); sp.scale.setScalar(sp.userData.size * k * (1 + .08 * Math.sin(now / 900 + sp.id))); sp.material.opacity = .95 * fade * (1 - cut); } }
         if (g.phase === 'out') { for (const sp of F.parts) { sp.position.y += dt * 4; sp.scale.setScalar(sp.userData.size * (1 + t * 1.5)); sp.material.opacity = Math.max(0, .8 - t); } }
-        if (g.phase === 'fire') { const left = NADES.molotov.lasts / 1000 - t, k = Math.max(0, Math.min(1, left / 1.2)); MAT.flame.uniforms.uTime.value = (now / 1000) % 1000;
-          // Each cell: grows in once the spread reaches it, flickers, shrinks away at its own end (the host's clock: as it burns there).
-          const U = F.fx.userData, fl = U.flames, gw = U.glow, ft = hostNow() - (g.firedAt || 0); if (fl) { for (let i = 0; i < U.cells.length; i++) { const c = U.cells[i], on = Math.min(1, Math.max(0, (ft - c[3] * FIRE.spread) / 300)) * Math.min(1, Math.max(0, (U.end[i] - ft) / 450));
-              if (on <= 0) { FM.makeScale(0, 0, 0); fl.setMatrixAt(i, FM); gw.setMatrixAt(i, FM); continue; } const w = .8 + .2 * Math.sin(now / 85 + i * 1.7) * Math.sin(now / 137 + i * .9);
-              FQ.setFromAxisAngle(UP, U.rot[i] + Math.sin(now / 400 + i) * .25); FV.set(c[0] - g.x + U.jx[i], c[2] - g.y + .05, c[1] - g.z + U.jz[i]); const hh = U.h[i] * w * on; FM.compose(FV, FQ, hh > 0 ? FS.set((.7 + .3 * w) * (.6 + U.h[i] * .5), hh, (.7 + .3 * w) * (.6 + U.h[i] * .5)) : FS.set(0, 0, 0)); fl.setMatrixAt(i, FM);
-              FQ.identity(); FV.set(c[0] - g.x, c[2] - g.y + .06, c[1] - g.z); FM.compose(FV, FQ, FS.set(on, 1, on)); gw.setMatrixAt(i, FM); } fl.instanceMatrix.needsUpdate = true; gw.instanceMatrix.needsUpdate = true; }
-          const cl = U.cells; if (cl?.length && k > .2) { if (now - (F.ember || 0) > 90) { F.ember = now; const c = cl[(Math.random() * cl.length) | 0]; FXP.spark(c[0] + (Math.random() - .5) * 2, (c[2] ?? g.y) + .4, c[1] + (Math.random() - .5) * 2, 2, { speed: 2, up: 5, life: 1.4, size: .55, gravity: -3 }); }
-            if (now - (F.smk || 0) > 450) { F.smk = now; const c = cl[(Math.random() * cl.length) | 0]; FXP.puff(c[0], (c[2] ?? g.y) + 2.5, c[1], 1, { color: 0x221d1a, size: 3.5, grow: 2, life: 2.6, rise: 4.5, spread: 1, alpha: .5 }); } }
-          if (now - F.crackle > 380) { F.crackle = now; burst({ x: g.x, y: g.y, z: g.z }, { len: .2, decay: 3, freq: 2200, vol: .25, type: 'bandpass' }); } }
+        // (FIRE final: an Inferno.Loop culled out of earshot at the start — tried again twice a second for the time left, so
+        // walking up to a fire you hear it; the loop object is the bank's, made once when it starts)
+        if (g.phase === 'fire' && F.loopCulled && now - F.loopTry > 500) { F.loopTry = now; const left = ((g.fe ?? NADES.molotov.lasts) - (hostNow() - (g.firedAt || hostNow()))) / 1000;
+          if (left < .5) F.loopCulled = false; else { SO.at = F.at; SO.src = null; SO.key = null; SO.loop = left; let lp = null; try { lp = gdPlay('nade.fire.loop', SO); } catch {} SO.loop = 0; if (lp && typeof lp === 'object') { F.loop = lp; F.loopCulled = false; } else if (lp !== true) F.loopCulled = false; } }
+        if (g.phase === 'fire' && !F.faded && Number.isFinite(g.fe) && hostNow() - (g.firedAt || 0) > g.fe - 1200) { F.faded = true; snd('nade.fire.fade', { x: g.x, y: g.y, z: g.z }, { key: 'ff:' + g.id }); }   // (v53 FIRE: CS2's Inferno.FadeOut as the last flames die)
       }
+      fire.update(list, hostNow());   // (v53 FIRE: every fire, bottle in flight, burst and scorch — one draw)
       for (const [id, v] of live) if (!seen.has(id)) { v.model.removeFromParent(); if (v.fx) disposeFx(v.fx, pass); live.delete(id); }
       // Flashbang white-out: as white as the flash's tier for its hold, then fading (stacked flashes: arena-nades.js).
       { const w = flashWhite(FL, now), o = w <= .002 ? '0' : w.toFixed(3); if (white.style.opacity !== o) white.style.opacity = o; }
     },
     // Leaving the match: every grenade, effect and smoke slot let go of (nothing left in the scene, no textures kept).
-    clear() { for (const v of live.values()) { v.model.removeFromParent(); if (v.fx) disposeFx(v.fx, pass); } live.clear(); while (mine.length) dropMine(mine.length - 1); FXP.clear(); pass?.clear(); white.style.opacity = '0'; FL.peak = FL.holdUntil = FL.fadeEnd = 0; this.preview(null); },
+    clear() { fire.clear(); for (const v of live.values()) { v.model.removeFromParent(); if (v.fx) disposeFx(v.fx, pass); } live.clear(); while (mine.length) dropMine(mine.length - 1); FXP.clear(); pass?.clear(); white.style.opacity = '0'; FL.peak = FL.holdUntil = FL.fadeEnd = 0; this.preview(null); },
     // The smoke pass's shaders and textures built now (the match's loading): post = the HDR buffer is on (graphics.post).
     warm(post) { return smokes()?.warm(post) || Promise.resolve(); },
     get smokePass() { return pass; },

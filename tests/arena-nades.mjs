@@ -80,9 +80,10 @@ assert.match(arenaApply(g3, { type: 'pickup', id: g3.combat.ground[0].id }, 'Bo'
 { const pane = { minX: 5, maxX: 5.3, minZ: -5, maxZ: 5, y0: 0, y1: 20, mat: 'glass', mover: 3, off: false }, bx = [pane]; bx.movers = [pane]; bx.nadeSolid = () => false;
   const g = { kind: 'he', x: 0, y: 9, z: 0, vx: 60, vy: 0, vz: 0, still: 0 }; let broke = null; for (let i = 0; i < 4 && !broke; i++) { stepNade(g, bx, null, .02); if (g.glass?.length) broke = g.glass[0]; }
   assert(broke === 3 && pane.off, 'the pane it hits breaks'); assert(Math.abs(g.vx) < 60 * .2, 'and the grenade loses most of its speed · ' + g.vx.toFixed(1)); }
-// Fire: about 4× the old area in the open; never through a wall; only on the floor it landed on.
-{ const open = fireCells([], 0, 0, 0), oldArea = Math.PI * (120 * 2.54 / 16.5) ** 2; assert(open.length * 9 > oldArea * 3.3, 'fire covers ~4× the old area: ' + (open.length * 9 / oldArea).toFixed(1) + '×');
-  const wall = [{ minX: 8, maxX: 10, minZ: -60, maxZ: 60, y0: 0, y1: 24 }], cells = fireCells(wall, 0, 0, 0); assert(cells.length && cells.every(([x]) => x < 8), 'the fire stops at a wall');
+// Fire (v53 FIRE): CS2's inferno in the open — 16 flames, within its 150 HU range (+ a flame's 30 HU half width); never
+// through a wall; a fire on a crate stays on the crate.
+{ const HU = 2.54 / 16.5, open = fireCells([], 0, 0, 0, { id: 'o', at: 1, bv: [0, 0] }); assert(open.length === 16 && open.every(f => Math.hypot(f[0], f[1]) <= 150 * HU + 1e-6), 'fire: CS2\'s 16 flames within 150 HU · ' + open.length);
+  const wall = [{ minX: 8, maxX: 10, minZ: -60, maxZ: 60, y0: 0, y1: 24 }], cells = fireCells(wall, 0, 0, 0, { id: 'w', at: 1, bv: [40, 0] }); assert(cells.length && cells.every(([x]) => x < 8), 'the fire stops at a wall');
   const crate = [{ minX: -6, maxX: 6, minZ: -6, maxZ: 6, y0: 0, y1: 6 }], top = fireCells(crate, 0, 0, 6); assert(top.length && top.every(([x, z]) => Math.abs(x) < 6.1 && Math.abs(z) < 6.1), 'fire on a crate stays on the crate'); }
 assert(Math.abs(NADES.smoke.radius - 164 * 2.54 / 16.5) < .5 && Math.abs(SMOKE.vert / .8 * 164 / 144 - 1.3) < .03, 'smoke: 30 % more ground and height than CS2\'s 144-unit cloud (as asked)');
 // No throwing in the freeze time (Defuse).
@@ -163,8 +164,8 @@ for (const mesh of [true, false]) { const pane = { minX: 5, maxX: 5.2, minZ: -5,
 // column boxes' tops, which put a canister beside a wall or on a stair at the map's bottom (y = 0).
 { const bx = meshBoxes(meshOf([flat(20)]), [{ minX: -1, maxX: 1, minZ: -1, maxZ: 1, y0: 0, y1: 60 }, { minX: 3, maxX: 30, minZ: -30, maxZ: 30, y0: 0, y1: 20.9 }]);   // (a wall's column over the canister, a stair column rounded up)
   const s = lone('smoke', { y: 20 + NADE_R }); nadesTick(s, [], .05, 7e9, { boxes: bx }); assert(s.combat.nades[0].phase === 'smoke' && Math.abs(s.combat.nades[0].y - 20) < .05, 'a smoke on a ledge at 20 pops at 20 · ' + s.combat.nades[0].y);
-  const m = lone('molotov', { y: 20 + NADE_R }); nadesTick(m, [], .05, 7e9, { boxes: bx }); const f = m.combat.nades[0], cells = fireCells(bx, f.x, f.z, f.y);
-  assert(f.phase === 'fire' && Math.abs(f.y - 20) < .05 && cells.length > 100 && cells.every(c => Math.abs(c[2] - 20) < .05), 'a molotov there burns on that floor · ' + f.y + ' / ' + cells.length + ' cells'); }
+  const m = lone('molotov', { y: 20 + NADE_R }); nadesTick(m, [], .05, 7e9, { boxes: bx }); const f = m.combat.nades[0], cells = fireCells(bx, f.x, f.z, f.y, f);
+  assert(f.phase === 'fire' && Math.abs(f.y - 20) < .05 && cells.length >= 8 && cells.every(c => Math.abs(c[2] - 20) < .05), 'a molotov there burns on that floor · ' + f.y + ' / ' + cells.length + ' flames'); }
 // NADE-3: under a CS2 map's lowest surface there is nothing — a grenade lobbed off the edge of the world is removed (and
 // logged), not held on an invisible floor; a pit below the lowest player floor is reached.
 { const half = meshBoxes(meshOf([flat(0, -200, 0)])), g = lone('smoke', { x: 2, y: 3, vx: 6, rest: false, at: 7e9 - 100 }), n0 = NADE_LOG.length; let t = 7e9;
@@ -283,4 +284,4 @@ for (const mesh of [true, false]) { const pane = { minX: 5, maxX: 5.2, minZ: -5,
   assert(Math.abs(sm.firedAt - (tp - 5000)) < 1 && fly.y === 30 && fly.x === ARENA.cx + sp[0] && gp.combat.nades.includes(fly), 'paused 10 s: the smoke\'s clock and the grenade in the air stand still');
   assert(holdNades({ combat: { clock: 5, nades: [] } }, 10) === false, '(nothing to hold: no change)'); }
 console.log('PASS: grenades v51 · no loadout from a refused throw, finite throws only, preview / client toss never break panes, smoke & fire on the real surface, out of the world removed + logged, pit floors reached, throw swept from the eye, bots on their own floor + flashed at their eye, HE armor / falloff / floors, flash: doors, bounce light, facing tiers, stacking, burn beat 40/s, molotov 30° slope, fire flinch, incendiary, decoy, host smoke tunnels, pause; falls through a map file\'s gaps told apart');
-console.log('PASS: grenades · throw strengths (full / medium / short), preview = host flight, fire 4× area within walls, smoke at CS2’s size, no throws in the freeze (but after a round’s end), CS2’s throw angles and 22-unit start, CS2 fuses, molotov air burst, grenades break glass,  · buy limits, throw + flight, HE damage + cover, smoke blocks sight 18 s (a volume: outside, edge, inside), HE opens a hole that closes, smoke puts out fire / molotov fizzles in smoke, molotov burns 7 s, flashbang (bots + facing), drop / pickup');
+console.log('PASS: grenades · throw strengths (full / medium / short), preview = host flight, fire: CS2’s 16-flame inferno within walls, smoke at CS2’s size, no throws in the freeze (but after a round’s end), CS2’s throw angles and 22-unit start, CS2 fuses, molotov air burst, grenades break glass,  · buy limits, throw + flight, HE damage + cover, smoke blocks sight 18 s (a volume: outside, edge, inside), HE opens a hole that closes, smoke puts out fire / molotov fizzles in smoke, molotov burns 7 s, flashbang (bots + facing), drop / pickup');

@@ -19,6 +19,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// (v53 FIRE final: a main guard — imported, e.g. to check its syntax, this tool used to run and reinstall the icons)
+if (!process.argv[1] || path.resolve(process.argv[1]) !== fileURLToPath(import.meta.url)) throw Error('tools/import-cs2-killfeed.mjs is a tool: run it with node, don\'t import it');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const CS2 = path.resolve(arg('--cs2', path.join(os.homedir(), 'CS2-extract'))), OUT = path.resolve(arg('--out', path.join(ROOT, 'user-assets', 'icons', 'killfeed')));
@@ -31,8 +33,12 @@ const WEAPON_ICONS = {
   mac10: 'mac10', mp9: 'mp9', mp7: 'mp7', smg: 'mp5sd', bizon: 'bizon', ump45: 'ump45', p90: 'p90', shotgun: 'nova', xm1014: 'xm1014',
   galil: 'galilar', famas: 'famas', ak: 'ak47', m4: 'm4a1', m4s: 'm4a1_silencer', sg553: 'sg556', aug: 'aug', ssg08: 'ssg08', sniper: 'awp',
   lmg: 'm249', negev: 'negev', knife: 'knife', karambit: 'knife_karambit', 'knife:butterfly': 'knife_butterfly', 'knife:stiletto': 'knife_stiletto',
-  'knife:m9': 'knife_m9_bayonet', 'knife:karambit': 'knife_karambit', he: 'hegrenade', flash: 'flashbang', smoke: 'smokegrenade', decoy: 'decoy',
-  molotov: 'molotov', incendiary: 'incgrenade', c4: 'c4', kit: 'defuser', kevlar: 'kevlar', helmet: 'armor_helmet', world: 'world',
+  'knife:m9': 'knife_m9_bayonet', 'knife:karambit': 'knife_karambit',
+  // (v53 KNIVES: the five new knives' names as the install has them — the Bayonet's is plain 'bayonet' (there is no
+  // knife_bayonet.vsvg), the Talon's knife_widowmaker, the Nomad's knife_outdoor)
+  'knife:bayonet': 'bayonet', 'knife:skeleton': 'knife_skeleton', 'knife:talon': 'knife_widowmaker', 'knife:flip': 'knife_flip', 'knife:nomad': 'knife_outdoor', he: 'hegrenade', flash: 'flashbang', smoke: 'smokegrenade', decoy: 'decoy',
+  molotov: 'molotov', incendiary: 'incgrenade', inferno: 'inferno', c4: 'c4',   // (inferno: a fire kill — CS2's player_death weapon for a burn: panorama/images/icons/equipment/inferno)
+  kit: 'defuser', kevlar: 'kevlar', helmet: 'armor_helmet', world: 'world',
 };
 // feed marks (f.how.* / f.head) -> CS2 icon (panorama/images/hud/deathnotice/<name>)
 const MARK_ICONS = { blind: 'blind_kill', noscope: 'noscope', air: 'inairkill', smoke: 'smoke_kill', wallbang: 'penetrate', head: 'icon_headshot', suicide: 'icon_suicide' };
