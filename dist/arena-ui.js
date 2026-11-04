@@ -1,6 +1,7 @@
 // Arena screens: entering / leaving the arena (map + spawn), the scoreboard (Tab, held), a CS-style kill feed
 // (killer · weapon · head-shot mark · victim), the match clock, the buy menu (B, CS2-style categories) and
 // bot controls. Reads the shared world (game.arena, game.combat); every change is an arena action to the host.
+import { gdPresetNow } from './gd-preset.js';   // (v53 stage 6: Low / Very Low — no backdrop blur in the HUD)
 import { ARENA_MAPS, MAP_LIST, mapOffered, inBuyZone as buyZoneAt, mapFileOf } from './arena-maps.js';
 import { userMapList } from './user-maps.js'; import { progressText } from './load-progress.js';
 import { fx as recFx, play as playSound } from './sound-bank.js';
@@ -31,7 +32,8 @@ import { KNIFE_IDS, knifeTitle, isStarKnife } from './gd-knives.js';   // (v53 K
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // CS2 buy-menu prices (for reference in deathmatch, where everything is free; defuse uses them).
-export const CS_PRICE = { he: 300, flash: 200, smoke: 300, decoy: 50, molotov: 400, incendiary: 500, pistol: 200, deagle: 700, smg: 1500, shotgun: 1050, lmg: 5200, ak: 2700, m4: 2900, sniper: 4750 };
+// (v53 GUNS final: read from weapons-data.js — its CS2 table's m_nPrice — so the two can't drift; made once at load)
+export const CS_PRICE = Object.fromEntries(['he', 'flash', 'smoke', 'decoy', 'molotov', 'incendiary', 'pistol', 'deagle', 'smg', 'shotgun', 'lmg', 'ak', 'm4', 'sniper'].map(id => [id, weaponById(id)?.price ?? 0]));
 const CATS = [['Pistols', ['pistol', 'deagle']], ['Mid-tier', ['smg', 'shotgun', 'lmg']], ['Rifles', ['ak', 'm4', 'sniper']], ['Equipment', []], ['Grenades', NADE_ORDER]];
 const isNade = id => weaponById(id)?.kind === 'nade';   // (the grenade list: weapons-data.js GRENADES, slot order)
 const NADE_ACT = { he: 'a-he', flash: 'a-flash', smoke: 'a-smoke', decoy: 'a-decoy', molotov: 'a-molotov', incendiary: 'a-molotov' };   // the key that draws each (input.js)
@@ -117,7 +119,7 @@ body:has(#ar-buy:not([hidden])) :is(#gd-hp,#gd-hpbar,#ar-money,#controls-hint,#a
   // imported them (KF: weapons, marks, and the kill tally's pips KF.p, cards KF.c, badge logos KF.l), ours otherwise. KF
   // arrives once (a fetch): the emblems take the new art then, once. Your key is cached per name (no string made per frame).
   const kfArt = { url: (grp, n) => { const t = grp === 'pip' ? KF?.p : grp === 'card' ? KF?.c : grp === 'logo' ? KF?.l : null; return t?.[n] ? KF.src(t[n]) : null; }, mark: (k, ours) => kfMark(k, ours), gun: (id, kn) => kfGun(id, kn), hs: HS };
-  const emblems = createKillEmblems({ art: kfArt, reduce: reduceFlashesNow(loadPreferences()) }), deathPanel = createDeathPanel({ art: kfArt, low: () => /low/i.test(String(loadPreferences().graphics || '')) });   // (v53 DEATH r2: no world blur behind it on the Low presets)
+  const emblems = createKillEmblems({ art: kfArt, reduce: reduceFlashesNow(loadPreferences()) }), deathPanel = createDeathPanel({ art: kfArt, low: () => !gdPresetNow().hudBlur /* v53 stage 6: the GD preset's HUD blur (Low / Very Low: flat fill) */ });   // (v53 DEATH r2: no world blur behind it on the Low presets)
   addEventListener('infra-preferences', e => emblems.setReduce(reduceFlashesNow(e.detail || loadPreferences())));
   let kfSeen = KF, kfName = null, kfKey = '';
   const killFx = on => { if (KF !== kfSeen) { kfSeen = KF; emblems.setArt(kfArt); } const nm = name(); if (nm !== kfName) { kfName = nm; kfKey = key(nm); } const G = g(), t = hostNow(); emblems.update(on, G, kfKey, t); deathPanel.update(on, G, kfKey, t); };

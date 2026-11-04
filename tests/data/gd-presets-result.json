@@ -1,0 +1,193 @@
+{
+ "presets": {
+  "High": {
+   "fps": 60.1,
+   "p95": 17.1,
+   "p99": 17.6,
+   "max": 33.3,
+   "drawsP95": 423,
+   "drawsMax": 426,
+   "trisMax": 2247364,
+   "programsInFight": 0,
+   "buffer": [
+    2074,
+    1349
+   ],
+   "players": 10,
+   "label": "Apple M3 Mac, Metal (not Windows)",
+   "throttle": 1,
+   "size": [
+    2940,
+    1912,
+    2
+   ],
+   "staged": {
+    "frames": 508,
+    "fps": 60,
+    "p95": 17.2,
+    "max": 17.8,
+    "drawsP50": 431,
+    "drawsP95": 450,
+    "drawsMax": 464,
+    "trisMax": 2465268,
+    "programsInFight": 0,
+    "agentsInView": [
+     9,
+     9
+    ],
+    "freezeDraws": 419,
+    "drawsPerAgent": 1.3,
+    "downAtEnd": 0,
+    "he": "ok"
+   }
+  },
+  "Medium": {
+   "fps": 56.7,
+   "p95": 17.2,
+   "p99": 49.9,
+   "max": 217.2,
+   "drawsP95": 408,
+   "drawsMax": 415,
+   "trisMax": 2244022,
+   "programsInFight": 0,
+   "buffer": [
+    1617,
+    1051
+   ],
+   "players": 10,
+   "label": "Apple M3 Mac, Metal (not Windows)",
+   "throttle": 1,
+   "size": [
+    2940,
+    1912,
+    2
+   ],
+   "staged": {
+    "frames": 500,
+    "fps": 60,
+    "p95": 17.1,
+    "max": 17.7,
+    "drawsP50": 415,
+    "drawsP95": 435,
+    "drawsMax": 446,
+    "trisMax": 2461920,
+    "programsInFight": 0,
+    "agentsInView": [
+     9,
+     9
+    ],
+    "freezeDraws": 404,
+    "drawsPerAgent": 1.2,
+    "downAtEnd": 0,
+    "he": "ok"
+   }
+  },
+  "Low": {
+   "fps": 60.1,
+   "p95": 17,
+   "p99": 17.4,
+   "max": 17.7,
+   "drawsP95": 359,
+   "drawsMax": 361,
+   "trisMax": 1913537,
+   "programsInFight": 0,
+   "buffer": [
+    1428,
+    929
+   ],
+   "players": 10,
+   "label": "Apple M3 Mac, Metal (not Windows)",
+   "throttle": 1,
+   "size": [
+    2940,
+    1912,
+    2
+   ],
+   "staged": {
+    "frames": 496,
+    "fps": 60,
+    "p95": 17.1,
+    "max": 17.7,
+    "drawsP50": 364,
+    "drawsP95": 380,
+    "drawsMax": 383,
+    "trisMax": 1969183,
+    "programsInFight": 0,
+    "agentsInView": [
+     9,
+     9
+    ],
+    "freezeDraws": 356,
+    "drawsPerAgent": 0.9,
+    "downAtEnd": 0,
+    "he": "ok"
+   }
+  },
+  "Very Low": {
+   "fps": 59.9,
+   "p95": 16.9,
+   "p99": 17.5,
+   "max": 50.8,
+   "drawsP95": 359,
+   "drawsMax": 361,
+   "trisMax": 1932822,
+   "programsInFight": 0,
+   "buffer": [
+    1071,
+    696
+   ],
+   "players": 10,
+   "label": "Apple M3 Mac, Metal (not Windows)",
+   "throttle": 1,
+   "size": [
+    2940,
+    1912,
+    2
+   ],
+   "staged": {
+    "frames": 497,
+    "fps": 60,
+    "p95": 17.1,
+    "max": 17.7,
+    "drawsP50": 363,
+    "drawsP95": 365,
+    "drawsMax": 366,
+    "trisMax": 1984504,
+    "programsInFight": 0,
+    "agentsInView": [
+     9,
+     9
+    ],
+    "freezeDraws": 356,
+    "drawsPerAgent": 0.8,
+    "downAtEnd": 0,
+    "he": "You have no HE Grenade"
+   }
+  },
+  "software-auto": {
+   "fps": 2.9,
+   "p95": 933.4,
+   "p99": 4583.7,
+   "max": 4583.7,
+   "drawsP95": 365,
+   "drawsMax": 383,
+   "trisMax": 1883871,
+   "programsInFight": 0,
+   "buffer": [
+    768,
+    432
+   ],
+   "players": 10,
+   "label": "SwiftShader software GPU on an M3 Mac (emulated)",
+   "throttle": 1,
+   "size": [
+    1280,
+    720,
+    1
+   ],
+   "staged": null
+  }
+ },
+ "when": "2026-11-04",
+ "machine": "emulation on an Apple M3 Mac (not Windows)"
+}

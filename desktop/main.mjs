@@ -42,6 +42,12 @@ app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 // limit switches — the game paces its own frames on the display's refresh (frame-gate.js); --use-angle — Windows keeps
 // ANGLE's default Direct3D 11, macOS Metal; nothing that weakens the sandbox, web security or certificate checks. Whether
 // WebGL ended up on the GPU is reported by desktop:info → gpu and shown in the Global Defensive performance overlay, F9.)
+// (v53 stage 6, spec §5.3 — checked by tests/desktop-flags.mjs: the high-performance GPU (force_high_performance_gpu above), ANGLE left on
+// its Windows default Direct3D 11 (no --use-angle: a forced backend has no fallback on an old driver), ignore-gpu-blocklist (the
+// user asked for it: blocklisted integrated GPUs are not forced to software), no background throttling — backgroundThrottling:
+// false on the window and the two switches above, so a match never slows behind other windows; the same in every mode, as in v51,
+// so nothing changes for the others — and Global Defensive's shaders built behind its loading card by the page itself
+// (graphics.js prewarm / compileFor, app.js gdRehearse), never mid-fight.)
 if (!app.requestSingleInstanceLock()) app.quit(); // one window, one room: no duplicate servers after relaunch
 let win = null, room = null, hosting = false, inMatch = false, quitting = false;
 const savePath = () => path.join(app.getPath('userData'), 'campaign-save.json');

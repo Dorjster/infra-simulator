@@ -10,6 +10,11 @@
 // host's tick time, requests in flight, the last frame's size) and a map / asset download in progress.
 // Cheap: frame() only writes two numbers into ring buffers (no allocation); the text is rebuilt at most 4 times a second,
 // line by line, and a line's DOM text is only touched when it changed.
+// v53 stage 6: the GD preset in use (preset(): e.g. 'Low · Auto · integrated'), the textures' video memory (textureBytes: every
+// texture the scene's materials hold, walked a slice a frame (a pass every 2 s) while the overlay is on — an estimate: width × height × bytes a
+// texel, + ⅓ for mip-maps; render targets not included) and, when a test emulates a slower computer (globalThis.__gdEmulation,
+// e.g. 'CPU ×4 (emulated)', 'SwiftShader (emulated software GPU)'), that label in capitals before the GPU line — never a
+// Windows measurement.
 import { loadProgress } from './load-progress.js';
 
 // Fixed-size ring of numbers with percentiles: no allocation after creation (the sort works on a preallocated copy, the
@@ -29,6 +34,39 @@ export function createRing(size = 240) {
   };
 }
 const SOFTWARE = /swiftshader|llvmpipe|basic render|software|microsoft basic/i;
+const BPT = { 1023: 4, 1022: 3, 1028: 1, 1030: 2, 1024: 1, 1025: 2 };   // (three.js formats: RGBA, RGB, Red, RG, Alpha, Luminance → bytes a texel at 8 bits)
+// Bytes of the textures the scene's materials use (each picture counted once — clones share their source). The walk is
+// spread over frames (createTexCounter: `budget` scene objects a step, an explicit reused stack, a fixed list of texture
+// slots — no array or closure per material), so the overlay never adds a spike to the frame times it shows; textureBytes()
+// is the same walk run to its end at once (tests).
+const TEX_KEYS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'lightMap', 'alphaMap', 'bumpMap', 'displacementMap',
+  'envMap', 'specularMap', 'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap', 'sheenColorMap', 'sheenRoughnessMap', 'transmissionMap',
+  'thicknessMap', 'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap', 'specularIntensityMap', 'specularColorMap', 'matcap', 'gradientMap'];
+export function texBytesOf(t) {
+  const im = t.image, w = im?.width || 0, h = im?.height || 0, d = t.isData3DTexture || t.isDataArrayTexture ? im?.depth || 1 : 1;
+  return w * h * d * (BPT[t.format] || 4) * (t.type === 1016 ? 2 : t.type === 1015 ? 4 : 1) * (t.generateMipmaps !== false && t.minFilter !== 1006 && t.minFilter !== 1003 ? 4 / 3 : 1);
+}
+export function createTexCounter() {
+  const seen = new Set(), mats = new Set(), stack = []; let sp = 0, acc = 0, busy = false;
+  const add = t => { if (!t || !t.isTexture || t.isRenderTargetTexture) return; const src = t.source || t.image || t; if (seen.has(src)) return; seen.add(src); acc += texBytesOf(t); };
+  const mat = m => { if (!m || mats.has(m)) return; mats.add(m); for (let i = 0; i < TEX_KEYS.length; i++) { const v = m[TEX_KEYS[i]]; if (v) add(v); } const u = m.uniforms; if (u) for (const k in u) { const e = u[k]; if (e) add(e.value); } };
+  return {
+    // walk up to `budget` objects; the bytes when a whole pass ends, else -1 (a new pass starts on the next call)
+    step(scene, budget = 250) {
+      if (!scene) return -1;
+      if (!busy) { busy = true; acc = 0; seen.clear(); mats.clear(); sp = 0; stack[sp++] = scene; }
+      for (let n = 0; n < budget && sp > 0; n++) {
+        const o = stack[--sp]; stack[sp] = null; const ms = o.material;
+        if (ms) { if (Array.isArray(ms)) for (let i = 0; i < ms.length; i++) mat(ms[i]); else mat(ms); }
+        const ch = o.children; if (ch) for (let i = 0; i < ch.length; i++) stack[sp++] = ch[i];
+      }
+      if (sp > 0) return -1;
+      busy = false; seen.clear(); mats.clear(); return acc;
+    },
+    get busy() { return busy; },
+  };
+}
+export function textureBytes(scene) { return scene ? createTexCounter().step(scene, Infinity) : 0; }
 const f1 = v => (Math.round(v * 10) / 10).toFixed(1);
 // What holds the frame rate back (package W: the overlay line 1 says it, so a player on a Windows laptop knows which setting
 // helps): '' when frames come at the 60 fps slot (mean within 8 %); 'GPU' when the GPU's time (if the browser reports it)
@@ -36,8 +74,8 @@ const f1 = v => (Math.round(v * 10) / 10).toFixed(1);
 // 'CPU' when the main thread's own work (script + the draw submit) fills > 85 % of the slot (a smaller picture won't help:
 // plug in, Windows power mode "Best performance", close other apps, fewer bots).
 export function limitOf(frameMean, cpuP50, gpuMs = null, slot = 1000 / 60) { if (!(frameMean > slot * 1.08)) return ''; if (gpuMs !== null && gpuMs !== undefined && gpuMs > slot * .85) return 'GPU'; return cpuP50 > slot * .85 ? 'CPU' : 'GPU'; }
-export function createPerfOverlay({ renderer, preferences = {}, gpuMs = () => null, net = () => null }) {
-  const frames = createRing(240), cpu = createRing(240); let el = null, nodes = [], on = false, textAt = 0, long33 = 0, long50 = 0, total = 0, desktopGpu = null;
+export function createPerfOverlay({ renderer, preferences = {}, gpuMs = () => null, net = () => null, preset = null, scene = null }) {
+  const frames = createRing(240), cpu = createRing(240), texCount = createTexCounter(); let el = null, nodes = [], on = false, textAt = 0, long33 = 0, long50 = 0, total = 0, desktopGpu = null, texAt = -1e9, texMB = 0;
   const gpu = (() => { try { const gl = renderer.getContext(), e = gl.getExtension('WEBGL_debug_renderer_info'); return String(e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)); } catch { return 'unknown'; } })();
   const webgl2 = typeof WebGL2RenderingContext !== 'undefined' && renderer.getContext() instanceof WebGL2RenderingContext;
   try { globalThis.infraDesktop?.info?.().then(i => { desktopGpu = i?.gpu || null; }).catch(() => {}); } catch {}
@@ -56,15 +94,15 @@ export function createPerfOverlay({ renderer, preferences = {}, gpuMs = () => nu
     const hw = desktopGpu ? (String(desktopGpu.webgl2 || desktopGpu.webgl || '').startsWith('enabled') ? 'hardware' : 'SOFTWARE ' + (desktopGpu.webgl2 || desktopGpu.webgl)) : SOFTWARE.test(gpu) ? 'SOFTWARE' : 'hardware';
     put(0, (n ? Math.round(1000 / Math.max(1, mean)) : 0) + ' FPS · frame p50 ' + f1(frames.quantile(.5)) + ' · p95 ' + f1(frames.quantile(.95)) + ' · p99 ' + f1(frames.quantile(.99)) + ' · max ' + f1(frames.quantile(1)) + ' ms · CPU ' + f1(cpu.quantile(.5)) + '/' + f1(cpu.quantile(.95)) + ' ms' + ((L => L ? ' · limit: ' + L : '')(n ? limitOf(mean, cpu.quantile(.5), g) : '')));
     put(1, 'long frames: last ' + n + ' → ' + frames.over(33.4) + ' >33 ms, ' + frames.over(50) + ' >50 ms · match ' + long33 + ' / ' + long50 + ' of ' + total);
-    put(2, info.calls + ' draws · ' + (info.triangles >= 1e6 ? f1(info.triangles / 1e6) + 'M' : Math.round(info.triangles / 1e3) + 'k') + ' tris · ' + (r.info.programs?.length || 0) + ' programs · ' + (r.domElement ? r.domElement.width + '×' + r.domElement.height : Math.round(innerWidth * pr) + '×' + Math.round(innerHeight * pr)) + ' (ratio ' + pr.toFixed(2) + ', DPR ' + (+devicePixelRatio).toFixed(2) + ') · ' + (preferences.graphics || '') + (g !== null && g !== undefined ? ' · GPU ' + f1(g) + ' ms' : ''));
-    put(3, gpu.slice(0, 90) + ' · WebGL' + (webgl2 ? '2' : '1') + ' · ' + hw + (desktopGpu ? ' · rasterization ' + (desktopGpu.rasterization || '?') + ' · compositing ' + (desktopGpu.gpu_compositing || '?') : ''));
+    put(2, info.calls + ' draws · ' + (info.triangles >= 1e6 ? f1(info.triangles / 1e6) + 'M' : Math.round(info.triangles / 1e3) + 'k') + ' tris · ' + (r.info.programs?.length || 0) + ' programs · ' + (r.domElement ? r.domElement.width + '×' + r.domElement.height : Math.round(innerWidth * pr) + '×' + Math.round(innerHeight * pr)) + ' (ratio ' + pr.toFixed(2) + ', DPR ' + (+devicePixelRatio).toFixed(2) + ') · ' + (preset ? preset() : preferences.graphics || '') + (scene ? ' · tex ' + Math.round(texMB) + ' MB (' + (r.info.memory?.textures || 0) + ')' : '') + (g !== null && g !== undefined ? ' · GPU ' + f1(g) + ' ms' : ''));
+    put(3, (globalThis.__gdEmulation ? 'EMULATION: ' + String(globalThis.__gdEmulation).toUpperCase() + ' — not a Windows measurement · ' : '') + gpu.slice(0, 90) + ' · WebGL' + (webgl2 ? '2' : '1') + ' · ' + hw + (desktopGpu ? ' · rasterization ' + (desktopGpu.rasterization || '?') + ' · compositing ' + (desktopGpu.gpu_compositing || '?') : ''));
     put(4, (mem ? 'heap ' + Math.round(mem.usedJSHeapSize / 1048576) + ' MB · ' : '') + (N ? 'RTT ' + f1(N.rtt) + ' ms · jitter ' + f1(N.jitter) + ' · snapshot ' + N.snapshotAgeMs + ' ms · interp ' + Math.round(N.interpMs) + ' ms' : 'not connected'));
     put(5, N ? 'corrections ' + N.corrections + ' (max ' + f1(N.correctionMaxU) + ' u / 5 s) · host tick ' + f1(N.hostTickMs) + ' ms · in flight ' + N.queue + ' · last frame ' + f1(N.lastSnapshotBytes / 1024) + ' KB' : '');
     const P = loadProgress, loading = P.label && performance.now() - P.at < 4000; put(6, loading ? 'download: ' + P.label + ' · ' + (P.total ? Math.min(100, Math.round(P.got / P.total * 100)) + '%' : (P.got / 1048576).toFixed(0) + ' MB') : '');
   }
   return {
     // every drawn Global Defensive frame: its interval on the display clock and the CPU time it took (ms)
-    frame(now, ms, cpuMs) { frames.push(ms); cpu.push(cpuMs); total++; if (ms > 33.4) long33++; if (ms > 50) long50++; if (on && now - textAt >= 250) { textAt = now; text(); } },
+    frame(now, ms, cpuMs) { frames.push(ms); cpu.push(cpuMs); total++; if (ms > 33.4) long33++; if (ms > 50) long50++; if (on && scene && (texCount.busy || now - texAt > 2000)) { const b = texCount.step(scene); if (b >= 0) { texAt = now; texMB = b / 1048576; } } if (on && now - textAt >= 250) { textAt = now; text(); } },   /* (the texture walk: a slice a frame, a pass every 2 s) */
     set(v) { v = !!v; if (v === on) return; on = v; if (on && !el) build(); if (el) el.hidden = !on; if (on) { textAt = 0; } },
     toggle() { this.set(!on); return on; },
     resetMatch() { long33 = long50 = total = 0; frames.clear(); cpu.clear(); },

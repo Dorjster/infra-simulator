@@ -22,8 +22,23 @@ import { radarImage, locationOf, cs2Picture, cs2RadarIndex } from './gd-radar-ar
 import { loadRadarPrefs, saveRadarPrefs, cleanRadarPrefs } from './gd-radar-prefs.js';
 import { hostNow } from './host-clock.js';   // (who is dead, when a decoy fires: the host's clock)
 import { loadHudPrefs, PLAYER_LETTERS } from './gd-hud-prefs.js';   // (v53 stage 4: CS2's colour-blind letters over the player colours)
+import { gdPresetNow } from './gd-preset.js';   // (v53 stage 6: the radar redrawn 15× a second on Low / Very Low — radarHz)
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
+// v53 stage 6 — the radar's text (A / B over the sites, team mates' numbers or letters) drawn from small pictures made once
+// per string on canvases of their own, never in the document: a canvas font set on the radar's own (on-page) canvas made
+// Chrome bring the page's style up to date mid-frame (batch B's profile: ~1.2 ms a frame at 4× CPU). GLYPH_S: the pictures'
+// pixels per font pixel (the radar draws a font pixel at ≤ 3 device pixels — sharp at every size).
+const GLYPH_S = 6, GLYPHS = new Map();
+function glyph(text, px, weight, fill, stroke = null, lw = 0) {
+  const k = text + (stroke ? '#s' : '#f') + px; let c = GLYPHS.get(k); if (c) return c;
+  const font = weight + ' ' + px + 'px system-ui, sans-serif', w = Math.ceil(px * .9 * Math.max(1, text.length) + lw * 2 + 4), h = Math.ceil(px * 1.5 + lw * 2);
+  c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w * GLYPH_S, h * GLYPH_S) : globalThis.document?.createElement('canvas'); if (!c) return null;
+  if (!(globalThis.OffscreenCanvas && c instanceof OffscreenCanvas)) { c.width = w * GLYPH_S; c.height = h * GLYPH_S; }
+  const g = c.getContext('2d'); if (!g) return null; g.scale(GLYPH_S, GLYPH_S); g.translate(w / 2, h / 2); g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (stroke) { g.lineWidth = lw; g.strokeStyle = stroke; g.lineJoin = 'round'; g.strokeText(text, 0, 0); } g.fillStyle = fill; g.fillText(text, 0, 0);
+  c.w = w; c.h = h; GLYPHS.set(k, c); return c;
+}
 const DUCK_EYE = 46 * 2.54 / 16.5;   // CS2's crouched eye, 46 HU (the feet of a crouched pose without fy)
 const FLOOR = 15;   // FLOOR: eye heights this far apart (game units, ~100 Hammer units) are different floors
 // CS2's player colours in slot order (cl_color 0–4: yellow, purple, green, blue, orange), per side, by the host's join
@@ -32,6 +47,7 @@ const FLOOR = 15;   // FLOOR: eye heights this far apart (game units, ~100 Hamme
 // v53 stage 4: CS2's own values (csgostyles.vcss @define color-player-yellow rgb(248,246,45), -purple rgb(192,54,153),
 // -green rgb(29,162,132), -blue rgb(136,206,245), -orange rgb(255,155,37)) — v52's were close guesses.
 export const TEAM_COLORS = Object.freeze(['#f8f62d', '#c03699', '#1da284', '#88cef5', '#ff9b25']); const ENEMY = '#ff4040', NUMS = ['1', '2', '3', '4', '5'];
+const MATE_GL = [[], []];   // (v53 stage 6: a team mate's glyph picture per slot — [0] numbers, [1] colour-blind letters — looked up by index each frame, no string built)
 let LETTERS = !!loadHudPrefs().letters; globalThis.addEventListener?.('gd-hud-prefs', e => { LETTERS = !!e.detail?.letters; });   // (Settings → HUD → letters: CS2's cl_teammate_colors_show 2)
 // How much of the map the radar shows: ZOOM_K / zoom of the overview picture's width (CS2's cl_radar_scale zooms its
 // overview: 0.7, the default, shows half of it; 0.25 all of it and a margin; 1 about a third). A built-in map's
@@ -97,7 +113,7 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
   // Last known places (GDUI-05): key → { x, y, z, at, live } — where he was when last seen or heard (at: when), live: seen
   // at the latest 15 Hz look (then drawn where he is now). Reused records; cleared on a new round, side, map or match.
   const known = new Map(); let eRound = null, eTeam = null, eMap = null, eMatch = null, eStart = null, bombSpot = null;
-  const drawn = []; let nd = 0;   // (enemy dots drawn this frame, for tests: reused records { k, x, z, live })
+  const drawn = []; let nd = 0, drawAt = -1e9;   // (drawAt: the last redraw, radarHz)   // (enemy dots drawn this frame, for tests: reused records { k, x, z, live })
   const eyes = []; let ne = 0;   // (the eyes that spot, rebuilt 15× a second into reused records { x, y, z, yaw })
   // The map picture (CS-overview style, gd-radar-art.js), drawn once per map, sits under the dots as its own layer:
   // each frame only its transform changes (moved and turned by the compositor, never repainted), so the rotating
@@ -160,8 +176,7 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
   // A team mate: his colour, a black rim, a tick the way he faces, his number on the big map, a C4 beside the carrier.
   const mate = (o, color, n, carrier, rel) => { dot(o.x, o.z, color, 5.5, '#000', rel); x.save(); x.translate(mapX(o.x), mapZ(o.z)); x.scale(q / k, q / k); const fx = -Math.sin(o.yaw || 0), fz = -Math.cos(o.yaw || 0);
     x.beginPath(); x.moveTo(fx * 6.5, fz * 6.5); x.lineTo(fx * 11, fz * 11); x.lineWidth = 2.2; x.strokeStyle = color; x.stroke(); x.rotate(-ang);
-    if (LETTERS) { const L = PLAYER_LETTERS[NUMS.indexOf(n)] || ''; x.font = '800 7px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#000'; x.fillText(L, 0, .5); }   /* (colour-blind letters: Y P G B O) */
-    else if (big && n) { x.font = '800 7px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#000'; x.fillText(n, 0, .5); }
+    if (LETTERS || (big && n)) { const si = NUMS.indexOf(n), row = LETTERS ? MATE_GL[1] : MATE_GL[0]; let gl = si >= 0 ? row[si] : null; if (gl === undefined || gl === null) { gl = glyph(LETTERS ? PLAYER_LETTERS[si] || '' : n, 7, 800, '#000'); if (si >= 0) row[si] = gl; } if (gl) x.drawImage(gl, -gl.w / 2, .5 - gl.h / 2, gl.w, gl.h); }   /* (colour-blind letters: Y P G B O; else the number on the big map — cached pictures, see glyph; MATE_GL: per slot, so the draw path builds no key) */
     if (carrier) { if (c4Img?.complete && c4Img.naturalWidth) x.drawImage(c4Img, 9 - 8 * PXU / 2, -7 - 6 * PXU / 2, 8 * PXU, 6 * PXU); else c4At(9, -7, '#ff4a2a'); } x.restore(); };
   const c4At = (ox, oy, fill) => { x.fillStyle = fill; x.fillRect(ox - 5.5, oy - 3.5, 11, 7); x.lineWidth = 1.4; x.strokeStyle = '#000'; x.strokeRect(ox - 5.5, oy - 3.5, 11, 7); x.fillStyle = '#000'; x.fillRect(ox - 3, oy - 1.4, 6, 1.6); };
   const c4 = (wx, wz, fill) => { x.save(); x.translate(mapX(wx), mapZ(wz)); x.scale(q / k, q / k); x.rotate(-ang); c4At(0, 0, fill); x.restore(); };   // (the bomb, upright: dropped, planted)
@@ -245,7 +260,9 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
         BOMB.ctSees = false; if (d && d.teams?.[me] === 'ct') { const gl = G.combat?.ground; if (gl) for (let i = 0; i < gl.length; i++) { const b = gl[i]; if (b.item !== 'c4') continue; const by = (b.y ?? 0) + .3;
           for (let j = 0; j < ne; j++) { const e = eyes[j]; if (Math.hypot(e.x - b.x, e.z - b.z) < reach && inView(e.x, e.z, e.yaw, b.x, b.z) && radarSight(m, boxes, G, e.x, e.y, e.z, b.x, by, b.z, b.y ?? 0, true, tNow, cx, cz)) { BOMB.ctSees = true; break; } } break; } }
         const lt = (layer ? 'LOWER · ' : '') + (p ? locationOf(m, p.x - cx, p.z - cz, feet) || '' : '').toUpperCase(); if (label.textContent !== lt) label.textContent = lt; }   /* where you are, by callout (CS) */
-      // Every frame: the map layer's place and turn, then the dots.
+      // Every frame: the map layer's place and turn, then the dots — on Low / Very Low 15 times a second (gd-preset.js radarHz;
+      // the canvas keeps the last picture in between).
+      { const hz = gdPresetNow().radarHz; if (hz > 0) { if (now - drawAt < 1000 / hz - 4) return; drawAt = now; } }
       // CS2's options: the big map (Tab) the whole map, north up; else "Radar map zoom" of the overview, turned with your
       // view when "Radar is rotating", you in the middle when "Radar centers the player" (else best fit: the view held
       // inside the map's bounds, you off centre near its edge). No running zoom (v51's): CS2's radar doesn't do that.
@@ -261,7 +278,7 @@ export function createRadar({ world, lan, name, yaw, where, active, speed = () =
       x.save(); x.translate(R, R); x.rotate(ang); x.scale(k, k); x.translate(-mx, -mz);
       const myTeam = d?.teams?.[me] || null;
       // Bomb sites on CS2's picture (it has none of its own): CS2's A / B, upright.
-      if (sites.length) { x.font = '900 15px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; for (let i = 0; i < sites.length; i++) { const s = sites[i]; if (s.low !== null && s.low !== (imgLayer === 'lower')) continue; x.save(); x.translate(mapX(cx + s.x), mapZ(cz + s.z)); x.scale(q / k, q / k); x.rotate(-ang); x.lineWidth = 3.5; x.strokeStyle = 'rgba(0,0,0,.85)'; x.strokeText(s.L, 0, 0); x.fillStyle = '#f4f4f4'; x.fillText(s.L, 0, 0); x.restore(); } }
+      if (sites.length) { for (let i = 0; i < sites.length; i++) { const s = sites[i]; if (s.low !== null && s.low !== (imgLayer === 'lower')) continue; x.save(); x.translate(mapX(cx + s.x), mapZ(cz + s.z)); x.scale(q / k, q / k); x.rotate(-ang); const gl = s.gl === undefined ? (s.gl = glyph(s.L, 15, 900, '#f4f4f4', 'rgba(0,0,0,.85)', 3.5)) : s.gl; if (gl) x.drawImage(gl, -gl.w / 2, -gl.h / 2, gl.w, gl.h); x.restore(); } }
       // The bomb: planted (a flashing C4), on the ground (Terrorists see it), carried by a team mate (beside his dot).
       const r = d?.round; bombShownNow = !!(r?.phase === 'planted' && r.planted && (!ctBombSpotted || myTeam !== 'ct' || bombSpot === r.planted.at));
       BOMB.planted = bombShownNow; BOMB.lit = 0; BOMB.dropped = false; BOMB.carrier = d?.bomb?.carrier && myTeam === 't' ? d.bomb.carrier : null;

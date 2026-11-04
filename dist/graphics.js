@@ -16,6 +16,8 @@ import { EffectComposer } from './post/EffectComposer.js';
 import { RenderPass } from './post/RenderPass.js';
 import { UnrealBloomPass } from './post/UnrealBloomPass.js';
 import { OutputPass } from './post/OutputPass.js';
+import { SharpenOutputPass } from './gd-sharpen.js';
+import { ExposurePass, GD_LOOK, BAKED_LIGHTS_U, BAKED_LIGHT_N } from './gd-exposure.js'; import { SSAOPass } from './gd-ssao.js'; import { FxaaOutputPass } from './gd-fxaa.js';   // (v53 LOOK: GD only — CS2's auto exposure and bloom per map, SSAO on High / Ultra, lights on the baked map)   // (v53 stage 6: Global Defensive's Low / Very Low presets only — scene.userData.gdPreset)
 import { AVATAR_SHADOW } from './avatar.js';
 import { anisotropy, applyFiltering } from './texture-quality.js';
 
@@ -57,14 +59,22 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   const TONE = { off: THREE.LinearToneMapping, filmic: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping };
   renderer.toneMapping = THREE.LinearToneMapping;
   // Worked out again only when a setting changes (no garbage per frame).
-  let dirty = true, lastPreset = null, lastBaked = false; addEventListener?.('infra-preferences', () => { dirty = true; });
+  let dirty = true, lastPreset = null, lastBaked = false, gdLast = null, gdSharpOn = false, gdFxOn = false, gdLookOn = '', gdExpPass = null, gdSsaoPass = null, bloomVer = -2, bloomBase = null; addEventListener?.('infra-preferences', () => { dirty = true; });
   function apply() {
-    if (!dirty && preset() === lastPreset) return; dirty = false; lastPreset = preset();
+    if (!dirty && preset() === lastPreset && (scene.userData.gdPreset ?? null) === gdLast) return; dirty = false; lastPreset = preset(); gdLast = scene.userData.gdPreset ?? null;
+    // v53 stage 6 (GD only): scene.userData.gdPreset — the Global Defensive preset's row (gd-preset.js), set by app.js only while
+    // a GD match is drawn, null elsewhere. Its `sharpen` (Low / Very Low on a GPU) makes the composer end in the sharpen pass;
+    // never on a software renderer (no post-processing there at all). Every other mode: gdLast null, gdSharp false — as before.
+    const gdSharp = !!gdLast?.sharpen && !software;
+    // v53 LOOK (GD only, spec 4.1): on a map with CS2's baked look and a GPU — CS2's auto exposure (gd-exposure.js, every preset
+    // with a composer), its bloom from the map's .vpost (gdPreset.bloom: Medium and up) and SSAO (gdPreset.ssao: High, Ultra,
+    // gd-ssao.js). gdL false in every other mode and on GD's fallback maps: gdKey '' — nothing changes there.
+    const gdL = !!gdLast && !software && !!scene.userData.baked, gdBloom = gdL && !!gdLast.bloom, gdSsao = gdL && !!gdLast.ssao, gdKey = gdL ? 'L' + (gdBloom ? 'b' : '') + (gdSsao ? 's' : '') : '';
     const p = prefs(); G = resolveGraphics(p, lastPreset, software); renderer.toneMappingExposure = G.brightness;
     { const a = anisotropy(p); if (a !== filtering) { const first = !filtering; filtering = a; if (!first) applyFiltering(scene, a); } }   // texture filtering changed: every texture re-sent once
     // A map whose light is baked (a CS2 map's look, scene.userData.baked) has its shadows in its light and takes no
     // shadow map: the sun's shadow pass would only cost (players' contact shadows instead).
-    const want = [G.shadows, G.edges, G.glow, G.aa, G.tone, reflect(), !!scene.userData.baked].join('|'); if (want === mode) return; mode = want;
+    const want = [G.shadows, G.edges, G.glow, G.aa, G.tone, reflect(), !!scene.userData.baked, gdSharp].join('|'); if (want === mode && gdKey === gdLookOn) return; const matsToo = want !== mode /* (GD look: only a GD pass change skips the materials; elsewhere always true here, as before) */; mode = want;   // (v53 LOOK: a change of the GD look passes alone rebuilds the composer, not every material)
     renderer.toneMapping = TONE[G.tone];
     shadowOn = G.shadows !== 'off' && !scene.userData.baked; fxOn = shadowOn || G.glow; scene.environment = reflect() ? envTexture : null;
     renderer.shadowMap.enabled = shadowOn; renderer.shadowMap.type = G.edges === 'sharp' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap; sun.castShadow = shadowOn;
@@ -72,27 +82,38 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
     sun.shadow.mapSize.setScalar(shadowSize(!!scene.userData.outdoor)); sun.shadow.map?.dispose(); sun.shadow.map = null; lastOutdoor = undefined;   // (outdoor shadow settings re-applied on the next frame)
     if (shadowOn) flagShadows();   // first time at once; the job keeps it current
     // The HDR buffer: for the glow, or for anti-aliasing (its MSAA). Made again when either changes.
-    const needPost = G.glow || G.aa > 0;
-    if (composer && (!needPost || composer.renderTarget1.samples !== G.aa)) { composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); bloom?.dispose(); composer = null; bloom = null; }
+    const needPost = G.glow || G.aa > 0 || gdSharp || gdBloom || gdSsao;
+    // (v53 LOOK review fix, GD only: a composer that exists only for the map's CS2 look — Medium: no glow, no sharpen, no
+    // MSAA asked — lost the 4× MSAA its canvas gave it before. A 4× MSAA half-float buffer halved Medium's fps at real size,
+    // so its output pass smooths the edges instead (gd-fxaa.js, a post-process AA as CS2's CMAA2 choice). Elsewhere as before.)
+    const gdFx = gdL && !gdSharp && !G.glow && !G.aa && !!renderer.getContextAttributes?.()?.antialias;
+    if (composer && (!needPost || composer.renderTarget1.samples !== G.aa || gdFxOn !== gdFx || gdSharpOn !== gdSharp || (G.glow && !bloom) || gdLookOn !== gdKey)) { composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); bloom?.dispose(); gdExpPass?.dispose(); gdSsaoPass?.dispose(); composer = null; bloom = null; gdExpPass = gdSsaoPass = null; }   // (v53 LOOK: and its GD passes)
     if (needPost && !composer) {
       const size = renderer.getDrawingBufferSize(new THREE.Vector2());
       const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: G.aa });
-      composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera)); composer.addPass(smokeHook);   // (smokeHook: off unless a Global Defensive smoke is up)
-      bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05);
+      composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera)); if (gdSsao) composer.addPass(gdSsaoPass = new SSAOPass(camera)); composer.addPass(smokeHook);   // (smokeHook: off unless a Global Defensive smoke is up)
+      if (gdL) composer.addPass(gdExpPass = new ExposurePass());   // (v53 LOOK: SSAO before the smoke, drawn into the scene's buffer in place — no swap, so the smoke reads the scene's depth; the exposure measured after the smoke, as CS2 sees the frame)
+      gdSharpOn = gdSharp; gdFxOn = gdFx; if (!gdSharp || G.glow) bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), .32, .45, 1.05);
       // The composer sizes every pass to the full buffer; the glow is a blur, so its mips start at a quarter of
       // the screen, not half (a third of High's cost on a Retina screen, the same look).
-      const fullSize = bloom.setSize.bind(bloom); bloom.setSize = (w, h) => fullSize(w / 2, h / 2);
-      composer.addPass(bloom); composer.addPass(new OutputPass());
+      if (bloom /* (GD: none on a sharpen-only composer) */) { const fullSize = bloom.setSize.bind(bloom); bloom.setSize = (w, h) => fullSize(w / 2, h / 2); composer.addPass(bloom); }   // (GD Low's sharpen-only composer: no glow buffers at all)
+      composer.addPass(gdSharp ? new SharpenOutputPass() : gdFx ? new FxaaOutputPass() /* (v53 LOOK: GD Medium's edges) */ : new OutputPass());
+      // (v53 LOOK: a GD map's bloom reads display values — what is above white there is an unclamped spike, such as the
+      // water's sun glint on Ancient that bloomed into a white square: clamped to white before the blur. Only this
+      // composer's own copy of the high-pass material, built now, so other modes' glow is untouched.)
+      if (bloom && gdBloom) { const hp = bloom.materialHighPassFilter; hp.fragmentShader = hp.fragmentShader.replace('gl_FragColor = mix( outputColor, texel, alpha );', 'gl_FragColor = mix( outputColor, min( texel, vec4( 1.0 ) ), alpha );'); hp.needsUpdate = true; }
+      gdLookOn = gdKey; bloomVer = -2; bloomBase = bloom ? { f: bloom.compositeMaterial.uniforms.bloomFactors.value, t: bloom.compositeMaterial.uniforms.bloomTintColors.value } : null;
+      gdExpPass?.warm(renderer); gdSsaoPass?.warm(renderer, composer.renderTarget2);   // (v53 LOOK: their programs now, behind the loading card — never in a round)
     }
-    if (bloom) bloom.enabled = G.glow;
-    scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });   // shadow / no-shadow, soft / sharp, tone-mapping shaders
+    if (bloom) bloom.enabled = G.glow; bloomVer = -2;   // (v53 LOOK: gdBloomSync() sets it again for a GD map)
+    if (matsToo) scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });   // shadow / no-shadow, soft / sharp, tone-mapping shaders
     glow(G.glow); metalShine();
   }
   // Lamps, neon, LEDs (bright unlit colours without a texture) become HDR on High so the bloom picks them up.
   const boosted = new Set();
   function glow(on) {
     if (!on) { for (const m of boosted) m.color.multiplyScalar(1 / 2.6); boosted.clear(); return; }
-    scene.traverse(o => { const m = o.material; if (!m || Array.isArray(m) || !m.isMeshBasicMaterial || m.map || boosted.has(m) || m.visible === false) return;
+    scene.traverse(o => { const m = o.material; if (!m || Array.isArray(m) || !m.isMeshBasicMaterial || m.map || boosted.has(m) || m.visible === false || m.userData.noGlow /* (v53 LOOK: a GD CS2 map's own materials) */) return;
       const c = m.color, lum = .2126 * c.r + .7152 * c.g + .0722 * c.b; if (lum > .35) { c.multiplyScalar(2.6); boosted.add(m); } });
   }
   // Meshes cast and receive shadows (sprites, lines, glass, labels and flagged objects don't).
@@ -115,7 +136,23 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   const sources = new Set(), wp = new THREE.Vector3(); let poolAt = 0, scanAt = 0;
   // (the same scan: a transparent double-sided material is drawn in one pass — three.js otherwise draws it twice a frame,
   // back then front, flagging it for a new program both times: every frame a full program lookup per material)
-  function scanLights() { scene.traverse(o => { if (o.isPointLight && !o.userData.pooled && !o.userData.noPool && !sources.has(o)) { sources.add(o); o.visible = false; } const m = o.material; if (m && !Array.isArray(m) && m.transparent && m.side === THREE.DoubleSide && !m.forceSinglePass) m.forceSinglePass = true; if (o.isLight) o.layers.enable(7); }); }   /* lights seen by the sun-shadow pass's camera too (its layer 7): else every other frame its lights count changed and every lit material looked up its program again */
+  function scanLights() { scene.traverse(o => { if (o.isPointLight && !o.userData.pooled && !o.userData.noPool && !sources.has(o)) { sources.add(o); o.visible = false; } const m = o.material; if (m && !Array.isArray(m) && m.transparent && m.side === THREE.DoubleSide && !m.forceSinglePass) m.forceSinglePass = true; if (o.isLight) o.layers.enable(7); if (o.isPointLight && o.userData.noPool && o.userData.gd && gdExtra.length < 8 && !gdExtra.includes(o)) gdExtra.push(o); }); }   /* lights seen by the sun-shadow pass's camera too (its layer 7): else every other frame its lights count changed and every lit material looked up its program again */
+  // v53 LOOK (GD only): the baked map's own light term (cs2-render.js gdPoints: a fixed BAKED_LIGHT_N slots, never a new
+  // program) gets the pool's lights (the fire's among them) and the unpooled GD lights (fun-pistol.js's muzzle flash),
+  // copied each frame into the shared uniforms; slots without a light get range 0. And the map's CS2 bloom (its .vpost
+  // CBloomLayer via gd-exposure.js GD_LOOK): strength, display-space threshold, CS2's blur weights and tints, its blend
+  // (SCREEN: 1 − (1 − a)(1 − b) as blending One-minus-dst-colour + One; ADD: additive) — set when the map's look or the
+  // composer changes, and put back to this game's own glow everywhere else.
+  const gdExtra = [];
+  function gdLights() { const P = BAKED_LIGHTS_U.uBPLp.value, C = BAKED_LIGHTS_U.uBPLc.value; let k = 0;
+    for (let i = 0; i < pool.length && k < BAKED_LIGHT_N; i++) { const l = pool[i]; if (!(l.intensity > 0)) continue; P[k].set(l.position.x, l.position.y, l.position.z, l.distance || 1e4); C[k].set(l.color.r * l.intensity, l.color.g * l.intensity, l.color.b * l.intensity); k++; }
+    for (let i = 0; i < gdExtra.length && k < BAKED_LIGHT_N; i++) { const l = gdExtra[i]; if (!l.parent || !l.visible || !(l.intensity > 0)) continue; l.getWorldPosition(wp); P[k].set(wp.x, wp.y, wp.z, l.distance || 1e4); C[k].set(l.color.r * l.intensity, l.color.g * l.intensity, l.color.b * l.intensity); k++; }
+    for (; k < BAKED_LIGHT_N; k++) P[k].w = 0; }
+  function gdBloomSync() { if (!bloom) return; const B = gdLookOn.includes('b') ? GD_LOOK.bloom : null, v = B ? GD_LOOK.ver : -1; if (v === bloomVer) return; bloomVer = v;
+    const cu = bloom.compositeMaterial.uniforms, bm = bloom.blendMaterial;
+    if (B) { bloom.strength = B.strength; bloom.threshold = B.lo; bloom.highPassUniforms.smoothWidth.value = B.hi - B.lo; bloom.radius = 0; cu.bloomFactors.value = B.weights; if (bloomBase) bloom.bloomTintColors = B.tints || bloomBase.t;   /* (review fix: UnrealBloomPass copies bloom.bloomTintColors into the uniform on every render) */
+      if (B.screen) { bm.blending = THREE.CustomBlending; bm.blendEquation = THREE.AddEquation; bm.blendSrc = THREE.OneMinusDstColorFactor; bm.blendDst = THREE.OneFactor; } else bm.blending = THREE.AdditiveBlending; bloom.enabled = B.strength > 0; }
+    else { bloom.strength = .32; bloom.radius = .45; bloom.threshold = 1.05; bloom.highPassUniforms.smoothWidth.value = .01; if (bloomBase) { cu.bloomFactors.value = bloomBase.f; bloom.bloomTintColors = bloomBase.t; } bm.blending = THREE.AdditiveBlending; bloom.enabled = G.glow; } }
   function updatePool(now) {
     if (jobs) jobs.add('light-scan', scanLights, 2000); else if (now - scanAt > 2000) { scanAt = now; scanLights(); }
     if (now - poolAt < 200) return; poolAt = now;
@@ -196,7 +233,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   };
   function draw() {
       if (!!scene.userData.baked !== lastBaked) { lastBaked = !!scene.userData.baked; dirty = true; }   // (entering / leaving a baked map: shadows off / on)
-      apply(); frame++; updatePool(performance.now());
+      apply(); frame++; updatePool(performance.now()); if (gdLast && scene.userData.baked) gdLights(); if (composer) gdBloomSync();   // (v53 LOOK: GD only)
       { const O = scene.userData.outdoor || null; if (O !== lastOutdoor) { lastOutdoor = O; sun.color.copy(O ? new THREE.Color(O.sun) : base.sunColor);
           // Outdoors (a Global Defensive map): the shadow box covers what you see around you (buildings cast across the
           // streets), the sun far out; the hall's tight box comes back indoors.
@@ -214,7 +251,7 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       // Otherwise this draw is exactly as without it.
       const sm = scene.userData.gdSmoke, smoke = !!sm?.active(); if (composer && sm?.armed) sm.wire(composer);   // (armed: in a match — its buffers' depth textures made at the start, not at the first smoke)
       if (composer) {
-        const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); const z = renderer.getSize(new THREE.Vector2()); composer.setSize(z.x, z.y); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.resolution.set(d.x / 2, d.y / 2); }
+        const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); const z = renderer.getSize(new THREE.Vector2()); composer.setSize(z.x, z.y); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom?./* (GD Low: no glow pass) */resolution.set(d.x / 2, d.y / 2); }
         smokeHook.enabled = smoke; if (smoke) sm.begin(composer); try { composer.render(); } finally { if (smoke) sm.end(); }
       } else if (smoke) sm.renderDirect(); else renderer.render(scene, camera);
   }

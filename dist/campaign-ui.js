@@ -2,6 +2,7 @@
 // Laptop · Team · Settings). Everything shown here is read from the shared world through
 // world.campaign (live checks) and world.operations; every button sends the same actions the 3D
 // interactions and the LAN host use. The older engineering tabs stay reachable under "Advanced".
+import { loadDevice as loadGdDevice, autoPreset as gdAutoPreset, PRESET_NAMES as GD_PRESET_NAMES, keptGraphics as gdKeptGraphics } from './gd-preset.js';   // (v53 stage 6: Settings → Graphics preset, GD only)
 import { getVolumes, setVolumes } from './spatial-audio.js';
 import { ARENA_MAPS, MAP_LIST, mapOffered } from './arena-maps.js';
 import { userMapList, refreshUserMaps } from './user-maps.js';
@@ -27,6 +28,18 @@ import {RACK_PADS, DELIVERY, PROCUREMENT, ROOM} from './facility-layout.js';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SAVE_KEY = 'infra-local-campaign-v20';
 const gdMode = () => typeof document !== 'undefined' && document.body?.classList.contains('gd-mode');   // in a Global Defensive match
+// v53 stage 6: Global Defensive's "Graphics preset" in place of the Graphics mode (gd-preset.js) — Auto (what this computer was
+// detected as) or one fixed preset; a computer with High / Ultra saved before v53 shows it as its preset until changed.
+function gdPresetHTML(p) {
+  const d = loadGdDevice(), kept = gdKeptGraphics(d), cur = GD_PRESET_NAMES.includes(p.gdPreset) ? p.gdPreset : p.gdPreset === 'auto' || !kept ? 'auto' : kept;   /* (kept: a High / Ultra saved before v53 only) */
+  const auto = gdAutoPreset(d), tier = { dedicated: 'graphics card', integrated: 'integrated graphics', software: 'software rendering', unknown: 'unknown GPU' }[d?.tier] || 'not detected yet';
+  const opts = [['auto', 'Auto · ' + auto + ' (' + tier + ')'], ['Ultra', 'Ultra (desktop GPU)'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low · no graphics card'], ['Very Low', 'Very Low · software rendering']];
+  return `<label title="Auto: from this computer's graphics (detected once: the GPU's name and a 2-second test). Low / Very Low: a smaller picture sharpened, no shadows or glow, fewer effects — for laptops without a graphics card">Graphics preset<select data-set="gdPreset">${opts.map(([v, t]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
+}
+// (the Graphics mode select as it was, for every mode but GD — which shows gdPresetHTML above instead)
+function graphicsModeNotGD(p) {
+  return `<label title="Performance: fastest · Balanced: sharp and smooth · Quality: reflections, shadows and glow">Graphics mode<select data-set="graphics">${[['Low', 'Performance'], ['Medium', 'Balanced'], ['High', 'Quality'], ['Ultra', 'Ultra (desktop GPU)']].map(([v, t]) => `<option value="${v}" ${p.graphics === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
+}
 const TABS = [['objective', 'Objective', 'J'], ['inventory', 'Inventory & orders', 'I'], ['map', 'Map', 'M'], ['laptop', 'Laptop', 'L'], ['team', 'Team', 'T'], ['settings', 'Settings', '']];
 
 export function createCampaignUI(ctx) {
@@ -186,7 +199,7 @@ export function createCampaignUI(ctx) {
     const info = await roomInfo().catch(() => null), canHost = !!desktop || !!info?.localHost || (lan.connected && lan.canManageWorld);
     subPanel(`<h2>Global Defensive</h2>
      <div class="ss-form"><label>Your name<input id="ss-ar-name" maxlength="20" autocomplete="nickname" placeholder="Player" value="${esc((() => { try { const n = localStorage.getItem('infra-name'); return n && n !== 'Engineer' ? n : ''; } catch { return ''; } })())}"></label><label>Mode<select id="ss-ar-kind"><option value="dm">Deathmatch</option><option value="defuse">Defuse (T vs CT, bomb)</option><option value="practice">Practice (any map, helpers)</option></select></label><label>Map<select id="ss-ar-map"></select></label><label>Bots<select id="ss-ar-bots">${[0, 1, 2, 3, 4, 5, 7, 9, 11].map(n => `<option ${n === 5 ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
-     <div id="ss-ar-practice" class="ss-form gd-practice" hidden><label>Bots<select id="ss-pr-bots"><option value="stand">Stand still (targets)</option><option value="move">Move, don't shoot</option><option value="fight">Fight back</option></select></label>${[['ammo', 'Infinite ammo'], ['impacts', 'Show bullet impacts'], ['recoil', 'Show my recoil'], ['paths', 'Show grenade paths']].map(([k, t]) => `<label class="chk"><input type="checkbox" id="ss-pr-${k}" checked> ${t}</label>`).join('')}</div>
+     <div id="ss-ar-practice" class="ss-form gd-practice" hidden><label>Bots<select id="ss-pr-bots"><option value="stand">Stand still (targets)</option><option value="move">Move, don't shoot</option><option value="fight">Fight back</option></select></label>${[['ammo', 'Infinite ammo'], ['impacts', 'Show bullet impacts'], /* GD practice, v53 HITS final: the recoil-dots toggle went with its panel (CS2 has none, open-B #9) */ ['paths', 'Show grenade paths']].map(([k, t]) => `<label class="chk"><input type="checkbox" id="ss-pr-${k}" checked> ${t}</label>`).join('')}</div>
      <details class="gd-more"><summary>More options</summary><div class="ss-form"><label>Bot difficulty<select id="ss-ar-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label>Warmup (s)<input id="ss-ar-warm" type="number" min="0" max="600" step="5" value="120" title="LAN lobby before the match · 0 starts at once"></label><label>Freeze time (s)<input id="ss-ar-freeze" type="number" min="0" max="60" step="1" value="15" title="Buy time at the start of every round · 0–60"></label>${canHost && desktop ? '<label>LAN passcode<input id="ss-ar-pass" maxlength="12" autocomplete="off" placeholder="optional"></label>' : ''}</div></details>
      <div class="gd-go"><button id="ss-ar-solo" class="primary">Play solo<small>you and the bots</small></button>${canHost ? '<button id="ss-ar-host">Host LAN game<small>friends on your network join you</small></button>' : ''}<button id="ss-ar-join">Join LAN game<small>play in a friend's game</small></button></div>
      <p id="ss-ar-status" class="ss-note" hidden role="status"></p>
@@ -202,7 +215,7 @@ export function createCampaignUI(ctx) {
         // Your name (Global Defensive has no face / engineer picker): saved, and used for the room and the scoreboard.
         { const nm = (el.querySelector('#ss-ar-name')?.value || '').trim() || 'Player'; try { localStorage.setItem('infra-name', nm); } catch {} dispatchEvent(new CustomEvent('gd-name', { detail: nm })); }
         const kind = el.querySelector('#ss-ar-kind').value, map = el.querySelector('#ss-ar-map').value, bots = +el.querySelector('#ss-ar-bots').value;
-        const practice = kind === 'practice' ? { bots: el.querySelector('#ss-pr-bots').value, ...Object.fromEntries(['ammo', 'impacts', 'recoil', 'paths'].map(k => [k, el.querySelector('#ss-pr-' + k).checked])) } : null, want = practice ? 'dm' : kind;
+        const practice = kind === 'practice' ? { bots: el.querySelector('#ss-pr-bots').value, ...Object.fromEntries(['ammo', 'impacts', /* GD practice, v53 HITS final: no recoil-dots toggle */ 'paths'].map(k => [k, el.querySelector('#ss-pr-' + k).checked])) } : null, want = practice ? 'dm' : kind;
         if (!MAP_LIST.some(m => m.id === map && (practice || m.kind === kind) && mapOffered(m, userMapList().map(u => u.id)))) return fail('That map is not available for ' + (kind === 'defuse' ? 'Defuse' : 'Deathmatch'));
         const before = lan.epoch;
         if (host && desktop) { try { const pass = el.querySelector('#ss-ar-pass')?.value.trim(); const h = await desktop.hostLan({ name: localStorage.getItem('infra-name') || 'Host', ...(pass ? { code: pass } : {}) }); await setInvite(h); if (h?.rebound && lan.connected) { status.textContent = 'Opening the room to your network…'; if (!(await lan.whenReady(12000, before))) return fail('The room did not come back after opening it to the LAN. Check the firewall and try Host again.'); } } catch (e) { return fail(e.message); } }
@@ -330,7 +343,7 @@ export function createCampaignUI(ctx) {
         if (act === 'resume') enter(); else if (act === 'settings') panel('settings'); else if (act === 'leave') await gdLeave(b.dataset.role || 'solo'); }); }
     m.hidden = !on; document.body.classList.toggle('gd-menu-open', !!on); if (!on) return;
     { const P = g().arena?.practice, box = m.querySelector('.gm-practice'); box.hidden = !P;   // practice: its settings, changed here
-      if (P) box.innerHTML = '<h3>Practice</h3>' + `<button data-gm="practice" data-k="bots">Bots: ${({ stand: 'stand still', move: 'move, don\'t shoot', fight: 'fight back' })[P.bots]}</button>` + [['ammo', 'Infinite ammo'], ['impacts', 'Bullet impacts'], ['recoil', 'My recoil'], ['paths', 'Grenade paths']].map(([k, t]) => `<button data-gm="practice" data-k="${k}">${t}: ${P[k] ? 'on' : 'off'}</button>`).join('') + `<button data-gm="collision">Collision shapes: ${COLLISION_VIEW.on ? 'on' : 'off'}</button>` + '<button data-gm="bot" data-k="add">Add a bot</button><button data-gm="bot" data-k="remove">Remove a bot</button>'; }
+      if (P) box.innerHTML = '<h3>Practice</h3>' + `<button data-gm="practice" data-k="bots">Bots: ${({ stand: 'stand still', move: 'move, don\'t shoot', fight: 'fight back' })[P.bots]}</button>` + [['ammo', 'Infinite ammo'], ['impacts', 'Bullet impacts'], /* GD practice, v53 HITS final: the recoil-dots toggle went with its panel (open-B #9) */ ['paths', 'Grenade paths']].map(([k, t]) => `<button data-gm="practice" data-k="${k}">${t}: ${P[k] ? 'on' : 'off'}</button>`).join('') + `<button data-gm="collision">Collision shapes: ${COLLISION_VIEW.on ? 'on' : 'off'}</button>` + '<button data-gm="bot" data-k="add">Add a bot</button><button data-gm="bot" data-k="remove">Remove a bot</button>'; }
     const A = g().arena, role = gdRole(), inv = inviteText(), leave = m.querySelector('[data-gm=leave]'), invEl = m.querySelector('.gm-invite');
     m.querySelector('.gm-sub').textContent = (A ? (A.practice ? 'Practice' : A.kind === 'defuse' ? 'Defuse' : 'Deathmatch') + ' · ' + (MAP_LIST.find(x => x.id === A.map)?.name || A.map) : '') + (role === 'host' ? ' · hosting' : role === 'guest' ? ' · in a LAN game' : '') + (humansIn() > 1 ? ' · ' + humansIn() + ' players' : '');
     leave.dataset.role = role; leave.innerHTML = role === 'host' ? 'Stop hosting <small>ends the match for everyone</small>' : role === 'guest' ? 'Leave game <small>the others play on</small>' : 'Leave match';
@@ -447,11 +460,11 @@ export function createCampaignUI(ctx) {
   function settingsView() {
     const p = settings, gd = gdMode(); if (gd) ctlCtx = 'arena';   // Global Defensive: its own settings only (no walking pace, guidance or Infra controls)
     return `<h2>Settings</h2><div class="set-grid">
-     <label>Mouse sensitivity<input data-set="look" type="range" min="0.3" max="2.5" step="0.1" value="${p.look}"></label>
+     ${gd ? '' : `<label>Mouse sensitivity<input data-set="look" type="range" min="0.3" max="2.5" step="0.1" value="${p.look}"></label>`}${''/* (v53 GUNS final: Global Defensive turns by CS2's sensitivity — Settings → Global Defensive → Mouse, the console's sensitivity; this slider is the other modes') */}
      ${gd ? '' : `<label>Walk speed<input data-set="speed" type="range" min="0.7" max="1.5" step="0.05" value="${p.speed}"></label>`}
      <label>Field of view · ${p.fov}°<input data-set="fov" type="range" min="60" max="100" value="${p.fov}"></label>
      <label>Text size<select data-set="uiScale">${[1, 1.15, 1.3].map(v => `<option ${p.uiScale === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-     <label title="Performance: fastest · Balanced: sharp and smooth · Quality: reflections, shadows and glow">Graphics mode<select data-set="graphics">${[['Low', 'Performance'], ['Medium', 'Balanced'], ['High', 'Quality'], ['Ultra', 'Ultra (desktop GPU)']].map(([v, t]) => `<option value="${v}" ${p.graphics === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+     ${gd ? gdPresetHTML(p) : graphicsModeNotGD(p)}
      ${(() => { const sel = (k, label, opts, title = '') => `<label${title ? ` title="${title}"` : ''}>${label}<select data-set="${k}">${opts.map(([v, t]) => `<option value="${v}" ${String(p[k] ?? 'auto') === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`, A = [['auto', 'Auto (Graphics mode)']];
        return [sel('shadows', 'Shadows', [...A, ['off', 'Off (fastest)'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High (sharpest)']], 'Real shadows from the sun and lamps: the higher, the sharper (and the more the GPU works)'),
          sel('shadowEdges', 'Shadow edges', [['soft', 'Soft'], ['sharp', 'Sharp (faster)']]),

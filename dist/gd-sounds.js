@@ -7,8 +7,9 @@
 // Units, once: 1 Hammer unit (HU, CS2's) = 1 inch = 2.54 cm; 1 game unit = 16.5 cm ≈ 6.5 HU (arena-move.js HU =
 // 2.54 / 16.5 game units per HU). CS2's curves are in HU: a sound `d` game units away is read at d / HU.
 // docs/GD-SOUNDS.md lists every event, its CS2 event and file, and what the local import covers.
+import { gdPresetNow } from './gd-preset.js';   // (v53 stage 6: Low / Very Low keep 24 voices)
 import { surfaceOf } from './gd-surface-props.js';   // (v53: a bullet impact's CS2 sound by surface)
-import { audioCtx, master, uiBus, musicBus, ringBus, reverb, duck, HU_UNITS, listenerFrame, setRanges } from './spatial-audio.js';
+import { audioCtx, master, uiBus, musicBus, ringBus, reverb, duck, HU_UNITS, listenerFrame, setRanges, gdFinalStage } from './spatial-audio.js';
 import { want, ready, bufferOf, setSoundRoute, roomSoundNames, sameSource, FX } from './sound-bank.js';
 import { userAssets } from './user-assets.js';
 import { WEAPONS, isFirearm } from './weapons-data.js';
@@ -35,8 +36,12 @@ export const impactFamily = mat => { if (IMPACT_OF[mat]) return IMPACT_OF[mat]; 
 // priority goes (faded over CS2's 0.1 s fadetime), or the new one is dropped if everything sounding outranks it.
 export const MIX = { gun: 14, far: 6, step: 8, impact: 6, foley: 8, boom: 6, bomb: 3, ui: 4, loop: 4, music: 1, radio: 2 };   // (music: one at a time — CS2's stop_music)
 export const VOICES = 40;
+// v53 stage 6: the voices in use at once on the GD preset (gd-preset.js voices: Low / Very Low 24 of the pool's 40 — the
+// pool stays VOICES long; past the cap a new sound takes the lowest-priority, quietest voice as a full mix does). setVoiceCap
+// (lab / app) — tests read voiceCap.
+export let voiceCap = VOICES; export const setVoiceCap = n => { voiceCap = Math.max(1, Math.min(VOICES, +n || VOICES)); };
 // (v53 S3) Our own synthesized hit / headshot stand-ins (synthSamples below): the event's `syn` when no file is there.
-export const SYNTH_KINDS = ['hit.body', 'hs.flesh', 'hs.helmet', 'hs.kill', 'hs.kill.helmet'];
+export const SYNTH_KINDS = ['hit.body', 'hs.flesh', 'hs.helmet', 'hs.kill', 'hs.kill.helmet', 'hit.armor'];   // (hit.armor: v53 HITS — the kevlar tick)
 // The events. cs: CS2's event (game_sounds_*.vsndevts); f: shipped placeholders; cat; mix; pr: priority (0 … 3);
 // pv / prate: the placeholder's own level and rate (never applied to a CS2 file); clip: CS2's first-person clip that
 // carries it (fp-sounds.js: models.fpSounds — CS2's clip events at their moments); far: the distant layer played with it;
@@ -64,9 +69,17 @@ for (const [k, P] of Object.entries(NADE_CS2)) {
   E(`nade.${k}.draw`, P + '.Draw', [], { clip: 'draw' }); E(`nade.${k}.pin`, k === 'molotov' ? 'Molotov.PreThrow' : P + '.PullPin', take('pin'), { clip: 'prime', pv: .8 });
   E(`nade.${k}.throw`, P + '.Throw', [], { clip: 'throw', syn: 'whoosh' });
   E(`nade.${k}.bounce`, k === 'decoy' ? 'Grenade.ImpactHard' : P + '.Bounce', take('bounce'), { mix: 'impact', pr: 1, pv: .6, prate: k === 'molotov' ? .8 : 1 }); }
-E('nade.he.explode', 'BaseGrenade.Explode', take('he'), { mix: 'boom', pr: 3, pv: 1.5, far: 'nade.he.far', wet: 1, syn: 'blast' }); E('nade.he.far', 'BaseGrenade.ExplodeDistant', take('low'), { mix: 'boom', pr: 2, pv: 1.2, layer: 1 });
+E('nade.he.explode', 'BaseGrenade.Explode', take('he'), { mix: 'boom', pr: 3, pv: 1.5, far: 'nade.he.far', with: 'nade.he.effect', wet: 1, syn: 'blast' }); E('nade.he.effect', 'BaseExplosionEffect.Sound', [], { mix: 'boom', pr: 2, layer: 1 }); E('nade.he.far', 'BaseGrenade.ExplodeDistant', take('low'), { mix: 'boom', pr: 2, pv: 1.2, layer: 1 });   // (v53 HITS final: BaseGrenade.Explode's two child events — soundevent_01 = .ExplodeDistant and BaseExplosionEffect.Sound, explo_gas_can_01, game_sounds_weapons.vsndevts 23193 / 23333; that one has no mixgroup: Explosions, ours)
 E('nade.flash.explode', 'Flashbang.Explode', take('flash'), { mix: 'boom', pr: 3, pv: 1.1, prate: 1.35, far: 'nade.flash.far', wet: .6, syn: 'pop' }); E('nade.flash.far', 'Flashbang.ExplodeDistant', [], { mix: 'boom', pr: 2, layer: 1 });
 E('nade.flash.ring', 'Flashbang.Ring.Long', [], { cat: 'own', mix: 'ui', pr: 3, syn: 'ring' });
+// (v53 HITS) CS2's three deafening rings (game_sounds_weapons.vsndevts: explosion_ring.vsnd, volume .1, its own time curve —
+// Long to 4.18 s, Medium 3 s, Short 2 s): which one CS2's code picks is not in the files — ours, by how long you are
+// blinded (FLASH_RING below). Played through the Effects input after the duck (ring), so the limiter and the glue hold it.
+E('nade.flash.ring.medium', 'Flashbang.Ring.Medium', [], { cat: 'own', mix: 'ui', pr: 3, syn: 'ring' }); E('nade.flash.ring.short', 'Flashbang.Ring.Short', [], { cat: 'own', mix: 'ui', pr: 3, syn: 'ring' });
+export const FLASH_RING = { long: 3500, medium: 2500 };   // (ms blinded — hold + fade: ≥ 3.5 s Long, ≥ 2.5 s Medium, else Short; ours)
+export const flashRingEvent = ms => ms >= FLASH_RING.long ? 'nade.flash.ring' : ms >= FLASH_RING.medium ? 'nade.flash.ring.medium' : 'nade.flash.ring.short';
+const RING_O = { ring: true, src: 'me' };
+export function gdFlashRing(ms) { return gdPlay(flashRingEvent(ms), RING_O); }   // (arena-nades-view.js: false — not imported — plays its own sine)
 E('nade.smoke.emit', 'BaseSmokeEffect.Sound', take('poof'), { mix: 'boom', pr: 2, pv: .9, far: 'nade.smoke.far', syn: 'hiss' }); E('nade.smoke.far', 'BaseSmokeEffect.SoundDistant', [], { mix: 'boom', pr: 1, layer: 1 });
 E('nade.smoke.clear', 'SmokeGrenade.Clear', [], { mix: 'foley' });
 E('nade.decoy.pop', null, [], { mix: 'impact', syn: 'pop' });
@@ -102,7 +115,7 @@ E('player.death', 'Player.Death', take('death'), { pr: 2, pv: .7 }); E('hurt.fal
 // once at the match's load (synthSamples below), played when no file of the event is there.
 E('hurt.body', 'Player.DamageBody.Victim', [], { cat: 'own', mix: 'ui', pr: 3, cap: 2 }); E('hurt.head', 'Player.DamageHeadShot.Victim', [], { cat: 'own', mix: 'ui', pr: 3, cap: 2, pv: .5, syn: 'hs.flesh' });
 E('hurt.head.helmet', 'Player.DamageHeadShotArmor.Victim', [], { cat: 'own', mix: 'ui', pr: 3, cap: 2, pv: .45, syn: 'hs.helmet' });
-E('hurt.body.onlooker', 'Player.DamageBody.Onlooker', take('flesh'), { mix: 'impact', pr: 1, pv: .5 }); E('hurt.head.onlooker', 'Player.DamageHeadShot.Onlooker', take('flesh'), { mix: 'impact', pr: 1, pv: .5, cap: 2 });
+E('hurt.body.onlooker', 'Player.DamageBody.Onlooker', take('flesh'), { mix: 'impact', pr: 1, pv: .5, cap: 2 }); E('hurt.head.onlooker', 'Player.DamageHeadShot.Onlooker', take('flesh'), { mix: 'impact', pr: 1, pv: .5, cap: 2 });
 E('hurt.head.helmet.onlooker', 'Player.DamageHeadShotArmor.Onlooker', [], { mix: 'impact', pr: 2, pv: .6, cap: 2, syn: 'hs.helmet' });   // (CS2's curve is the bare head's own — out to 1070 HU: the brighter ping is what carries)
 // (v53 S3 fix) A headshot that KILLS: CS2's own Death* events for the victim and the onlookers (game_sounds_player.vsndevts:
 // Player.DeathHeadShot.Victim line 4844 — vol .55, headshot_noarmor_02/04/05; Player.DeathHeadShotArmor.Victim 4844+210 —
@@ -118,6 +131,27 @@ E('hurt.head.helmet.kill.onlooker', 'Player.DeathHeadShotArmor.Onlooker', [], { 
 E('hurt.head.helmet.kill.onlooker.dink', 'Player.DeathHeadShot.Dink', [], { mix: 'impact', pr: 2, cap: 2, layer: 1 }); E('hurt.head.helmet.kill.onlooker.flesh', 'Player.DeathHeadShot.Flesh', [], { mix: 'impact', pr: 1, cap: 2, layer: 1 });
 E('ui.hit', 'Player.DamageBody.AttackerFeedback', [], { cat: 'ui', mix: 'ui', pr: 3, cap: 2, pv: .4, syn: 'hit.body' }); E('ui.hit.head', 'Player.DamageHeadShot.AttackerFeedback', [], { cat: 'ui', mix: 'ui', pr: 3, cap: 2, pv: .5, syn: 'hs.flesh' });
 E('ui.hit.helmet', 'Player.DamageHeadShotArmor.AttackerFeedback', [], { cat: 'ui', mix: 'ui', pr: 3, cap: 2, pv: .5, syn: 'hs.helmet' });
+// (v53 HITS, H2) Body armour (game_sounds_player.vsndevts, the user's install): a chest / stomach hit on kevlar (the host's
+// record ar — combat-logic.js hitMarks) is CS2's *BodyArmor* family, not the flesh one — the attacker's
+// Player.DamageBodyArmor.AttackerFeedback (line 2924: kevlar_01–08, vol 1.2, pitch 1.3, block .05 s, instance limit 3)
+// with its child .AttackerFeedbackFlesh (4031: mud_impact_bullet1/3/4, vol .3, delay .1), the victim's .Victim (3472:
+// kevlar, vol 1.5, delay .05), the onlookers' .Onlooker (3354: vol .7, pitch 1.3, to 1100 HU) with .OnlookerFlesh;
+// a kill: Player.DeathBodyArmor.AttackerFeedback (2834: kevlar, vol 1) with .AttackerFeedbackFlesh (5381: vol .5),
+// .Victim (4768: vol 2, pitch .8, child Player.DeathBody.Flesh) and .Onlooker (4701). A knife's hit:
+// Player.DamageBody.Knife.AttackerFeedback (6165) — sounds/common/null.vsnd: CS2 plays nothing for the attacker (ours too).
+// Without CS2: our own kevlar tick (synthSamples hit.armor). Every one capped at 2 voices on the UI / impact mixes (spec 2.2).
+E('ui.hit.armor', 'Player.DamageBodyArmor.AttackerFeedback', [], { cat: 'ui', mix: 'ui', pr: 3, cap: 2, pv: .4, syn: 'hit.armor', with: 'ui.hit.armor.flesh' }); E('ui.hit.armor.flesh', 'Player.DamageBodyArmor.AttackerFeedbackFlesh', [], { cat: 'ui', mix: 'ui', pr: 3, cap: 2, layer: 1 });
+E('ui.hit.knife', 'Player.DamageBody.Knife.AttackerFeedback', [], { cat: 'ui', mix: 'ui', pr: 3, cap: 2, silent: 1 });
+E('ui.kill.armor', 'Player.DeathBodyArmor.AttackerFeedback', take('kill'), { cat: 'ui', mix: 'ui', pr: 3, pv: .55, cap: 2, with: 'ui.kill.armor.flesh' }); E('ui.kill.armor.flesh', 'Player.DeathBodyArmor.AttackerFeedbackFlesh', [], { cat: 'ui', mix: 'ui', pr: 3, cap: 2, layer: 1 });
+E('hurt.body.armor', 'Player.DamageBodyArmor.Victim', [], { cat: 'own', mix: 'ui', pr: 3, cap: 2, pv: .45, syn: 'hit.armor' }); E('hurt.body.armor.kill', 'Player.DeathBodyArmor.Victim', [], { cat: 'own', mix: 'ui', pr: 3, cap: 2, pv: .5, syn: 'hit.armor', with: 'hurt.body.kill.flesh' });   // (v53 HITS final: its child Player.DeathBody.Flesh, enable_child_events)
+E('hurt.body.armor.onlooker', 'Player.DamageBodyArmor.Onlooker', [], { mix: 'impact', pr: 1, cap: 2, pv: .4, syn: 'hit.armor', with: 'hurt.body.armor.onlooker.flesh' }); E('hurt.body.armor.onlooker.flesh', 'Player.DamageBodyArmor.OnlookerFlesh', [], { mix: 'impact', pr: 1, cap: 2, layer: 1 });
+E('hurt.body.armor.kill.onlooker', 'Player.DeathBodyArmor.Onlooker', [], { mix: 'impact', pr: 2, cap: 2, pv: .45, syn: 'hit.armor', with: 'hurt.body.kill.onlooker.flesh' });
+// (v53 HITS final) A body kill without armour, and the onlookers' body hits: Player.DeathBody.Victim (line 4558: vol 2, pitch
+// .8, player_damagebody_04…, child Player.DeathBody.Flesh — 3851: vol 2, pitch 1.3, delay .1), Player.DeathBody.Onlooker
+// (4634: vol 2, pitch .8, the same child) — and Player.DamageBody.Onlooker (3417: mud_impact_bullet*, vol 1, pitch 1.3)
+// for every body hit you see on someone else (hurt.body.onlooker above; it was defined and never played).
+E('hurt.body.kill', 'Player.DeathBody.Victim', [], { cat: 'own', mix: 'ui', pr: 3, cap: 2, pv: .5, with: 'hurt.body.kill.flesh' }); E('hurt.body.kill.flesh', 'Player.DeathBody.Flesh', [], { cat: 'own', mix: 'ui', pr: 3, cap: 2, layer: 1 });
+E('hurt.body.kill.onlooker', 'Player.DeathBody.Onlooker', take('flesh'), { mix: 'impact', pr: 2, cap: 2, pv: .5, with: 'hurt.body.kill.onlooker.flesh' }); E('hurt.body.kill.onlooker.flesh', 'Player.DeathBody.Flesh', [], { mix: 'impact', pr: 1, cap: 2, layer: 1 });
 E('ui.kill', 'Player.DeathBody.AttackerFeedback', take('kill'), { cat: 'ui', mix: 'ui', pr: 3, pv: .55, cap: 2 }); E('ui.kill.head', 'Player.DeathHeadShot.AttackerFeedback', [], { cat: 'ui', mix: 'ui', pr: 3, pv: .6, cap: 2, syn: 'hs.kill' });
 // (CS2's Player.DeathHeadShotArmor.AttackerFeedback has volume 0 itself and plays its child events — enable_child_events,
 // soundevent_01 = .Flesh, .Dink: the helmet kill is those two here, the Dink with the Flesh as its layer.)
@@ -168,9 +202,27 @@ let OV = {}; const RES = {};
 // The round's music and radio, under CS2's own volume (this game's levels: CS2's files are mastered hot — the stingers and
 // the radio lines measure about −11 LUFS, the radio already band-limited in the file — and the round end must not cover
 // the bomb or the round's UI; the Music slider scales the music on top). Needs a person with headphones to settle.
-export const CAT_LEVEL = { music: .5, radio: .7 };
+export const CAT_LEVEL = { music: .5, radio: 1 };   // (v53 HITS: the radio's .7 is now CS2's own VO mix group, .34 — MIXGROUP_VOL)
+// (v53 HITS, the audio audit) CS2's mix-group volumes — scripts/soundmixers.txt, its Default_Mix (the user's install):
+// every event's level × its group's vol, as CS2 mixes (CS2's own file at its event volume, or our stand-in at its pv).
+// The group: the event's own mixgroup in its .vsndevts where it differs from its voice category's (mixGroupOf: casings,
+// drops and breaks Physics; grenade bounces Foley; doors World; the flash ring Explosions; hurt sounds PlayerDamage /
+// PlayerVictim; attacker feedback PlayerAttackerFeedback), else the category's (gun Weapons, far WeaponsDistant, step
+// Footsteps, impact BulletImpacts, foley Foley, boom Explosions, bomb Weapons, ui UI, radio VO).
+export const MIXGROUP_VOL = { Weapons: .6, WeaponsDistant: .6, Footsteps: .8, BulletImpacts: .3, Foley: 1, UI: 1, Explosions: .7, ExplosionsDistant: .7, Physics: .8, World: .4, VO: .34, PlayerDamage: 1, PlayerVictim: 1, PlayerAttackerFeedback: 1, Music: 1 };
+const GROUP_OF_MIX = { gun: 'Weapons', far: 'WeaponsDistant', step: 'Footsteps', impact: 'BulletImpacts', foley: 'Foley', boom: 'Explosions', bomb: 'Weapons', ui: 'UI', loop: 'Foley', music: 'Music', radio: 'VO' };
+export function mixGroupOf(e) { const id = e.id;
+  if (/^hurt\./.test(id) || id === 'impact.flesh') return e.cat === 'own' ? 'PlayerVictim' : 'PlayerDamage';
+  if (/^ui\.(hit|kill)/.test(id)) return 'PlayerAttackerFeedback';
+  if (/^(gun\.casing|item\.drop|c4\.drop|world\.(glass\.)?break|nade\.decoy\.bounce|nade\.smoke\.clear)/.test(id)) return 'Physics';
+  if (/^nade\.\w+\.bounce$/.test(id)) return 'Foley';
+  if (/^world\.door/.test(id)) return 'World';
+  if (/^nade\.flash\.ring/.test(id)) return 'Explosions';
+  if (e.mix === 'boom' && e.layer && /\.far$/.test(id)) return 'ExplosionsDistant';
+  return e.cat === 'radio' ? 'VO' : GROUP_OF_MIX[e.mix] || 'Foley'; }
+const groupVol = e => MIXGROUP_VOL[mixGroupOf(e)] ?? 1;
 function resolve(id) { const e = EVENTS[id], o = OV[id], R = e.cs ? REF[e.cs] : null, cs2 = !!o?.files?.length, pr = e.prate || 1;
-  return { id, e, cs2, files: cs2 ? o.files : e.f, vol: cs2 ? (Number.isFinite(+o.vol) ? +o.vol : 1) * (CAT_LEVEL[e.cat] ?? 1) : (e.pv ?? 1), curve: (cs2 && o.curve?.length ? o.curve : R?.[1]) || null,
+  return { id, e, cs2, files: cs2 ? o.files : e.f, vol: (cs2 ? (Number.isFinite(+o.vol) ? +o.vol : 1) * (CAT_LEVEL[e.cat] ?? 1) : (e.pv ?? 1)) * groupVol(e), silent: !!e.silent, curve: (cs2 && o.curve?.length ? o.curve : R?.[1]) || null,
     limit: (cs2 ? o.limit : null) ?? R?.[2] ?? 0, occl: (cs2 ? o.occl : null) ?? R?.[3] ?? .5, plo: cs2 ? (o.pitch?.[0] ?? 1) : pr * .97, phi: cs2 ? (o.pitch?.[1] ?? 1) : pr * 1.03,
     delay: cs2 ? (+o.delay || 0) : 0, mi: MIX_I[e.mix], pr: e.pr, cat: e.cat, flat: e.cat === 'ui' || e.cat === 'music' || e.cat === 'radio', sets: cs2 && Array.isArray(o.sets) ? o.sets : null,
     far: e.far || null, with: e.with || null, wet: e.wet || 0, dm: e.dm ?? (e.layer && e.mix !== 'step' ? 0 : DMIX[e.mix] ?? .5),
@@ -257,7 +309,7 @@ function acquire(r, src, lvl, t) { let free = null, inMix = 0, same = 0, oldSame
   if (r.cap > 0 && ev >= r.cap) { release(oldEv, t, true); voiceStats.capped++; return oldEv; }
   const out = v => { if (!v || (v.pr === r.pr && v.lvl > lvl)) { voiceStats.dropped++; return null; } release(v, t, true); return v; };
   if (inMix >= CAP[r.mi]) return out(wMix);
-  return free || out(wAll); }
+  return (live < Math.min(voiceCap, gdPresetNow().voices || VOICES) ? free : null) || out(wAll); }   // (v53 stage 6: the preset's voice cap)
 export const liveVoices = (t = ctx?.currentTime ?? 0) => { let n = 0; for (const v of SLOTS) if (v.busy && v.end > t) n++; return n; };
 export function resetVoices() { for (const v of SLOTS) { v.busy = false; v.s = v.g = null; } for (const k in voiceStats) voiceStats[k] = 0; }   // (tests)
 
@@ -275,7 +327,8 @@ let nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date
 // Returns true when handled (played, or placed out of earshot / outranked — on purpose silent), false when none of its
 // files is decoded yet (asked for now: the caller plays its stand-in).
 export function gdPlay(id, o = NO) {
-  const r = RES[id]; if (!r) return false; if (o.key && seenKey(o.key, nowMs())) return true;
+  const r = RES[id]; if (!r) return false; if (r.silent) return true;   // (v53 HITS: CS2's null.vsnd events — the knife's attacker feedback)
+  if (o.key && seenKey(o.key, nowMs())) return true;
   let c; try { c = ctx ??= audioCtx(); } catch { return false; }
   const at = r.cat === 'world' ? o.at || null : null, t = c.currentTime + (o.delay || 0) + r.delay; readEar();
   const dx = at ? at.x - ear.x : 0, dy = at ? at.y - ear.y : 0, dz = at ? at.z - ear.z : 0, hu = at ? Math.hypot(dx, dy, dz) / HU : 0;
@@ -326,15 +379,17 @@ export function synthWhoosh(at = null) { try { const c = ctx ??= audioCtx(), t =
 //   hs.kill         a headshot kill — a ding (1.87 / 2.81 / 3.74 kHz bell partials) over a low punch (110 → 48 Hz) (450 ms);
 //   hs.kill.helmet  the same with the helmet's ping in front.
 export function synthSamples(kind, sr = 48000) {
-  const len = { 'hit.body': .09, 'hs.flesh': .18, 'hs.helmet': .26, 'hs.kill': .45, 'hs.kill.helmet': .45 }[kind]; if (!len) return null;
+  const len = { 'hit.body': .09, 'hs.flesh': .18, 'hs.helmet': .26, 'hs.kill': .45, 'hs.kill.helmet': .45, 'hit.armor': .12 }[kind]; if (!len) return null;
   const n = Math.ceil(sr * len), d = new Float32Array(n); let seed = 0x2545f491; const noise = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2147483648 - 1);
   const TAU = 2 * Math.PI, part = (f, a, tau, t0 = 0) => { for (let i = Math.floor(t0 * sr); i < n; i++) { const t = i / sr - t0; d[i] += a * Math.sin(TAU * f * t) * Math.exp(-t / tau); } };
   const sweep = (f0, f1, a, tau, att = .003) => { let ph = 0; for (let i = 0; i < n; i++) { const t = i / sr, f = f1 + (f0 - f1) * Math.exp(-t / .05); ph += TAU * f / sr; d[i] += a * Math.sin(ph) * Math.min(1, t / att) * Math.exp(-t / tau); } };
   const dull = (fc, a, tau) => { const k = 1 - Math.exp(-TAU * fc / sr); let y = 0; for (let i = 0; i < n; i++) { y += k * (noise() - y); d[i] += a * 4 * y * Math.exp(-i / sr / tau); } };   // (one-pole lowpassed noise)
+  const band = (fc, a, tau) => { const k1 = 1 - Math.exp(-2 * Math.PI * fc * 1.4 / sr), k2 = 1 - Math.exp(-2 * Math.PI * fc / 1.4 / sr); let y1 = 0, y2 = 0; for (let i = 0; i < n; i++) { const x = noise(); y1 += k1 * (x - y1); y2 += k2 * (x - y2); d[i] += a * 3 * (y1 - y2) * Math.exp(-i / sr / tau); } };   // (two one-pole lowpasses apart: a band of noise)
   const click = (ms, a) => { let prev = 0; for (let i = 0; i < Math.min(n, Math.ceil(sr * ms / 1000)); i++) { const x = noise(); d[i] += a * (x - prev) * .5; prev = x; } };   // (a differenced noise burst: bright)
   const ping = a => { for (const [f, g, tau] of [[2480, 1, .055], [3130, .7, .045], [3710, .55, .038], [3990, .35, .03], [5230, .15, .02]]) part(f, a * g, tau); click(2, a * .5); };
   const ding = a => { for (const [f, g, tau] of [[1870, .6, .16], [2805, .45, .12], [3740, .25, .08]]) part(f, a * g, tau); };
   if (kind === 'hit.body') { dull(500, .6, .02); part(170, .35, .03); part(1300, .15, .008); }
+  else if (kind === 'hit.armor') { click(3, .9); band(2600, .7, .018); part(900, .3, .015); dull(400, .35, .02); }   // (v53 HITS: our kevlar tick — a dry, papery slap: a 3 ms click, noise round 2.6 kHz dying in ~20 ms, a 900 Hz knock, a soft thud)
   else if (kind === 'hs.flesh') { click(1.5, .7); sweep(140, 70, .7, .045); dull(350, .5, .03); }
   else if (kind === 'hs.helmet') ping(1);
   else { if (kind === 'hs.kill.helmet') ping(.8); ding(1); sweep(110, 48, .9, .07); dull(200, .3, .04); }
@@ -353,21 +408,24 @@ export function gdSynthWarm() { let c; try { c = ctx ??= audioCtx(); } catch { r
 // never sum past the bus's headroom.
 export const HIT_OUT = [null, null];
 export const UI_DUCK = .7;
-export function hitEvents(kill, head, helmet, out = HIT_OUT) { out[0] = out[1] = null;
-  if (!kill) { out[0] = head ? (helmet ? 'ui.hit.helmet' : 'ui.hit.head') : 'ui.hit'; return 1; }
-  if (!head) { out[0] = 'ui.kill'; return 1; }
+// (v53 HITS) armor: the host's record says the bullet met body armour (ar) — the BodyArmor events; knife: a knife's hit —
+// CS2's Knife.AttackerFeedback, which is silent (null.vsnd).
+export function hitEvents(kill, head, helmet, out = HIT_OUT, armor = false, knife = false) { out[0] = out[1] = null;
+  if (!kill) { out[0] = head ? (helmet ? 'ui.hit.helmet' : 'ui.hit.head') : knife ? 'ui.hit.knife' : armor ? 'ui.hit.armor' : 'ui.hit'; return 1; }
+  if (!head) { out[0] = armor ? 'ui.kill.armor' : 'ui.kill'; return 1; }
   const hk = helmet ? 'ui.kill.head.helmet' : 'ui.kill.head'; if (RES[hk]?.cs2) { out[0] = hk; return 1; }
   out[0] = 'ui.kill'; out[1] = hk; return 2; }
 const HFO = { gain: 1, src: 'me' };
-export function gdHitSounds(kill, head, helmet) { const k = hitEvents(kill, head, helmet); let ok = false; HFO.gain = k > 1 ? UI_DUCK : 1; for (let i = 0; i < k; i++) if (gdPlay(HIT_OUT[i], HFO)) ok = true; return ok; }
+export function gdHitSounds(kill, head, helmet, armor = false, knife = false) { const k = hitEvents(kill, head, helmet, HIT_OUT, armor, knife); let ok = false; HFO.gain = k > 1 ? UI_DUCK : 1; for (let i = 0; i < k; i++) if (gdPlay(HIT_OUT[i], HFO)) ok = true; return ok; }
 // A hit the room's blood record shows (combat.bl: victim, zone, helmet — gd-hit-feedback.js): the victim hears theirs
 // (2D, yours: Player.DamageHeadShot(Armor).Victim / DamageBody.Victim); everyone else a headshot where it happened —
 // placed, with the occlusion and HRTF rules every world sound has (placeCue, gdPlay): the helmet's ping carries.
 // kill: the hit killed (the record's k) — a killing headshot is CS2's Death* event, a wounding one its Damage* event.
-const HURT_EV = ['hurt.body', 'hurt.head', 'hurt.head.helmet', 'hurt.body', 'hurt.head.kill', 'hurt.head.helmet.kill', null, 'hurt.head.onlooker', 'hurt.head.helmet.onlooker', null, 'hurt.head.kill.onlooker', 'hurt.head.helmet.kill.onlooker'];
-export const hurtEvent = (zone, helmet, victim, kill = false) => HURT_EV[(victim ? 0 : 6) + (kill ? 3 : 0) + (zone === 'head' ? (helmet ? 2 : 1) : 0)];
+const HURT_EV = ['hurt.body', 'hurt.head', 'hurt.head.helmet', 'hurt.body.kill', 'hurt.head.kill', 'hurt.head.helmet.kill', 'hurt.body.onlooker', 'hurt.head.onlooker', 'hurt.head.helmet.onlooker', 'hurt.body.kill.onlooker', 'hurt.head.kill.onlooker', 'hurt.head.helmet.kill.onlooker'];   // (v53 HITS final: the body kill and the onlookers' body slots are CS2's DeathBody.* / DamageBody.Onlooker)
+const ARMOR_EV = ['hurt.body.armor', 'hurt.body.armor.kill', 'hurt.body.armor.onlooker', 'hurt.body.armor.kill.onlooker'];   // (v53 HITS: a body hit on kevlar)
+export const hurtEvent = (zone, helmet, victim, kill = false, armor = false) => zone !== 'head' && armor ? ARMOR_EV[(victim ? 0 : 2) + (kill ? 1 : 0)] : HURT_EV[(victim ? 0 : 6) + (kill ? 3 : 0) + (zone === 'head' ? (helmet ? 2 : 1) : 0)];
 const HUO = { at: null, src: null };
-export function gdHurtSound(zone, helmet, victim, at = null, src = null, kill = false) { const id = hurtEvent(zone, helmet, victim, kill); if (!id) return false; HUO.at = victim ? null : at; HUO.src = victim ? 'me' : src; return gdPlay(id, HUO); }
+export function gdHurtSound(zone, helmet, victim, at = null, src = null, kill = false, armor = false) { const id = hurtEvent(zone, helmet, victim, kill, armor); if (!id) return false; HUO.at = victim ? null : at; HUO.src = victim ? 'me' : src; return gdPlay(id, HUO); }
 
 // ── The routes from the shared bank (sound-bank.js) while a match is on: undefined leaves a call to the bank (its
 // files, the other modes' tuning) — also while GD's own copy is still decoding. ──
@@ -461,9 +519,9 @@ export function reloadTake(name, set = null, t = NaN) { const L = set ? TAKES.ge
 // else's; silent: inside the clip's WPN_RELOAD_SILENT window. null: not a reload event (the caller's own tuning).
 const RLV = [1, null, 1];
 export function reloadLevel(ev, own, silent) { if (!ev) return null; if (!own && !ev[8]) { RLV[0] = 0; RLV[1] = ev[1]; RLV[2] = 1; return RLV; } const sup = !own && silent && ev[5]; RLV[0] = ev[0] * (sup ? ev[6] : 1); RLV[1] = ev[1]; RLV[2] = sup ? ev[7] : 1; return RLV; }
-export const inReloadSilent = (set, t) => { const w = RELOAD_REF[set]?.reload?.silent; return !!w && t >= w[0] && t <= w[1]; };
+export const inReloadSilent = (set, t, empty = false) => { const r = RELOAD_REF[set], w = (empty && r?.empty?.silent) || r?.reload?.silent; return !!w && t >= w[0] && t <= w[1]; };   // (v53 GUNS final: empty — the reload_empty clip's own window)
 export function gdClip(set, name, vol, rate, at, src = null, clip = null, t = 0) { CLO.at = at; CLO.name = name; CLO.gain = vol; CLO.rate = rate; CLO.src = src ?? (at ? null : 'me'); CLO.curve = null; CLO.occl = undefined; CLO.fall = 1; CLO.cull = CULL;
-  const ev = clip === 'reload' ? reloadTake(name, set, t) : null, L = ev ? reloadLevel(ev, !at, inReloadSilent(set, t)) : null;
+  const re = clip === 'reloadempty', ev = clip === 'reload' || re ? reloadTake(name, set, t) : null, L = ev ? reloadLevel(ev, !at, inReloadSilent(set, t, re)) : null;   // (v53 GUNS final: CS2's reload_empty clip takes the reload's levels and curves too)
   if (L) { if (L[0] <= 0) return true; CLO.gain = L[0]; CLO.curve = L[1]; CLO.fall = L[2]; CLO.occl = ev[2]; CLO.cull = L[2] < 1 ? CULL * ev[6] : CULL; }   // (not broadcast: silent to others on purpose — never the caller's fallback)
   return gdPlay(CLIP_EV(set), CLO); }
 
@@ -477,7 +535,7 @@ let on = false; export const gdOn = () => on;
 // beep / plant / defuse stand-ins keep the game's own reach (spatial-audio RANGE) but linear: silent at its edge, not
 // Web Audio's 'inverse' floor heard everywhere.
 export const GD_RANGE = { step: ['linear', 116.6 * HU, 1, 1100 * HU], handling: ['linear', 50.3 * HU, 1, 1100 * HU], gun: ['linear', 175.7 * HU, 1, 2500 * HU], effect: ['linear', 28.3 * HU, 1, 1700 * HU], explosion: ['linear', 231.4 * HU, 1, 2700 * HU], beep: ['linear', 10, 1, 320], plant: ['linear', 8, 1, 330], defuse: ['linear', 5, 1, 140] };
-export function gdAudio(v) { v = !!v; if (v === on) return; on = v; setSoundRoute(on ? ROUTE : null); setRanges(on ? GD_RANGE : null); if (on) { loadGdOverrides().then(() => { if (on) gdPrewarm(); }); } else { gdStopMusic(.3); roundSounds.reset(); } }   // (leaving the match: its music stops, its round memory goes)
+export function gdAudio(v) { v = !!v; if (v === on) return; on = v; setSoundRoute(on ? ROUTE : null); setRanges(on ? GD_RANGE : null); try { gdFinalStage(on, on ? (ctx ??= audioCtx()) : ctx); } catch {}   /* (v53 HITS: CS2's FinalMixGlue as the last stage while a match is on — spatial-audio.js) */ if (on) { loadGdOverrides().then(() => { if (on) gdPrewarm(); }); } else { gdStopMusic(.3); roundSounds.reset(); } }   // (leaving the match: its music stops, its round memory goes)
 const PREWARM = /^(nade|c4|step|land|impact|item|ui|hurt|player|world|knife|music|radio|gun\.(dry|scope|casing))/;   // (music, radio: only what this computer imported — a couple of voices)
 export function gdPrewarm() { const names = []; for (const id in RES) if (PREWARM.test(id)) names.push(...RES[id].files); try { reverb(ctx ??= audioCtx()); } catch {} gdSynthWarm(); return want(names); }   // (the shared reverb built now, at the match's load: steps send to it from the first one — never its impulse made mid-round)
 const gunsWanted = new Set();

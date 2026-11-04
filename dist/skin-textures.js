@@ -7,12 +7,13 @@
 // freeze, buy time, warmup, deathmatch, a loading card); a finish still missing when a round goes live keeps drawing
 // its built-in stand-in (skin-render.js) until the next quiet moment. Least recently used pictures nobody shows are
 // freed once over the budget, outside live rounds only.
+import { gdTexSize } from './gd-preset.js';   // (v53 stage 6: Low / Very Low texture cap)
 import * as THREE from './three.module.js';
 import { textureSize, anisotropy } from './texture-quality.js';
 
 export const SKIN_BUDGET = 128 * 1024 * 1024;   // bytes of skin textures (RGBA8 + mips) kept on the GPU at most (PLAN §5.4)
 const TIERS = { fp: 1024, tp: 512 };   // your own first-person gun at 1024, everyone else's (and drops) at 512
-const tierSize = t => Math.min(TIERS[t] || 512, textureSize());
+const tierSize = t => Math.min(TIERS[t] || 512, gdTexSize(textureSize()));   /* (v53 stage 6: the GD preset's texture cap) */
 let manifest = null, manifestP = null, base = '/user-assets/skins/', gate = () => true, fetchGate = null, renderer = null, readyFn = null, manifestFns = new Set();
 const entries = new Map(), fetchQ = [], uploadQ = []; let inflight = 0, pumping = false, bytes = 0;
 const stats = { uploads: 0, fetches: 0, failed: 0, evicted: 0 };

@@ -129,8 +129,10 @@ async function runView(view) {
   }
   const result = { label: LABEL, view, map, info, loadMs, machine };
   await p.evaluate(() => __infra.lab.enter()); await fight(4000);   // (into the fight: the first round, bought and thrown)
-  if (PRESET === 'auto') { for (let i = 0; i < 120 && !(await p.evaluate(() => !!__infra.gdPerf.bench)); i++) await fight(500);   // (the first run's pick: at quiet moments — freeze time, a round's end)
-    result.autoPreset = await p.evaluate(() => ({ bench: __infra.gdPerf.bench, frames: __infra.gdPerf.benchN, active: __infra.lab.active, safe: __infra.gdPerf.safe,graphics: JSON.parse(localStorage.getItem('infra-player-preferences') || '{}').graphics || null, ratio: __infra.renderer.getPixelRatio() })); console.log('auto preset', JSON.stringify(result.autoPreset)); }
+  // (v53 stage 6: the first run's pick is gd-preset.js's device detection — the GD start panel or a loading card — not v52's
+  // first-match bench, which is off: the record it stores, read here once it exists)
+  if (PRESET === 'auto') { for (let i = 0; i < 120 && !(await p.evaluate(() => !!JSON.parse(localStorage.getItem('infra-gd-device') || 'null')?.preset)); i++) await fight(500);
+    result.autoPreset = await p.evaluate(() => ({ device: JSON.parse(localStorage.getItem('infra-gd-device') || 'null'), active: __infra.lab.active, safe: __infra.gdPerf.safe, graphics: JSON.parse(localStorage.getItem('infra-player-preferences') || '{}').graphics || null, ratio: __infra.renderer.getPixelRatio() })); console.log('auto preset', JSON.stringify(result.autoPreset)); }
   // census=1: what one frame draws — objects (all / visible, of the kept top level), skinned meshes and their bones, the
   // render() calls of a frame (pass, draw calls, ms) and how often skeletons are recomputed per frame (where the CPU goes)
   if (O.census === '1') { result.census = await p.evaluate(async () => { const I = __infra, r = I.renderer, sc = I.scene, only = sc.userData.renderOnly; const c = { objects: 0, visible: 0, meshes: 0, skinned: 0, skeletons: 0, bones: 0, instanced: 0, lights: 0, top: {} }, sk = new Set();

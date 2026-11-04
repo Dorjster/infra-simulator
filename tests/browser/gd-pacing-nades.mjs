@@ -4,18 +4,19 @@
 // Dust II with 9 bots. The match is restarted with $16000 so you can buy a HE, a flash, a smoke and your side's fire
 // grenade at spawn; during the measured window you strafe, fire and throw one grenade every THROW_MS forward from your
 // eye (the game's own throw action) while the bots fight. Works on a 52.0.5 tree too (same actions), for comparison.
-//   node tests/browser/gd-pacing-nades.mjs <repo> <out> [throttle=1] [seconds=24] [dsf=2]
+//   node tests/browser/gd-pacing-nades.mjs <repo> <out> [throttle=1] [seconds=24] [dsf=2] [w=1920] [h=1080]
+//   (w × h: device pixels — v53 stage 6: 2940 1912 is the user's real Retina window, 1470 × 956 at 2×)
 // Muted: run through bt2.sh (its Chrome adds --mute-audio). Gate: fps ≥ 55, no frame over 100 ms after 3 s, ≥ 3 grenades.
 // Diagnosis switches (environment): PROFILE=1 a CPU profile of the window (self time per file, natives by caller);
 // STYLEPROBE=1 page writes per element; FONTPROBE=1 canvas font sets; BLUROFF=1 every backdrop-filter off (an experiment).
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { writeFileSync, mkdirSync } from 'node:fs';
-const [root, out, throttle = '1', seconds = '24', dsf = '2'] = process.argv.slice(2); mkdirSync(out, { recursive: true });
+const [root, out, throttle = '1', seconds = '24', dsf = '2', wArg = '1920', hArg = '1080'] = process.argv.slice(2); mkdirSync(out, { recursive: true });
 const THROW_MS = 4000;
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'PERF02', HOST_KEY: 'k', CAMPAIGN_SAVE: '/tmp/perf-nades-' + Date.now() + '.json' }, stdio: ['ignore', 'pipe', 'pipe'] });
 process.on('exit', () => { try { server.kill(); } catch {} });
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
 const b = await chromium.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: false, args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--mute-audio', '--autoplay-policy=no-user-gesture-required', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'] });
-const p = await b.newPage({ viewport: { width: Math.round(1920 / +dsf), height: Math.round(1080 / +dsf) }, deviceScaleFactor: +dsf }); p.on('dialog', d => d.accept()); const errs = []; p.on('pageerror', e => errs.push(e.message));
+const p = await b.newPage({ viewport: { width: Math.round(+wArg / +dsf), height: Math.round(+hArg / +dsf) }, deviceScaleFactor: +dsf }); p.on('dialog', d => d.accept()); const errs = []; p.on('pageerror', e => errs.push(e.message));
 await p.addInitScript(() => { localStorage.setItem('infra-face', 'smile'); localStorage.setItem('infra-name', 'Pacer'); localStorage.setItem('infra-face-name', 'Pacer'); localStorage.setItem('infra-player-preferences', JSON.stringify({ graphics: 'High' }));
   const L = globalThis.__links = []; const f = WebGL2RenderingContext.prototype.linkProgram; WebGL2RenderingContext.prototype.linkProgram = function (x) { L.push(performance.now()); return f.call(this, x); }; });
 // STYLEPROBE=1: count style / class / text writes on page elements during the measured window, by element

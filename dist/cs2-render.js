@@ -7,7 +7,7 @@ import * as THREE from './three.module.js';
 import { gltfLoader } from './gltf-loader.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { mapFileOf, ARENA_MAPS } from './arena-maps.js'; import { modeOffHit } from './bsp-map.js'; import { islandsOf, sizeOf, dupCut, modeCut, doorTurn, seeThroughName } from './look-cuts.js';
-import { anisotropy } from './texture-quality.js'; import { loadPreferences } from './player-preferences.js'; import { walkFixed } from './render-optimizer.js'; import { noteProgress } from './load-progress.js';
+import { anisotropy } from './texture-quality.js'; import { EXPOSURE_U, BAKED_LIGHTS_U, BAKED_LIGHT_N, setLook } from './gd-exposure.js'; /* (v53 LOOK: CS2's auto exposure and bloom per map — gd-exposure.js) */ import { gdPresetNow } from './gd-preset.js'; /* (v53 stage 6: Very Low's 512 px texture cap on the map's own pictures too) */ import { loadPreferences } from './player-preferences.js'; import { walkFixed } from './render-optimizer.js'; import { noteProgress } from './load-progress.js';
 
 let kept = null; const loading = new Map(), none = new Set();   // kept: { id, root, textures, meshes }; none: maps without a look (or whose look failed)
 // CS2's textures are made for its own baked light (soft, with ambient occlusion); under this game's sun and sky their
@@ -23,9 +23,9 @@ export const EXPOSURE_AT = 1;
 // there is, and CS2's own light and shadows (props sit in their shadows instead of floating on flat light).
 export const BAKED = { uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSun: { value: new THREE.Color(1, 1, 1) }, uLScale: { value: 4 }, uExposure: { value: .6 }, uWhite: { value: 4 }, uSunMask: { value: null }, uHasMask: { value: 0 },
   uPSh: { value: null }, uPShMat: { value: new THREE.Matrix4() }, uPShOn: { value: 0 }, uPShSpan: { value: 2048 }, uPShDebug: { value: 0 },
-  uSunK: { value: 1 }, uGrade: { value: 0 }, uCurveA: { value: new THREE.Vector4() }, uCurveB: { value: new THREE.Vector4() }, uLut: { value: null }, uLutOn: { value: 0 } };   // (the sun's live shadows near the camera: sun-shadows.js — the casters' depth from the sun, where to look it up, its size)   // (uSunMask: the sun's reach at the atlas's full size, when the map has it)
+  uSunK: { value: 1 }, uExpTex: EXPOSURE_U.uExpTex, uExpOn: EXPOSURE_U.uExpOn, uBPLp: BAKED_LIGHTS_U.uBPLp, uBPLc: BAKED_LIGHTS_U.uBPLc, uGrade: { value: 0 }, uCurveA: { value: new THREE.Vector4() }, uCurveB: { value: new THREE.Vector4() }, uLut: { value: null }, uLutOn: { value: 0 } };   // (the sun's live shadows near the camera: sun-shadows.js — the casters' depth from the sun, where to look it up, its size)   // (uSunMask: the sun's reach at the atlas's full size, when the map has it)
 const BAKED_PARS = 'uniform vec3 uSunDir; uniform vec3 uSun; uniform float uSunK; uniform float uLScale; uniform float uExposure; uniform float uWhite; uniform sampler2D uSunMask; uniform float uHasMask; varying vec3 vBakedN;\n'
-  + 'uniform float uGrade; uniform vec4 uCurveA; uniform vec4 uCurveB; uniform highp sampler3D uLut; uniform float uLutOn;\n'
+  + 'uniform float uGrade; uniform vec4 uCurveA; uniform vec4 uCurveB; uniform highp sampler3D uLut; uniform float uLutOn; uniform sampler2D uExpTex; uniform float uExpOn;\n'
   + 'vec3 bakedLight( vec3 L ) { return uGrade > 0.5 ? L : uExposure * L / ( 1.0 + L / uWhite ); }\n'
   // CS2's grading of the map (its post_processing_volume, install_look.py): the colour × the exposure through its filmic
   // curve (Hable's: shoulder A, linear strength B and angle C, toe strength D, numerator E, denominator F; white point
@@ -33,7 +33,7 @@ const BAKED_PARS = 'uniform vec3 uSunDir; uniform vec3 uSun; uniform float uSunK
   // (Mirage's near-straight curve lost its darks to rounding in the usual one) — then its colour lookup table (32³, on
   // the sRGB colour). Light stays linear up to here (bakedLight), as CS2's does.
   + 'vec3 cs2Hable( vec3 x ) { float A = uCurveA.x, B = uCurveA.y, C = uCurveA.z, D = uCurveA.w, E = uCurveB.x, F = uCurveB.y; return x * ( A * x * ( F - E ) + B * ( C * F - E ) ) / ( F * ( x * ( A * x + B ) + D * F ) ); }\n'
-  + 'vec3 cs2Grade( vec3 c ) { vec3 t = clamp( cs2Hable( max( c * uCurveB.w, 0.0 ) ) / cs2Hable( vec3( uCurveB.z ) ), 0.0, 1.0 ); if ( uLutOn < 0.5 ) return t;\n'
+  + 'vec3 cs2Grade( vec3 c ) { vec3 t = clamp( cs2Hable( max( c * ( uExpOn > 0.5 ? texture2D( uExpTex, vec2( 0.5 ) ).g : uCurveB.w ), 0.0 ) ) / cs2Hable( vec3( uCurveB.z ) ), 0.0, 1.0 ); if ( uLutOn < 0.5 ) return t;\n'
   + '  vec3 s = mix( 12.92 * t, 1.055 * pow( t, vec3( 1.0 / 2.4 ) ) - 0.055, step( 0.0031308, t ) ); s = texture( uLut, s * ( 31.0 / 32.0 ) + 0.5 / 32.0 ).rgb;\n'
   + '  return mix( s / 12.92, pow( ( s + 0.055 ) / 1.055, vec3( 2.4 ) ), step( 0.04045, s ) ); }\n'
   // The sun's reach: CS2's baked one, darkened near the camera by what moves (sun-shadows.js: players, props, doors,
@@ -45,15 +45,25 @@ const BAKED_PARS = 'uniform vec3 uSunDir; uniform vec3 uSun; uniform float uSunK
   + '  float e = max( abs( p.x - 0.5 ), abs( p.y - 0.5 ) ) * 2.0; if ( e >= 1.0 || p.z >= 1.0 || p.z <= 0.0 ) return baked; float t = 1.0 / uPShSpan, z = p.z - 0.0006;\n'
   + '  float s = step( z, texture2D( uPSh, p.xy ).r ) * 2.0 + step( z, texture2D( uPSh, p.xy + vec2( t, t ) ).r ) + step( z, texture2D( uPSh, p.xy + vec2( - t, t ) ).r ) + step( z, texture2D( uPSh, p.xy + vec2( t, - t ) ).r ) + step( z, texture2D( uPSh, p.xy + vec2( - t, - t ) ).r );\n'
   + '  if ( uPShDebug > 0.5 && uPShDebug < 1.5 && n.y > 0.8 ) { float l = s / 6.0; shDbg = vec4( baked < 0.5 && l > 0.5 ? 1.0 : 0.0, l < 0.5 && baked > 0.5 ? 1.0 : 0.0, l < 0.5 && baked < 0.5 ? 1.0 : 0.0, 1.0 ); }\n'
-  + '  return uPShDebug > 0.5 && uPShDebug < 1.5 ? mix( baked, s / 6.0, 1.0 - smoothstep( 0.8, 0.97, e ) ) : baked * mix( 1.0, s / 6.0, 1.0 - smoothstep( 0.8, 0.97, e ) ); }\n';   // (uPShDebug: tests — red: only the baked reach is shaded there, green: only the live one, blue: both)
+  + '  return uPShDebug > 0.5 && uPShDebug < 1.5 ? mix( baked, s / 6.0, 1.0 - smoothstep( 0.8, 0.97, e ) ) : baked * mix( 1.0, s / 6.0, 1.0 - smoothstep( 0.8, 0.97, e ) ); }\n'
+  // v53 LOOK (look-dynamic-lights-on-baked): the baked materials are MeshBasicMaterials (no three.js light loop), so the
+  // fire's and the guns' lights never reached the map. A FIXED six-light term instead (BAKED_LIGHT_N, the count never
+  // changes from load: no program change in a round): graphics.js copies its pool's four lights (the strongest point
+  // sources near the camera — gd-fire-view.js's fire lights among them) and up to two unpooled GD lights (fun-pistol.js's
+  // muzzle flash) into uBPLp (position, range; range 0 = off) and uBPLc (colour × intensity) each frame. Each light as
+  // three.js lights a Lambert surface: irradiance = colour · intensity · facing · its range window / d² (decay 2), the
+  // diffuse ÷ π.
+  + 'uniform vec4 uBPLp[ ' + BAKED_LIGHT_N + ' ]; uniform vec3 uBPLc[ ' + BAKED_LIGHT_N + ' ];\n'
+  + 'vec3 gdPoints( vec3 n ) { vec3 s = vec3( 0.0 ); for ( int i = 0; i < ' + BAKED_LIGHT_N + '; i ++ ) { vec4 P = uBPLp[ i ]; if ( P.w <= 0.0 ) continue; vec3 d = P.xyz - vBakedW; float r2 = max( dot( d, d ), 0.01 ), r = sqrt( r2 ), w = clamp( 1.0 - pow( r / P.w, 4.0 ), 0.0, 1.0 );\n'
+  + '  s += uBPLc[ i ] * ( w * w / r2 ) * max( dot( n, d / r ), 0.0 ); } return s * RECIPROCAL_PI; }\n';   // (uPShDebug: tests — red: only the baked reach is shaded there, green: only the live one, blue: both)
 // The grade alone (skin-render.js: your first-person gun graded as the map it is drawn over, PLAN §5.5): its uniforms
 // (the same objects, so one map setting serves both) and its functions, cut from the chunk above.
-export const GRADE_U = { uGrade: BAKED.uGrade, uCurveA: BAKED.uCurveA, uCurveB: BAKED.uCurveB, uLut: BAKED.uLut, uLutOn: BAKED.uLutOn };
+export const GRADE_U = { uGrade: BAKED.uGrade, uCurveA: BAKED.uCurveA, uCurveB: BAKED.uCurveB, uLut: BAKED.uLut, uLutOn: BAKED.uLutOn, uExpTex: BAKED.uExpTex, uExpOn: BAKED.uExpOn };
 export const GRADE_PARS = BAKED_PARS.slice(BAKED_PARS.indexOf('uniform float uGrade;'), BAKED_PARS.indexOf('vec3 bakedLight')) + BAKED_PARS.slice(BAKED_PARS.indexOf('vec3 cs2Hable'), BAKED_PARS.indexOf('uniform sampler2D uPSh;'));
 function bakedShader(shader, vertexLight) {
   Object.assign(shader.uniforms, BAKED);
   shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vBakedN; varying vec3 vBakedW;\n#ifdef CS2_TINT\nattribute vec4 tint; varying vec3 vTint;\n#endif').replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvBakedN = normalize( mat3( modelMatrix ) * normal ); vBakedW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\n#ifdef CS2_TINT\n\tvTint = tint.rgb;\n#endif');   // (CS2_TINT: meshes merged into one, each one's colour per vertex — prepare)
-  const light = (irr, sun, uvDbg = 'vec3( 0.0 )') => `{ vec3 bakedN = normalize( vBakedN ) * ( gl_FrontFacing ? 1.0 : - 1.0 ); reflectedLight.indirectDiffuse += bakedLight( ${irr} + uSun * uSunK * ( sunReach( ${sun}, bakedN ) * max( dot( bakedN, uSunDir ), 0.0 ) ) ); if ( uPShDebug > 2.5 ) shDbg = vec4( ${uvDbg}, 1.0 ); else if ( uPShDebug > 1.5 ) shDbg = vec4( bakedLight( ${irr} ), 1.0 ); }`;   // (uPShDebug 2: the baked light alone, no texture — tests)
+  const light = (irr, sun, uvDbg = 'vec3( 0.0 )') => `{ vec3 bakedN = normalize( vBakedN ) * ( gl_FrontFacing ? 1.0 : - 1.0 ); reflectedLight.indirectDiffuse += bakedLight( ${irr} + uSun * uSunK * ( sunReach( ${sun}, bakedN ) * max( dot( bakedN, uSunDir ), 0.0 ) ) + gdPoints( bakedN ) ); if ( uPShDebug > 2.5 ) shDbg = vec4( ${uvDbg}, 1.0 ); else if ( uPShDebug > 1.5 ) shDbg = vec4( bakedLight( ${irr} ), 1.0 ); }`;   // (uPShDebug 2: the baked light alone, no texture — tests)
   let f = shader.fragmentShader.replace('#include <common>', '#include <common>\n' + BAKED_PARS + '#ifdef CS2_TINT\nvarying vec3 vTint;\n#endif\n').replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse, opacity );\n#ifdef CS2_TINT\n\tdiffuseColor.rgb *= vTint;\n#endif');
   if (vertexLight) f = f.replace('#include <color_fragment>', '').replace('reflectedLight.indirectDiffuse += vec3( 1.0 );', light('vColor.rgb * uLScale', 'vColor.a'));   // (the vertex colour is light, not tint)
   else f = f.replace('reflectedLight.indirectDiffuse += lightMapTexel.rgb * lightMapIntensity * RECIPROCAL_PI;', light('pow( lightMapTexel.rgb, vec3( 2.2 ) ) * uLScale', '( uHasMask > 0.5 ? texture2D( uSunMask, vLightMapUv ).r : lightMapTexel.a )', '( uPShDebug > 4.5 ? vec3( floor( vLightMapUv.y * 255.0 ) / 255.0, fract( vLightMapUv.y * 255.0 ), 0.0 ) : uPShDebug > 3.5 ? vec3( floor( vLightMapUv.x * 255.0 ) / 255.0, fract( vLightMapUv.x * 255.0 ), 0.0 ) : vec3( fract( vLightMapUv * 16.0 ), 0.0 ) )'));
@@ -62,6 +72,10 @@ function bakedShader(shader, vertexLight) {
   shader.fragmentShader = f;
 }
 const bakedLM = s => bakedShader(s, false), bakedVL = s => bakedShader(s, true);
+export { BAKED_LIGHT_N };   // (v53 LOOK: the baked shader's fixed point-light count, gd-exposure.js — see BAKED_PARS)
+// v53 LOOK: CS2's per-map look settings (tools/import-cs2-look.mjs → user-assets/look/look.json: the post_processing_volume's
+// exposure range and speeds, the .vpost's bloom) — read once per page; without it the map keeps its fixed exposure, no bloom.
+let lookJson = null; const lookData = ua => lookJson ??= (ua.models?.look?.file ? fetch(new URL('/user-assets/' + ua.models.look.file + '?h=' + encodeURIComponent(ua.models.look.v || ''), location.href).href).then(r => r.ok ? r.json() : null).catch(() => null) : Promise.resolve(null));
 // The player's Sun light setting (Settings → Graphics: 30–150 %): the sun's own light on a CS2 map, shade and bounce
 // light as they are — set now and whenever the settings change.
 const sunK = p => Math.max(.3, Math.min(1.5, +p?.sunLight || 1));
@@ -94,13 +108,13 @@ export function placeRender(root, { x0, y1, W, D, zLow, U }, cx = 0, cz = 0) {
 export const mapRender = id => kept?.id === id ? kept.root : null;
 // A promise (with .done) while map `id`'s look still has to load; null when there is none or it is in.
 export function ensureMapRender(id) {
-  if (!mapFileOf(id)?.cs2 || typeof document === 'undefined' || kept?.id === id || none.has(id)) return null; if (loading.has(id)) return loading.get(id);   // (the manifest is read once per page: a kept look is current)
+  if (!mapFileOf(id)?.cs2 || typeof document === 'undefined' || kept?.id === id && kept.cap === mapTexCap() || none.has(id)) return null; /* (v53 stage 6: a kept look drawn at another preset's texture cap is loaded again, behind this loading card) */ if (loading.has(id)) return loading.get(id);   // (the manifest is read once per page: a kept look is current)
   const p = userAssets().then(ua => { const v = ua.models?.maps?.[id]; if (!v) return null;
       const lm = v.light?.file ? loadLightMap(userAssetURL(ua, v.light.file)).catch(e => { console.warn('map light', id, e?.message); return null; }) : null;   // (without it: lit by the sun and sky as before)
       const mk = v.light?.mask ? loadSunMask(userAssetURL(ua, v.light.mask)).catch(e => { console.warn('map sun', id, e?.message); return null; }) : null;
       const lt = v.light?.post?.lut ? loadLut(userAssetURL(ua, v.light.post.lut)).catch(e => { console.warn('map grading', id, e?.message); return null; }) : null;
       const sk = v.light?.sky?.file ? new THREE.TextureLoader().loadAsync(userAssetURL(ua, v.light.sky.file)).then(t => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }).catch(e => { console.warn('map sky', id, e?.message); return null; }) : null;
-      return Promise.all([gltfLoader().loadAsync(userAssetURL(ua, v.file), e => noteProgress('Downloading the map\'s look', e.loaded, e.total || 0)), lm, mk, lt, sk]).then(([g, t, m, l, k]) => prepare(id, g, t ? { ...v.light, tex: t, mask: m, lutTex: l, skyTex: k } : null)); })
+      return Promise.all([gltfLoader().loadAsync(userAssetURL(ua, v.file), e => noteProgress('Downloading the map\'s look', e.loaded, e.total || 0)), lm, mk, lt, sk, lookData(ua)]).then(([g, t, m, l, k, lj]) => { setLook(id, t ? lj?.maps?.[id] : null, v.light?.post?.use); /* (v53 LOOK: GD_LOOK for gd-exposure.js / graphics.js) */ return capMapTextures(g, mapTexCap(), { tex: t, mask: m }).then(cap => prepare(id, g, t ? { ...v.light, tex: t, mask: m, lutTex: l, skyTex: k } : null, cap)); }); })
     .catch(e => { console.warn('map look', id, e?.message); return null; });
   p.done = false; p.then(r => { p.done = true; loading.delete(id); if (!r) none.add(id); }); loading.set(id, p); return p;   // (none, or it failed: the map is drawn from its columns — not asked again this page)
 }
@@ -157,7 +171,25 @@ function mergedMesh(list) {
 }
 const GLASS_OPACITY = .28, GLASS_TINT = new THREE.Color(.82, .9, .92), CLAIMED_OPACITY = .55;   // (CS2's glass: see-through, a faint green-blue; a textured window a pane claims: half)
 const PROP_CELL = 50;   // (metres, the look's units: ≈ 320 game units — props merged per square of this)
-function prepare(id, gltf, light) {
+// v53 stage 6 (spec §5.2 "textures capped at 512–1024 with mip-maps"): the GD preset's texture cap (gd-preset.js texCap) on the
+// look's own pictures (walls, floors, props — the map's albedo) as they load: Very Low 512 px. Low's cap, 1024, is the
+// importer's size already (no change). Each picture once (GLTFLoader's clones share their source); its mip-maps stay
+// (three.js builds them at upload). On Very Low the baked light map and its sun mask (8192 px on Dust II: 341 MB of the
+// ~930 MB measured) are drawn at LIGHT_CAP 4096 — a quarter of the memory, the baked light softer, still CS2's own; the
+// grading table and the sky keep their size. Resized with no premultiply / colour conversion (the light map's channels
+// are data). 0: no cap. (Measured texture memory per preset: UPDATE-v53.0.md.)
+const LIGHT_CAP = 4096;
+const mapTexCap = () => { const c = gdPresetNow().texCap; return c > 0 && c < 1024 ? c : 0; };
+const fitData = async (img, size) => { const w = img?.width || 0, h = img?.height || 0; if (!w || !h || Math.max(w, h) <= size) return img; const k = size / Math.max(w, h);
+  const out = await createImageBitmap(img, { resizeWidth: Math.max(1, Math.round(w * k)), resizeHeight: Math.max(1, Math.round(h * k)), resizeQuality: 'high', premultiplyAlpha: 'none', colorSpaceConversion: 'none' }); img.close?.(); return out; };
+async function capMapTextures(gltf, cap, light = null) {
+  if (!cap) return 0; const srcs = new Map();
+  gltf.scene.traverse(o => { if (!o.isMesh) return; for (const m of [].concat(o.material || [])) { const t = m?.map; if (t?.isTexture && t.image?.width > cap) { const s = t.source || t; if (!srcs.has(s)) srcs.set(s, []); srcs.get(s).push(t); } } });
+  for (const t of [light?.tex, light?.mask]) if (t?.isTexture && t.image?.width > LIGHT_CAP) srcs.set(t.source || t, [t, LIGHT_CAP]);
+  await Promise.all([...srcs.values()].map(async ts => { const size = typeof ts[ts.length - 1] === 'number' ? ts.pop() : cap; try { const im = await fitData(ts[0].image, size); for (const t of ts) { t.image = im; t.needsUpdate = true; } } catch {} }));
+  return cap;
+}
+function prepare(id, gltf, light, cap = 0) {
   if (kept) dispose(kept); const textures = new Set(), meshes = [], still = [], root = new THREE.Group(), r = globalThis.__infra?.renderer, an = anisotropy();
   gltf.scene.updateMatrixWorld(true); const movers = new Map();   // (doors and breakables, by their entity: convert_world.py names them mover_e<entity>)
   const moverOf = o => { for (let q = o; q; q = q.parent) { const m = /^mover_e(\d+)/.exec(q.name || ''); if (m) return +m[1]; } return -1; };
@@ -188,7 +220,7 @@ function prepare(id, gltf, light) {
     const ov = light?.overlays?.[s.name.replace(/__nolm$/, '').replace(/\.\d+$/, '')] || null;
     let m;
     // CS2's water (Anubis's canal, coast) has its own shader and no texture: a clear teal surface the sun glints on.
-    if (!map && /water/i.test(s.name)) { m = new THREE.MeshStandardMaterial({ color: 0x1f5b63, roughness: .1, metalness: .05, transparent: true, opacity: .84, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, name: s.name }); const mesh = new THREE.Mesh(g, m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.renderOrder = 1; mesh.userData.noShadow = true; mesh.userData.cs2 = true; g.userData.shared = true; meshes.push(mesh); s.dispose(); root.add(mesh); return; }
+    if (!map && /water/i.test(s.name)) { m = new THREE.MeshLambertMaterial({ color: 0x1f5b63, transparent: true, opacity: .84, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, name: s.name }); /* (v53 LOOK: was a MeshStandardMaterial at roughness 0.1 — on High it mirrored graphics.js's global room environment (scene.environment: its ceiling light) as a white square on Ancient's water, which the bloom spread; a material's envMapIntensity does not reach scene.environment. CS2 reflects the map's own cube maps there (look.json probes: not converted yet) — until then no reflection, as on Medium) */ const mesh = new THREE.Mesh(g, m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.renderOrder = 1; mesh.userData.noShadow = true; mesh.userData.cs2 = true; g.userData.shared = true; meshes.push(mesh); s.dispose(); root.add(mesh); return; }
     if (ov?.[0] === 3 && map) { m = new THREE.MeshBasicMaterial({ map, color: s.color, opacity: ov[1], side: s.side, name: s.name, transparent: true, depthWrite: false, toneMapped: false, fog: false, blending: THREE.CustomBlending, blendSrc: THREE.DstColorFactor, blendDst: THREE.SrcColorFactor }); m.onBeforeCompile = mod2x; m.customProgramCacheKey = () => 'cs2-mod2x'; }
     else if (kind === 'map') { m = new THREE.MeshBasicMaterial({ ...common, color: s.color, lightMap: light.tex }); m.onBeforeCompile = bakedLM; m.customProgramCacheKey = () => 'cs2-baked-lm'; }
     else if (kind === 'vertex') { m = new THREE.MeshBasicMaterial({ ...common, color: s.color, vertexColors: true }); m.onBeforeCompile = bakedVL; m.customProgramCacheKey = () => 'cs2-baked-vl'; }
@@ -197,6 +229,7 @@ function prepare(id, gltf, light) {
     if (ov && ov[0] === 2) { if (!(m.alphaTest > 0)) m.alphaTest = .5; } else if (ov && ov[0] !== 3) { m.transparent = true; m.depthWrite = false; m.opacity = ov[1]; }   // (2: cut out by its alpha; 1: blended, times its opacity)
     if (s.transparent || ov) { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = -4; }
     if (glassy) { m.opacity = GLASS_OPACITY; m.color.multiply(GLASS_TINT); }
+    m.userData.noGlow = true;   // (v53 LOOK: graphics.js's High glow never boosts the map's own unlit materials ×2.6 — a white untextured one under Ancient's water drew a white square; CS2's own bloom is the map's .vpost)
     m.forceSinglePass = true;   // (three.js draws a transparent double-sided material twice a frame, flagging it for a new program each time: one pass)   // (decals, signs and overlays lie on walls: drawn over them, whatever the order, even seen head-on)
     s.dispose(); const mesh = new THREE.Mesh(g, m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); if (m.transparent) mesh.renderOrder = 1;
     // Baked: its shadows are in its light; it neither casts nor takes the sun's shadow map (graphics.js flags it so).
@@ -310,6 +343,6 @@ function prepare(id, gltf, light) {
   root.userData.keep = false; root.userData.cs2Render = id; root.userData.baked = !!light;
   if (r) { for (const t of textures) r.initTexture(t); const sc = globalThis.__infra?.scene, cam = globalThis.__infra?.camera; if (sc && cam && r.compileAsync) { const all = cam.clone(); all.layers.enableAll(); r.compileAsync(root.userData.casters || root, all, sc).catch(() => {}); } if (sc && cam && r.compileAsync) r.compileAsync(root, cam, sc).catch(() => {}); }   // textures uploaded and shaders built now, on the loading screen
   root.userData.worldCasters = () => { if (!root.userData.casters) { const cr = buildCasters(still); root.add(cr); root.userData.casters = cr; } return root.userData.casters; };   // (tests: the sun's fit)
-  root.userData.movers = movers; root.userData.props = props; kept = { id, root, textures, meshes }; return root;
+  root.userData.movers = movers; root.userData.props = props; kept = { id, root, textures, meshes, cap }; return root;
 }
 function dispose(k) { k.root.userData.casters?.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); for (const m of k.meshes) { m.geometry.dispose(); m.material.dispose(); m.removeFromParent(); } for (const t of k.textures) t.dispose(); for (const G of k.root.userData.movers.values()) G.removeFromParent(); for (const G of k.root.userData.props?.values() || []) G.removeFromParent(); k.root.removeFromParent(); }   // (a door's group may hang from its hinge, outside the root)

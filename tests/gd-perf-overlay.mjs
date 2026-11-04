@@ -3,7 +3,7 @@
 // percentiles every frame allocates nothing (the per-frame path must be garbage-free: "no lag"). The overlay object itself
 // updates its text at most 4 times a second and only touches a line's DOM text when it changed (tiny DOM stub).
 import v8 from 'node:v8'; import vm from 'node:vm';
-import { createRing, createPerfOverlay, limitOf } from '../dist/gd-perf-overlay.js';
+import { createRing, createPerfOverlay, limitOf, textureBytes, createTexCounter } from '../dist/gd-perf-overlay.js';
 let ok = 0, n = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (d !== '' ? ' · ' + d : '')); };
 const ref = (a, k) => { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * k))]; };
 const close = (a, b) => Math.abs(a - b) < 1e-3;
@@ -41,4 +41,24 @@ const close = (a, b) => Math.abs(a - b) < 1e-3;
 // GPU when the GPU's time (reported) fills its share, or the main thread has time to spare
 { check('limitOf: 60 fps → no tag; 30 fps with 22 ms main thread → CPU; 30 fps with 6 ms main thread → GPU; GPU timer 20 ms → GPU', limitOf(16.7, 9) === '' && limitOf(33.3, 22) === 'CPU' && limitOf(33.3, 6) === 'GPU' && limitOf(33.3, 15, 20) === 'GPU' && limitOf(25, 14.5, 9) === 'CPU', [limitOf(16.7, 9), limitOf(33.3, 22), limitOf(33.3, 6), limitOf(33.3, 15, 20), limitOf(25, 14.5, 9)].join('|'));
   check('limitOf: 144 Hz under the 60 cap (mean 16.7 from 13.9/20.8 gaps) is no limit', limitOf(16.7, 5) === ''); }
+// v53 stage 6: the texture memory estimate (each picture once, + ⅓ for mip-maps, float types, no render targets), walked a
+// slice a frame (review: a whole-scene walk every 2 s cost 1.2–8.4 ms in one frame), the preset text and the EMULATION label
+{ const tex = (w, h, o = {}) => ({ isTexture: true, image: { width: w, height: h }, source: o.source || {}, format: 1023, type: 1009, generateMipmaps: true, minFilter: 1008, ...o });
+  const shared = {}, a = tex(256, 256, { source: shared }), a2 = tex(256, 256, { source: shared }), flt = tex(64, 64, { type: 1015, generateMipmaps: false, minFilter: 1006 }), rt = tex(2048, 2048, { isRenderTargetTexture: true });
+  const leaf = (m) => ({ material: m, children: [] });
+  const scene = { children: [leaf({ map: a }), leaf([{ map: a2, normalMap: tex(128, 128) }, { map: rt }]), { children: [leaf({ uniforms: { t: { value: flt }, k: { value: 1 } } }), leaf(null)] }] };
+  const want = 256 * 256 * 4 * 4 / 3 + 128 * 128 * 4 * 4 / 3 + 64 * 64 * 4 * 4;
+  check('textureBytes: a shared source once, mips + ⅓, a float texture × 4 bytes a channel, render targets left out', Math.abs(textureBytes(scene) - want) < 1, textureBytes(scene) + ' vs ' + want);
+  const c = createTexCounter(); let steps = 0, b = -1; while ((b = c.step(scene, 2)) < 0 && steps < 50) steps++;
+  check('the walk in slices (2 objects a step) ends with the same sum, over several frames', steps >= 2 && Math.abs(b - want) < 1, steps + ' steps, ' + b);
+  check('the next pass starts again from the top (same sum)', (() => { let q = -1; for (let i = 0; i < 50 && q < 0; i++) q = c.step(scene, 2); return Math.abs(q - want) < 1; })());
+  const body = globalThis.document.body; body.kids.length = 0; globalThis.performance.now ??= () => Date.now();
+  const renderer = { info: { render: { calls: 360, triangles: 1.9e6 }, programs: [1], memory: { textures: 3 } }, getPixelRatio: () => 1, getContext: () => ({ getExtension: () => null, getParameter: () => 'ANGLE (Apple, ANGLE Metal Renderer: Apple M3)', RENDERER: 0 }) };
+  const o = createPerfOverlay({ renderer, scene, preset: () => 'preset Low · Auto · integrated 0.3 ms' }); o.set(true);
+  for (let i = 0; i < 300; i++) o.frame(3000 + i * 16.7, 16.7, 4);
+  const lines = () => body.kids.at(-1).kids.filter(k => typeof k.data === 'string').map(t => t.data);
+  check('the preset and the texture memory on line 3', /preset Low · Auto · integrated 0\.3 ms/.test(lines()[2]) && /tex 0 MB \(3\)/.test(lines()[2]), lines()[2]);
+  check('no EMULATION label without a test setting __gdEmulation', !/EMULATION/.test(lines()[3]), lines()[3]);
+  globalThis.__gdEmulation = 'CPU ×4 (emulated)'; for (let i = 0; i < 30; i++) o.frame(9000 + i * 16.7, 16.7, 4);
+  check('EMULATION label first on the GPU line when a test sets __gdEmulation', /^EMULATION: CPU ×4 \(EMULATED\) — not a Windows measurement · ANGLE/.test(lines()[3]), lines()[3]); delete globalThis.__gdEmulation; }
 console.log(ok + '/' + n); process.exit(ok === n ? 0 : 1);

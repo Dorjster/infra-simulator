@@ -79,8 +79,10 @@ export function createEmotes({ canEmote = () => true, color = () => 0x6bd9ff, fa
     showSelf(v) { showSelf = !!v; },
     get previewVisible() { return open || !!current || showSelf; },
     renderPreview(renderer) {
-      const visible = open || !!current || showSelf; previewTag.hidden = !visible; if (!visible) return;
-      previewTag.textContent = 'YOU · ' + (current ? EMOTES.find(e => e.id === current).label : open ? EMOTES[index].label : 'your face');
+      // (v53 stage 6: written only when it changes — this runs every frame in every mode, and an attribute or text written
+      // with the same value still dirtied the page's style each frame: a style recalc mid-frame in a Global Defensive fight)
+      const visible = open || !!current || showSelf; if (previewTag.hidden !== !visible) previewTag.hidden = !visible; if (!visible) return;
+      const tag = 'YOU · ' + (current ? EMOTES.find(e => e.id === current).label : open ? EMOTES[index].label : 'your face'); if (previewTag.textContent !== tag) previewTag.textContent = tag;
       renderer.getSize(size); const w = 200, h = 240, x = size.x - w - 16, y = 84;
       const alpha = renderer.getClearAlpha(); renderer.getClearColor(clear); const auto = renderer.autoClear, info = renderer.info.autoReset;
       renderer.info.autoReset = false; renderer.autoClear = false;

@@ -6,6 +6,7 @@
 // legs and arms by two-bone IK (feet planted, knees bending as the body crouches; both hands on the gun), the spine
 // leaning in. Hit boxes come from the pose, never from the model: the agent stands at its true size (CS2's 72 u, the
 // capsule's height; its head where the head zone is, weapons-data.js) and drops as the capsule does crouched. Allocation-free per frame.
+import { gdTexSize } from './gd-preset.js';   // (v53 stage 6: Low / Very Low texture cap)
 import { CASTER, bonesMoved } from './sun-shadows.js';
 import { skinObject, unskinObject, sameSkin } from './skin-render.js';
 import * as THREE from './three.module.js';
@@ -14,8 +15,18 @@ import { userAssets, userAssetURL } from './user-assets.js';
 import { weaponModel, knifeFor, MUZZLE, loadRealWeapons, onModelRegistered } from './weapon-models.js';
 import { weaponById } from './weapons-data.js';
 import { addRim, rimFor } from './rim-light.js';
+// v53 LOOK (spec 4.1 readability, CS2's "Boost Player Contrast" — csgo_english.txt SFUI_Settings_PlayerContrast: "Improves
+// the legibility of players in low contrast situations"; its exact shading is in CS2's binary, not its files): on top of
+// rim-light.js's rim, a slight saturation lift of the agent's lit colour (× SAT_LIFT about its luminance) so a CT or T
+// never greys into the wall behind; and the darkest tint an agent takes in a tunnel raised from 0.30 to SHADE_FLOOR (no
+// dark-on-dark). One shared onBeforeCompile and key for every agent material (one program, compiled at load as before).
+const SAT_LIFT = 1.12, SHADE_FLOOR = .36, RIM_COMPILE = addRim(new THREE.MeshStandardMaterial()).onBeforeCompile;
+function readableShader(shader, renderer) { RIM_COMPILE.call(this, shader, renderer);
+  shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `{ float gdY = dot( outgoingLight, vec3( 0.2126, 0.7152, 0.0722 ) ); outgoingLight = max( mix( vec3( gdY ), outgoingLight, ${SAT_LIFT.toFixed(2)} ), 0.0 ); }\n#include <opaque_fragment>`); }
+const readableKey = () => 'rim-1-gdsat';
+const readable = m => { addRim(m); m.onBeforeCompile = readableShader; m.customProgramCacheKey = readableKey; return m; };
 import { live } from './live-settings.js';
-import { fitImage, anisotropy } from './texture-quality.js';
+import { fitImage, anisotropy, textureSize } from './texture-quality.js';
 import { deathFall, DEATH_FALL_S } from './phys-smooth.js';
 import { gloveLook, gloveMaterial, gloveVersion } from './glove-assets.js';   // (the death fall's curve: package P)
 import { agentRig, startRagdoll, updateRagdoll, stopRagdoll, deathOf, deathCtx, loadCs2Ragdolls, trackVy } from './gd-ragdoll.js';   // (v53 DEATH: the death ragdoll — CS2's own when imported)
@@ -49,7 +60,7 @@ export const hasAgent = side => !!templates[side];
 export function useAgents(sides = {}, clips = null, holds = undefined) { for (const [side, sc] of Object.entries(sides)) templates[side] = prepare(sc); if (clips) CLIPS = splitClips(clips); if (holds !== undefined) useHolds(holds?.holds, holds?.clips); return Object.keys(templates); }   // (holds: { holds: holds.json, clips: holds-clips.json }, null to drop them)
 // Its pictures at the size Settings → Texture quality asks for (stored at 2048), filtered as set.
 async function fitTextures(root) { const ts = new Set(); root.traverse(o => { if (o.isMesh) for (const m of [].concat(o.material)) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) if (m[k]) ts.add(m[k]); });
-  const a = anisotropy(); await Promise.all([...ts].map(async t => { t.image = await fitImage(t.image); t.anisotropy = a; t.needsUpdate = true; })); }
+  const a = anisotropy(); await Promise.all([...ts].map(async t => { t.image = await fitImage(t.image, gdTexSize(textureSize())); t.anisotropy = a; t.needsUpdate = true; })); }
 
 // Fingers closed round a grip: each segment's bend (radians) about its own axis — fingers, thumb.
 export const CURL = { axis: 'z', sign: 1, fingers: [.75, .9, .6], thumb: [.3, .4, .35] };   // ~125°: round a grip, not a clenched fist
@@ -153,7 +164,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   g.add(fallG); fallG.add(face); face.rotation.y = Math.PI; face.add(model); model.scale.setScalar(T.k); model.add(body);   // the avatar convention: facing −z in g
   body.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });   // (casts its shadow on a baked CS2 map: sun-shadows.js)
   const B = {}; body.traverse(o => { const n = o.name.toLowerCase(); if (o.isBone && POSED.includes(n) && !B[n]) B[n] = o; });
-  const own = [], rim = { value: rimFor(1) }; if (lightAt) body.traverse(o => { if (o.isMesh) { o.material = [].concat(o.material).map(m => { const c = addRim(m.clone()); c.userData = { rim }; own.push(c); return c; }); if (o.material.length === 1) o.material = o.material[0]; } });
+  const own = [], rim = { value: rimFor(1) }; if (lightAt) body.traverse(o => { if (o.isMesh) { o.material = [].concat(o.material).map(m => { const c = readable(m.clone()); c.userData = { rim }; own.push(c); return c; }); if (o.material.length === 1) o.material = o.material[0]; } });
   let shade = 1, shadeAt = 0; const feetW = new THREE.Vector3();
   // (CS2 gloves: see setGloves below)
   let glRec = null, glV = -1, glMat = null, glSrc = null, glTint = false; const glTintC = new THREE.Color(), glMeshes = new Map();
@@ -191,7 +202,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
   }
   let deadT = 0, fallNew = true;   // (the death fall: seconds since this body died; first update not yet run)
   function update(dt, s = {}) {
-    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(.3, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); if (glTint && dgMesh) dgMesh.material.color.multiply(glTintC); rim.value = live.rim ? rimFor(shade) : 0; } }
+    if (own.length) { shadeAt -= dt; if (shadeAt <= 0) { shadeAt = .15; g.getWorldPosition(feetW); const l = lightAt(feetW.x, feetW.y, feetW.z), want = Math.min(1.1, Math.max(SHADE_FLOOR, .3 + .75 * l)); shade += (want - shade) * .5; for (const m of own) m.color.setScalar(shade); if (glTint && dgMesh) dgMesh.material.color.multiply(glTintC); rim.value = live.rim ? rimFor(shade) : 0; } }
     const k = Math.min(1, dt * 10); st.speed += ((s.speed || 0) - st.speed) * Math.min(1, dt * 8); st.crouch += ((s.crouch ? 1 : 0) - st.crouch) * k; st.gun += ((s.aim && !s.dead ? 1 : 0) - st.gun) * k;
     st.reload += ((s.act === 'reload' ? 1 : 0) - st.reload) * Math.min(1, dt * 9); st.throwA += ((s.act === 'throw' ? 1 : 0) - st.throwA) * Math.min(1, dt * 14);
     // Death: toppled about the feet as a body falls (phys-smooth.js deathFall: slow to start, fastest as it lands, ~0.5 s,
@@ -270,7 +281,7 @@ export function makeAgent(p, team, { lightAt = null } = {}) {
       if (!shown) { shown = []; for (const n of ['world_L', 'world_R']) { if (!geos[n]) continue; const m = new THREE.SkinnedMesh(geos[n], dgMesh.material); m.name = 'cs2_gloves/' + n; m.castShadow = true; m.receiveShadow = false; m.frustumCulled = false; m.layers.mask = dgMesh.layers.mask;
           m.position.copy(dgMesh.position); m.quaternion.copy(dgMesh.quaternion); m.scale.copy(dgMesh.scale); m.bind(dgMesh.skeleton, dgMesh.bindMatrix); dgMesh.parent.add(m); shown.push(m); } glMeshes.set(L.type.type, shown); }
       const src = L.tex.state === 'ready' ? L.tex : L.fb, make = tx => { const m = dgOrig.clone(); m.map = tx.color; m.normalMap = tx.normal; m.roughness = L.f.roughMean ?? .75; m.metalness = L.f.metalMean ?? 0; m.name = 'cs2g_tp_' + L.kit; m.userData = { shared: true, kit: L.kit }; return m; };
-      let mat; if (lightAt) { if (glSrc !== src || !glMat) { if (glMat) { own.splice(own.indexOf(glMat), 1); glMat.dispose(); } glMat = addRim(make(src.tex)); glMat.userData = { rim }; glMat.color.setScalar(shade); own.push(glMat); glSrc = src; } mat = glMat; }
+      let mat; if (lightAt) { if (glSrc !== src || !glMat) { if (glMat) { own.splice(own.indexOf(glMat), 1); glMat.dispose(); } glMat = readable(make(src.tex)); glMat.userData = { rim }; glMat.color.setScalar(shade); own.push(glMat); glSrc = src; } mat = glMat; }
       else mat = gloveMaterial(src, 'tp:' + team, tx => { const m = make(tx); m.onBeforeCompile = dgOrig.onBeforeCompile; m.customProgramCacheKey = dgOrig.customProgramCacheKey; return m; });
       for (const m of shown) m.material = mat; }
     for (const list of glMeshes.values()) for (const m of list) m.visible = list === shown;

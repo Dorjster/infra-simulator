@@ -5,11 +5,12 @@
 // pistol arms). The rig looks along +z from just in front of its shoulders.
 // Imported on this computer (user-assets, never shipped): CS2's gloves are worn on every pair of arms, and CS2's own
 // first-person M4A1-S animations (cs2rifle) hold every rifle, sniper and machine gun.
+import { gdTexSize } from './gd-preset.js';   // (v53 stage 6: Low / Very Low texture cap)
 import * as THREE from './three.module.js';
 import { prepareSkins, applySkin, fitSkinned, fpLightTick } from './skin-render.js'; import { gloveLook, gloveType, gloveMaterial, onGloves, gloveFpTypes } from './glove-assets.js'; import { loadSkinManifest, skinFileURL } from './skin-textures.js';
 import { gltfLoader } from './gltf-loader.js';
 import { weaponModel, MUZZLE, VARIANTS, modelFromFile, registerModel, KNIFE_SKINS } from './weapon-models.js';
-import { weaponById, CS_UNITS_PER_UNIT } from './weapons-data.js';
+import { weaponById, CS_UNITS_PER_UNIT, vmVfov } from './weapons-data.js';   // (vmVfov: v53 GUNS G1)
 import { isStarKnife, NEW_KNIVES, INSPECT_DRAW_S, DRAW_RARE } from './gd-knives.js';   // (v53 KNIVES)
 import { userAssets, userAssetURL } from './user-assets.js';
 import { anisotropy } from './texture-quality.js';
@@ -134,6 +135,7 @@ const sent = new WeakMap();   // texture → its version when sent to the GPU
 function pump() {
   if (busy || !queue.length || !ctx) return; if (held()) { setTimeout(pump, 400); return; } busy = true; const [id, v] = queue.shift();
   gltfLoader().loadAsync(userAssetURL(ctx.ua, v.file)).then(async g => { const set = buildAuthored(g, ctx.glove, id, ctx.arms, await knifeBase(id)), I = globalThis.__infra;
+      await fitTextures([...set.textures], gdTexSize(1 << 15));   // (v53 stage 6: the gun's own 2048 pictures under the GD preset's cap — Low 1024, Very Low 512; none on Medium and up, as before)
       await I?.gfx?.compileFor(set.root).catch(() => {});   // (its shaders built off the frame, for where a frame draws: graphics.js; in a match's own lights by the arena's warm-up, lab.js)
       for (const t of set.textures) { if (sent.get(t) === t.version) continue; while (held()) await new Promise(r => setTimeout(r, 400)); I?.renderer?.initTexture(t); if (I?.renderer) sent.set(t, t.version); if (!behindCard()) await new Promise(r => setTimeout(r, 16)); }   // (its textures on the GPU, one per frame, between plays; the shared ones — CS2 arms, glove — once, not a frame's wait per set: V)
       authored.set(id, set); for (const fn of readyFns) fn(id); })   // only now ready: its first showing costs nothing
@@ -219,7 +221,7 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
       for (const m of [].concat(o.material)) { m.userData.shared = true; if (m !== glove?.material && m !== leftGloveMat && m !== shirts.get(PACKS.cs2rifle.sleeve.from) && m.map && !/glove|sleeve|arm|hand/i.test(m.name || '') && !weaponMats.includes(m)) weaponMats.push(m); if (m !== glove?.material && m !== leftGloveMat && m !== shirts.get(PACKS.cs2rifle.sleeve.from)) m.envMapIntensity = .35; for (const t of [m.map, m.normalMap, m.roughnessMap]) if (t && !textures.includes(t)) textures.push(t); } } });
   // The authoring camera becomes ours: its frame → the view's, inches (metres: sets built from CS2's own data, its
   // view-model offset in the camera's place) → game units; such sets also carry CS2's view-model field of view.
-  sc.updateMatrixWorld(true); const u = (cam?.userData?.metres ? 39.3701 : 1) / CS_UNITS_PER_UNIT, vfov = cam?.userData?.vfov || 0;
+  sc.updateMatrixWorld(true); const u = (cam?.userData?.metres ? 39.3701 : 1) / CS_UNITS_PER_UNIT, rawVfov = cam?.userData?.vfov || 0, cs2Cam = !!(rawVfov && cam?.userData?.metres);   // (v53 GUNS G1: a CS2-data set's stored 60 is CS2's viewmodel_fov — 4:3 horizontal; `vfov` below converts it, weapons-data vmVfov)
   fix.matrix.makeScale(u, u, u).multiply(cam ? cam.matrixWorld.clone().invert() : new THREE.Matrix4()); cam?.removeFromParent();
   const mixer = new THREE.AnimationMixer(sc), clip = n => gltf.animations.find(a => a.name === n), now = () => performance.now();
   const twists = forearmTwists(sc);   // (KNIFE-diag: CS2's forearm twist bones, driven from the hand every update — forearmTwists below)
@@ -248,18 +250,27 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
         const i = textures.indexOf(old); if (i >= 0) textures.splice(i, 1); textures.push(kbase.color, kbase.orm); }
       prepareSkins([m], { model: id, uv: 'cs2', tier: 'fp', M: best ? fitSkinned(best, root) : undefined, hasUv: !!best?.geometry.attributes.uv }); if (env) { m.envMap = env; m.envMapIntensity = 1; } }
     if (a) a.stop(); }
+  const reloading = () => !!cur && (cur === mixer.existingAction(clip('reload')) || (!!clip('reloadempty') && cur === mixer.existingAction(clip('reloadempty'))));   // (v53 GUNS: either reload clip)
+  const idleName = o => o.empty && clip('idleempty') ? 'idleempty' : 'idle';
   let cur = null, until = 0, bobT = 0, bobA = 0, breathT = 0, drawnAt = -Infinity; const hm = new THREE.Matrix4(), drawWin = (INSPECT_DRAW_S[id] || 0) * 1000;
   const play = (n, { once = false, fade = .12, ms = 0 } = {}) => { const c = clip(n); if (!c) return 0; const a = mixer.clipAction(c); a.reset(); a.enabled = true; a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat); a.clampWhenFinished = once; a.timeScale = ms ? c.duration * 1000 / ms : 1;
     if (cur && cur !== a && fade > 0) a.crossFadeFrom(cur, fade, false); else if (cur && cur !== a) cur.stop(); a.play(); cur = a; return c.duration * 1000 / a.timeScale; };
   return {
-    root, authored: true, vfov, textures, worn, weaponMats: (prepareSkins(weaponMats), weaponMats),
+    root, authored: true, get vfov() { return cs2Cam ? vmVfov() : rawVfov; }, rawVfov, textures, worn,   // (v53 GUNS G1: vfov — vertical degrees, the preset's live value in Global Defensive; rawVfov the file's, for the other modes: weapons.js fitHand)
+    weaponMats: (prepareSkins(weaponMats), weaponMats),
     // gloves: the holder's CS2 gloves (skins record 'gloves') or null — the agent's own; setGloves: a pick or files arriving.
     setGloves(gloves, team = 'ct') { return wearSide(worn, team, gloves || null); },
     // (v53 KNIVES final: drawClip — the draw CS2 picked, drawPick(): a knife with a draw2 (the Skeleton, the Nomad) plays
     // its rare draw_<k> 1 time in 9 — viewmodel_knife.vnmgraph DeployOptions, weights [1, 8, 1] over draw, draw2, none)
     drawPick() { return clip('drawrare') && Math.random() * 9 < DRAW_RARE ? 'drawrare' : 'draw'; },
-    hold(id, { draw = true, team = 'ct', gloves = null, drawClip = 'draw' } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; wearSide(worn, team, gloves); const dn = clip(drawClip) ? drawClip : 'draw'; drawnAt = draw ? now() : -Infinity; until = draw && clip(dn) ? now() + play(dn, { once: true, fade: 0 }) : (play('idle', { fade: 0 }), 0); },
-    fire() { if (cur === mixer.existingAction(clip('reload'))) return; until = now() + play('fire', { once: true, fade: .03 }); },
+    hold(id, { draw = true, team = 'ct', gloves = null, drawClip = 'draw' } = {}) { if (sleeves.ct) sleeves.ct.visible = team !== 't'; if (sleeves.t) sleeves.t.visible = team === 't'; wearSide(worn, team, gloves); const dn = clip(drawClip) ? drawClip : 'draw'; drawnAt = draw ? now() : -Infinity; until = draw && clip(dn) ? now() + play(dn, { once: true, fade: 0 }) : (play(idleName(this), { fade: 0 }), 0); },   // (v53 GUNS: held open when empty)
+    // v53 GUNS (G7, open-B#12): CS2's empty magazine — the last shot plays fireempty (shoot_empty_*: the slide locks back),
+    // the set then idles in idleempty (idle_slide_back_*) while the magazine is empty (weapons.js setEmpty, each frame),
+    // and a reload from 0 plays reloadempty (reload_empty_*: weapons.js picks it, its own sounds too). A set without them
+    // (no CS2 empty clips: every rifle, a set built before v53 GUNS) plays fire / idle / reload as before.
+    empty: false, setEmpty(v) { v = !!v; if (v === this.empty) return; this.empty = v; if (!until && cur && (cur === mixer.existingAction(clip('idle')) || cur === mixer.existingAction(clip('idleempty')))) play(idleName(this), { fade: .12 }); },
+    hasClip: n => !!clip(n), get clipNow() { return cur ? cur.getClip().name : null; },   // (tests: the clip playing now)
+    fire(last = false) { if (reloading()) return; until = now() + play(last && clip('fireempty') ? 'fireempty' : 'fire', { once: true, fade: .03 }); if (last && clip('fireempty')) this.empty = true; },
     // Knife swings: the set's own clip for the swing — CS2's light_miss1 / 2, light_hit1 / 2, light_backstab / 2,
     // heavy_miss1, heavy_hit1, heavy_backstab (weapons.js picks: SWING_CLIP) — else the one it falls back to (a set built
     // before v53 has only 'light' and 'heavy'), else its fire clip. Returns the clip played (its sounds: weapons.js).
@@ -269,9 +280,9 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     throw(strength) { const n = strength === 'short' && clip('throwlow') ? 'throwlow' : 'throw'; until = clip(n) ? now() + play(n, { once: true, fade: .05 }) : 0; },
     // The bomb: planting.
     plant() { if (clip('plant')) until = now() + play('plant', { once: true, fade: .1 }); },
-    reload(ms) { until = now() + play('reload', { once: true, fade: .1, ms }); },
+    reload(ms, emptyMag = false) { const n = emptyMag && clip('reloadempty') ? 'reloadempty' : 'reload'; until = now() + play(n, { once: true, fade: .1, ms }); return n; },   // (v53 GUNS: from an empty magazine CS2's reload_empty_*)
     // A shotgun's shell-by-shell reload broken off by a shot (CS2): back to idle so the shot's own clip can play.
-    stopReload() { if (cur === mixer.existingAction(clip('reload'))) { until = 0; play('idle', { fade: .08 }); } },
+    stopReload() { if (reloading()) { until = 0; play(idleName(this), { fade: .08 }); } },
     // (v53 KNIVES: a knife with two CS2 inspects plays lookat01 twice as often as lookat02 — CS2's viewmodel_inspects
     // graph, option weights [2, 1] over Inspect0 / Inspect1 (gd-knives.js); inspectClip: which one, for its sounds)
     inspectClip: 'inspect',
@@ -281,7 +292,7 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     inspect() { const dr = this.canInspectDraw(); if (!dr && now() < until && cur !== mixer.existingAction(clip('fire'))) return 0; const n = dr ? 'inspectdraw' : clip('inspect2') && Math.random() * 3 >= 2 ? 'inspect2' : 'inspect'; this.inspectClip = n; const ms = play(n, { once: true, fade: dr ? .05 : .15 }); until = now() + ms; return ms; },
     twirl() {},
     update(dt, speed = 0) {
-      if (until && now() >= until) { until = 0; play('idle', { fade: .18 }); }
+      if (until && now() >= until) { until = 0; play(idleName(this), { fade: .18 }); }   // (v53 GUNS: idleempty while the magazine is empty)
       mixer.update(dt); if (twists.length) forearmTwist(twists); fpLightTick(dt, root);   // (the map's light where you stand on your gun, a few times a second: skin-render.js) (forearmTwist: KNIFE-diag)
       // Restrained layers on top: a walking bob, and breathing.
       bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); breathT += dt;
@@ -342,7 +353,7 @@ const armsKey = () => 'cs2arms1';
 function armsEnv(arms) { if (!arms || arms.env) return; const e = fpEnv(); if (!e) return; arms.env = e; for (const m of arms.materials) { m.envMap = e; m.needsUpdate = true; } }   // (before the first set's compile: a set's warm-up builds it with its reflections)
 // Pictures at Settings → Texture quality (low 512, medium 1024, high 2048 — CS2's 2048² gloves were 148 MB with mips at
 // any setting): made smaller once as they load, before any upload; data maps kept as they are (no premultiply, no colour conversion).
-async function fitTextures(ts, size = textureSize()) {
+async function fitTextures(ts, size = gdTexSize(textureSize())) {   /* (v53 stage 6: the GD preset's texture cap) */
   if (typeof createImageBitmap !== 'function') return; const done = new Map();
   for (const t of ts) { const img = t?.image, w = img?.width || 0, h = img?.height || 0; if (!w || !h || Math.max(w, h) <= size) continue;
     if (!done.has(img)) { const k = size / Math.max(w, h); try { done.set(img, await createImageBitmap(img, { resizeWidth: Math.max(1, Math.round(w * k)), resizeHeight: Math.max(1, Math.round(h * k)), resizeQuality: 'high', premultiplyAlpha: 'none', colorSpaceConversion: 'none' })); } catch { done.set(img, img); } }

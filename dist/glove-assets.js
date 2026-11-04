@@ -15,6 +15,7 @@
 // GPU one a frame only while the gate is open (freeze, buy time, warmup, menus, a loading card — never in a live round);
 // a pair not in yet when a round goes live shows the finish's fallback colour (a 1×1 picture set: the same shader).
 // Least recently used entries nobody shows are freed once over the budget, outside live rounds only.
+import { gdTexSize } from './gd-preset.js';   // (v53 stage 6: Low / Very Low texture cap)
 import * as THREE from './three.module.js';
 import { gltfLoader } from './gltf-loader.js';
 import { textureSize, anisotropy } from './texture-quality.js';
@@ -23,7 +24,7 @@ import { skinGateOpen, skinFetchOpen, skinRenderer } from './skin-textures.js';
 
 export const GLOVE_BUDGET = 160 * 1024 * 1024;   // bytes of glove pictures (RGBA8 + mips) kept on the GPU at most
 const TIERS = { fp: 1024, tp: 512 };
-export const tierSize = t => Math.min(TIERS[t] || 512, textureSize());
+export const tierSize = t => Math.min(TIERS[t] || 512, gdTexSize(textureSize()));   /* (v53 stage 6: the GD preset's texture cap) */
 // CS2's rarity colours (gloves are all "Extraordinary": ancient).
 export const RARITY_COLOR = { ancient: '#eb4b4b', legendary: '#d32ce6', mythical: '#8847ff', rare: '#4b69ff', uncommon: '#5e98d9', common: '#b0c3d9', immortal: '#e4ae39' };
 export const MESH_NAMES = ['glove_L', 'glove_R', 'skin', 'world_L', 'world_R'];

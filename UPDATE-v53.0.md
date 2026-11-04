@@ -481,6 +481,436 @@ feed and the finishes importer.
   (1920 × 1080 device pixels), with $16000 so you can buy and throw a smoke, your side's fire grenade, an HE and a flash
   while the bots fight. The same file runs on a 52.0.5 tree and on the batch A tree, for comparison.
 
+## Stage 6: smooth without a graphics card (package PERF)
+
+Global Defensive now has its own **Graphics preset** (Settings → Graphics preset, in a match): **Auto**, Ultra, High,
+Medium, **Low** and **Very Low**. Other modes keep their Graphics mode exactly as before. (CS2's own presets are Low /
+Medium / High / Very High, and CS2 also offers "your system's recommended defaults": `csgo_english.txt` 44492,
+44614-44621. Ours has Auto plus five presets, as the spec asks.)
+
+- **Auto, detected once per computer** (`dist/gd-preset.js`). The game reads the graphics chip's name
+  (`WEBGL_debug_renderer_info`) and runs a 2-second test on a small canvas of its own. The test runs only while the
+  Global Defensive start panel is open or, for a guest who joins straight in, behind a match's loading card. It never
+  runs during play. A result that arrives during play waits for the next loading card. Before that, the chip's name
+  alone places the computer. A graphics card → High; Intel Iris Xe, Arc, Radeon 680M/780M and Apple chips → Medium;
+  Intel UHD / HD and Radeon Vega → Low; SwiftShader, llvmpipe or Microsoft Basic Render Driver (no graphics
+  acceleration) → Very Low. A slow test moves the choice down, never up. A message says what was picked.
+- **A computer that ran v52** keeps its Graphics mode as its GD preset only if it is **High or Ultra**, so your Mac keeps
+  High. A saved "Medium" or "Low" is not kept, because v52 wrote those by itself: the default value was saved with any
+  other setting, and its first-match test and software start-up saved them too. Those computers get Auto: a UHD 620
+  laptop gets Low and a software PC gets Very Low (review fix). v52's own first-match test no longer runs in Global
+  Defensive, so its "Graphics set to Performance/Balanced" message can't contradict the new one.
+- **Low and Very Low** (spec 5.2):
+  - the picture at 80 % (Low) or 60 % (Very Low) of the screen's pixels, never more than a 1080p screen's and never a
+    higher pixel ratio than Medium's (review fix: in a small window on a 2× screen Low drew more pixels than Medium),
+    with a new **sharpen pass** (`dist/gd-sharpen.js`: 5 samples, clamped so edges never ring, folded into the last
+    pass). On 1920 × 1080 at 150 % Windows scaling, Low draws 1536 × 864; in your MacBook's window (1470 × 956 at 2×),
+    1428 × 929;
+  - the dynamic resolution steps down from there to 60 % (Low) / 50 % (Very Low) and holds 60 fps. On a software
+    renderer its target is 30 fps, but no measured run reached it (see below);
+  - baked map light only: no real-time shadows, no glow, no anti-aliasing; on a software renderer no post-processing at
+    all (not even the sharpen);
+  - the smoke marched at a third of the resolution or less, CS2's lowest particle detail, one flame per fire, 4 ragdolls,
+    fewer bullet holes (64 on Low, 32 on Very Low, of 128);
+  - **textures capped with mip-maps**: guns (also the first-person gun's own 2048 px pictures), agents, gloves and skins
+    at 1024 (Low) / 512 (Very Low). On Very Low the map's own pictures are also capped at 512, and its baked light map
+    and sun mask (8192 px on Dust II) are drawn at 4096 (review fix). The baked light is softer, but it is still CS2's.
+    Measured texture memory on Dust II (the overlay's estimate): High and Medium 1121 MB, Low 1089 MB, Very Low
+    634 MB (it was 938 MB before the map and light-map caps);
+  - players farther than 15 m animate every other frame (their meshes and materials stay the same: see Partial);
+  - at most 24 sounds at once (40 otherwise);
+  - the radar redrawn 15 times a second;
+  - **no blurred HUD backgrounds**: the kill tally's badge and cards, the alerts and the round banner get CS2's dark fill
+    without the blur (batch B measured the always-on blur at about 4 fps at 4× CPU). Medium and up keep CS2's blur.
+- **For every preset:** the radar's letters and numbers are drawn from small pictures made once and looked up per site
+  and per player slot, so no font is set on the radar in a frame and no text is built for it (batch B's profile: 2.2 ms
+  a frame at 4× CPU in "set font"; now 0). `#emote-preview-tag` is no longer written every frame (only when it changes).
+- **Performance overlay (F9):** also shows the preset in use (whether it is Auto, set or kept from v52, the chip's class
+  and the test time), the textures' video memory (an estimate, worked out a slice per frame so the overlay adds no
+  spike of its own; review fix: the whole walk took 1.2–8.4 ms in one frame every 2 s), and, in the tests, a clear
+  "EMULATION … not a Windows measurement" label.
+- **Desktop app** (`desktop/main.mjs`, spec 5.3): already asked for the high-performance GPU, left ANGLE on Direct3D 11,
+  ignored the GPU blocklist and turned background throttling off (since v51, in every mode). Nothing was changed for other
+  modes. The flags are now documented in place and checked by a new test. Shaders stay compiled behind the loading card,
+  and a preset changed in a match now warms its own shader variants straight away.
+- **Frame pacing** (spec 5.4): the 60 fps cap is the existing "Frame rate limit → 60 FPS". No shader was linked during any
+  measured fight on any preset.
+- **New tests:** `tests/gd-low-preset.mjs` (116 checks: the preset by chip name for 20 real renderer strings, the
+  test's rule, the setting and the v52 rule, the spec 5.2 table, the render scale in pixels, the 24-voice cap played
+  through a recording Web Audio, the texture / LOD / radar / decal caps, the HUD rule, the wiring, and the draw-call
+  budget, read back from the browser run's recorded result with its date) and `tests/desktop-flags.mjs` (27 checks).
+  `tests/gd-perf-overlay.mjs` now also checks the texture-memory sum, the walk in slices, the preset text and the
+  EMULATION label. `tests/browser/gd-presets.mjs` measures every preset in a real match at your MacBook's window size,
+  including a **staged 10-player fight**: all 9 bots held in view 4–15 m away, shooting, with you firing and throwing an
+  HE. It also makes the comparison picture. `tests/gd-other-modes-untouched.mjs` audits `dist/app.js` as a shared file
+  (every change in a Global Defensive branch) instead of requiring it byte-identical.
+
+### Measured — EMULATION on the MacBook (Apple M3), never on Windows
+
+There is no Windows laptop here. Every number below is from this Mac, in muted Chrome, labelled as emulation. Solo
+Defuse on Dust II, 10 players. "Fight": you strafe, fire and throw grenades from the spawn view for 16 s. "Staged": all
+9 bots held in view, as above, for 8 s.
+
+| preset | how | picture drawn | fps | p95 | p99 | max | draw calls p95 (max) | staged fight: draws p95 (max), fps | programs linked |
+|---|---|---|---|---|---|---|---|---|---|
+| High | M3, 1× CPU, 1470×956 at 2× | 2074×1349 | 60.1 | 17.1 ms | 17.6 ms | 33.3 ms | 423 (426) | 450 (464), 60.0 | 0 |
+| Medium | M3, 1× CPU, 1470×956 at 2× | 1617×1051 | 56.7 | 17.2 ms | 49.9 ms | 217 ms | 408 (415) | 435 (446), 60.0 | 0 |
+| Low | M3, 1× CPU, 1470×956 at 2× | 1428×929 | 60.1 | 17.0 ms | 17.4 ms | 17.7 ms | 359 (361) | **380 (383)**, 60.0 | 0 |
+| Very Low | M3, 1× CPU, 1470×956 at 2× | 1071×696 | 59.9 | 16.9 ms | 17.5 ms | 50.8 ms | 359 (361) | 365 (366), 60.0 | 0 |
+| Medium | CPU ×4, 1920×1080 at 150 % | 1920×1080 | 53.0 | 33.4 ms | 34.2 ms | 50.9 ms | 412 | — | 0 |
+| Low | CPU ×4, 1920×1080 at 150 % | 1280×720 (stepped down) | 59.1 | 17.6 ms | 33.3 ms | 49 ms | 367 | — | 0 |
+| Very Low (Auto) | SwiftShader on the M3's CPU, 1280×720 | 768×432 | **2.9** | 933 ms | 4.6 s | 4.6 s | 365 | — | 0 |
+
+In the 1× runs, Medium had one hitch (217 ms) and Very Low one 51 ms frame. In the run before it, with the same code
+apart from the Very Low texture caps, Medium was 60.1 fps (max 17.8 ms) and Very Low 60.1 fps (max 17.7 ms).
+Other agents' test runs were loading this Mac at the same time. The two 4× rows and the software row are from earlier
+runs (the 4× ones at 1920×1080 at 150 %, before the review fixes). The picture
+`~/Desktop/GD-v53-presets.jpg` shows the same spawn view on the four presets, with the overlay.
+
+- **Low stays under 400 draw calls** in a full 10-player fight: in the staged fight, with all 9 bots in view and shooting, at most 383 draw calls
+  (p95 380). CS2's agents are always drawn, whether or
+  not they are in view (`cs2-agents.js` sets `frustumCulled = false`), so the spawn-view fight already pays for all
+  ten of them. Medium and High draw more (the players' own sun shadows on a baked map, from Medium up).
+- **Medium misses spec 5.5's Iris Xe target in the 4× CPU emulation**: 53.0 fps against the target of 60, p95 33.4 ms,
+  and 1 frame over 50 ms in about 1060 frames against the target of under 1 in 1000. It is CPU-bound. Medium has no
+  render scale of its own, so a smaller picture won't fix it. It needs less main-thread work per frame: the agents'
+  animation, the HUD and the effects.
+- **The software renderer is not playable yet.** Auto picked Very Low by itself (chip "SwiftShader", test about 680 ms)
+  and drew 768 × 432 with no post-processing, but reached **2.9 fps** (p95 933 ms). SwiftShader works out every vertex on
+  the CPU, and a Dust II fight is about 1.9 million triangles a frame (the map 1.5 M, the ten CS2 agents 0.5 M). The
+  pixels are not the problem, and the dynamic resolution cannot help: it never stepped below the preset's start, and
+  it does not move during a live round. Reaching the 30 fps target needs a lighter copy of the map and the agents, made
+  when they are imported (not done). A real Microsoft Basic Render Driver was not measured.
+- **Your High preset at your MacBook's real window size** (1470 × 956 at 2×, drawn at 2074 × 1349;
+  `gd-pacing-nades.mjs`, 4× CPU, 20 s, the trees run in turn, 3 rounds):
+
+  | tree | round 1 | round 2 | round 3 | mean |
+  |---|---|---|---|---|
+  | this worktree (stage 6 plus other packages' work in progress, such as the C4 on the back) | 48.8 | 48.5 | 48.3 | 48.5 fps |
+  | batch B (HEAD) | 49.5 | 49.9 | 48.6 | 49.3 fps |
+  | 52.0.5 | 52.3 | 52.7 | 51.7 | 52.2 fps |
+  | stage 6 alone on batch B (no other package's work in progress), a second set under heavier load | 44.6 | 46.5 | 41.8 | 44.3 fps |
+  | batch B, the same second set | 44.8 | 41.6 | 45.9 | 44.1 fps |
+
+  Stage 6 alone is the same as batch B within the noise. The worktree as a whole is about 0.8 fps (1.6 %) behind batch
+  B in every round, and that tree also holds other packages' unfinished work. **High is still about 3 fps behind
+  52.0.5 at 4× CPU** (open-after-B #33: mostly CS2's HUD blur, which High keeps). This stays open.
+- **The 2-second test** read 0.25–0.43 ms on the M3 (six runs) and 680 ms on SwiftShader. Its limits for the other
+  chips (Iris Xe, UHD 620, Vega 8) are worked out from their published speed, not measured on them.
+
+### Partial in stage 6
+
+- Normal maps are not dropped past 10 m, and the agents and guns have no lighter models past 15 m: only their animation
+  is halved there. Both need new shader variants warmed behind the loading card (or lighter meshes from the importer).
+- The software renderer reaches about 3 fps, not 30, and the dynamic resolution's 30 fps target is not shown working
+  (see above).
+- Medium at 4× CPU (the Iris Xe emulation): 53 fps, not the 60 the spec asks for (see above).
+- Your High preset is not faster than batch B, and it is about 3 fps behind 52.0.5 at 4× CPU (see above).
+- Real Windows laptops (Iris Xe, UHD 620, Vega 8) were not measured; the table's targets for them are not confirmed.
+- No SSAO exists on any preset (spec 4.1 asks for it on High / Ultra). (Package LOOK below adds it on High / Ultra.)
+
+## Map look and the HUD's look like the CS2 pictures (package LOOK)
+
+Every map's look settings now come from the CS2 install on this computer. `node tools/import-cs2-look.mjs` reads them
+into `user-assets/look/look.json`. It backed up first, to `~/CS2-extract/backup/look-*`, and added only `models.look` to
+the manifest. Without the import, each map keeps the old fixed look.
+
+- **Auto exposure like CS2's** (`dist/gd-exposure.js`). Each map's exposure now moves inside the range set in that map's
+  `post_processing_volume` entity (`minexposure` / `maxexposure`, `exposurespeedup` / `exposurespeeddown`):
+  Dust II 0.925–1.1, Mirage 0.8–1.0, Inferno 0.8–1.1, Nuke 1.0 / 0.85, Anubis 0.7–1.8, Ancient 1.0–1.7,
+  Overpass 0.8–1.2. Before, every map used one fixed value.
+  - **Nuke's range is reversed in its own entity** (minexposure 1.0, maxexposure 0.85, hammeruniqueid 2:61814:38404). CS2's
+    clamp then holds Nuke at 0.85, and so does ours. The CS2 footage fit gave the same 0.85.
+  - **How it works:** the frame's brightness is measured on the graphics card (the picture is shrunk to 32 × 32, then to
+    1 × 1, between two tiny targets). The game never reads pixels back to the processor. The exposure moves at the same
+    speed at any frame rate. Both shaders are built behind the loading card.
+  - **Not in CS2's files:** the brightness the exposure aims for, and exactly what the two speeds mean (we treat them as
+    rates per second).
+  - **The brightness it aims for is set per map** (after review). One value for every map (0.205, the 3D view of
+    `cs2-hud.png`) pushed several maps to the wrong end of their range compared with CS2's own footage: Dust II 1.10
+    instead of 0.925, Inferno 1.10 instead of 0.8, Anubis 0.80 instead of 1.8. We measure the picture after each map's
+    colour grade, and the grades differ, so one value cannot fit all. Each map's value is now the brightness our game
+    shows at CS2's footage exposure (`~/CS2-extract/build/exposure_fit.json`) in its two spawn views: Dust II 0.129,
+    Mirage 0.240, Inferno 0.0875, Nuke 0.0995, Anubis 0.341, Ancient 0.0886, Overpass 0.0309. These are our own
+    calibration, not CS2 data. A map without a footage fit keeps 0.205.
+  - **Nuke's washout is not fixed by this.** Nuke's reversed range holds it at 0.85, which is the same value as before.
+    The bright white walls in the Nuke pictures come from elsewhere (the curve, the colour table or the bloom) and are
+    still open.
+  - **Measured at real size (2940 × 1912), first view → second view:** Dust II 1.092 → 1.099; Mirage 0.809 → 0.989;
+    Inferno 1.083 → 1.1; Nuke 0.85 → 0.85; Anubis 1.58 → 0.798; Ancient 1.7 → 1.7; Overpass 1.192 → 1.2 (High).
+    Each stays inside its map's range on High and on Low. Ancient and Overpass sit at the top of their ranges in these views.
+- **Screen bloom from each map's `.vpost` CBloomLayer**, on Medium and up only. Low and Very Low have none.
+  - **Medium's edges** (fixed after review). Before LOOK, Medium drew straight to the screen with the browser's 4×
+    anti-aliasing. The bloom and the exposure now need a post-processing buffer on Medium, and that buffer had none.
+    We first gave the buffer 4× anti-aliasing. A Medium A/B at 2940 × 1912 then measured 25.5 and 27.3 fps (staged fight
+    32 fps) with it, 53.6 fps (staged 59) with the buffer and no anti-aliasing, and 40.8 fps (staged 33) with no buffer
+    at all (Medium as it was before LOOK). So Medium now smooths its edges in the last pass instead (`dist/gd-fxaa.js`).
+    CS2 has a post-process option like this too: CMAA2, in its anti-aliasing list (`csgo_english.txt`). **Not CS2:** ours
+    is FXAA, not CMAA2. With FXAA, Medium measured 57.3 and 51.0 fps (staged fight 57 and 38). With the look turned
+    off on Medium, it measured 53.6 fps (staged 60). These are the same within this Mac's run-to-run spread.
+  - The map's `m_vBlurTint` is now really applied. Before the fix, the bloom pass reset it to white every frame. Every
+    map's tint is white today, so nothing looks different.
+  - SCREEN blend: Dust II 0.184, Mirage and Overpass 0.1261, Anubis 0.0301, Nuke 0.0112.
+  - ADD blend: Inferno 0.12, Ancient 0.163. Their screen strength is 0, but their files use the ADD blend, so they do bloom.
+  - The bloom's thresholds come from the same files. **Conflict:** spec 4.1 asks for "bloom on lights and fire only".
+    CS2's files bloom the whole screen, and the standing rule ("all things should be like CS2") wins.
+- **Fire and muzzle light on the baked map.** The baked map materials ignored three.js lights. They now have a fixed set
+  of 6 point-light slots. The set is built at load and its size never changes, so no shader is built during a round.
+  A molotov lights the floor around it: one slot is filled in the picture test, and 0 shaders were built.
+- **SSAO** (`dist/gd-ssao.js`) on High and Ultra only, at half resolution, 8 samples. It is built at load and is off on
+  Medium and below.
+  - **Fixed after review:** the first version drew into the composer's other buffer and cleared its depth, so on High a
+    smoke behind a wall showed through the wall, and a smoke covered a player standing in front of it. SSAO now darkens
+    the scene's own buffer in place (a multiply blend, no clear, no swap), so the smoke reads this frame's depth. A unit
+    test runs the real composer in the game's pass order. The picture test also samples the depth the smoke receives on
+    the graphics card: on High with SSAO, 58 of 64 samples are nearer than the far plane (before the fix, none would be). **Not CS2:** CS2's "Ambient Occlusion" setting is soft occluder shapes on characters and props, not a
+  screen-space pass. We added the screen-space pass because spec 4.1 asks for it.
+- **Easier to see players:** a small saturation lift (× 1.12) on agents, and the darkest shade an agent can get raised from
+  0.30 to 0.36. Both apply to agents in GD only. CS2's "Boost Player Contrast" is built into its program; its exact shading
+  is not in the files.
+- **Fixes found on the way:**
+  - Ancient on High showed a white square. The water material reflected the global environment, and the High glow was
+    brightening one of the map's own untextured materials. The water is now a Lambert material, and map materials are
+    excluded from the glow.
+  - SSAO no longer produces NaN on the sky.
+  - The bloom input is clamped, so one very bright pixel no longer blooms.
+- **Kill cards** (`dist/gd-kill-emblem.js`). Measured against `cs2-kill-emblem.png` and `-ace.png`:
+  - The cards are drawn 1.126 × CS2's stylesheet size and sit 44 px above the badge. The first LOOK version used 1.103 and
+    45 px, and reported a height of 0.790. That number was the module's own constant, not a measurement. Measured from
+    the pixels, it was 0.78.
+  - The sizes are now measured from pixels (`tests/browser/gd-emblem-hud-shots.mjs`): 1920 × 1080 drawn at 3×, with the
+    badge hidden, and the card outlines' rows and columns counted. A card is 0.802 badge diameters tall (CS2 0.79). The
+    3-kill fan tops 0.620 above the badge (CS2 0.62) and is 1.094 badges wide (CS2 1.06–1.10). Measuring at 1× was too
+    coarse: two runs differed by 0.015.
+  - Every kill shows its card from the first one.
+  - The number and the skulls are CS2's own `kill_N` and `kill_pip` images, scaled with the card. They come out at about
+    13 px and 9.3 px tall, against the 14.5 px and 10.5 px measured in CS2's picture. The difference is 1–1.5 px, about
+    what a glyph measurement on a 12 px number can miss. We did not resize CS2's images separately from their card.
+  - The dot grid on the card is at 0.05 opacity, so it is nearly invisible.
+- **HUD colours, from `cs2-hud.png` and the install's stylesheets:**
+  - The money is white: `hudmoney.vcss` gives `defaultColor #ffffff`, and green #8fff6f appears only on its + animation.
+  - Health, armour, ammo and their bars keep CS2's HUD colour. The default is Team Color, which is gold #eabe54 on T.
+  - **This differs from the package brief,** which asked for white health and ammo and green money. The picture measures
+    the money at (240, 215, 160), like the white chat text under its warm cast. It measures "100" at (235, 205, 119),
+    which is the T team colour.
+- **The HUD's per-frame object** in `gd-hud.js` is now reused, so the HUD allocates nothing per frame.
+
+**Performance at real size** (`tests/browser/gd-presets.mjs`, 2940 × 1912, re-run after the review fixes on 2026-11-04,
+0 shaders built during fights; other agents' tests were loading this Mac at the same time):
+
+| preset | fps | p95 | staged fight fps | staged draws max | first LOOK run | stage 6 (PERF) fps |
+|---|---|---|---|---|---|---|
+| High | 56.8 | 17.7 ms | 60.0 | 470 | 55.7 | 60.1 |
+| Medium | 53.2 | 33.4 ms | 56.1 | 433 | 54.3 | 56.7 |
+| Low | 60.1 | 17.4 ms | 60.0 | **384** | 60.1 | 60.1 |
+| Very Low | 60.1 | 17.1 ms | 59.0 | 384 | 60.1 | 59.9 |
+
+Low stays under 400 draw calls. In a High A/B in the first LOOK run, with SSAO and exposure on, both runs reached 60.1 fps
+(p95 16.8 and 17.0 ms). With SSAO off they reached 55.1 fps, and with SSAO and exposure off 57.1 fps. That spread is
+machine noise, not the passes. The Medium A/B is above, under bloom.
+
+**Partial (LOOK):**
+- PBR normal and roughness maps, the close-up detail normal, and per-area cube maps are not done.
+  - The converted map files (`user-maps/*.glb`) hold no normal or metal/roughness textures.
+  - The map's env_cubemap and light-probe entities are imported and listed in `look.json`, but their cube-map arrays
+    (`env_cubemap_array.vtex`) are not converted yet. Metal and glass still use the global environment.
+- The exposure's target brightness and the meaning of its speeds are ours (see above). CS2's files do not hold them.
+
+**Not like CS2 yet (LOOK, listed after review):**
+- **Sky bloom:** each `.vpost` has `m_flSkyboxBloomStrength` (Inferno 0.1557, Dust II 0.9994, Nuke and Ancient 1.0). It
+  is imported but not used, so our sky blooms at the full strength. On Inferno, CS2 blooms its sky at about 0.16 × the
+  scene's strength.
+- **Bloom thresholds are approximate.** CS2 thresholds the HDR scene. We threshold the graded picture, and cap the start
+  at 0.92. On Anubis (threshold 9.999 and width 9.999), where CS2 blooms little more than the sun, our near-white pixels
+  bloom at its very small strength of 0.0301.
+- **SCREEN blend above white:** the blend runs on the HDR buffer. Where a pixel is brighter than 1 (High's glowing lamps,
+  fire and muzzle sprites), the blend takes a little off it. The bloom's own value is at most its strength (≤ 0.184), so
+  such a pixel never drops below 1. It still shows as white with the default "off" tone mapping. With filmic or AgX tone
+  mapping, the very brightest highlights come out slightly dimmer.
+- **SSAO** is a screen-space pass. CS2 uses AO proxies (see above).
+
+## Smoke and flash lineups: bounce, roll and rest like CS2 (package LINEUPS)
+
+What a grenade does after it first touches something was checked rule by rule against Source's grenade code, which CS2's
+grenades inherited (`CBaseCSGrenadeProjectile::ResolveFlyCollisionCustom` in the public Source SDK: these are Source
+rules, not in the CS2 files), and every change was measured on all 366 public CS2 lineups.
+
+- **One full bounce a tick, as in Source.** A grenade keeps 45 % of its speed when it hits something (0.45 × the
+  surface's 1.0, or 0.3 off a player, at most 0.9). Source traces a grenade's move once a tick (1/64 s) and handles that
+  one hit; the rest of that tick it is only pushed along, which stops at whatever it meets without changing its speed.
+  Ours now does the same: a second touch in the same tick only pushes it out of the surface, and the next tick bounces
+  it again. The old rule let that second touch slide it along the surface, so grenades rolled on along ledges and off
+  them. A rolling grenade now loses 55 % a tick and stops in as many ticks as in Source (3 ticks from 300 units/s).
+  An earlier draft of this package bounced on every touch within a tick too (209 lineups); that is not Source's rule,
+  and Source's rule lands 208 of them on its own.
+- **A grenade that hits a player** now goes through the same rule: 0.45 × 0.3, and stopped (never at rest: a player is
+  not a floor) when slower than 30 units/s. Before, a slow grenade on a head kept bouncing.
+- **Edges and corners answer like a box.** Source's grenade is a small box (±2 units), so at an edge or a corner it
+  bounces off a flat plane: the face it met, or a straight axis. Ours used a rounded direction there, which threw
+  grenades sideways off ledges, window frames and door edges. Which plane is picked at an edge is our own rule, fitted
+  to the public lineups. (+12, −2.)
+- **CS2's window panes now break.** CS2 gives its Nuke and Anubis window props the collision property "window": "Solid
+  but does not block light or LOS", with nothing excluded, so solid to grenades (`scripts/collision_properties.txt`).
+  The props break in CS2 (their break pieces, such as `models/props/de_nuke/windows/nuke_window_84x68/piece.vmdl_c`, are
+  in the install). The importer had left them as plain world, so grenades bounced off them. Now each one becomes a
+  breakable glass pane when the map loads (8 on Nuke, 15 on Anubis): a grenade or a bullet breaks it for everyone, the
+  host decides, and it is whole again next round. A grenade flies on through at full speed. CS2's own lineups through
+  these windows pop where an unslowed grenade does (Nuke T Roof → A flash and the silo yard flash: 557 and 513 units off
+  before, 4 and 6 now); slowed to Source's 0.4 they pop short and miss, so "full speed" is fitted. The map file has no
+  per-triangle layer, so the panes are found by shape (thin see-through boxes, at most 0.7 units thick, 20 to 100 units
+  across; also fitted). The map files are not changed.
+- **Other breakable glass** now keeps 0.4 of the grenade's whole velocity, Source's rule for breakable glass ("slow our
+  flight a little bit", in the same function as the 0.45). It used to keep 0.15 of the run and no upward speed, which
+  was ours. No public lineup goes through such glass, so the hit count does not change.
+- **Checked and kept as they were:** the elasticity of 0.45 (the hit count drops on either side of it), the 30 units/s
+  floor stop (Source: speed² < 30²), the 0.3 bounce off players, and the grenade's size. Our 2.27 units is close to
+  Source's 2; 2.0 and 3.0 both land fewer lineups.
+- **The smoke's detonation was checked and left as it was. It is not like Source.** Source looks again every 0.2 s while
+  a smoke still moves faster than 0.1 units/s. Ours goes off on the tick it comes to rest. Against the public air times
+  (139 smokes, rounded to 0.1 s) the two are equally good: 0.308 s off on average now, 0.317 s with the 0.2 s clock.
+  Where it comes to rest is the same either way.
+- **The test now counts flashes that come to rest before 1.6 s.** In the test, a flash that came to rest before its pop
+  used to count as a miss. It now counts where it lies, which is where the game pops it.
+
+Hits within 32 units of CS2's spot for smokes, or within 16 units at the 1.6 s pop for flashes, measured the same way
+before and after (`tests/gd-lineups.mjs`):
+
+| | before | after | median miss, units (before → after) |
+|---|---|---|---|
+| all | 189 / 366 | **209 / 366** | 29.0 → 13.5 |
+| smoke, standing | 48 / 77 | 52 / 77 | 11.5 → 11.0 |
+| smoke, crouched | 2 / 3 | 2 / 3 | 29.0 → 29.0 |
+| smoke, jump-throw | 83 / 217 | 94 / 217 | 63.6 → 47.5 |
+| flash, standing | 31 / 37 | 32 / 37 | 5.6 → 5.5 |
+| flash, crouched | 0 / 1 | 0 / 1 | 368.5 → 368.5 |
+| flash, jump-throw | 25 / 31 | 29 / 31 | 5.7 → 5.4 |
+| Mirage (smokes / flashes) | 21 / 11 | 22 / 12 | |
+| Dust II | 29 / 17 | 33 / 19 | |
+| Inferno | 19 / 5 | 20 / 5 | |
+| Nuke | 11 / 3 | 15 / 5 | |
+| Anubis | 20 / 3 | 21 / 3 | |
+| Ancient | 23 / 9 | 27 / 9 | |
+| Overpass | 10 / 8 | 10 / 8 | |
+
+21 lineups were gained and 1 was lost (Inferno balcony / mini pit smoke from A Long: 30 → 111 units, lost to Source's
+one-bounce-a-tick rule). Of the lineups that still miss, 10 end more than 50 units further off than before and 5 more
+than 50 units nearer. The flashes that already popped on CS2's spot still do, 5.24 units off on average before and
+after (56 flashes). Sources: the bounce rules and the 0.4 glass rule are Source SDK rules, not in the CS2 files. The
+window layer is from CS2's `collision_properties.txt`. "Windows let a grenade through at full speed", the window shape
+rule and the edge rule are fitted to the public lineups (`tests/fixtures/cs2-lineups-public.json`, which players
+publish; they are not CS2 files).
+
+**What is left (157 misses).** 52 of them pass within 32 units of CS2's spot, 59 within 33 to 128 units, and 46 never
+come within 128 units. 24 of the 52 near misses end more than 32 units past CS2's spot along the throw (33 to 184
+units), so some of our smokes still travel too far after landing. None of the Source rules above explains it. Of the 46
+far misses, 38 are jump-throws whose first touch is already far from CS2's path. Two named cases:
+- Anubis Top Mid smoke from T spawn (1920 units off, before and after): CS2's spot is 2270 units across the map from the
+  throw. A standing full throw reaches about 1400 to 1500 units at most (675 units/s at 0.4 × 800 gravity), so the lineup
+  as published cannot land there. Our flight hits the overhang 270 units above the thrower at step 35 and drops back.
+- CS2's railings let grenades through (`csgo_railing`: "Solid but exclude bullets & grenades"); ours are still solid.
+  See "Partial" below.
+
+- Tests: `tests/gd-nade-bounce.mjs` (new, 14 checks: the 45 % reflection, one full bounce a tick in a corner, the roll
+  losing 55 % a tick, the 30 units/s stop, the 0.3 off a player and the stop on a head, the box edge, window panes found
+  and turned into breakable glass on Nuke and Anubis, the 0.4 through other glass and full speed through a window, the
+  smoke going off at rest), `tests/arena-nades.mjs` (glass: 0.4) and `tests/gd-lineups.mjs` (the new totals, which may
+  not drop on any map).
+- Picture: `~/Desktop/GD-v53-lineups-bounce.jpg`.
+
+## Hits: blood, impacts, hit sounds, tagging, the mix and money (package HITS)
+
+Every number below is from the user's CS2 install (`particles/blood_impact/*.vpcf`, `particles/impact_fx/*.vpcf`,
+`game_sounds_player.vsndevts`, `weapons.vdata`, `scripts/soundmixers.txt`, `sounds/graphs/__main__.vmix`) unless it
+says **ours** or **CS:GO**.
+
+- **Headshot blood no longer covers the screen** (`dist/gd-blood.js`). Each emitter now has CS2's screen-size cap and
+  fade (`m_flMaxSize`, `m_flStartFadeSize` / `m_flEndFadeSize`), its own FadeOut window, and InterpolateRadius with
+  Source's `Bias()`. A headshot is `blood_impact_headshot.vpcf`'s real children: 01b, 01c (8 wisps drawn with a new
+  wispy spray cell, not the opaque chunk), 01d, 01e, `red_01_chunk` ×2 and `red_01_backspray`. `red_01_mist` and
+  `drops1` are no longer on headshots. Which system CS2's code fires for each hit is not in the files.
+- **Your own wounds** show CS2's local-player splatter: `blood_impact_localfrontenemy` (`_splatter_lft` / `_rgt`, 5 to
+  10 splats by damage), `localrearhit` from behind, and `lp_spray` on every hit. It is one pooled draw, warmed at load.
+  A front hit always draws both children, the left and the right edge, each laid in order down its own path, as the
+  file lists both and places each child's path (x ±100, y 100 to −50). **How that path maps onto the screen, and how
+  big, is ours.** CS2's code places those control points, and that code is not in the files.
+- **Bullet impacts** (`dist/gd-impacts.js`):
+  - Concrete's `ricochet_sparks_sparse` is drawn at its full 1 HU width with the soft `spark.vtex` profile and the warm
+    (195,184,166) tint, as short glints with a 0.1 s length fade-in and a 20 HU cap. These were the two long white streaks.
+  - The **radius curves**: a `C_OP_SetFloat` on the radius with a curve over the particle's age. Several emitters used
+    to keep their starting size. Now concrete, plaster and glass `*_base` add up to +10.9 HU at 0.164 s and +19.15 HU at
+    1 s. `impact_glass_dust` and `impact_plaster_smoke` add up to +44.7 HU at 2 s, and `impact_dirt_child_smoke_puff`
+    does the same. `impact_concrete_child_smoke` grows ×1 → ×4 over its life (this was misread as "grows from nothing").
+    `impact_dirt_child_smoke` follows its curve from ×0.1 to ×3 at 0.5 s. **Ours:** the keys are joined in straight
+    lines (CS2's tangents are not modelled), and the op's output field is not written in the file, so we read it as the
+    radius (the default). The concrete smoke's `flOpStrength` rnd(1..2) scales its radius.
+  - **Control point 6 comes from the files** (it was our guess before, and it ran the wrong way). Each surface's parent
+    system sets it itself with `C_OP_DistanceBetweenCPsToCP`, from the hit to control point 5, which `impact_dirt.vpcf`
+    notes is "the start of the Shot". `impact_concrete`, `impact_glass` and `impact_plaster_high`: 100 to 800 HU gives
+    1 to 0. `impact_dirt`: 1 to 0.1. Metal, tile and wood set none. `impact_fx_hit_darken` sets its own from the local
+    player (50 to 1200 HU).
+  - The children read CP6 through their own **curves**, not as a straight multiplier: the count remaps (concrete smoke
+    4 to 1, glass dust 3 to 2, plaster smoke 1 to 2, dirt puff 2 to 1, darken 2 to 1) and the alpha, life and radius
+    curves on concrete, plaster, glass, dirt, the darkening and `impact_generic_burst_2`. Every curve's keys and slopes
+    are read back from the vpcf by `tests/gd-impacts.mjs`.
+  - What it looks like now: a concrete hit within 100 HU gives one bright puff (alpha × 0.86, life × 0.69) and
+    `generic_burst_2` at its longest life. At 800 HU or more it gives four faint short puffs, and `generic_burst_2` is
+    twice as wide.
+  - **Ours:** the curves are evaluated as cubic Hermite through the stored slopes (the editor's tangent modes are not
+    modelled). An unset control point 6 (metal, tile, wood) is 0. The darkening's output range is not in its file, so it
+    uses Source 1's default (0 to 1), and its count's `REMAP_BIASED` uses Source's `Bias` at (p + 1) / 2. For another
+    player's shot the distance is measured from your eye, not the shooter's (the impact pool takes the shot's length as
+    an optional `len` when a caller has it).
+  - The spark cores on metal, wood and the other surfaces are cream, as the files say, not "deeper orange" (open-B #17).
+- **Armour hit and kill sounds** (`dist/gd-sounds.js`, `dist/gd-hit-feedback.js`). The host adds a 1-bit `ar` to the
+  hit and to the blood record: a chest or stomach hit while the victim had kevlar before the hit.
+  - Hits on armour play `Player.DamageBodyArmor.AttackerFeedback` (with `.AttackerFeedbackFlesh`), `.Victim` and
+    `.Onlooker`.
+  - Kills on armour play `Player.DeathBodyArmor.*`.
+  - `Player.DamageBody.Knife.AttackerFeedback` is `null.vsnd` in CS2, so the knife's attacker hears nothing here too.
+  - Without CS2 imported, a kevlar tick we synthesise stands in. The 2-voice and UI-mix limits of spec 2.2 still apply.
+  - The kills also carry CS2's child event `Player.DeathBody.Flesh` (armour or not): `Player.DeathBody.Victim` and
+    `.Onlooker`, and `Player.DeathBodyArmor.Victim` and `.Onlooker`. Onlookers now hear every body hit they see
+    (`Player.DamageBody.Onlooker`), not only headshots and armour hits. The HE plays both of `BaseGrenade.Explode`'s
+    children, `.ExplodeDistant` and `BaseExplosionEffect.Sound`.
+  - The shooter's hit feedback can take the hit result's own `ar` and `w` (`hit(kill, head, helmet, ar, w)`); without
+    them it still reads your newest blood record. `lab.js` reportHit (package GUNS) can pass them.
+- **Tagging by the attacker's weapon** (`dist/combat-logic.js` `hitTag` / `flinchTag`, called from `lab.js` onHurt).
+  The blood record now carries the weapon id `w`. The amounts come from `weapons.vdata`
+  `m_flFlinchVelocityModifierLarge` / `Small`; the HE uses 0.3 / 0.1 and the knife 0.3 / 0.3.
+  - **The rule is CS:GO's, unverified for CS2:** the first hit at full speed takes you to Large, and a hit while still
+    slowed takes you to min(v, v × Small).
+  - Every SMG's 0.0 is not explained by the files. We treat it as "no value" and use 0.5 (**ours**).
+  - The recovery of 0.4 a second is CS:GO's and is not in the files.
+  - An HE hit now stamps `hx` with the host's clock instead of a count, and `hitTag` ignores a record or stamp older
+    than 1.5 s. So a page that has just joined never takes an old one, and an HE read together with a bullet is not read
+    again by the next fall or bomb hurt.
+  - `DUCK_EYE` is now 46.045 HU, the same as the GUNS package's crouched eye. `lan/room.mjs` relays `combat.bl` whole,
+    so it needed no change.
+- **The mix no longer clips** (`dist/spatial-audio.js`, GD only). A last stage modelled on CS2's FinalMixGlue: −6 dB,
+  knee 3.125 dB, 4 ms attack, 458 ms release, no make-up gain. Web Audio stops at 20:1 where CS2 uses 40:1.
+  - Chrome's compressor adds its own make-up gain, so we take that gain back out (same formula), then put a −1 dBFS
+    ceiling after it.
+  - In muted Chrome, 8 world + 4 UI voices peaked at +0.56 dBFS before and −6.02 dBFS now.
+  - `soundmixers.txt` Default_Mix group volumes now apply in the GD bank (Weapons .6, Footsteps .8, BulletImpacts .3,
+    Explosions .7, VO .34, …).
+  - The HE and flash sounds go through CS2's events: `BaseGrenade.Explode`, `Flashbang.Explode`, and
+    `Flashbang.Ring.Long` / `.Medium` / `.Short`. **Which ring goes with how long you are blinded is ours** (3.5 s / 2.5 s).
+- **Money and alerts** (`dist/arena-defuse.js`, `dist/gd-hud-alerts.js`):
+  - Terrorists still alive when time runs out unplanted get $0 (`Team_Cash_Award_no_income`).
+  - The defuser gets $300 (`Player_Cash_Award_Bomb_Defused`). The value of `cash_player_bomb_defused` is not in the
+    files, so this is CS:GO's 300.
+  - The overtime MATCH POINT alert is right: MR3 overtime shows it at 15-14 and not at 12-12.
+- **The practice recoil-dots panel `#gd-recoil` is gone.** CS2 has none; it was ADDENDUM 11's "stray dark square".
+  Its two toggles (the setup form's "Show my recoil" and the practice menu's "My recoil") are gone too.
+- Tests: `tests/gd-blood.mjs`, `tests/gd-impacts.mjs` (now also the radius curves, read back from the vpcf),
+  `tests/gd-headshot-audio.mjs`, `tests/gd-hud-alerts.mjs`, and the new `tests/gd-tagging.mjs`, `tests/gd-mix-peak.mjs`,
+  `tests/gd-money-rules.mjs`, `tests/browser/gd-mix-peak.mjs`. `tests/browser/gd-impacts-shots.mjs` now aims at a
+  stopped bot and fires up to 3 shots (open-B #34). The 600 HU camera no longer ends up inside a wall.
+- Picture: `~/Desktop/GD-v53-impacts.jpg`, with 1:1 crops at 0, 8, 60 and 200 ms, concrete at 50, 300 and 800 HU,
+  practice's impact boxes off, and the blood frames held from each record's own start.
+- **Not like CS2 yet:** CS2's dust sprites cast particle shadows (`m_bParticleShadows`, `m_flShadowDensity` 2), and ours
+  do not. So a grey concrete puff on a light wall is real but faint (low contrast).
+
 ## Numbers marked (verify) and where they came from
 
 | number | value | source |
@@ -509,11 +939,19 @@ feed and the finishes importer.
 
 ## Partial, and what is not like CS2 yet
 
-- **Smoke rolling and resting differ from CS2.** Of the 366 public CS2 lineups, 178 still end more than 32 units from CS2's spot. 50 of those pass within 32 units of CS2's spot and then roll or bounce away. Examples:
-  - Mirage Apartments window smoke: passes 1 unit from CS2's spot, then stops 165 units away.
-  - Inferno A Long smoke from Mid: bounces early and ends 502 units off.
-  - Nuke T Roof flash: bounces at a spot where CS2's goes through.
-  - The full list is in the stage 2 notes.
+- **Smoke rolling and resting differ from CS2.** After package LINEUPS, 157 of the 366 public CS2 lineups still miss
+  (177 before). 24 of the 52 smokes that pass within 32 units of CS2's spot end more than 32 units past it along the
+  throw: they travel too far after landing (see package LINEUPS).
+  - Mirage Apartments window smoke: passes CS2's spot, then stops 176 units away and 144 units lower.
+  - Inferno A Long smoke from Mid: its first touch is on a railing, and it ends 764 units off.
+- **CS2's railings stop our grenades.** CS2's file says thrown grenades pass `csgo_railing`, `csgo_railing_no_players`
+  and two other excluded layers. The map file has no per-triangle layer. CS2's world physics (`world_physics.vmdl_c`)
+  lists the shapes (Nuke 870, Overpass 69, Anubis 43, Inferno 20). Taking out only the small ones measured +1 lineup.
+  The rest are large mesh shapes, so the fix needs a new importer that reads their triangles, a side file in
+  `user-assets/` that the room sends to every player, and a grenade-only mask (ragdolls and dropped guns must still hit
+  railings). Not done yet.
+- **Smoke detonation**: ours goes off on the tick it rests; Source checks every 0.2 s (equal against the public air
+  times).
 - **Jump smokes are very sensitive** to the launch: 3 % more or less upward speed halves the hits.
 - **Run-jump and walk lineups** cannot be checked: the public data gives no running speed. Smoke air times are checked to ±0.3 s, not ±1 tick, because the public times are measured by hand.
 - **Inputs during the throw delay:** a jump, stop or crouch in the 0.104 s after release is not applied.
