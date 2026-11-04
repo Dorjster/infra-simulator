@@ -23,6 +23,11 @@
 //                   are dead and spectating the team counter stays (CS2) and the player you watch has a white frame
 //   centre          the dynamic crosshair (gd-crosshair.js), the scope, the hit marker and arcs (gd-hit-feedback.js)
 // Colours: CS2's cl_hud_color (gd-hud-prefs.js; default Team Color — the picture's gold is t-color #eabe54); text white
+// (v53 LOOK, add12-hud-colours: the money is NOT HUD-coloured — hudmoney.vcss .money-text-label{color: defaultColor},
+// @define defaultColor #ffffff, gains #8fff6f / losses #fd3535 only on its +/− animation; cs2-hud.png agrees: the
+// "$800" measures (247,222,163) like the white chat text's (239,213,180) under the picture's warm cast, while "100"
+// measures (235,205,119), the Terrorists' t-color #eabe54 = (234,190,84): health, armour, ammo and their bars keep
+// cl_hud_color, hudhealthammocenter.vcss .hud-HA-text Label / .ProgressBarLeft{color: defaultColor} washed by it.)
 // with soft shadows, thin lines, no panel backgrounds. The font: Barlow Semi Condensed (OFL, dist/fonts), tabular numbers.
 // COST (spec 3 UI performance): one node set built here, reused; DOM written only when a value changes (numbers and
 // references compared, no signature strings: the weapon list keeps its last values in WL, each avatar a bit field); the
@@ -97,7 +102,7 @@ ${['health', 'armor', 'ammo', 'reserve', 'money', 'timer', 'scoreCT', 'scoreT', 
    restarts it without a reflow */
 #gd-hud .reserve .bw{display:inline-flex;overflow:hidden}#gd-hud .reserve .bw.ra .bul{animation:gd-rl-a .3s ease-in}#gd-hud .reserve .bw.rb .bul{animation:gd-rl-b .3s ease-in}
 @keyframes gd-rl-a{0%{transform:translateY(0)}50%{transform:translateY(${U(50)})}50.01%{transform:translateY(${U(-50)})}100%{transform:translateY(0)}}@keyframes gd-rl-b{0%{transform:translateY(0)}50%{transform:translateY(${U(50)})}50.01%{transform:translateY(${U(-50)})}100%{transform:translateY(0)}}
-#gd-hud .money{font-size:${U(38)};line-height:${U(38)};color:var(--hc);white-space:nowrap}#gd-hud .money .dm{position:absolute;left:0;bottom:100%;font-size:${U(24)};opacity:0}
+#gd-hud .money{font-size:${U(38)};line-height:${U(38)};color:#fff;white-space:nowrap}#gd-hud .money .dm{position:absolute;left:0;bottom:100%;font-size:${U(24)};opacity:0}
 #gd-hud .money .dm.add{color:#8fff6f}#gd-hud .money .dm.rem{color:#fd3535}#gd-hud .money .dm.a{animation:gd-mny 2.9s linear}#gd-hud .money .dm.b{animation:gd-mny2 2.9s linear}
 @keyframes gd-mny{0%{opacity:0;transform:translateY(${U(26)})}13%{opacity:1;transform:none}87%{opacity:1;transform:none}100%{opacity:0;transform:translateY(${U(30)})}}@keyframes gd-mny2{0%{opacity:0;transform:translateY(${U(26)})}13%{opacity:1;transform:none}87%{opacity:1;transform:none}100%{opacity:0;transform:translateY(${U(30)})}}
 #gd-hud .wl{position:absolute;inset:0}#gd-hud .row{position:absolute;right:${U(34)};width:${U(130)};height:${U(36)};display:none}#gd-hud .row.on{display:block}
@@ -131,6 +136,9 @@ html body:has(#gd-hud.cs2:not([hidden])) #ar-banner:not(.over){display:none!impo
 html body:has(#gd-hud.cs2:not([hidden])) #controls-hint{bottom:calc(100vh - var(--gd-view-top,0px) - var(--gd-view-h,100vh) + ${U(196)})}   /* (the first seconds' key strip: above the kill cards, never over CS2's health / ammo row) */
 html body:has(#gd-hud.cs2:not([hidden])) #game-notifications{left:calc(var(--gd-view-left,0px) + ${U(8)});right:auto;top:auto;bottom:calc(100vh - var(--gd-view-top,0px) - var(--gd-view-h,100vh) + ${U(150)});width:${U(560)}}
 `; };
+// v53 LOOK (gd-hud-per-frame-object): the crosshair's movement state copied into one reused record each frame (it was
+// { ...move(), scoped } — a new object 60+ times a second).
+const MOVE_S = { scoped: false };
 export function createGdHud({ world, name, weapons, recoil, fov, move, active, spectating = () => false, watched = () => null }) {   // (spectating / watched: lab.js — dead and watching a team mate, CS2's in-eye; the watched player's key)
   let tW = null, tS = null, tK = -1, tC = '', tTitle = '';   // (the weapon title, made again only when the weapon, its skin or the host's CS2 catalogue — the finish names — changes)
   const css = document.createElement('style'); css.textContent = CSS_TEXT() + `
@@ -270,7 +278,7 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active, s
       // The crosshair: the player's own look, fixed at the screen centre (never moved by recoil); none for a sniper
       // rifle unless scoped (then the scope's reticle), as in CS2. Dynamic: the gap opens with the inaccuracy.
       const showX = !!w && !sniper; if (els.x.hidden === showX) els.x.hidden = !showX; if (!showX) return;
-      const inacc = weapons.inaccuracy ?? moveInaccuracy(w, { ...move(), scoped: sc > 0 }), gap = Math.round(Math.min(40, px(inacc, f)));   /* dynamic, CS2's: the gun's whole inaccuracy now (weapons.js — its floor, the shots' fire penalty, running, jumping), as the cone the next bullet can land in */
+      const inacc = weapons.inaccuracy ?? moveInaccuracy(w, (Object.assign(MOVE_S, move()).scoped = sc > 0, MOVE_S)), gap = Math.round(Math.min(40, px(inacc, f)));   /* dynamic, CS2's: the gun's whole inaccuracy now (weapons.js — its floor, the shots' fire penalty, running, jumping), as the cone the next bullet can land in */
       if (last.xg !== gap || last.xv !== xhVer) { last.xg = gap; last.xv = xhVer; els.x.innerHTML = crosshairHTML(xh, gap); }
     },
   };

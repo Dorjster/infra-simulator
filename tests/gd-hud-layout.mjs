@@ -62,6 +62,17 @@ for (const [W, H, tag] of [[1024, 768, '4:3 1024×768'], [1440, 1080, '4:3 1440�
   check('gd-hud.js places its boxes with boxCSS from the table (every one named) and the unit --gd-u = view height / 1080 × --gd-hs', used.every(k => src.includes(`'${k}'`)) && /--gd-u:calc\(var\(--gd-view-h, 100vh\) \/ 1080 \* var\(--gd-hs, 1\)\)/.test(src) && src.includes("import { BOX, boxCSS"));
   check('gd-hud.js: white text with soft shadows, no panel backgrounds on health / ammo / money (only the timer and score boxes)', !/#gd-hud \.(num|money|ammo|health|reserve|armor)\{[^}]*background/.test(src) && /text-shadow:0 0 3px #000d/.test(src));
   check('gd-hud.js ships its own open-licence font (Barlow Semi Condensed, OFL) with tabular numbers', src.includes('barlow-semi-condensed-700.ttf.bin') && src.includes('font-variant-numeric:tabular-nums') && readFileSync(new URL('../dist/fonts/OFL-BarlowSemiCondensed.txt', import.meta.url), 'utf8').includes('SIL Open Font License')); }
+// v53 LOOK (add12-hud-colours): the default colours as CS2 draws them, the same at every size (colours are CSS, not
+// layout: checked once per resolution's default prefs): the money white (hudmoney.vcss defaultColor #ffffff; green
+// #8fff6f / red #fd3535 only on its +/− animation), health / armour / ammo / their bars in cl_hud_color (default 0 Team
+// Color: the reference picture's T gold "100"), the bars CS2's thin lines (hudhealthammocenter.vcss .hud-HA-bar 8 px, #AmmoClipBar 4 px).
+{ const src = readFileSync(new URL('../dist/gd-hud.js', import.meta.url), 'utf8');
+  for (const [W, H, tag] of [[1366, 768, '1366×768'], [1920, 1080, '1920×1080'], [2560, 1440, '2560×1440']]) {
+    store.delete('gd-hud'); const d = P.loadHudPrefs(), hb = L.boxOf('healthBar', W, H, 1), cb = L.boxOf('clipBar', W, H, 1);
+    check(`${tag}: default colours — money white, + green #8fff6f / − red #fd3535, numbers and bars Team Color (T #eabe54)`,
+      src.includes('#gd-hud .money{font-size:${U(38)};line-height:${U(38)};color:#fff;') && /\.dm\.add\{color:#8fff6f\}/.test(src) && /\.dm\.rem\{color:#fd3535\}/.test(src) && src.includes('line-height:${U(42)};color:var(--hc);')
+      && /#gd-hpbar i\{[^}]*background:var\(--hc\)/.test(src) && d.color === 0 && P.hudColorOf(d, 't') === '#eabe54');
+    check(`${tag}: the health and clip bars are CS2's thin lines (.hud-HA-bar 8 px, #AmmoClipBar 4 px at 1080 p)`, Math.abs(hb.h - 8 * H / 1080) < 1e-9 && Math.abs(cb.h - 4 * H / 1080) < 1e-9, hb.h + ' / ' + cb.h); } }
 // 4. options
 { const c = P.cleanHudPrefs({ scale: 3, color: 99, letters: 1 }); check('HUD scale clamped to 0.8 – 1.4; unknown colour → Team Color', c.scale === 1.4 && c.color === 0 && c.letters === true && P.cleanHudPrefs({ scale: .1 }).scale === .8); }
 check('cl_hud_color 0 (Team Color): T #eabe54, CT rgb(150, 200, 250) (csgostyles.vcss t-color / ct-color)', P.hudColorOf({ color: 0 }, 't') === '#eabe54' && P.hudColorOf({ color: 0 }, 'ct') === '#96c8fa');

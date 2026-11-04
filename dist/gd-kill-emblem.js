@@ -30,7 +30,8 @@
 // (world-blur hudWorldBlur = gaussian(2, 2, 2), csgostyles.vcss), cut to kill_mask, and .kill-flag-bg-pattern: CS2's
 // bluedots_large at 0.2 opacity (backgroundDotsSize 360 px). Ours: backdrop-filter blur(2px) brightness(.373) (= the
 // world under 160/255 black) and the dots (CS2's image when tools/import-cs2-hud.mjs imported it, else a dot grid of our
-// own). The badge's disc is the same (.hud-HA-center: hud-blur-bg-color + world-blur, a circle mask). CS2's world blur
+// own — v53 LOOK: at 0.05, nearly invisible, since CS2's 360 px dots read as a plain dark fill in its pictures and our
+// 3.4 px grid at 0.2 read as a texture; CS2's imported image keeps its 0.2). The badge's disc is the same (.hud-HA-center: hud-blur-bg-color + world-blur, a circle mask). CS2's world blur
 // samples the world only, so an older card under a newer one is hidden; a backdrop filter also sees the older card, so
 // an older card shows its plain card (kill_extra / ours without a number) — its number would be under the newer card in
 // CS2 anyway (the user's pictures: older cards show only their skulls).
@@ -82,8 +83,32 @@ export const HIDDEN_Y = 42;      // px: a hidden flag rests here (.hud-HA__kill-
 export const FLAG_MS = 200;      // the fan's move (.hud-HA__kill-flag.animate transition-duration 0.2 s)
 export const ON_KILL_MS = 700;   // CS2's on-kill / on-kill-spotlight (0.7 s ease-out)
 const U = 152 / 126;             // CS2 px per card-SVG unit (126 units drawn 152 px tall)
-export const CARD = { w: 28 * U, h: 38 * U, x0: 10, y0: 8.4 };   // the card inside the 48 × 126 SVG (kill_mask: x 10–38, y 8.4–46.4)
+// v53 LOOK (coord-kill-card-fan, C1, H4): the cards were too small against the user's CS2 pictures. Measured at 1080 p
+// (audit-v53-hits k3.png vs cs2-kill-emblem.png / -ace.png, in badge diameters, which the picture's 1.105× sideways
+// stretch cancels out of): card 0.71 → CS2 0.79 tall, its top 0.56 → 0.62 above the badge's top, the 3-kill fan
+// 1.00 → 1.06 badges wide. The card (with its number, pips and CS2's own mask images) is drawn CARD_SCALE × CS2's
+// vcss size about its own centre; the pivot stays CS2's 42.95 px and the fan CS2's FAN, and the cards' centres sit
+// CARD_CY px above the badge's centre. fanGeometry() is the model the test checks (corners of every card, turned as
+// the CSS turns them); the old model gave 0.716 / 0.578 / 1.038 where the screenshot measured 0.71 / 0.56 / 1.00
+// (outline anti-aliasing). v53 LOOK review fix: now MEASURED from the screenshot's pixels (tests/browser/
+// gd-emblem-hud-shots.mjs, the badge hidden, the gold outline's rows and columns at 1920 × 1080): the model reads
+// 0.016 taller, 0.014 higher and 0.035 wider than the screen (1.113 / 45 measured 0.781 / 0.625 / 1.078 — the card
+// short of CS2's 0.79). CARD_SCALE 1.126 and CARD_CY 44 give the model 0.807 / 0.629 / 1.122, so on screen
+// 0.79 / 0.615 / 1.087 (CS2 0.79 / 0.62 / 1.06–1.10). The number and the skulls are CS2's own kill_N / kill_pip images,
+// scaled with the card (their size against the card is CS2's art's).
+export const CARD_SCALE = 1.126;
+const UC = U * CARD_SCALE;       // CS2 px per card-SVG unit, on the drawn (scaled) card
+export const CARD = { w: 28 * UC, h: 38 * UC, x0: 10, y0: 8.4 };   // the card inside the 48 × 126 SVG (kill_mask: x 10–38, y 8.4–46.4)
 export const CARD_CY = 44, PIVOT = 42.95, BADGE = 64, BADGE_BOTTOM = 53;   // px at 1080 p (the pivot from CS2's layout, the rest measured: see the top)
+// The fan of n cards in badge diameters: h (a card's height), top (the highest corner above the badge's top), fan (the
+// union's width) — the CSS transform: translate (FAN), then rotate about the pivot PIVOT px below the card's centre.
+export function fanGeometry(n) {
+  const w = CARD.w, h = CARD.h; let x0 = Infinity, x1 = -Infinity, y0 = Infinity;
+  for (const [tx, ty, r] of FAN[n] || []) { const a = r * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    for (let k = 0; k < 4; k++) { const px = k & 1 ? w / 2 : -w / 2, py = (k & 2 ? h / 2 : -h / 2) - PIVOT;
+      const X = px * c - py * s + tx, Y = px * s + py * c + PIVOT + ty - CARD_CY; if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; } }
+  return { h: h / BADGE, top: (-y0 - BADGE / 2) / BADGE, fan: (x1 - x0) / BADGE };
+}
 // Kill kinds: which pip a card shows (CS2's .HUD--KillN--<kind> classes).
 export const KIND = { body: 0, head: 1, slash: 2, blast: 3, burn: 4, shock: 5 }; const KIND_N = 6;
 export const PIP_NAMES = ['default', 'headshot', 'slash', 'blast', 'burn', 'shock'];
@@ -171,19 +196,19 @@ export const KILL_EMBLEM_CSS = `
 ${fanCSS()}
 .ke-c{position:absolute;inset:0;transform-origin:50% 50%;color:var(--g)}
 .ke-gl{position:absolute;left:-18px;top:-16px;right:-18px;bottom:-16px;border-radius:50%;opacity:0;background:radial-gradient(closest-side,#9fd2ffaa,#5aa8ff55 55%,#5aa8ff00)}.ke-c.h .ke-gl{background:radial-gradient(closest-side,#ffe9a8cc,#ffbf3a66 55%,#ffbf3a00)}
-.ke-bg{position:absolute;inset:0;border-radius:${px(4.8 * U)};background:#0000;-webkit-backdrop-filter:blur(2px) brightness(.373);backdrop-filter:blur(2px) brightness(.373)}.ke-bg.ke-mk{border-radius:0;background:#0000}
-.ke-dt{position:absolute;inset:0;border-radius:${px(4.8 * U)};opacity:.2;background-image:var(--dots,radial-gradient(circle,#fff 0 .6px,#fff0 1px));background-size:var(--dots-size,3.4px 3.4px)}
+.ke-bg{position:absolute;inset:0;border-radius:${px(4.8 * UC)};background:#0000;-webkit-backdrop-filter:blur(2px) brightness(.373);backdrop-filter:blur(2px) brightness(.373)}.ke-bg.ke-mk{border-radius:0;background:#0000}
+.ke-dt{position:absolute;inset:0;border-radius:${px(4.8 * UC)};opacity:var(--dots-o,.05);background-image:var(--dots,radial-gradient(circle,#fff 0 .6px,#fff0 1px));background-size:var(--dots-size,3.4px 3.4px)}
 .ke-cp{display:none}${plainCSS()}
 .ke-svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
-.ke-mk{position:absolute;left:${px(-CARD.x0 * U)};top:${px(-CARD.y0 * U)};width:${px(48 * U)};height:152px;background:var(--g);-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}.ke-mk.lum{mask-mode:luminance}
+.ke-mk{position:absolute;left:${px(-CARD.x0 * UC)};top:${px(-CARD.y0 * UC)};width:${px(48 * UC)};height:${px(152 * CARD_SCALE)};background:var(--g);-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}.ke-mk.lum{mask-mode:luminance}
 .ke-p{position:absolute;inset:0;display:none}.ke-c.k0 .ke-p.k0,.ke-c.k1 .ke-p.k1,.ke-c.k2 .ke-p.k2,.ke-c.k3 .ke-p.k3,.ke-c.k4 .ke-p.k4,.ke-c.k5 .ke-p.k5{display:block}.ke-f6 .ke-p{display:none!important}
-.ke-cn{position:absolute;left:0;right:0;top:${px(12 * U)};text-align:center;font:800 21px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:var(--g);text-shadow:0 1px 2px #0008}
-.ke-wh{position:absolute;inset:0;border-radius:${px(4.8 * U)};background:#fff;opacity:0}
-.ke-cl{position:absolute;inset:0;border-radius:${px(4.8 * U)};overflow:hidden}
+.ke-cn{position:absolute;left:0;right:0;top:${px(12 * UC)};text-align:center;font:800 ${px(21 * CARD_SCALE)}/1 system-ui,-apple-system,Segoe UI,sans-serif;color:var(--g);text-shadow:0 1px 2px #0008}
+.ke-wh{position:absolute;inset:0;border-radius:${px(4.8 * UC)};background:#fff;opacity:0}
+.ke-cl{position:absolute;inset:0;border-radius:${px(4.8 * UC)};overflow:hidden}
 .ke-sh{position:absolute;left:0;top:-30%;width:45%;height:160%;opacity:0;background:linear-gradient(90deg,#fff0,#ffffffd0 45%,#fff 50%,#ffffffd0 55%,#fff0);transform:translateX(-140%) rotate(24deg)}
 .ke-spot{position:absolute;left:50%;bottom:50%;width:36px;height:100px;margin-left:-18px;border-radius:10px;background:linear-gradient(0deg,#fff,#fff0);opacity:0}
-.ke-m{position:absolute;left:${px(2.6 * U)};width:${px(7.4 * U)};height:${px(7.4 * U)};display:none;filter:drop-shadow(0 0 1px #000)}.ke-m svg,.ke-m img{width:100%;height:100%;display:block}
-.ke-m.mw{top:${px(14 * U)}}.ke-m.mn{top:${px(21.6 * U)}}.ke-m.ms{top:${px(29.2 * U)}}.ke-m.mb{top:${px(14 * U)};left:auto;right:${px(2.6 * U)}}
+.ke-m{position:absolute;left:${px(2.6 * UC)};width:${px(7.4 * UC)};height:${px(7.4 * UC)};display:none;filter:drop-shadow(0 0 1px #000)}.ke-m svg,.ke-m img{width:100%;height:100%;display:block}
+.ke-m.mw{top:${px(14 * UC)}}.ke-m.mn{top:${px(21.6 * UC)}}.ke-m.ms{top:${px(29.2 * UC)}}.ke-m.mb{top:${px(14 * UC)};left:auto;right:${px(2.6 * UC)}}
 .ke-c.mw .ke-m.mw,.ke-c.mn .ke-m.mn,.ke-c.ms .ke-m.ms,.ke-c.mb .ke-m.mb{display:block}
 .ke-bx{position:absolute;left:50%;top:50%;width:0;height:0}.ke-bx.t1{transform:scale(1.15)}.ke-bx.t2{transform:scale(1.32)}.ke-bx.t3{transform:scale(1.5)}
 .ke-fw{position:absolute;left:-30px;top:-30px;width:60px;height:60px;opacity:.55}.h~.ke-bx .ke-fw{opacity:1}
@@ -252,7 +277,7 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
   if (doc.getElementById && !doc.getElementById('gd-ke-css')) { const css = doc.createElement('style'); css.id = 'gd-ke-css'; css.textContent = KILL_EMBLEM_CSS; (doc.head || doc.body).append?.(css); }
   parent?.append?.(root);
   // CS2's card dots (bluedots_large, tools/import-cs2-hud.mjs → user-assets/icons/hud/hud.json "kill_dots"), once per page.
-  if (typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) fetch('/user-assets/icons/hud/hud.json').then(r => r.ok ? r.json() : null).then(m => { const f = m?.icons?.kill_dots; if (!f) return; setVar('--dots', `url('/user-assets/icons/hud/${encodeURIComponent(f)}?h=${encodeURIComponent(m.hash || '')}')`); setVar('--dots-size', '360px 360px'); }).catch(() => {});
+  if (typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) fetch('/user-assets/icons/hud/hud.json').then(r => r.ok ? r.json() : null).then(m => { const f = m?.icons?.kill_dots; if (!f) return; setVar('--dots', `url('/user-assets/icons/hud/${encodeURIComponent(f)}?h=${encodeURIComponent(m.hash || '')}')`); setVar('--dots-size', '360px 360px'); setVar('--dots-o', '.2'); }).catch(() => {});
   const F = []; const q = (el, s) => el.querySelector(s);
   for (let i = 0; i < FLAGS; i++) { const f = q(root, '.ke-f' + (i + 1)); F.push({ f, c: q(f, '.ke-c'), bx: q(f, '.ke-bx'), cd: q(f, '.ke-cd'), cp: q(f, '.ke-cp'), bw: q(f, '.ke-bw'), cn: i === SLOTS ? q(f, '.ke-cn') : null, ic: f.querySelectorAll('.ke-p'), mk: f.querySelectorAll('.ke-m'), par: 0 }); }
   const LG = root.querySelectorAll('.ke-lg');

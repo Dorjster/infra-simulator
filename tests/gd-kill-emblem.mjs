@@ -161,9 +161,18 @@ ok([...flags()].every(f => f.querySelectorAll('.ke-a').length === 5 && f.querySe
 ok(JSON.stringify(E.root.innerHTML.match(/>\d<\/text>/g)) === JSON.stringify(['>1</text>', '>2</text>', '>3</text>', '>4</text>']) && (E.root.innerHTML.match(/>A<\/text>/g) || []).length === 0 && (E.root.innerHTML.match(/mask="url\(#gd-ke-ace-m\)"/g) || []).length === 1 && flags()[5].querySelector('.ke-cn'), "our own cards carry their kill number 1–4, the 5th is CS2's kill_5 ace (a spade with a skull cut out, no letter: the user's ace picture), the extra card the count label");
 // v53 HUD fix: CS2's card fill and fan geometry (hudhealthammocenter.vcss / kill_5 / the user's pictures)
 { const css = KE.KILL_EMBLEM_CSS;
-  ok(KE.PIVOT === 42.95 && KE.CARD_CY === 44, 'the fan turns about the card SVG\'s centre, 42.95 px below the card (CS2 layout), cards 44 px above the badge (fitted to both pictures)');
+  ok(KE.PIVOT === 42.95 && KE.CARD_CY === 44, 'the fan turns about the card SVG\'s centre, 42.95 px below the card (CS2 layout), cards 44 px above the badge (v53 LOOK fit, measured)');
+  // v53 LOOK (coord-kill-card-fan, C1, H4): the cards as big as in the user's CS2 pictures, in badge diameters
+  // (fanGeometry: the CSS's own corners; the model reads 0.016 taller / 0.014 higher / 0.035 wider than the screenshot's
+  // outline pixels — gd-emblem-hud-shots.mjs measured them, v53 LOOK review fix).
+  { const g1 = KE.fanGeometry(1), g3 = KE.fanGeometry(3), g5 = KE.fanGeometry(5);
+    ok(g3.h - .016 >= .79 && g1.h - .016 >= .79 && g5.h - .016 >= .79, 'a card is >= 0.79 badge diameters tall on screen (CS2 0.79): model ' + g3.h.toFixed(3) + ' → screen ' + (g3.h - .016).toFixed(3));
+    ok(g3.fan - .035 >= 1.04 && g3.fan - .035 <= 1.10, 'the 3-kill fan spans 1.06–1.10 badge widths (CS2 pictures): model ' + g3.fan.toFixed(3) + ' → screen ' + (g3.fan - .035).toFixed(3));
+    ok(g3.top - .014 >= .6 && g3.top - .014 <= .64, 'the 3-kill fan tops 0.62 badge diameters above the badge (CS2): model ' + g3.top.toFixed(3));
+    ok(KE.CARD_SCALE >= 1.1 && KE.CARD_SCALE <= 1.25 && Math.abs(KE.CARD.w - 28 * 152 / 126 * KE.CARD_SCALE) < 1e-9 && new RegExp('\\.ke-mk\\{[^}]*height:' + (+(152 * KE.CARD_SCALE).toFixed(2)) + 'px').test(css), 'card, number, pips and CS2 mask images drawn ' + KE.CARD_SCALE + '× CS2\'s vcss size');
+    ok(flags()[0].querySelector('.ke-cd') && /\.gd-ke\.n1 \.ke-f1\{transform:translate3d\(0px,0px,0\) rotate\(0deg\);visibility:visible\}/.test(css), 'the 1st kill already shows its card (n1 → flag 1 visible, in place)'); }
   ok(/\.ke-bg\{[^}]*backdrop-filter:blur\(2px\) brightness\(\.373\)/.test(css) && /\.ke-bd\{[^}]*backdrop-filter:blur\(2px\) brightness\(\.373\)/.test(css), "cards and badge: CS2's hud-blur-bg-color #000000a0 over the world blurred (gaussian 2) — not see-through");
-  ok(/\.ke-dt\{[^}]*opacity:\.2/.test(css) && flags().every(f => f.querySelector('.ke-dt')), "CS2's dot pattern at 0.2 on every card");
+  ok(/\.ke-dt\{[^}]*opacity:var\(--dots-o,\.05\)/.test(css) && flags().every(f => f.querySelector('.ke-dt')), "the card's dot grid nearly invisible (ours 0.05; CS2's imported dots at its vcss 0.2): a plain translucent dark fill as in CS2's pictures");
   ok(/\.gd-ke\.n3 \.ke-f1 \.ke-cd\{display:none\}\.gd-ke\.n3 \.ke-f1 \.ke-cp\{display:block\}/.test(css) && /\.gd-ke\.n3 \.ke-f2 \.ke-cp\{display:block\}/.test(css) && !/\.gd-ke\.n3 \.ke-f3 \.ke-cp/.test(css) && /\.gd-ke\.n5 \.ke-f4 \.ke-cp\{display:block\}/.test(css) && /\.gd-ke\.nx \.ke-f4 \.ke-cp/.test(css), 'older cards show the plain card (skulls only, as both pictures), the newest its number');
   ok(!/\.ke-f5 \.ke-p\{display:none/.test(css), "the ace card keeps its corner pips (the user's ace picture: skulls in the corners)"); }
 // CS2's pictures: set once, in place (no new nodes); cards as luminance masks (black fill clear)

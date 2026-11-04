@@ -33,7 +33,7 @@ export function hudEditorHTML(p = loadHudPrefs()) {
   const [a, b, s] = HUD_SCALE_RANGE;
   return `<h3>HUD (Global Defensive)</h3><div class="set-grid">
     <label title="The size of every HUD element (CS2: HUD Scale)">HUD scale · <span>${p.scale.toFixed(2)}</span><input data-hd="scale" type="range" min="${a}" max="${b}" step="${s}" value="${p.scale}"></label>
-    <label title="The colour of health, armour, ammo, money and the kill cards (CS2: HUD Color)">HUD color<select data-hd="color">${HUD_COLORS.map(([n], i) => `<option value="${i}" ${p.color === i ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+    <label title="The colour of health, armour, ammo and the kill cards (CS2: HUD Color — the money stays white, as CS2\'s)">HUD color<select data-hd="color">${HUD_COLORS.map(([n], i) => `<option value="${i}" ${p.color === i ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
     <label class="chk" title="Colour-blind aid: a letter over each player colour on the avatars and the radar (CS2: Colors and Letters)"><input type="checkbox" data-hd="letters" ${p.letters ? 'checked' : ''}> Show letters over player colors</label>
     <label class="chk" title="Tones down the kill cards' lightning, flash, sparks and glow"><input type="checkbox" data-hd="reduceFlashes" ${p.reduceFlashes ? 'checked' : ''}> Reduce flashes</label>
     </div><div class="cp-row"><button data-hd-reset>Reset HUD (CS2 defaults)</button></div>`;
