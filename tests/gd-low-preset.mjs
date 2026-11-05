@@ -160,7 +160,7 @@ ok(/low: \(\) => !gdPresetNow\(\)\.hudBlur/.test(src('arena-ui.js')), 'the death
 
 // ── 6. wiring ──
 const gx = src('graphics.js'), app = src('app.js');
-ok(/const gdSharp = !!gdLast\?\.sharpen && !software;/.test(gx) && /composer\.addPass\(gdSharp \? new SharpenOutputPass\(\) : gdFx \? new FxaaOutputPass\(\) \/\* \(v53 LOOK: GD Medium's edges\) \*\/ : new OutputPass\(\)\);/.test(gx) /* (v53 LOOK: GD Medium's FXAA output in between) */, 'graphics.js: the sharpen pass ends the composer only for a GD preset with sharpen, never on a software renderer');
+ok(/const gdSharp = !!gdLast\?\.sharpen && !software;/.test(gx) && /const outPass = gdSharp \? new SharpenOutputPass\(\) : gdFx \? new FxaaOutputPass\(\) \/\* \(v53 LOOK: GD Medium's edges\) \*\/ : new OutputPass\(\);[\s\S]{0,400}?composer\.addPass\(outPass\)/.test(gx) /* (v53 PERF4X: the last pass held as outPass — the kill tally's blur is patched into it) */ /* (v53 LOOK: GD Medium's FXAA output in between) */, 'graphics.js: the sharpen pass ends the composer only for a GD preset with sharpen, never on a software renderer');
 ok(/if \(!gdSharp \|\| G\.glow\) bloom = new UnrealBloomPass/.test(gx), 'graphics.js: a sharpen-only composer makes no glow buffers');
 ok(/gdRowNow=gdFrame\?row:null;scene\.userData\.gdPreset=gdRowNow;/.test(app), 'app.js: the preset row only while a GD match is drawn (other modes: null — graphicsCeiling, the scaler and graphics.js as before)');
 ok(/if\(gdRowNow\?\.scale\)return/.test(app) && /gdTgt=gdFrame&&gdRowNow&&gdRowNow\.fps<60\?gdRowNow\.fps:0/.test(app), 'app.js: the render scale and the 30 fps target come from the GD row');

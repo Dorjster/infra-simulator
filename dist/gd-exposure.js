@@ -58,7 +58,11 @@ export const EXPOSURE_U = { uExpTex: { value: null }, uExpOn: { value: 0 } };
 // off) and colour × intensity per slot, written by graphics.js each frame from its light pool. Here (not in
 // cs2-render.js) so graphics.js reads it without loading the map code.
 export const BAKED_LIGHT_N = 6;
-export const BAKED_LIGHTS_U = { uBPLp: { value: Array.from({ length: BAKED_LIGHT_N }, () => new THREE.Vector4()) }, uBPLc: { value: Array.from({ length: BAKED_LIGHT_N }, () => new THREE.Vector3()) } };
+// (v53 PERF4X: flat Float32Arrays — x y z range per slot, r g b per slot — which three.js uploads as they are; arrays of
+// Vector4 / Vector3 were flattened again before every map draw. setBakedLight writes a slot, bakedLightsOn counts the lit.)
+export const BAKED_LIGHTS_U = { uBPLp: { value: new Float32Array(BAKED_LIGHT_N * 4) }, uBPLc: { value: new Float32Array(BAKED_LIGHT_N * 3) } };
+export function setBakedLight(k, x, y, z, range, r, g, b) { const P = BAKED_LIGHTS_U.uBPLp.value, C = BAKED_LIGHTS_U.uBPLc.value, i = k * 4, j = k * 3; P[i] = x; P[i + 1] = y; P[i + 2] = z; P[i + 3] = range; C[j] = r; C[j + 1] = g; C[j + 2] = b; }
+export function bakedLightsOn() { const P = BAKED_LIGHTS_U.uBPLp.value; let n = 0; for (let k = 0; k < BAKED_LIGHT_N; k++) if (P[k * 4 + 3] > 0) n++; return n; }
 
 // One adaptation step (the JS mirror of the shader: tests, and the fallback). L: the frame's log-average luminance.
 export function adaptExposure(E, L, dt, look = GD_LOOK, key = look.key ?? EXPOSURE_KEY) {

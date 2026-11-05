@@ -8,13 +8,17 @@ export const CROSSHAIR_STYLES = [['classic', 'Classic (4 lines)'], ['tshape', 'T
 export function loadCrosshair() { try { return { ...CROSSHAIR_DEFAULT, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...CROSSHAIR_DEFAULT }; } }
 export function saveCrosshair(c) { try { localStorage.setItem(KEY, JSON.stringify(c)); } catch {} globalThis.dispatchEvent?.(new CustomEvent('gd-crosshair', { detail: c })); }
 // HTML for the crosshair centred in its box (left/top 50 %), with an extra gap (dynamic spread, px).
-export function crosshairHTML(c, extraGap = 0) {
-  const s = Math.max(1, +c.size), t = Math.max(1, +c.thickness), g = Math.max(0, +c.gap) + (c.dynamic ? extraGap : 0), ow = c.outline ? Math.max(1, +c.outlineWidth) : 0;
+// (v53 PERF4X) gapVar: the dynamic gap read from the box's CSS variable --xg instead of baked in (the HUD sets that one
+// property as the gap moves — no new nodes, no HTML parsed while firing; the same pixels as extraGap = --xg). Default off.
+export function crosshairHTML(c, extraGap = 0, gapVar = false) {
+  const dv = gapVar && !!c.dynamic, s = Math.max(1, +c.size), t = Math.max(1, +c.thickness), g = Math.max(0, +c.gap) + (c.dynamic && !dv ? extraGap : 0), ow = c.outline ? Math.max(1, +c.outlineWidth) : 0;
   const sh = ow ? `box-shadow:0 0 0 ${ow}px rgba(0,0,0,.85);` : '', base = `position:absolute;background:${c.color};${sh}`;
-  const bar = (x, y, w, h) => `<i style="${base}left:${x}px;top:${y}px;width:${w}px;height:${h}px"></i>`, out = [];
-  if (c.style === 'classic' || c.style === 'tshape' || c.style === 'cross') { const gg = c.style === 'cross' ? 0 : g;
-    if (c.style !== 'tshape') out.push(bar(-t / 2, -gg - s, t, s)); out.push(bar(-t / 2, gg, t, s), bar(-gg - s, -t / 2, s, t), bar(gg, -t / 2, s, t)); }
-  if (c.style === 'circle') { const r = s + g; out.push(`<i style="position:absolute;left:${-r}px;top:${-r}px;width:${r * 2}px;height:${r * 2}px;border-radius:50%;border:${t}px solid ${c.color};box-sizing:border-box;${ow ? `outline:${ow}px solid rgba(0,0,0,.6);` : ''}"></i>`); }
+  // (gapVar: an arm's offset that grows with the gap — "+" away from the centre on the far side, "−" on the near side)
+  const at = (v, k) => dv && k ? `calc(${v}px ${k > 0 ? '+' : '-'} var(--xg, 0px))` : v + 'px';
+  const bar = (x, y, w, h, kx = 0, ky = 0) => `<i style="${base}left:${at(x, kx)};top:${at(y, ky)};width:${w}px;height:${h}px"></i>`, out = [];
+  if (c.style === 'classic' || c.style === 'tshape' || c.style === 'cross') { const gg = c.style === 'cross' ? 0 : g, k = c.style === 'cross' ? 0 : 1;
+    if (c.style !== 'tshape') out.push(bar(-t / 2, -gg - s, t, s, 0, -k)); out.push(bar(-t / 2, gg, t, s, 0, k), bar(-gg - s, -t / 2, s, t, -k, 0), bar(gg, -t / 2, s, t, k, 0)); }
+  if (c.style === 'circle') { const r = s + g, d = dv ? `calc(${r * 2}px + 2 * var(--xg, 0px))` : r * 2 + 'px'; out.push(`<i style="position:absolute;left:${at(-r, -1)};top:${at(-r, -1)};width:${d};height:${d};border-radius:50%;border:${t}px solid ${c.color};box-sizing:border-box;${ow ? `outline:${ow}px solid rgba(0,0,0,.6);` : ''}"></i>`); }
   if (c.dot || c.style === 'dot') { const d = Math.max(2, t + (c.style === 'dot' ? 2 : 0)); out.push(bar(-d / 2, -d / 2, d, d)); }
   return `<div style="position:absolute;left:50%;top:50%;width:0;height:0;opacity:${c.opacity}">${out.join('')}</div>`;
 }

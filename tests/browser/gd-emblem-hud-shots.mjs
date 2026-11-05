@@ -76,7 +76,7 @@ try {
     await p.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 40000 }).catch(() => {});
     const l0 = await p.evaluate(() => { const L = globalThis.__lk = []; const f = WebGL2RenderingContext.prototype.linkProgram; WebGL2RenderingContext.prototype.linkProgram = function (x) { L.push(1); return f.call(this, x); }; return 0; });
     const r = await p.evaluate(kind => { const c = __infra.camera, d = c.getWorldDirection(c.position.clone()).normalize(); return __infra.lab.lan.act({ type: 'arena', action: { type: 'throw', kind, x: c.position.x, y: c.position.y, z: c.position.z, dx: d.x, dy: -.25, dz: d.z, strength: 'short', vx: 0, vy: 0, vz: 0 } }).then(r => r, e => ({ error: String(e?.message || e) })); }, kind);
-    await p.waitForTimeout(2500); const lit = await p.evaluate(async () => { const X = await import('/gd-exposure.js'); return { slots: X.BAKED_LIGHTS_U.uBPLp.value.filter(v => v.w > 0).length, first: X.BAKED_LIGHTS_U.uBPLc.value[0].toArray().map(v => +v.toFixed(2)), linked: globalThis.__lk.length }; });
+    await p.waitForTimeout(2500); const lit = await p.evaluate(async () => { const X = await import('/gd-exposure.js'); return { slots: X.bakedLightsOn(), first: [...X.BAKED_LIGHTS_U.uBPLc.value.slice(0, 3)].map(v => +v.toFixed(2)) /* (v53 PERF4X: flat slots) */, linked: globalThis.__lk.length }; });
     report.fireLight = { kind, throw: r?.error || 'ok', ...lit }; console.log('FIRE', JSON.stringify(report.fireLight)); await p.screenshot({ path: out + '/fire-light.png' });
     check('a fire lights the baked map (a light slot filled)', lit.slots > 0, JSON.stringify(lit)); }
   check('no page error', !errs.length, errs[0]);

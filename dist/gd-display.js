@@ -88,8 +88,11 @@ export function layout(p, ww, wh, sw, sh, out = {}) {
   return out;
 }
 // What the HUD reads (gd-hud: angles → pixels): the picture's box in CSS pixels and its horizontal stretch (1 unless stretched).
-export const gdView = { x: 0, y: 0, w: 0, h: 0, sx: 1, on: false };
-export function setView(L, ww, wh) { gdView.on = !!L.on; gdView.x = L.x; gdView.y = L.y; gdView.w = L.w || ww; gdView.h = L.h || wh; gdView.sx = L.stretched ? (L.w / L.h) / L.aspect : 1; return gdView; }
+// ox / oy (v53 PERF4X review): where a position:fixed HUD element's 0, 0 is in the window — the picture's box with black
+// bars (body.gd-bars is the containing block: applyBox), else 0. A fixed element is placed at x - ox, y - oy; x / y stay
+// window pixels (the canvas's box, gd-hud-blur.js).
+export const gdView = { x: 0, y: 0, w: 0, h: 0, sx: 1, on: false, ox: 0, oy: 0 };
+export function setView(L, ww, wh) { gdView.on = !!L.on; gdView.x = L.x; gdView.y = L.y; gdView.w = L.w || ww; gdView.h = L.h || wh; gdView.sx = L.stretched ? (L.w / L.h) / L.aspect : 1; const bx = !!(L.on && L.bars); gdView.ox = bx ? L.x || 0 : 0; gdView.oy = bx ? L.y || 0 : 0; return gdView; }
 
 // The page side (app.js): box the body for black bars, set the view variables. Off: the page exactly as before.
 let sheet = null;

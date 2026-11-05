@@ -21,7 +21,7 @@ const state = p => p.evaluate(async () => { const I = __infra, X = await import(
   let E = null; if (pass && X.EXPOSURE_U.uExpOn.value) { const t = pass.e[pass.i], buf = new Float32Array(4); I.renderer.readRenderTargetPixels(t, 0, 0, 1, 1, buf); E = [...buf].map(v => +v.toFixed(4)); }
   const L = X.GD_LOOK; return { passes: I.gfx.passes.map(x => (x.constructor?.name || '?') + (x.enabled === false ? '(off)' : '')), E, look: { id: L.id, lo: L.lo, hi: L.hi, up: L.up, down: L.down, use: L.use, bloom: L.bloom && { screen: L.bloom.screen, strength: L.bloom.strength, lo: +L.bloom.lo.toFixed(3), hi: +L.bloom.hi.toFixed(3) } },
     bloom: (() => { const bp = I.gfx.passes.find(x => x.constructor?.name === 'UnrealBloomPass'); return bp ? { on: bp.enabled, strength: bp.strength, threshold: +bp.threshold.toFixed(3), blend: bp.blendMaterial.blending } : null; })(),
-    lights: X.BAKED_LIGHTS_U.uBPLp.value.filter(v => v.w > 0).length, links: globalThis.__links.length, baked: !!I.scene.userData.baked, preset: I.scene.userData.gdPreset?.name || null }; });
+    lights: X.bakedLightsOn() /* (v53 PERF4X: flat slots) */, links: globalThis.__links.length, baked: !!I.scene.userData.baked, preset: I.scene.userData.gdPreset?.name || null }; });
 for (const preset of presets) {
   const ctx = await b.newContext({ viewport: { width: Math.round(W / dsf), height: Math.round(H / dsf) }, deviceScaleFactor: dsf });
   for (const map of maps) {

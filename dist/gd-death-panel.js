@@ -61,8 +61,8 @@ export function createDeathPanel({ doc = globalThis.document, parent = doc?.body
   (doc.head || doc.body)?.append?.(css);
   const el = doc.createElement('div'); el.id = 'gd-dp'; el.className = 'gd-dpc'; el.hidden = true; parent?.append?.(el);   // (class gd-dpc, not stage 3's .gd-dp: its old styles in gd-kill-emblem.js's sheet don't touch this one)
   const skip = doc.createElement('div'); skip.id = 'gd-dp-skip'; skip.hidden = true; skip.textContent = '[SPACE] Skip'; parent?.append?.(skip);
-  let shownAt = null, hpEl = null, hpBar = null, hpShown = null, killerK = null, fitH = -1;
-  function fit() { const H = gdView?.on && gdView.h > 0 ? gdView.h : (globalThis.innerHeight || 1080), Y = gdView?.on ? gdView.y || 0 : 0; if (H === fitH) return; fitH = H; const s = H / 1080;
+  let shownAt = null, hpEl = null, hpBar = null, hpShown = null, killerK = null, fitH = -1, fitY = NaN;
+  function fit() { const H = gdView?.on && gdView.h > 0 ? gdView.h : (globalThis.innerHeight || 1080), Y = gdView?.on ? (gdView.y || 0) - (gdView.oy || 0) : 0; /* (v53 PERF4X review: black bars — the body, already at the picture's box, is the fixed panel's containing block: gd-display.js gdView.oy) */ if (H === fitH && Y === fitY) return; fitY = Y; fitH = H; const s = H / 1080;
     if (el.style) { el.style.top = (Y + TOP * s).toFixed(1) + 'px'; el.style.transform = `translateX(-50%) scale(${s.toFixed(4)})`; } if (skip.style) { skip.style.top = (Y + 810 * s).toFixed(1) + 'px'; skip.style.transform = `translateX(-50%) scale(${s.toFixed(4)})`; } }
   // CS2's "shrink min(14px)": the font stepped down until the text fits its box (once per death: a few layouts, no frame cost)
   const fits = e => e.scrollWidth <= e.clientWidth + 1 && e.scrollHeight <= Math.max(e.clientHeight, 30) + 1;

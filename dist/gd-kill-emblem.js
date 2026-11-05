@@ -34,7 +34,10 @@
 // 3.4 px grid at 0.2 read as a texture; CS2's imported image keeps its 0.2). The badge's disc is the same (.hud-HA-center: hud-blur-bg-color + world-blur, a circle mask). CS2's world blur
 // samples the world only, so an older card under a newer one is hidden; a backdrop filter also sees the older card, so
 // an older card shows its plain card (kill_extra / ours without a number) — its number would be under the newer card in
-// CS2 anyway (the user's pictures: older cards show only their skulls).
+// CS2 anyway (the user's pictures: older cards show only their skulls). v53 PERF4X (+ review): on a GD composer with the
+// HUD blur (High / Ultra) the badge's and the cards' world blur is drawn by the game's output pass (gd-hud-blur.js; the
+// backdrop filters cost about 1 fps each at CPU ×4), sampling the world only as CS2's does, and each card's art is masked
+// where the badge or a newer card lies over it (CS2: hidden there); the backdrop filters stay the fallback.
 // Everything is laid out in CS2's 1080 p pixels and scaled by the picture's height (gd-display.js gdView; stage 4's HUD
 // scale multiplies through setScale).
 //
@@ -64,6 +67,7 @@
 //
 // Death panel — when you die: CS2's death panel during the death cam (v53 DEATH: gd-death-panel.js, re-exported at the end).
 import { gdView } from './gd-display.js';
+import { HUD_BLUR, setBadgeBlur } from './gd-hud-blur.js';   // (v53 PERF4X: the badge's world blur drawn by graphics.js's last pass while HUD_BLUR.ready — class 'glb' then drops the page's backdrop filter)
 import { loadHudPrefs, hudColorOf, PLAYER_COLORS, TEAM_COLOR } from './gd-hud-prefs.js';   // (v53 stage 4: CS2's HUD colour, your player colour, the HUD scale)
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
@@ -189,6 +193,80 @@ const fanCSS = () => { let s = ''; const tf = ([x, y, r]) => `translate3d(${x}px
 // Older cards (all but the newest; past five, cards 1–4 under the extra card) show their plain card: see the top.
 const plainCSS = () => { let s = ''; for (let n = 2; n <= SLOTS + 1; n++) for (let k = 0; k < Math.min(n - 1, SLOTS - 1); k++) s += `.gd-ke.${n > SLOTS ? 'nx' : 'n' + n} .ke-f${k + 1} .ke-cd{display:none}.gd-ke.${n > SLOTS ? 'nx' : 'n' + n} .ke-f${k + 1} .ke-cp{display:block}`; return s; };
 const px = v => +v.toFixed(2) + 'px';
+// ── v53 PERF4X review: the cards' world blur in the output pass (gd-hud-blur.js setCardBlur), as the badge's ──
+// A card's place, as the page draws it: FAN's translate, then rotate about the pivot PIVOT px below the card's centre
+// (transform-origin), the card's centre at (0, −CARD_CY) in the root's frame; the root's 0, 0 is the badge's centre.
+// cardAt(c, i): card i's resting [x, y, deg] for root count c (0 … 5, 6 = nx: the 5-kill fan + the extra card on top),
+// or the hidden rest; cardShown(c, i) as the fan CSS shows it.
+export const CARD_RAD = 4.8 * UC;   // (the card's corners: .ke-bg's border radius = kill_mask's 4.8-unit corners)
+const HIDDEN_AT = [0, HIDDEN_Y, 0], EXTRA_AT = [0, 0, 0];
+export const cardShown = (c, i) => c === 6 ? true : i < c && i < SLOTS;
+export const cardAt = (c, i) => !cardShown(c, i) ? HIDDEN_AT : c === 6 ? (i < SLOTS ? FAN[SLOTS][i] : EXTRA_AT) : FAN[c][i];
+// the card's centre in the root's frame for a [x, y, deg] (written into out: no allocation)
+export function cardCentre(tx, ty, deg, out) { const a = deg * Math.PI / 180; out[0] = tx + PIVOT * Math.sin(a); out[1] = -CARD_CY + PIVOT + ty - PIVOT * Math.cos(a); return out; }
+// CSS's easing curves (cubic-bezier x1 y1 x2 y2 at progress u: x solved by bisection, no allocation)
+export function bezier(x1, y1, x2, y2, u) { if (u <= 0) return 0; if (u >= 1) return 1; let lo = 0, hi = 1, t = u;
+  for (let k = 0; k < 20; k++) { const x = ((1 - 3 * x2 + 3 * x1) * t + (3 * x2 - 6 * x1)) * t * t + 3 * x1 * t; if (Math.abs(x - u) < 1e-5) break; if (x < u) lo = t; else hi = t; t = (lo + hi) / 2; }
+  return ((1 - 3 * y2 + 3 * y1) * t + (3 * y2 - 6 * y1)) * t * t + 3 * y1 * t; }
+// the card's scale at ms since its burst: the pop (ke-pop: 1.35 → 1, 140 ms, cubic-bezier(.34, 1.56, .64, 1)) or the pulse
+// (ke-pu: 1 → 1.08 at 40 % → 1, 260 ms, ease-out per step)
+export function cardScale(kind, ms) { if (kind === 1) return ms >= 140 ? 1 : 1.35 - .35 * bezier(.34, 1.56, .64, 1, ms / 140);
+  if (kind === 2) { const v = ms / 260; return v >= 1 ? 1 : v < .4 ? 1 + .08 * bezier(0, 0, .58, 1, v / .4) : 1.08 - .08 * bezier(0, 0, .58, 1, (v - .4) / .6); } return 1; }
+// The same curves as tables for the per-frame path (read inline, linear between 256 steps: no call with numbers to box):
+// EIO the fan's ease-in-out over FLAG_MS; CSC the card's scale over 260 ms (pop: 140 ms of it, then 1; pulse: 260 ms).
+const CARD_AT = new Float64Array(7 * FLAGS * 3), CARD_ON = new Uint8Array(7 * FLAGS);   // (cardAt / cardShown as flat tables: count c, card i at (c × FLAGS + i))
+for (let c = 0; c <= 6; c++) for (let i = 0; i < FLAGS; i++) { const a = cardAt(c, i), o = (c * FLAGS + i) * 3; CARD_AT[o] = a[0]; CARD_AT[o + 1] = a[1]; CARD_AT[o + 2] = a[2]; CARD_ON[c * FLAGS + i] = cardShown(c, i) ? 1 : 0; }
+const EN = 256, EIO = new Float64Array(EN + 1), CSC1 = new Float64Array(EN + 1), CSC2 = new Float64Array(EN + 1), CSC = [null, CSC1, CSC2];
+for (let k = 0; k <= EN; k++) { EIO[k] = bezier(.42, 0, .58, 1, k / EN); CSC[1][k] = cardScale(1, k / EN * 260); CSC[2][k] = cardScale(2, k / EN * 260); }
+// The cards' world blur, per emblem (createKillEmblems): each card's move as the page animates it — the fan's 200 ms
+// ease-in-out transition from where the card is to its new rest (cardAt), the pop / pulse scale on a kill — worked out
+// from the same numbers (no layout or style read), every frame only while one runs, else only when the fit changes; the
+// shapes go straight into HUD_BLUR.q. All state is in typed arrays and these are module functions (one closure each),
+// so no number is boxed: no allocation per kill or frame (tests/gd-kill-emblem.mjs).
+//   m: per card from x, y, deg, to x, y, deg, move start, burst start (ms); k: burst kind (0, 1 pop, 2 pulse);
+//   n: a count change noted by a kill / clear (n[i]: burst −1 cleared / 0 / 1 / 2, n[FLAGS]: the count, −1 none) — only
+//      integers on the kill path (and its clock, e[2]); applied at the next tick, as from that moment;
+//   e: 0 when the last move ends, 1 the clock (update()'s host ms — performance.now() would box a number per call),
+//      3 4 5 the badge's centre x, y and the fit's scale (window CSS px); f: 0 dirty, 1 the count shown, 2 shown.
+export function cardsNew() { const S = { m: new Float64Array(FLAGS * 8), k: new Uint8Array(FLAGS), n: new Int8Array(FLAGS + 1), e: new Float64Array(6), f: new Int32Array(3) };
+  for (let i = 0; i < FLAGS; i++) { S.m[i * 8 + 1] = S.m[i * 8 + 4] = HIDDEN_Y; S.m[i * 8 + 6] = -1e9; } S.n[FLAGS] = -1; S.e[0] = -1e9; S.e[5] = 1; S.f[0] = 1; return S; }
+export function cardsMoveS(S, c, newest) { const N = S.n; N[FLAGS] = c; S.e[2] = S.e[1];   // (the move's time: the clock of the update() it came in)
+  for (let i = 0; i < FLAGS; i++) N[i] = newest === undefined ? -1 : CARD_ON[c * FLAGS + i] !== 1 ? -1 : i === newest ? 1 : newest >= 0 ? 2 : 0;
+  S.f[0] = 1; }
+function cardsApplyS(S) { const N = S.n, M = S.m, K = S.k, c = N[FLAGS]; if (c < 0) return; const t = S.e[2]; N[FLAGS] = -1; S.f[1] = c;
+  for (let i = 0; i < FLAGS; i++) { const o = i * 8, a = (c * FLAGS + i) * 3;
+    if (M[o + 3] !== CARD_AT[a] || M[o + 4] !== CARD_AT[a + 1] || M[o + 5] !== CARD_AT[a + 2]) { const u = (t - M[o + 6]) / FLAG_MS, f = u <= 0 ? 0 : u >= 1 ? EN : u * EN, k = Math.min(EN - 1, f | 0), e = EIO[k] + (EIO[k + 1] - EIO[k]) * (f - k);
+      M[o] += (M[o + 3] - M[o]) * e; M[o + 1] += (M[o + 4] - M[o + 1]) * e; M[o + 2] += (M[o + 5] - M[o + 2]) * e; M[o + 3] = CARD_AT[a]; M[o + 4] = CARD_AT[a + 1]; M[o + 5] = CARD_AT[a + 2]; M[o + 6] = t; }
+    const b = N[i]; if (b < 0) K[i] = 0; else if (b > 0) { K[i] = b; M[o + 7] = t; } }
+  S.e[0] = t + 260; }
+// once per update(): the clock, whether the cards show, and — while one moves, or after a change — their shapes
+export function cardsTickS(S, now, show) { const E = S.e, F = S.f; if (typeof now === 'number' && now === now) E[1] = now; const sh = show ? 1 : 0; if (F[2] !== sh) { F[2] = sh; F[0] = 1; }
+  cardsApplyS(S); const t = E[1]; if (!F[0] && t > E[0] + 20) return; F[0] = 0;
+  const M = S.m, CKk = S.k, q = HUD_BLUR.q, Kf = E[5], bx = E[3], by = E[4], c = F[1]; let ch = false;
+  for (let i = 0; i < FLAGS; i++) { const o = i * 8; if (!sh || CARD_ON[c * FLAGS + i] !== 1) { if (q[o + 7]) { q[o + 7] = 0; ch = true; } continue; }
+    const u = (t - M[o + 6]) / FLAG_MS, f = u <= 0 ? 0 : u >= 1 ? EN : u * EN, k = Math.min(EN - 1, f | 0), e = EIO[k] + (EIO[k + 1] - EIO[k]) * (f - k);   // (the fan's ease-in-out)
+    const tx = M[o] + (M[o + 3] - M[o]) * e, ty = M[o + 1] + (M[o + 4] - M[o + 1]) * e, a = (M[o + 2] + (M[o + 5] - M[o + 2]) * e) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const kind = CKk[i], v = (t - M[o + 7]) / 260, g = v <= 0 ? 0 : v >= 1 ? EN : v * EN, m = Math.min(EN - 1, g | 0);
+    const sc = Kf * (kind === 1 ? CSC1[m] + (CSC1[m + 1] - CSC1[m]) * (g - m) : kind === 2 ? CSC2[m] + (CSC2[m + 1] - CSC2[m]) * (g - m) : 1);   // (pop / pulse)
+    const x = bx + Kf * (tx + PIVOT * sa), y = by + Kf * (-CARD_CY + PIVOT + ty - PIVOT * ca);   // (cardCentre, in window px; = setCardBlur(i, true, …) written in place)
+    if (!q[o + 7] || q[o] !== Math.fround(x) || q[o + 1] !== Math.fround(y) || q[o + 2] !== Math.fround(ca) || q[o + 4] !== Math.fround(sc * CARD.w / 2)) ch = true;
+    q[o] = x; q[o + 1] = y; q[o + 2] = ca; q[o + 3] = sa; q[o + 4] = sc * CARD.w / 2; q[o + 5] = sc * CARD.h / 2; q[o + 6] = sc * CARD_RAD; q[o + 7] = 1; }
+  if (ch) HUD_BLUR.ver++; }
+// Where a newer card or the badge lies over an older card, CS2's world blur shows the world only (the older card's art
+// is hidden), and the page's backdrop filter dimmed it; the output pass draws under the whole page, so while it draws
+// (class glb) each card's art (.ke-st: its fill, dots, outline, number, pips and marks — not the burst's light) is masked
+// where the badge's disc and every card above it at rest lie: one alpha mask per count and card, made once here.
+const ST_PAD = 14;   // px the art's box (.ke-st) reaches past the card on each side (strokes, the mask art's margin)
+function holesCSS() { let s = ''; const A = [0, 0], B = [0, 0], W = CARD.w + 2 * ST_PAD, H = CARD.h + 2 * ST_PAD, f = v => +v.toFixed(2);
+  for (let c = 1; c <= 6; c++) for (let i = 0; i < FLAGS; i++) { if (!cardShown(c, i)) continue; const [ix, iy, ir] = cardAt(c, i); cardCentre(ix, iy, ir, A); const a = -ir * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const loc = (x, y, o) => { const dx = x - A[0], dy = y - A[1]; o[0] = dx * ca - dy * sa + CARD.w / 2 + ST_PAD; o[1] = dx * sa + dy * ca + CARD.h / 2 + ST_PAD; return o; };
+    loc(0, 0, B); let holes = `<circle cx='${f(B[0])}' cy='${f(B[1])}' r='${BADGE / 2}'/>`;
+    for (let j = i + 1; j < FLAGS; j++) { if (!cardShown(c, j)) continue; const [jx, jy, jr] = cardAt(c, j), C = cardCentre(jx, jy, jr, [0, 0]); loc(C[0], C[1], B);
+      holes += `<rect x='${f(-CARD.w / 2)}' y='${f(-CARD.h / 2)}' width='${f(CARD.w)}' height='${f(CARD.h)}' rx='${f(CARD_RAD)}' transform='translate(${f(B[0])} ${f(B[1])}) rotate(${f(jr - ir)})'/>`; }
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${f(W)}' height='${f(H)}'><mask id='m'><rect width='${f(W)}' height='${f(H)}' fill='white'/><g fill='black'>${holes}</g></mask><rect width='${f(W)}' height='${f(H)}' fill='white' mask='url(%23m)'/></svg>`;
+    const u = `url("data:image/svg+xml,${svg.replace(/</g, '%3C').replace(/>/g, '%3E').replace(/"/g, "'")}")`;
+    s += `.gd-ke.glb.${c === 6 ? 'nx' : 'n' + c} .ke-f${i + 1} .ke-st{-webkit-mask-image:${u};mask-image:${u}}`; }
+  return s; }
 export const KILL_EMBLEM_CSS = `
 .gd-ke{position:fixed;left:0;top:0;width:0;height:0;z-index:36;pointer-events:none;transform-origin:0 0;--g:#eabe54;--ring:#88cef5;--tm:#eabe54}.gd-ke[hidden]{display:none}
 .ke-ln{position:absolute;top:-.5px;width:240px;height:1px;opacity:.85}.ke-ln.l{right:0;background:linear-gradient(270deg,var(--g),transparent)}.ke-ln.r{left:0;background:linear-gradient(90deg,var(--g),transparent)}
@@ -220,6 +298,10 @@ ${fanCSS()}
 .ke-sw{position:absolute;left:0;top:0;width:0;height:0}.ke-sp{position:absolute;left:-1.5px;top:-1.5px;width:3px;height:3px;border-radius:50%;background:#e8f6ff;box-shadow:0 0 4px #8fd0ff;opacity:0}.h~.ke-bx .ke-sp{background:#fff6d0;box-shadow:0 0 4px #ffc23d}
 .ke-rg{position:absolute;left:-26px;top:-26px;width:52px;height:52px;border-radius:50%;box-shadow:0 0 0 2px #ffe08acc,0 0 10px #ffc23d88;opacity:0;display:none}.ke-bx.ace .ke-rg{display:block}
 .ke-bd{position:absolute;left:${-BADGE / 2}px;top:${-BADGE / 2}px;width:${BADGE}px;height:${BADGE}px;border-radius:50%;background:#0000;-webkit-backdrop-filter:blur(2px) brightness(.373);backdrop-filter:blur(2px) brightness(.373);box-shadow:inset 0 0 0 3px var(--ring),0 0 2px #0006}
+.gd-ke.glb .ke-bd{-webkit-backdrop-filter:none;backdrop-filter:none}/* v53 PERF4X: the same disc drawn by the game's output pass (gd-hud-blur.js) */
+.ke-st{position:absolute;left:-${ST_PAD}px;top:-${ST_PAD}px;right:-${ST_PAD}px;bottom:-${ST_PAD}px}.ke-si{position:absolute;left:${ST_PAD}px;top:${ST_PAD}px;right:${ST_PAD}px;bottom:${ST_PAD}px}.gd-ke.glb .ke-st{-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+.gd-ke.glb .ke-bg{-webkit-backdrop-filter:none;backdrop-filter:none}${holesCSS()}/* v53 PERF4X review: the cards' world blur drawn by the output pass too; each card's art masked where the badge and the cards above it lie */
+.gd-ke.glb .ke-ln.l{clip-path:inset(0 ${BADGE / 2}px 0 0)}.gd-ke.glb .ke-ln.r{clip-path:inset(0 0 0 ${BADGE / 2}px)}/* (and the line stops at the disc: the output pass draws under the page, so the line no longer passes under a page blur there — CS2's world blur shows the world only) */
 .ke-lg{position:absolute;inset:9px;color:var(--tm)}.ke-lg .ke-mk{left:0;top:0;width:100%;height:100%;mask-mode:alpha}.gd-ke.ct .ke-lg.t,.gd-ke.t .ke-lg.ct{display:none}
 .nA{animation:ke-pop0 140ms cubic-bezier(.34,1.56,.64,1) both}.nB{animation:ke-pop1 140ms cubic-bezier(.34,1.56,.64,1) both}
 .pA{animation:ke-pu0 260ms ease-out both}.pB{animation:ke-pu1 260ms ease-out both}
@@ -270,7 +352,7 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
   for (let i = 0; i < FLAGS; i++) {
     let ic = ''; for (let k = 0; k < KIND_N; k++) ic += `<span class="ke-p k${k}">${pipHTML(k)}</span>`;
     let mk = ''; for (let b = 0; b < 4; b++) mk += `<span class="ke-m${MARK_CLS[b + 1]}">${markHTML(MARK_KEYS[b])}</span>`;
-    h += `<div class="ke-f ke-f${i + 1}"><div class="${cardClass(0, 0, 0)}"><i class="ke-spot"></i><i class="ke-gl"></i><span class="ke-bw">${bgHTML()}</span><i class="ke-dt"></i><span class="ke-cd">${cardHTML(i)}</span>${i < SLOTS - 1 ? `<span class="ke-cp">${plainHTML()}</span>` : ''}${ic}${i === SLOTS ? '<b class="ke-cn"></b>' : ''}${mk}<i class="ke-wh"></i><span class="ke-cl"><i class="ke-sh"></i></span></div>`
+    h += `<div class="ke-f ke-f${i + 1}"><div class="${cardClass(0, 0, 0)}"><i class="ke-spot"></i><i class="ke-gl"></i><span class="ke-st"><span class="ke-si"><span class="ke-bw">${bgHTML()}</span><i class="ke-dt"></i><span class="ke-cd">${cardHTML(i)}</span>${i < SLOTS - 1 ? `<span class="ke-cp">${plainHTML()}</span>` : ''}${ic}${i === SLOTS ? '<b class="ke-cn"></b>' : ''}${mk}</span></span><i class="ke-wh"></i><span class="ke-cl"><i class="ke-sh"></i></span></div>`
       + `<div class="${TIER_CLASS[0]}"><div class="ke-fw"><i class="ke-fl"></i></div>${arcsHTML(i * 7 + 3)}${SPARK_HTML(i)}<i class="ke-rg"></i></div></div>`; }
   h += `</div><div class="ke-bd"><span class="ke-lg t">${logoHTML('t')}</span><span class="ke-lg ct">${logoHTML('ct')}</span></div>`;
   const root = doc.createElement('div'); root.id = 'gd-ke'; root.className = rootClass(0, reduce, false); root.hidden = true; root.innerHTML = h;
@@ -293,7 +375,17 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
   function fit(force) {
     const on = !!gdView?.on && gdView.w > 0 && gdView.h > 0, W = on ? gdView.w : (globalThis.innerWidth || 1920), H = on ? gdView.h : (globalThis.innerHeight || 1080), X = on ? gdView.x || 0 : 0, Y = on ? gdView.y || 0 : 0;
     if (!force && W === fitW && H === fitH && X === fitX && Y === fitY) return; fitW = W; fitH = H; fitX = X; fitY = Y;
-    const k = H / 1080 * scale; root.style.transform = `translate3d(${(X + W / 2).toFixed(1)}px,${(Y + H - BADGE_BOTTOM * k).toFixed(1)}px,0) scale(${k.toFixed(4)})`; }   // (a string only when the screen changed)
+    // (v53 PERF4X review: with black bars the body is the fixed root's containing block, already at the picture's box —
+    // the transform is from that box's corner (gdView.ox / oy), else the badge sat X px right of the picture's centre)
+    const OX = on ? gdView.ox || 0 : 0, OY = on ? gdView.oy || 0 : 0;
+    const k = H / 1080 * scale; root.style.transform = `translate3d(${(X - OX + W / 2).toFixed(1)}px,${(Y - OY + H - BADGE_BOTTOM * k).toFixed(1)}px,0) scale(${k.toFixed(4)})`;   // (a string only when the screen changed)
+    // (v53 PERF4X: the badge's disc for gd-hud-blur.js in WINDOW pixels — its centre where the transform puts it, radius BADGE / 2 and CSS's
+    // blur(2px) both scaled by k, as the browser scales them; set again in update() as it is shown or hidden)
+    BB.x = +(X + W / 2).toFixed(1); BB.y = +(Y + H - BADGE_BOTTOM * k).toFixed(1); BB.r = BADGE / 2 * +k.toFixed(4); BB.s = 2 * +k.toFixed(4); BB.k = +k.toFixed(4); CS.e[3] = BB.x; CS.e[4] = BB.y; CS.e[5] = BB.k; CS.f[0] = 1; }
+  const BB = { x: 0, y: 0, r: 0, s: 0, k: 1 }; let glb = false;   // (v53 PERF4X)
+  // (v53 PERF4X review) the cards' world blur: this emblem's state for the module's card functions (see cardsNew)
+  const CS = cardsNew();
+  const cardsMove = (c, newest) => cardsMoveS(CS, c, newest), cardsTick = (now, show) => cardsTickS(CS, now, show);
   // Colours (v53 stage 4, verified against the user's two CS2 pictures with CS2's csgostyles.vcss values): the cards, their
   // numbers / pips and the line take the HUD colour (cl_hud_color: picture 1 Team Color = t-color #eabe54 — sampled
   // (228, 188, 88); the ace picture White = color-hud-1 #e8e8e8 — sampled (231, 232, 235)); the badge's RING is your
@@ -308,9 +400,9 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
   const setVar = (k, v) => { const st = root.style; if (typeof st.setProperty === 'function') st.setProperty(k, v); else st[k] = v; };
   globalThis.addEventListener?.('gd-hud-prefs', e => { hudPrefs = e.detail || loadHudPrefs(); api.setScale(hudPrefs.scale); api.setReduce(reduceFlashesNow(null)); colCard = ''; colors(lastTeams, lastMe); });
   let lastTeams = null, lastMe = '';
-  const setRoot = () => { root.className = rootClass(n, rf, ct); };
+  const setRoot = () => { root.className = rootClass(n, rf, ct); if (glb) root.classList.add('glb'); /* (v53 PERF4X: kept across class rewrites) */ };
   function paint(newest) {   // newest: the flag that bursts (−1: none — a redraw)
-    setRoot();
+    setRoot(); cardsMove(n > SLOTS ? 6 : n, newest);   // (v53 PERF4X review: the cards' world blur follows)
     const shown = Math.min(n, SLOTS);
     for (let i = 0; i < FLAGS; i++) { const s = F[i], vis = i < shown || (i === SLOTS && n > SLOTS); if (!vis) continue;
       const kind = i < SLOTS ? KK[i] : lastKind, marks = i < SLOTS ? KM[i] : lastMarks;
@@ -323,7 +415,7 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
     get count() { return n; },
     // A kill of yours: kind (KIND / pipKind), marks (markBits). No allocation.
     kill(kind, marks) { if (n < SLOTS) { KK[n] = kind; KM[n] = marks & 15; } lastKind = kind; lastMarks = marks & 15; n++; paint(n > SLOTS ? SLOTS : n - 1); },
-    clear() { if (!n) return; n = 0; setRoot(); for (let i = 0; i < FLAGS; i++) { const s = F[i]; s.c.className = EMBLEM_CLASS[0]; s.bx.className = TIER_CLASS[0]; } },
+    clear() { if (!n) return; n = 0; setRoot(); cardsMove(0); for (let i = 0; i < FLAGS; i++) { const s = F[i]; s.c.className = EMBLEM_CLASS[0]; s.bx.className = TIER_CLASS[0]; } },
     setReduce(b) { b = !!b; if (b === rf) return; rf = b; setRoot(); },
     // Stage 4's HUD scale (0.8–1.4): multiplies the 1080 p fit.
     setScale(k) { k = Number.isFinite(+k) && +k > 0 ? +k : 1; if (k === scale) return; scale = k; fit(true); },
@@ -333,8 +425,9 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
       LG[0].innerHTML = logoHTML('t'); LG[1].innerHTML = logoHTML('ct'); },
     // Every frame (arena-ui.js): on = in a match; G = the game; me = your key; now = the host's clock (ms).
     update(on, G, me, now) {
-      if (!on) { if (!root.hidden) root.hidden = true; return; }
+      if (!on) { if (!root.hidden) root.hidden = true; setBadgeBlur(false); cardsTick(now, false); return; }
       fit(false);
+      if (HUD_BLUR.ready !== glb) { glb = HUD_BLUR.ready; root.classList.toggle('glb', glb); }   // (v53 PERF4X: the output pass draws the disc — no backdrop filter)
       const C = G?.combat, D = C?.d, rid = D?.round?.id, ts = D?.teams; lastTeams = ts; lastMe = me;
       if (rid !== lastRound) { if (lastRound !== undefined) api.clear(); lastRound = rid; }   // (a new round: its freeze time starts — spec "clear when the next round's freeze time starts")
       const side = ts?.[me] === 'ct'; if (side !== ct) { ct = side; setRoot(); colors(ts, me); } else if (rid !== colRound) colors(ts, me);
@@ -342,6 +435,8 @@ export function createKillEmblems({ doc = globalThis.document, parent = doc?.bod
       if (!D && wasDown && !down) api.clear();   // (deathmatch has no rounds: the tally is per life)
       wasDown = down;
       if (root.hidden !== down) root.hidden = down;   // (dead: the spectate view's HUD instead)
+      setBadgeBlur(!down, BB.x, BB.y, BB.r, BB.s);   // (v53 PERF4X: the disc follows the badge — a few comparisons when nothing changed)
+      cardsTick(now, !down);   // (v53 PERF4X review: the cards' shapes — work only while one moves)
       const FE = C?.feed;
       if (lastAt === -Infinity) { lastAt = now; sameN = 0; if (FE) for (let i = 0; i < FE.length; i++) { const at = FE[i].at; if (at > lastAt) { lastAt = at; sameN = 0; } if (at === lastAt && sameN < 4) SAME[sameN++] = FE[i].target; } return; }   // (first look: what is in the feed already is no news)
       if (!FE || !FE.length) return;

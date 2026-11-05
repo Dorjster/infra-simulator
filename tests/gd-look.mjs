@@ -75,7 +75,7 @@ for (const id of Object.keys(CS2)) { const e = entryOf(id), b = X.bloomOf(e.bloo
 
 // ── 3. the baked map's lights ──
 { const cr = src('cs2-render.js'), gx = src('graphics.js');
-  ok(X.BAKED_LIGHT_N === 6 && X.BAKED_LIGHTS_U.uBPLp.value.length === 6 && X.BAKED_LIGHTS_U.uBPLc.value.length === 6, 'a fixed 6 light slots (uniform arrays made once)');
+  ok(X.BAKED_LIGHT_N === 6 && X.BAKED_LIGHTS_U.uBPLp.value.length === 6 * 4 && X.BAKED_LIGHTS_U.uBPLc.value.length === 6 * 3 && X.BAKED_LIGHTS_U.uBPLp.value instanceof Float32Array, 'a fixed 6 light slots (uniform arrays made once; v53 PERF4X: flat Float32Arrays, uploaded as they are)');
   ok(/'uniform vec4 uBPLp\[ ' \+ BAKED_LIGHT_N \+ ' \]; uniform vec3 uBPLc\[ ' \+ BAKED_LIGHT_N \+ ' \];/.test(cr) && /for \( int i = 0; i < ' \+ BAKED_LIGHT_N \+ '; i \+\+ \)/.test(cr) && /\+ gdPoints\( bakedN \) \)/.test(cr), 'the baked shaders (light map and vertex light) add the six lights: the count is fixed from load — no program change when a fire or a shot lights up');
   const fn = /function gdLights\(\) \{[\s\S]*?\n/.exec(gx)?.[0] || ''; ok(fn && !/new |\[\]|\{ *\}|=>/.test(fn.replace(/^function gdLights\(\) \{/, '')), 'graphics.js gdLights: copies the pool into the slots without allocating');
   ok(/if \(gdLast && scene\.userData\.baked\) gdLights\(\);/.test(gx), 'graphics.js: only in a GD match on a baked map'); }
