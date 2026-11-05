@@ -104,7 +104,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
   const group = new THREE.Group(); group.name = 'arena'; group.userData.gd = true; group.visible = false; scene.add(group);
   let current = null, boxes = [], ladders = [], bounds = null, savedBg = null, savedFog = null;
   // Doors and breakables of a map file (bsp-map.js movers): their mesh groups and how far each has swung / slid.
-  let movers = [], lastState = null, lastV = -1, phys = null; const PHYS_NEAR = [], PHYS_OUT = new Float64Array(4);   // (phys: a CS2 look's physics props, arena-physprops.js)
+  let movers = [], lastState = null, lastV = -1, phys = null, physList = null; const PHYS_NEAR = [], PHYS_OUT = new Float64Array(4);   // (phys: a CS2 look's physics props, arena-physprops.js)
   // A door's collision switches halfway through the swing you see (arena-maps.js applyMapState): since[id] — when this
   // screen saw it start moving (its own clock: the swing is drawn from then); swingNext — when the next one switches.
   const since = []; let swingNext = Infinity, dbg = null;   // (dbg: the collision view, gd-collision-view.js — made when first shown)
@@ -172,6 +172,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
       // The doors, panes and props that move cast the sun's live shadows too (sun-shadows.js; the map's own tiles: cs2-render.js).
       for (const M of movers) M.g.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });
       for (const pv of pivots.values()) pv.traverse(o => { if (o.isMesh) o.layers.enable(CASTER); });
+      if (pivots.size) physList = map.physProps;   // (v53 PROPS: the list the host's simulation numbers — gd-props.js)
       if (pivots.size) phys = createPhysProps(map.physProps, pivots, { cx, cz, floorAt: (x, z, y) => map.nav?.floorAt?.(x, z, y),
         // A wall in the way: CS2's own surfaces where the map has its grenade triangles (a ball round the prop's body, up
         // off the floor, touching something that is no floor), its doors and breakables by their boxes; else the boxes.
@@ -199,6 +200,7 @@ export function createArenaScene(scene, { pickables = [] } = {}) {
     physBlast(x, y, z, r) { phys?.blast(x, y, z, r); },
     physReset() { phys?.reset(); builtLook?.userData.propBatch?.rest(); },
     get physProps() { return phys; },
+    get physPropList() { return phys ? physList : null; },   // (v53 PROPS: the map's props, in the order the host's simulation numbers them — gd-props.js)
     // The round's doors and breakables (game.combat.mapState) — called every frame: collision switched when the state
     // changes, doors swung / slid toward it at their own pace (CS: about 100°/s), panes broken with shards and a crash.
     mapState(state, dt) { if (COLLISION_VIEW.on) (dbg ??= createCollisionView(group, () => boxes)).update(globalThis.__infra?.camera, state?.v ?? 0); else if (dbg?.shown) dbg.hide();   // (the collision view, when asked for: nothing at all otherwise)

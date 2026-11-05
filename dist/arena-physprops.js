@@ -3,6 +3,9 @@
 // about; they slide, spin, tip over and settle on the floor; pottery and bottles shatter when shot. Each computer moves
 // its own and only for the eye — never in a player's or a bullet's way (CS2 pushes its physics props aside and shoots
 // through them). Per frame: no allocation (fixed arrays, scratch vectors).
+// v53 PROPS: in a match whose host simulates the props (gd-props.js: the combat frame's `pp`) this one only draws them —
+// `net` is set, netPose / netBreak place them where the host's snapshots say (gd-props.js propsNet), and its own shot,
+// blast and update no longer move anything. Without the host's field (an older host) it simulates them as before.
 import * as THREE from './three.module.js';
 import { fixedSteps } from './phys-smooth.js';
 
@@ -46,17 +49,27 @@ export function createPhysProps(props, pivots, { cx = 0, cz = 0, floorAt = () =>
     g.quaternion.copy(_q); g.updateMatrixWorld(true); }
   const keep = k => { const o = k * 12, v = k * 5; PV[v] = S[o]; PV[v + 1] = S[o + 1]; PV[v + 2] = S[o + 2]; PV[v + 3] = S[o + 7]; PV[v + 4] = S[o + 8]; };
   for (let k = 0; k < n; k++) keep(k);
+  const netWoke = new Uint8Array(n);   // (v53 PROPS: drawn apart from the merged look since the host first moved it)
   return {
     count: n,
+    net: false,
+    // v53 PROPS: the host's pose of prop k (world x y z, yaw, tip and its direction) — drawn as it is, no stepping.
+    netPose(k, x, y, z, yaw, tip, dir) { if (k < 0 || k >= n) return; const o = k * 12; if (!netWoke[k]) { netWoke[k] = 1; wake(k); } S[o] = x; S[o + 1] = z; S[o + 2] = y; S[o + 7] = yaw; S[o + 8] = tip; S[o + 9] = dir; keep(k); place(k, 1); },
+    // v53 PROPS: the first whole prop on a ray (origin o, unit d) within `far` — its index or −1 (a knife's swing: the host knocks it).
+    pick(ox, oy, oz, dx, dy, dz, far = 10) { let best = -1, bt = far; for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const r = Math.max(R[k], H[k] / 2), px = S[o] - ox, py = S[o + 2] + H[k] / 2 - oy, pz = S[o + 1] - oz, t = px * dx + py * dy + pz * dz;
+        if (t < 0 || t > bt) continue; const qx = px - dx * t, qy = py - dy * t, qz = pz - dz * t; if (qx * qx + qy * qy + qz * qz > r * r) continue; best = k; bt = t; } return best; },
+    // v53 PROPS: the host broke prop k (a pot, a bottle): it goes, in pieces, here too (quiet: it broke before this page
+    // saw the round — a guest joining mid-round — gone without its pieces and sound again).
+    netBreak(k, quiet = false) { if (k < 0 || k >= n || S[k * 12 + 11]) return; const o = k * 12; wake(k); S[o + 11] = 1; awake[k] = 0; if (P[k]) P[k].visible = false; if (!quiet) onBreak(k, S[o], S[o + 2] + H[k] / 2, S[o + 1], R[k]); },
     // Bodies (players, bots): xyz feet triplets in `pos` (count of them): a prop they stand in is pushed out of the way.
     // Fixed 128 Hz steps (the rest of the frame carried to the next), then every prop that moved drawn between its last
     // two steps.
-    update(dt, pos, count) { if (!n) return; const steps = fixedSteps(clock, dt, STEP, MAX_STEPS);
+    update(dt, pos, count) { if (!n || this.net) return; const steps = fixedSteps(clock, dt, STEP, MAX_STEPS);
       for (let s = 0; s < steps; s++) { for (let k = 0; k < n; k++) if (awake[k] || moved[k]) keep(k); step(STEP, pos, count); }
       for (let k = 0; k < n; k++) { if (!moved[k]) continue; if (!awake[k] && steps) { keep(k); moved[k] = 0; place(k, 1); continue; } place(k, clock.a); } },
     // A shot along the ray (origin o, unit direction d) up to `far`: the first prop it passes through is knocked along it
     // (and shattered when it is pottery or glass). Returns that prop's index or −1.
-    shot(ox, oy, oz, dx, dy, dz, far = 300, power = 1) { let best = -1, bt = far;
+    shot(ox, oy, oz, dx, dy, dz, far = 300, power = 1) { if (this.net) return -1; let best = -1, bt = far;
       for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const cxk = S[o], cyk = S[o + 2] + H[k] / 2, czk = S[o + 1], r = Math.max(R[k], H[k] / 2);
         const px = cxk - ox, py = cyk - oy, pz = czk - oz, t = px * dx + py * dy + pz * dz; if (t < 0 || t > bt) continue;
         const qx = px - dx * t, qy = py - dy * t, qz = pz - dz * t; if (qx * qx + qy * qy + qz * qz > r * r) continue; best = k; bt = t; }
@@ -64,11 +77,11 @@ export function createPhysProps(props, pivots, { cx = 0, cz = 0, floorAt = () =>
       if (props[k].breaks) { wake(k); S[o + 11] = 1; awake[k] = 0; if (P[k]) P[k].visible = false; onBreak(k, S[o], S[o + 2] + H[k] / 2, S[o + 1], R[k]); return k; }
       knock(k, dx * 55 * power, dz * 55 * power, 6 + Math.max(0, dy) * 20, 1, true); return k; },
     // A grenade's blast at (x, y, z), radius r (game units): everything within is thrown outward (pots break near it).
-    blast(x, y, z, r) { for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const dx = S[o] - x, dz = S[o + 1] - z, dy = S[o + 2] - y, d = Math.hypot(dx, dy, dz); if (d > r) continue;
+    blast(x, y, z, r) { if (this.net) return; for (let k = 0; k < n; k++) { const o = k * 12; if (S[o + 11]) continue; const dx = S[o] - x, dz = S[o + 1] - z, dy = S[o + 2] - y, d = Math.hypot(dx, dy, dz); if (d > r) continue;
         const f = 1 - d / r; if (props[k].breaks && f > .45) { wake(k); S[o + 11] = 1; if (P[k]) P[k].visible = false; onBreak(k, S[o], S[o + 2] + H[k] / 2, S[o + 1], R[k]); continue; }
         const u = d > 1e-3 ? 1 / d : 0; knock(k, dx * u * 90 * f, dz * u * 90 * f, 20 * f, 1, true); } },
     // A new round: every prop back where the map put it, whole.
-    reset() { knocks.fill(0); for (let k = 0; k < n; k++) { const o = k * 12; S[o] = home[k * 3]; S[o + 1] = home[k * 3 + 1]; S[o + 2] = home[k * 3 + 2]; for (let j = 3; j < 12; j++) S[o + j] = 0; awake[k] = 0; moved[k] = 0; keep(k); if (P[k]) { P[k].visible = true; place(k); } } clock.acc = 0; },
+    reset() { knocks.fill(0); netWoke.fill(0); for (let k = 0; k < n; k++) { const o = k * 12; S[o] = home[k * 3]; S[o + 1] = home[k * 3 + 1]; S[o + 2] = home[k * 3 + 2]; for (let j = 3; j < 12; j++) S[o + j] = 0; awake[k] = 0; moved[k] = 0; keep(k); if (P[k]) { P[k].visible = true; place(k); } } clock.acc = 0; },
     // Is prop k moving (tests)? Its spot (simulated, and drawn: the pivot).
     awake: k => !!awake[k], at: k => [S[k * 12], S[k * 12 + 2], S[k * 12 + 1]], broken: k => !!S[k * 12 + 11], drawn: k => P[k]?.position || null,
   };

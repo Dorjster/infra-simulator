@@ -275,6 +275,26 @@ function prepare(id, gltf, light, cap = 0) {
       const ng = new THREE.BufferGeometry(); for (const a in g.attributes) ng.setAttribute(a, g.attributes[a]); ng.setIndex(new THREE.BufferAttribute(new ia.constructor(keep), 1)); ng.userData.shared = true; mesh.geometry = ng; }
     for (const mesh of gone) { mesh.removeFromParent(); still.splice(still.indexOf(mesh), 1); meshes.splice(meshes.indexOf(mesh), 1); mesh.material.dispose(); }
     root.userData.duplicates = cut; }
+  // v53 PROPS final: a physics prop's own model a second time as fixed scenery. The export's world holds a copy of each
+  // prop_physics model where the map put it (Mirage: a node per model — its seven cinder blocks, pots, cans, bottles —
+  // Overpass and Inferno inside the merged world), so a prop the host knocked left its copy standing where it stood, lit
+  // by the world's light (Overpass's spray can turned bright white). Cut from the fixed surfaces by whole islands, as the
+  // doors' copies: of a mesh of one of the prop's materials, each island (look-cuts.js islandsOf) wholly inside the prop's
+  // own box — the copy, a lid, a label (the export's copy is not always split into islands shaped like the prop's own:
+  // Overpass's food box and spray can were not, so no shape test). The same model elsewhere (scenery, another prop) is in
+  // no box: it stays.
+  if (Hm && props.size && !globalThis.__noPropCut) {   /* (__noPropCut: pictures without it, to compare) */ const base = n => String(n || '').replace(/__nolm$/, '').replace(/\.\d+$/, ''), own = new Map(), pad = 2 * Hm.U, tol = 1.2 * Hm.U, gone = []; let cut = 0;
+    for (const G of props.values()) { const b = moverBox(G), mats = new Set(); G.traverse(o => { if (o.isMesh) mats.add(base(o.material.name)); });
+      if (!Number.isFinite(b[0])) continue; for (const m of mats) (own.get(m) || own.set(m, []).get(m)).push({ b }); }
+    for (const mesh of still) { const L = own.get(base(mesh.material.name)), g = mesh.geometry, I = g.index; if (!L || !I || !g.attributes.position) continue;
+      const q = gameBox(g, mesh.matrix), near = L.filter(o => q[0] <= o.b[1] + pad && q[1] >= o.b[0] - pad && q[4] <= o.b[3] + pad && q[5] >= o.b[2] - pad && q[2] <= o.b[5] + pad && q[3] >= o.b[4] - pad); if (!near.length) continue;
+      const ia = I.array, Il = islandsOf(gameOf(mesh), ia, 4 / tol), go = new Uint8Array(Il.n.length); let any = false;
+      for (let j = 0; j < Il.n.length; j++) for (const o of near) { const b = o.b; if (Il.lo[j * 3] >= b[0] - pad && Il.hi[j * 3] <= b[1] + pad && Il.lo[j * 3 + 2] >= b[2] - pad && Il.hi[j * 3 + 2] <= b[3] + pad && Il.lo[j * 3 + 1] >= b[4] - pad && Il.hi[j * 3 + 1] <= b[5] + pad) { go[j] = 1; any = true; break; } }
+      if (!any) continue; const keep = []; for (let t = 0; t < ia.length; t += 3) if (!go[Il.of[t / 3]]) keep.push(ia[t], ia[t + 1], ia[t + 2]);
+      cut += (ia.length - keep.length) / 3; if (!keep.length) { gone.push(mesh); continue; }
+      const ng = new THREE.BufferGeometry(); for (const a in g.attributes) ng.setAttribute(a, g.attributes[a]); ng.setIndex(new THREE.BufferAttribute(new ia.constructor(keep), 1)); ng.userData.shared = true; mesh.geometry = ng; }
+    for (const mesh of gone) { mesh.removeFromParent(); still.splice(still.indexOf(mesh), 1); meshes.splice(meshes.indexOf(mesh), 1); mesh.material.dispose(); }
+    root.userData.propCopies = cut; }   // (triangles cut: tests)
   // Another game mode's walls and props (bsp-map.js modeOffOf — Nuke's 2v2 silo doors on both sides of Ramp and its
   // roll-up door across Outside → Secret, Overpass's 2v2 walls, Inferno's barricades): CS2 never shows them in a match and
   // no collision stands there, but the export drew them — doors and walls you walked through. Out of the look by whole
@@ -307,6 +327,7 @@ function prepare(id, gltf, light, cap = 0) {
     for (const o of own.values()) for (const mesh of o.keys()) { const M = mesh.material; if (M.transparent) continue; M.transparent = true; M.depthWrite = false; M.opacity = M.map ? CLAIMED_OPACITY : GLASS_OPACITY; if (!M.map) M.color.multiply(GLASS_TINT); M.needsUpdate = true; mesh.renderOrder = 1; mesh.castShadow = false; mesh.userData.glass = true; }
     for (const [i, o] of own) { const m = panes[i], G = new THREE.Group(), parts = [...o].map(([mesh, tris]) => ({ I: mesh.geometry.index, tris, saved: Uint32Array.from(tris.flatMap(t => [mesh.geometry.index.array[t], mesh.geometry.index.array[t + 1], mesh.geometry.index.array[t + 2]])) }));
       G.name = 'mover_e' + m.e; G.userData.setBroken = br => { for (const q of parts) { const a = q.I.array; q.tris.forEach((t, j) => { if (br) a[t] = a[t + 1] = a[t + 2] = q.saved[j * 3]; else { a[t] = q.saved[j * 3]; a[t + 1] = q.saved[j * 3 + 1]; a[t + 2] = q.saved[j * 3 + 2]; } }); q.I.needsUpdate = true; } };
+      G.userData.glassTris = () => { let n = 0; for (const q of parts) { const a = q.I.array; for (const t of q.tris) if (a[t] !== a[t + 1] || a[t + 1] !== a[t + 2]) n++; } return n; };   // (v53 DETAILS final, tests: the pane's glass triangles still drawn — 0 once broken)
       movers.set(m.e, G); root.add(G); }
     root.userData.panes = [panes.length, own.size]; }
   // Fewer draws (the main thread's cost a frame is mostly per draw: 950 meshes on Inferno and 450 props). The map's fixed,
@@ -341,7 +362,7 @@ function prepare(id, gltf, light, cap = 0) {
     const keepM = meshes.filter(m => !merged.has(m)), keepS = still.filter(m => !merged.has(m)); meshes.length = 0; meshes.push(...keepM, ...made); still.length = 0; still.push(...keepS, ...made.filter(m => !m.layers.isEnabled(CASTER_LAYER)));
   }
   root.userData.keep = false; root.userData.cs2Render = id; root.userData.baked = !!light;
-  if (r) { for (const t of textures) r.initTexture(t); const sc = globalThis.__infra?.scene, cam = globalThis.__infra?.camera; if (sc && cam && r.compileAsync) { const all = cam.clone(); all.layers.enableAll(); r.compileAsync(root.userData.casters || root, all, sc).catch(() => {}); } if (sc && cam && r.compileAsync) r.compileAsync(root, cam, sc).catch(() => {}); }   // textures uploaded and shaders built now, on the loading screen
+  if (r) { for (const t of textures) r.initTexture(t); const sc = globalThis.__infra?.scene, cam = globalThis.__infra?.camera; const hid = []; for (const G of props.values()) if (!G.visible) { G.visible = true; hid.push(G); }   /* v53 PROPS: the batched props' own look (drawn alone once the host knocks one) warmed here too — compile() walks visible objects only */ if (sc && cam && r.compileAsync) { const all = cam.clone(); all.layers.enableAll(); r.compileAsync(root.userData.casters || root, all, sc).catch(() => {}); } if (sc && cam && r.compileAsync) r.compileAsync(root, cam, sc).catch(() => {}); for (const G of hid) G.visible = false; }   // textures uploaded and shaders built now, on the loading screen
   root.userData.worldCasters = () => { if (!root.userData.casters) { const cr = buildCasters(still); root.add(cr); root.userData.casters = cr; } return root.userData.casters; };   // (tests: the sun's fit)
   root.userData.movers = movers; root.userData.props = props; kept = { id, root, textures, meshes, cap }; return root;
 }
