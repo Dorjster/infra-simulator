@@ -4,6 +4,7 @@ import http from 'node:http';
 import https from 'node:https';
 import {selfSigned} from './selfsigned.mjs';
 import {readZip} from './zip.mjs';
+import {openZip,zipEntryName} from './zip.mjs';import {createWriteStream} from 'node:fs';import {once as gdOnce} from 'node:events';   // (53.0.1, Global Defensive's asset packs: the upload kept on disk, read one entry at a time)
 import {readFile,stat,writeFile,rename,copyFile,mkdir,readdir,mkdtemp,rm} from 'node:fs/promises';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
@@ -65,15 +66,44 @@ const ASSET_MIME={'.bin':'application/octet-stream','.jpg':'image/jpeg','.png':'
 // CS2 finishes ride under skins-pack/ (import-cs2-models --with-skins): unpacked to a temporary folder and installed as the
 // import tool installs them (tools/cs2-skins/manifest.mjs installSkins: checked, never written over file by file, the old
 // skins/ kept as skins.bak-…, two backups kept); never through assets/skins/ (that would overwrite the installed set).
-async function installPack(buf){const entries=readZip(buf);if(!entries.some(e=>e.name==='infra-pack.json'))throw new Error('no infra-pack.json in it (asset packs are made by tools/import-cs2-models.mjs)');let files=0,maps=0,skins=0,gloves=0,tmp=null,gtmp=null;
-  try{for(const {name,data} of entries){let m;
-    if((m=/^assets\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!/^(skins|gloves)(\/|\.)/i.test(m[1])&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){const f=path.resolve(assetsDir,m[1]);if(!f.startsWith(assetsDir+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);files++;}
-    else if((m=/^skins-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){tmp??=await mkdtemp(path.join(os.tmpdir(),'gd-skins-pack-'));const f=path.resolve(tmp,m[1]);if(!f.startsWith(tmp+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);skins++;}
-    else if((m=/^gloves-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!name.split('/').some(x=>!x||x.startsWith('.'))&&ASSET_MIME[path.extname(name)]){gtmp??=await mkdtemp(path.join(os.tmpdir(),'gd-gloves-pack-'));const f=path.resolve(gtmp,m[1]);if(!f.startsWith(gtmp+path.sep))continue;await mkdir(path.dirname(f),{recursive:true});await writeFile(f,data);gloves++;}
-    else if((m=/^maps\/([a-z0-9]+)\.bsp$/.exec(name))&&FILE_MAP_IDS.includes(m[1])){await loadMapFile(m[1],data);await mkdir(mapsDir,{recursive:true});await writeFile(path.join(mapsDir,m[1]+'.bsp'),data);maps++;}}
-  let skinsNote=null;if(tmp){await mkdir(assetsDir,{recursive:true});const {installSkins}=await import(pathToFileURL(path.join(project,'tools','cs2-skins','manifest.mjs')));const r=installSkins({assets:assetsDir,from:tmp,log});skinsNote=r.unchanged?'unchanged':'installed';await loadSkinCatalog();}
-  let glovesNote=null;if(gtmp){await mkdir(assetsDir,{recursive:true});const {installGloves}=await import(pathToFileURL(path.join(project,'tools','cs2-gloves','manifest.mjs')));const r=installGloves({assets:assetsDir,from:gtmp,log});glovesNote=r.unchanged?'unchanged':'installed';await loadGloveCatalog();}
-  return {ok:true,files,maps,skins,gloves,...(skinsNote?{skinsNote}:{}),...(glovesNote?{glovesNote}:{})};}finally{if(tmp)await rm(tmp,{recursive:true,force:true}).catch(()=>{});if(gtmp)await rm(gtmp,{recursive:true,force:true}).catch(()=>{});}}
+// (53.0.1) Also the "Infra Simulator Assets" folder zipped whole (Finder → Compress: one top folder, __MACOSX/ and ._
+// AppleDouble entries, a READ ME): no infra-pack.json but assets/manifest.json; its one top folder is left out, Finder's
+// own files skipped, and its assets/skins/ and assets/gloves/ go through installSkins / installGloves exactly as
+// skins-pack/ and gloves-pack/ do (backups kept, never written over file by file). The pack is a file on disk (the upload,
+// below), read one entry at a time (lan/zip.mjs openZip: CRC-checked, zip64, zip-bomb and link guards): memory stays
+// about the largest file in it, not the pack.
+const GD_PACK_JUNK=/(^|\/)(__MACOSX(\/|$)|\._|\.DS_Store$)/,GD_PACK_ROOTS=new Set(['infra-pack.json','assets','maps','skins-pack','gloves-pack']);
+// (53.0.1) All or nothing, as v53.0.0 (which unpacked and checked the whole pack before writing): every entry is first
+// unpacked and CRC-checked into a staging folder inside assetsDir (.gd-pack-staging-…: the same disk, so each file is
+// then moved in place by a rename; a dot folder, never served), the skins and gloves into their temporary folders; only
+// when all of them are good do the installed files change. A damaged entry anywhere: refused, nothing installed.
+async function installPack(file){const gdZip=await openZip(file);let files=0,maps=0,skins=0,gloves=0,gdSkipped=0,tmp=null,gtmp=null,stage=null;
+  try{const gdReal=gdZip.entries.filter(e=>!e.dir&&!GD_PACK_JUNK.test(e.name)),first=gdReal[0]?.name.split('/')[0];
+  const top=first&&gdReal[0].name.includes('/')&&!GD_PACK_ROOTS.has(first)&&gdReal.every(e=>e.name.startsWith(first+'/'))?first+'/':'',gdRel=e=>e.name.slice(top.length);   // (Finder: everything in one folder)
+  const pack=gdReal.some(e=>gdRel(e)==='infra-pack.json'),folder=!pack&&gdReal.some(e=>gdRel(e)==='assets/manifest.json');
+  if(!pack&&!folder)throw new Error('no infra-pack.json in it, nor assets/manifest.json of the Global Defensive assets folder zipped whole (asset packs are made by tools/import-cs2-models.mjs)');
+  await mkdir(assetsDir,{recursive:true});stage=await mkdtemp(path.join(assetsDir,'.gd-pack-staging-'));const gdA=path.join(stage,'assets'),gdM=path.join(stage,'maps'),gdPut=new Set(),gdMaps=new Set();
+  const gdInto=async(dir,sub,e)=>{const f=path.resolve(dir,sub);if(!f.startsWith(dir+path.sep))return false;await mkdir(path.dirname(f),{recursive:true});await gdZip.extractTo(e,f);return true;};   // (streamed: CRC-checked, through f.part)
+  for(const e of gdReal){const name=gdRel(e);let m;if(!zipEntryName(name)||name.split('/').some(x=>x.startsWith('.'))){gdSkipped++;continue;}
+    if((m=/^assets\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&!/^(skins|gloves)(\/|\.)/i.test(m[1])&&ASSET_MIME[path.extname(name)]){if(await gdInto(gdA,m[1],e)){gdPut.add(m[1]);files++;}else gdSkipped++;}
+    else if((m=(folder?/^assets\/skins\/([a-z0-9][a-z0-9_.\-\/]*)$/i:/^skins-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i).exec(name)||/^skins-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&ASSET_MIME[path.extname(name)]){tmp??=await mkdtemp(path.join(os.tmpdir(),'gd-skins-pack-'));if(await gdInto(tmp,m[1],e))skins++;else gdSkipped++;}
+    else if((m=(folder?/^assets\/gloves\/([a-z0-9][a-z0-9_.\-\/]*)$/i:/^gloves-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i).exec(name)||/^gloves-pack\/([a-z0-9][a-z0-9_.\-\/]*)$/i.exec(name))&&ASSET_MIME[path.extname(name)]){gtmp??=await mkdtemp(path.join(os.tmpdir(),'gd-gloves-pack-'));if(await gdInto(gtmp,m[1],e))gloves++;else gdSkipped++;}
+    else if((m=/^maps\/([a-z0-9]+)\.bsp$/.exec(name))&&FILE_MAP_IDS.includes(m[1])){await gdInto(gdM,m[1]+'.bsp',e);gdMaps.add(m[1]);}
+    else gdSkipped++;}
+  // The skins and gloves checked as their installers check them (validateManifest), before anything installed changes.
+  const gdSk=tmp&&await import(pathToFileURL(path.join(project,'tools','cs2-skins','manifest.mjs'))),gdGl=gtmp&&await import(pathToFileURL(path.join(project,'tools','cs2-gloves','manifest.mjs')));
+  for(const [mod,dir] of [[gdSk,tmp],[gdGl,gtmp]])if(mod){const v=mod.validateManifest(dir);if(!v.ok)throw new Error('the baked folder does not pass the check:\n  '+v.errors.join('\n  '));}
+  // Every entry unpacked and checked: now the installed set changes (models moved in, maps loaded and written, then the
+  // skins and gloves through their installers), in the order v53.0.0 wrote them.
+  for(const rel of gdPut){const f=path.join(assetsDir,rel);await mkdir(path.dirname(f),{recursive:true});await rename(path.join(gdA,rel),f);}
+  for(const gdId of gdMaps){const data=await readFile(path.join(gdM,gdId+'.bsp'));await loadMapFile(gdId,data);await mkdir(mapsDir,{recursive:true});await writeFile(path.join(mapsDir,gdId+'.bsp'),data);maps++;}
+  let skinsNote=null;if(tmp){const r=gdSk.installSkins({assets:assetsDir,from:tmp,log});skinsNote=r.unchanged?'unchanged':'installed';await loadSkinCatalog();}
+  let glovesNote=null;if(gtmp){const r=gdGl.installGloves({assets:assetsDir,from:gtmp,log});glovesNote=r.unchanged?'unchanged':'installed';await loadGloveCatalog();}
+  return {ok:true,layout:pack?'pack':'folder',files,maps,skins,gloves,skipped:gdSkipped,...(skinsNote?{skinsNote}:{}),...(glovesNote?{glovesNote}:{})};}finally{await gdZip.close().catch(()=>{});for(const d of [stage,tmp,gtmp])if(d)await rm(d,{recursive:true,force:true}).catch(()=>{});}}
+// (53.0.1, Global Defensive's asset packs) What a room that quit mid-install left: staging folders in assetsDir (an hour
+// old) and uploads in the temporary folder (a day old: another room may be installing one right now).
+{const gdOld=async(dir,re,age)=>{for(const f of await readdir(dir).catch(()=>[]))if(re.test(f)){const p=path.join(dir,f),st=await stat(p).catch(()=>null);if(st&&Date.now()-st.mtimeMs>age)await rm(p,{recursive:true,force:true}).catch(()=>{});}};
+ await gdOld(assetsDir,/^\.gd-pack-staging-/,3600e3);await gdOld(os.tmpdir(),/^gd-(pack-upload|skins-pack|gloves-pack)-/,86400e3);}
 // The CS2 finish catalogue (skins.js setSkinCatalog): read at start and after a pack; none → built-in finishes only.
 async function loadSkinCatalog(){const m=await readFile(path.join(assetsDir,'skins','skins.json'),'utf8').then(JSON.parse).catch(()=>null);setSkinCatalog(m);if(m)log('CS2 finishes: '+Object.keys(m.weapons||{}).length+' guns, '+Object.keys(m.knives||{}).length+' knife finishes');}
 await loadSkinCatalog();
@@ -132,6 +162,7 @@ function lanAddresses(){const out=[];try{for(const list of Object.values(os.netw
 // The room code is kept next to the save, so guests can rejoin after a host restart with the same code.
 const roomFile=campaignPath.replace(/\.json$/,'')+'.room';let roomCode=options.roomCode||await readFile(roomFile,'utf8').then(x=>x.trim()).catch(()=>'')||randomBytes(3).toString('hex').toUpperCase();if(!options.roomCode)await writeFile(roomFile,roomCode).catch(()=>{});
 const hostKey=options.hostKey||randomBytes(24).toString('hex');
+let gdPackBusy=false;   // (53.0.1: one Global Defensive asset pack installed at a time)
 const loopback=req=>['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
 const RATE={'/api/pose':45,'/api/combat':60,'/api/voice':60};   // requests a second per player (below: the rest 35)
 const json=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
@@ -162,8 +193,15 @@ const handler=async(req,res)=>{try{
  // Maps from files: the list, the files, and (the host) adding one.
  if(url.pathname==='/api/user-maps'&&req.method==='GET'){json(res,200,{maps:[...userMaps.values()]});return;}
  if(url.pathname==='/api/user-assets/pack'&&req.method==='POST'){const p=players.get(req.headers['x-player-token']);if(!(p?.isHost||(!p&&loopback(req)))){json(res,403,{error:'Only the host adds models and maps'});return;}
-   const chunks=[];let n=0;for await(const c of req){n+=c.length;if(n>3584*1048576){json(res,413,{error:'Asset pack too large (3.5 GB at most)'});return;}chunks.push(c);}/* (a zip addresses 4 GB; the CS2 maps' grenade collision made the pack about 2 GB) */
-   try{const r=await installPack(Buffer.concat(chunks));broadcast('user-maps',{maps:[...userMaps.values()]});loadHitboxes().catch(()=>{});/* (v53 AGENTS: a pack may bring CS2's hit boxes for Global Defensive's host hit test) */broadcast('user-assets',{});log('Asset pack installed: '+r.files+' model files, '+r.maps+' maps'+(r.skinsNote?', CS2 finishes '+r.skinsNote:'')+(r.glovesNote?', CS2 gloves '+r.glovesNote:''));json(res,200,r);}catch(e){json(res,400,{error:'Not a usable asset pack: '+e.message});}return;}
+   /* (53.0.1, Global Defensive's asset packs: the upload streams to a temporary file — never one Buffer: the desktop app's V8
+      cannot allocate 2.3 GB — removed whatever happens; one pack at a time. 3.5 GB at most: a plain zip addresses 4 GB, the
+      v53.0.0 folder zipped is 2.3 GB.) */
+   const gdPackMax=3584*1048576;if(Number(req.headers['content-length'])>gdPackMax){json(res,413,{error:'Asset pack too large (3.5 GB at most)'});return;}
+   if(gdPackBusy){json(res,409,{error:'Another asset pack is being installed'});return;}gdPackBusy=true;let gdUp=null,gdReply=null;   /* (the reply sent once the temporary file is gone) */
+   try{gdUp=await mkdtemp(path.join(os.tmpdir(),'gd-pack-upload-'));const file=path.join(gdUp,'pack.zip'),ws=createWriteStream(file);let n=0,over=false,werr=null;ws.on('error',e=>{werr=e;});
+     try{for await(const c of req){n+=c.length;if(n>gdPackMax){over=true;break;}if(werr)break;if(!ws.write(c))await gdOnce(ws,'drain').catch(()=>{});}}finally{await new Promise(ok=>{if(ws.destroyed)ok();else{ws.once('close',ok);ws.end();}});}
+     if(over)gdReply=[413,{error:'Asset pack too large (3.5 GB at most)'}];else if(werr)gdReply=[500,{error:'The asset pack could not be saved on this computer: '+werr.message+' (Global Defensive needs twice its size free)'}];
+   else try{const r=await installPack(file);broadcast('user-maps',{maps:[...userMaps.values()]});loadHitboxes().catch(()=>{});/* (v53 AGENTS: a pack may bring CS2's hit boxes for Global Defensive's host hit test) */broadcast('user-assets',{});log('Asset pack installed: '+r.files+' model files, '+r.maps+' maps'+(r.skinsNote?', CS2 finishes '+r.skinsNote:'')+(r.glovesNote?', CS2 gloves '+r.glovesNote:''));gdReply=[200,r];}catch(e){gdReply=[400,{error:'Not a usable asset pack: '+e.message}];}}finally{if(gdUp)await rm(gdUp,{recursive:true,force:true}).catch(()=>{});gdPackBusy=false;}if(gdReply)json(res,...gdReply);return;}
  /* v53 S2 — Global Defensive practice lineups saved on this computer (gd-lineups.js): GET /api/lineups/<map> → { map, lineups };
     POST { add: lineup } / { remove: id } (the host's page or this computer only — the file is on the host's disk), the
     file rewritten whole through a temporary one (never half-written), at most MAX_USER a map. Not cached. */

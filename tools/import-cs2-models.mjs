@@ -19,7 +19,7 @@
 // At the end everything imported (models and maps) is written as one asset pack, ~/Desktop/Infra Simulator Assets.zip:
 // on another computer, install it in one step (the game's Settings → Models and maps → Import asset pack, or drop it in
 // that computer's ~/Desktop/Infra Simulator Assets folder and run this). --no-pack skips writing it.
-import { execFileSync } from 'node:child_process'; import { writeZip } from '../lan/zip.mjs'; import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process'; import { writeZipFile } from '../lan/zip.mjs'; import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, mkdtempSync, rmSync, existsSync } from 'node:fs'; import { installSkins, manifestFiles } from './cs2-skins/manifest.mjs'; import { installGloves, manifestFiles as gloveManifestFiles } from './cs2-gloves/manifest.mjs'; import { packFiles, SKINS, GLOVES } from './asset-pack-files.mjs'; import os from 'node:os'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.join(here, '..'), DROP = path.join(os.homedir(), 'Desktop', 'Infra Simulator Assets');
 const argv = process.argv.slice(2), opt = k => { const i = argv.indexOf(k); return i >= 0 ? argv.splice(i, 2)[1] : null; }, mapsArg = opt('--maps'), packArg = opt('--pack');
@@ -155,10 +155,12 @@ if (app) { for (const f of walkAssets(out)) { const t = path.join(app, 'assets',
 if (!noPack && (existsSync(path.join(out, 'manifest.json')) || existsSync(mapsOut))) {
   const maps = existsSync(mapsOut) ? readdirSync(mapsOut).filter(f => /\.bsp$/i.test(f)) : [], man = existsSync(path.join(out, 'manifest.json')) ? JSON.parse(readFileSync(path.join(out, 'manifest.json'), 'utf8')) : { models: {} };
   const info = { version: 1, made: new Date().toISOString(), weapons: Object.keys(man.models.weapons || {}), agents: Object.keys(man.models.agents || {}), viewmodels: Object.keys(man.models.viewmodels || {}), maps: maps.map(f => f.replace(/\.bsp$/i, '')), looks: Object.keys(man.models.maps || {}), skins: skinFiles().length > 0, gloves: gloveFiles().length > 0 };
-  const entries = [{ name: 'infra-pack.json', data: Buffer.from(JSON.stringify(info, null, 1)) }, ...(existsSync(out) ? walkAssets(out).map(f => ({ name: 'assets/' + path.relative(out, f).split(path.sep).join('/'), data: readFileSync(f) })) : []),
+  // (53.0.1) entries name their files, read one at a time as the pack is written (writeZipFile: never the whole pack in
+  // memory, no 2 GiB single write; zip64 past 4 GB or 65535 entries)
+  const entries = [{ name: 'infra-pack.json', data: Buffer.from(JSON.stringify(info, null, 1)) }, ...(existsSync(out) ? walkAssets(out).map(f => ({ name: 'assets/' + path.relative(out, f).split(path.sep).join('/'), file: f })) : []),
     // CS2 finishes: under skins-pack/, which a room's pack import leaves alone until it installs them under the back-up rule
-    ...skinFiles().map(f => ({ name: 'skins-pack/' + path.relative(path.join(out, 'skins'), f).split(path.sep).join('/'), data: readFileSync(f) })),
+    ...skinFiles().map(f => ({ name: 'skins-pack/' + path.relative(path.join(out, 'skins'), f).split(path.sep).join('/'), file: f })),
     // CS2 gloves: under gloves-pack/ the same way (lan/room.mjs installPack → installGloves)
-    ...gloveFiles().map(f => ({ name: 'gloves-pack/' + path.relative(path.join(out, 'gloves'), f).split(path.sep).join('/'), data: readFileSync(f) })), ...maps.map(f => ({ name: 'maps/' + f, data: readFileSync(path.join(mapsOut, f)) }))];
-  writeFileSync(PACK, writeZip(entries)); console.log(`→ ${PACK}: ${info.weapons.length} weapons, ${info.agents.length} agents, ${info.viewmodels.length} first-person, ${info.maps.length} maps (${(statSync(PACK).size / 1048576).toFixed(0)} MB${info.skins ? `, CS2 finishes ${(skinFiles().reduce((n, f) => n + statSync(f).size, 0) / 1048576).toFixed(0)} MB included as skins-pack/` : ''}${info.gloves ? `, CS2 gloves ${(gloveFiles().reduce((n, f) => n + statSync(f).size, 0) / 1048576).toFixed(0)} MB included as gloves-pack/` : ''}) — on another computer: Settings → Models and maps → Import asset pack`);
+    ...gloveFiles().map(f => ({ name: 'gloves-pack/' + path.relative(path.join(out, 'gloves'), f).split(path.sep).join('/'), file: f })), ...maps.map(f => ({ name: 'maps/' + f, file: path.join(mapsOut, f) }))];
+  writeZipFile(PACK, entries); console.log(`→ ${PACK}: ${info.weapons.length} weapons, ${info.agents.length} agents, ${info.viewmodels.length} first-person, ${info.maps.length} maps (${(statSync(PACK).size / 1048576).toFixed(0)} MB${info.skins ? `, CS2 finishes ${(skinFiles().reduce((n, f) => n + statSync(f).size, 0) / 1048576).toFixed(0)} MB included as skins-pack/` : ''}${info.gloves ? `, CS2 gloves ${(gloveFiles().reduce((n, f) => n + statSync(f).size, 0) / 1048576).toFixed(0)} MB included as gloves-pack/` : ''}) — on another computer: Settings → Models and maps → Import asset pack`);
 }

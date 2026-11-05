@@ -22,3 +22,4 @@ These drive the real client in Chrome through Playwright. They need `playwright-
 | `arena-lan-e2e.mjs <root> <out>` | Deathmatch over LAN in two separate browsers: join through the start screen, see each other, drop / pick up, shots hurt and are heard in 3D, spectating, no hitches in play |
 | `arena-defuse-e2e.mjs <root> <out>` | Defuse solo: teams, $800, freeze, buy with money, plant on A, explosion → T win, a bot joins CT, win money |
 | `arena-defuse-lan-e2e.mjs <root> <out>` | Defuse over LAN: host T plants, guest CT defuses with E → CT win on both screens, no hitches |
+| `gd-pack-import-e2e.mjs <root> <out> <zip>` | Settings → Models and maps → Import asset pack with a big zip (the Global Defensive assets folder zipped by Finder, or an asset pack): the reply, the maps the room then serves, and the peak memory of Chrome's processes and of the room (53.0.1: nothing holds the pack in memory) |

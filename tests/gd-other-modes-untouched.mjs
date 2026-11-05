@@ -39,9 +39,12 @@ const GD_SIDE = new Set(['skins.js', 'skin-render.js', 'skin-sync.js', 'skin-tex
 // (fun-pistol.js since v53 GUNS: every gun's shot effects — Global Defensive's too — live in it; CS2's muzzle flash, shell
 // case and the light cut to the flash are added in its GD branches (gdOn()), audited like the others in part 3)
 const SHARED = ['lab.js', 'campaign-ui.js', 'graphics.js', 'hud.js', 'multiplayer.js', 'sound-bank.js', 'app.js', 'fun-pistol.js', '../lan/server.mjs', '../lan/room.mjs'];
+// The room's GD-side helpers (lan/): zip.mjs reads and writes only Global Defensive's asset packs (CS2 models, maps,
+// finishes and gloves: tools/import-cs2-models.mjs, POST /api/user-assets/pack); 53.0.1 reads them from a file.
+const LAN_GD_SIDE = new Set(['../lan/zip.mjs']);
 const otherModes = () => {
   const d = readdirSync(DIST).filter(f => /\.(m?js|css|html)$/.test(f) && statSync(path.join(DIST, f)).isFile() && !GD_NAME.test(f) && !GD_SIDE.has(f) && !SHARED.includes(f) && !/^three\./.test(f) && f !== 'OrbitControls.js');
-  const l = readdirSync(LAN).filter(f => /\.mjs$/.test(f) && !SHARED.includes('../lan/' + f)).map(f => '../lan/' + f);
+  const l = readdirSync(LAN).filter(f => /\.mjs$/.test(f) && !SHARED.includes('../lan/' + f) && !LAN_GD_SIDE.has('../lan/' + f)).map(f => '../lan/' + f);
   return [...d, ...l].sort(); };
 
 // ── 2. behaviour fingerprints (the same code runs on 52.0.5's dist for --print) ──
@@ -67,7 +70,7 @@ if (PRINT) {
 const F = JSON.parse(readFileSync(FIX, 'utf8'));
 // ── 1. other modes' own modules, byte for byte ──
 { const now = otherModes(), changed = [], gone = [], extra = now.filter(f => !(f in F.files));
-  for (const [f, h] of Object.entries(F.files)) { if (SHARED.includes(f)) continue; /* (a file moved to SHARED: audited in part 3 instead) */ const p = path.join(DIST, f); if (!existsSync(p)) gone.push(f); else if (sha(readFileSync(p)) !== h) changed.push(f); }
+  for (const [f, h] of Object.entries(F.files)) { if (SHARED.includes(f) || LAN_GD_SIDE.has(f)) continue; /* (a file moved to SHARED: audited in part 3 instead; LAN_GD_SIDE: Global Defensive's own) */ const p = path.join(DIST, f); if (!existsSync(p)) gone.push(f); else if (sha(readFileSync(p)) !== h) changed.push(f); }
   ok('every other-mode module is byte-identical to 52.0.5 (' + Object.keys(F.files).length + ' files: scenes, HUD, settings, logic)', !changed.length, 'changed: ' + changed.join(', ') + ' — keep Global Defensive work out of them (spec 0.1)');
   ok('no other-mode module removed', !gone.length, gone.join(', '));
   ok('no new module outside Global Defensive\'s own names (a GD module goes in gd-* / arena-* …; a new shared one needs a GD_SIDE entry with a reason)', !extra.length, extra.join(', ')); }
