@@ -10,11 +10,57 @@
 //  · Win: eliminate the other team, the bomb explodes (T), it's defused or the clock runs out unplanted (CT).
 import { ARENA } from './facility-layout.js';
 import { ARENA_MAPS, spawnSlots, inBuyZone } from './arena-maps.js';
-import { weaponById, EYE, MAX_HP, defaultPistol } from './weapons-data.js';
-import { refillAll, recording, statOf } from './combat-logic.js';
+import { weaponById, EYE, MAX_HP, defaultPistol, reserveFor } from './weapons-data.js';
+import { refillAll, recording, statOf, applyReserveNext } from './combat-logic.js';
 
 export const JOIN_GRACE_MS = 8000;
 export const DEFUSE = { freezeMs: 15000, roundMs: 115000, buyMs: 20000, bombMs: 40000, plantMs: 3200, defuseMs: 10000, kitMs: 5000, overMs: 6000, matchOverMs: 12000, half: 12, win: 13, start: 800, max: 16000, buyRadius: 45, bombRadius: 1750 * 2.54 / 16.5 };
+// v53 DETAILS — the planted bomb's beeps (drawn and heard on every computer from the host's explodeAt: arena-ui.js bombView).
+// What CS2's files hold (game_sounds_weapons.vsndevts): the beep is C4.PlantSound (+ its C4.PlantSoundB layer), and the
+// last 10 s have their own files, C4.PlantSound_10sec / C4.PlantSoundB_10sec, plus C4.10Seconds (arm_bomb, once) —
+// so `tenS` is the moment the beep changes. WHEN each beep falls is game code, not in the install's files (no bomb
+// timer data in the soundevents, the particles or the HUD's panorama scripts — hudteamcounter.vts has none):
+// gapMs is CS:GO's planted_c4 rule, max(0.1 + 0.9 × the share of the timer left, 0.15) s — 1 s apart at the plant,
+// 0.15 s from 2.2 s before the end. UNVERIFIED for CS2. Each beep also fires the bomb's c4_timer_light flash.
+export const C4_BEEP = { tenS: 10, minS: .15, baseS: .1, spanS: .9, from: 'CS:GO planted_c4 (unverified for CS2); the 10 s change: CS2 soundevents' };
+export function beepGapMs(leftMs, bombMs = DEFUSE.bombMs) { const f = Math.max(0, Math.min(1, leftMs / bombMs)); return 1000 * Math.max(C4_BEEP.minS, C4_BEEP.baseS + C4_BEEP.spanS * f); }
+// The beep's sound event at `leftMs` before the blast (gd-sounds.js ids): the last 10 s their own files.
+export const beepEvent = leftMs => leftMs <= C4_BEEP.tenS * 1000 ? 'c4.beep.10' : 'c4.beep';
+// (v53 DETAILS final) The schedule is anchored at the host's PLANT time (explodeAt − bombMs, which a pause moves with explodeAt), not at the moment a computer first
+// sees the bomb: the first beep at the plant, each next one beepGapMs later — so every computer (and a late joiner)
+// beeps and flashes at the same host instants. beepFrom: the first scheduled beep at or after `nowMs` (walked once per
+// plant, ~100 steps; numbers only, no allocation).
+export function beepFrom(plantAt, explodeAt, nowMs) { const bm = explodeAt - plantAt > 0 ? explodeAt - plantAt : DEFUSE.bombMs; let t = plantAt; for (let i = 0; i < 4000 && t < nowMs; i++) t += beepGapMs(explodeAt - t, bm); return t; }
+// The bomb's last-second sounds (CS2's files hold both events — C4.ExplodeTriggerTrip, items/nvg_on, and C4.ExplodeWarning,
+// ui/arm_bomb: game_sounds_weapons.vsndevts 24493 / 24432 — but not WHEN they play): each once per bomb, 1 s before the
+// blast, the trip first. CS:GO's planted_c4 rule as remembered, UNVERIFIED for CS2.
+export const C4_END = { tripMs: 1000, warnMs: 1000, from: 'CS:GO planted_c4 (from memory; unverified for CS2); the events: CS2 soundevents' };
+// (v53 DETAILS final 2) One frame of the planted bomb's sounds and flashes, as a pure step (arena-ui.js bombView plays
+// what it returns; tests step it). st: bombState(), reused; p: the host's planted record; nowMs: host time; pausedAt:
+// the host's pause moment (d.paused.at) or null. Returns BOMB_EV bits: BEEP (st.at = its host instant, st.left = ms then
+// left), TEN (C4.10Seconds), TRIP (C4.ExplodeTriggerTrip), WARN (C4.ExplodeWarning, after the trip). Rules:
+//  · paused: the bomb's clock stands at the pause (no beeps, flashes or end sounds while the host's bomb is frozen);
+//  · a resume moves explodeAt (arena-logic.js 'pause'): the schedule shifts by the same amount — nothing replays, because
+//    the once-per-bomb sounds are keyed on the plant (p.at, which a pause does not move), not on explodeAt;
+//  · first seen (a late join): a once-per-bomb sound already more than BOMB_LATE_MS past is not played late.
+// Numbers only: no allocation.
+export const BOMB_EV = { BEEP: 1, TEN: 2, TRIP: 4, WARN: 8 };
+export const BOMB_LATE_MS = 150;
+export const bombState = () => ({ id: null, ex: 0, next: 0, ten: false, trip: false, warn: false, at: 0, left: 0 });
+export function bombStep(st, p, nowMs, pausedAt = null) {
+  if (!p) { st.id = null; return 0; }
+  const now = pausedAt !== null && pausedAt !== undefined && Number.isFinite(pausedAt) && pausedAt < nowMs ? pausedAt : nowMs, bm = DEFUSE.bombMs, id = Number.isFinite(p.at) ? p.at : p.explodeAt;
+  if (st.id !== id) { st.id = id; st.ex = p.explodeAt; st.next = beepFrom(p.explodeAt - bm, p.explodeAt, now - 50);   // (a beep due in the last 50 ms still plays)
+    const l0 = p.explodeAt - now; st.ten = l0 < C4_BEEP.tenS * 1000 - BOMB_LATE_MS; st.trip = l0 < C4_END.tripMs - BOMB_LATE_MS; st.warn = l0 < C4_END.warnMs - BOMB_LATE_MS; }
+  else if (st.ex !== p.explodeAt) { st.next += p.explodeAt - st.ex; st.ex = p.explodeAt; }   // (a resume: the same schedule, later by the pause)
+  const left = p.explodeAt - now; let ev = 0;
+  if (left > 0) { if (!st.ten && left <= C4_BEEP.tenS * 1000) { st.ten = true; ev |= BOMB_EV.TEN; }
+    if (!st.trip && left <= C4_END.tripMs) { st.trip = true; ev |= BOMB_EV.TRIP; }
+    if (st.trip && !st.warn && left <= C4_END.warnMs) { st.warn = true; ev |= BOMB_EV.WARN; } }
+  if (now >= st.next) { let at = st.next; while (st.next <= now) { at = st.next; st.next += beepGapMs(p.explodeAt - st.next, bm); }   // (a hitch: the missed beeps are skipped, the newest one plays)
+    const bl = p.explodeAt - at; if (bl > 0) { st.at = at; st.left = bl; ev |= BOMB_EV.BEEP; } }
+  return ev;
+}
 // Match rules (host settings, fixed when a match starts): round length, first to `win` (halftime after win − 1
 // rounds), starting / maximum money, friendly fire, and what happens at (win − 1)–(win − 1): 'sudden' (the next
 // round decides), 'draw', or 'mr3' (CS2 overtime: blocks of six rounds, $10,000 each, sides swap after three).
@@ -152,9 +198,10 @@ export function newRound(game, players, now) {
   for (const [k, t] of Object.entries(d.pending || {})) { d.teams[k] = t; delete A.loadout[k]; delete (C.ammo ??= {})[k]; if (d.bomb?.carrier === k) d.bomb.carrier = null; } d.pending = {};
   for (const bk of d.botMoves || []) if (d.teams[bk]) d.teams[bk] = d.teams[bk] === 't' ? 'ct' : 't'; d.botMoves = [];
   if (A.freezeNext !== undefined) { A.freezeMs = A.freezeNext; delete A.freezeNext; }   // a freeze-time change made during the match: from this round on
+  applyReserveNext(game);   // (v53 RESERVE: the host's reserve-ammo model chosen during the match — from this round on; every gun is refilled below in it)
   if (!warmup(game) && !A.restarting) d.n++; A.restarting = false; const firstOfHalf = d.n <= 1 || d.n === half + 1;
   // The dead lose everything (gun, grenades, armor, kit) and start again with their team's pistol.
-  for (const k of Object.keys(C.down || {})) { delete (C.armor ??= {})[k]; if (!A.bots.some(b => key(b.name) === k)) { A.loadout[k] = { primary: null, secondary: defaultPistol(d.teams[k]), nades: [] }; delete d.kits[k]; } else { const b = A.bots.find(b => key(b.name) === k); b.weapon = null; } }
+  for (const k of Object.keys(C.down || {})) { delete (C.armor ??= {})[k]; if (!A.bots.some(b => key(b.name) === k)) { A.loadout[k] = { primary: null, secondary: defaultPistol(d.teams[k], A.slots?.[k]), nades: [] };   /* (v53 GUNS8: the CT's loadout slot s0) */ delete d.kits[k]; } else { const b = A.bots.find(b => key(b.name) === k); b.weapon = null; } }
   C.down = {}; C.hp = {}; C.nades = []; C.ground = []; C.spawnTo ??= {}; d.bought = {}; C.dmg = {};   // (dmg: who hurt whom this round — an assist is earned within one round, CS2; HP is new, so is the tally)
   for (const [k, t] of Object.entries(d.teams)) if (t === 'spec') C.down[k] = { until: 4e15, by: '', weapon: 'spectating' };   // spectators watch
   for (const mem of members(game, players)) { if (!d.teams[mem.k]) assignTeam(game, mem.name, players); if (firstOfHalf) d.money[mem.k] ??= RU.start; }
@@ -171,12 +218,24 @@ export function newRound(game, players, now) {
   A.dirty = true;   // loadouts changed: the room sends the whole world
 }
 // A bot's gun, full: magazine and reserve.
-const arm = (b, id) => { const w = weaponById(id); b.weapon = w.id; b.ammo = w.mag; b.reserve = w.reserve; b.reloadUntil = 0; };
+const arm = (b, id) => { const w = weaponById(id); b.weapon = w.id; b.ammo = w.mag; b.reserve = reserveFor(w, b.rm); b.reloadUntil = 0; };   // (v53 RESERVE: b.rm, the host's reserve model)
 function botBuy(game, b) {
   const d = game.combat.d, k = key(b.name), t = d.teams[k], money = d.money[k] ?? (d.rules || DEFAULT_RULES).start; if (b.weapon !== defaultPistol(t)) return;
-  const want = money >= 4750 + 1000 && Math.random() < .2 ? 'sniper' : money >= 3100 ? (t === 't' ? 'ak' : 'm4') : money >= 2050 ? (t === 't' ? 'galil' : 'famas') : money >= 1250 ? (t === 't' ? 'mac10' : 'mp9') : null;
+  // v53 GUNS8: CS2's bot buy preferences (botprofile.db of the user's install, its "Template" WeaponPreference lists in
+  // order — Rifle m4a1, ak47, famas, galilar, mp7 · Punch aug, sg556, famas, galilar, mp7 · Sniper awp, scar20, g3sg1,
+  // ssg08, famas, galilar, mp7 · Power m249, xm1014, nova, famas, galilar, mp7 · Shotgun xm1014, nova, famas, galilar,
+  // mp7 · Spray p90, mp9, mac10, mp7): a bot takes its template's first gun its side may buy and can afford (the money
+  // rule — what CS2's BuyState keeps back — is code, not data: ours keeps $650 for a vest past the first gun's price).
+  // Its template: Rifle for most, by its number (each bot keeps one). The old rule is the fallback when none fits.
+  const pref = BOT_PREF[BOT_TEMPLATE[(+String(b.id || '').replace(/\D/g, '') || 0) % BOT_TEMPLATE.length]], side = id => { const w = weaponById(id); return w && (!w.team || w.team === t); };
+  const pick = pref.find(id => side(id) && PRICE[id] + (PRICE[id] >= 2000 ? 650 : 0) <= money);
+  const want = pick || (money >= 3100 ? (t === 't' ? 'ak' : 'm4') : money >= 2050 ? (t === 't' ? 'galil' : 'famas') : money >= 1250 ? (t === 't' ? 'mac10' : 'mp9') : null);
   if (want) { gain(d, k, -PRICE[want]); arm(b, want); }
 }
+// (v53 GUNS8) botprofile.db's templates, in GD ids (m4a1 = the M4A4 'm4', galilar 'galil', sg556 'sg553', awp 'sniper',
+// m249 'lmg', nova 'shotgun'); which template each bot plays: ours (CS2 gives one per bot in its profile list).
+const BOT_PREF = { rifle: ['m4', 'ak', 'famas', 'galil', 'mp7'], punch: ['aug', 'sg553', 'famas', 'galil', 'mp7'], sniper: ['sniper', 'scar20', 'g3sg1', 'ssg08', 'famas', 'galil', 'mp7'], power: ['lmg', 'xm1014', 'shotgun', 'famas', 'galil', 'mp7'], shotgun: ['xm1014', 'shotgun', 'famas', 'galil', 'mp7'], spray: ['p90', 'mp9', 'mac10', 'mp7'] };
+const BOT_TEMPLATE = ['rifle', 'rifle', 'punch', 'rifle', 'sniper', 'rifle', 'spray', 'rifle', 'power', 'rifle', 'shotgun'];
 // A spawn spot on a side that nobody (alive, of any team) stands on: for players and bots joining mid-freeze.
 // A bot's feet at a spawn spot with a height (map files: floors above the spawns), else undefined (the top floor).
 const spotY = (m, at) => at.y !== undefined && m.nav ? m.nav.floorAt(at.x - ARENA.cx, at.z - ARENA.cz, at.y + 9.7) : undefined;
@@ -244,7 +303,7 @@ export function defuseTick(game, players, now, { hurtAll, posOf }) {
   // Planting: stand still on the site with the bomb.
   // Planting stops only for a real move away (5 units: more than a stop's slide plus position lag), death or losing the bomb.
   if (r.plant) { const p = posOf(r.plant.by); if (!p || (C.down || {})[r.plant.by] || Math.hypot(p.x - r.plant.x, p.z - r.plant.z) > 5 || d.bomb.carrier !== r.plant.by) { r.plant = null; changed = true; }
-    else if (now - r.plant.start >= DEFUSE.plantMs && r.phase === 'live') { if (recording(game)) statOf(game, r.plant.by).plants++; r.planted = { x: r.plant.x, z: r.plant.z, y: r.plant.y, site: r.plant.site, at: now, explodeAt: now + DEFUSE.bombMs, by: r.plant.by }; r.phase = 'planted'; d.bomb.carrier = null; gain(d, r.plant.by, 300); r.plant = null; r.defuse = null; changed = true; } }
+    else if (now - r.plant.start >= DEFUSE.plantMs && r.phase === 'live') { if (recording(game)) statOf(game, r.plant.by).plants++; r.planted = { x: r.plant.x, z: r.plant.z, y: r.plant.y, site: r.plant.site, at: now, explodeAt: now + DEFUSE.bombMs, by: r.plant.by, ...(Number.isFinite(p.yaw) ? { yaw: Math.round(p.yaw * 100) / 100 } : {}) };   /* (yaw: v53 DETAILS — the planter's facing; the bomb lies that way, as CS2's planted C4 does in play — not in the files) */ r.phase = 'planted'; d.bomb.carrier = null; gain(d, r.plant.by, 300); r.plant = null; r.defuse = null; changed = true; } }
   if (r.defuse) { const p = posOf(r.defuse.by); if (!p || (C.down || {})[r.defuse.by] || Math.hypot(p.x - r.defuse.x, p.z - r.defuse.z) > 5) { r.defuse = null; changed = true; }
     else if (now - r.defuse.start >= r.defuse.ms) { if (recording(game)) statOf(game, r.defuse.by).defuses++; gain(d, r.defuse.by, DEFUSE_AWARD); end(game, 'ct', 'defuse', now); return true; } }
   if (r.phase === 'live' || r.phase === 'planted') {

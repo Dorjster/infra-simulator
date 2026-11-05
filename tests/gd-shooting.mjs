@@ -210,7 +210,7 @@ for (const S2 of [2e8, 2e6]) { const { g, P, a, b } = fresh(), t = 3e9 + 5000, S
 { const t0 = 8e9, d = { levels: {} }; startArena(d, { map: 'dust2', kind: 'defuse', bots: 0 }, t0); const M = ARENA_MAPS.dust2, at = ([x, z]) => ({ x: ARENA.cx + x, y: 9.7 + (M.nav ? M.nav.floorAt(x, z) || 0 : 0), z: ARENA.cz + z, yaw: 0 });
   const DP = [{ id: 't1', name: 'Tess', pose: at(M.t[0]) }, { id: 'c1', name: 'Cal', pose: at(M.ct[0]) }]; const { arenaTick } = await import('../dist/arena-logic.js'); arenaTick(d, DP, .05, t0 + 50);
   ok('freeze time', d.combat.d.round.phase === 'freeze'); poseAmmo(d, 'Tess', { n: 100, r: 0 }, 'pistol'); poseAmmo(d, 'Tess', { n: 103, r: 0, w: 'pistol' }, 'pistol');
-  ok('late shot numbers in the freeze are counted, not charged to the fresh magazine', JSON.stringify(ammoOf(d, 'Tess', 'pistol')) === '[20,60]'   /* (v53 RELOAD: CS2's Glock reserve, 3 magazines — weapons.vdata) */ && d.combat.shots.tess.n === 103, JSON.stringify(ammoOf(d, 'Tess', 'pistol')));
+  ok('late shot numbers in the freeze are counted, not charged to the fresh magazine', JSON.stringify(ammoOf(d, 'Tess', 'pistol')) === '[20,120]'   /* (v53 RESERVE: the default Bullets model, the user's 20 | 120; CS2's 3 magazines = 60 in Magazines — tests/gd-reserve-modes.mjs) */ && d.combat.shots.tess.n === 103, JSON.stringify(ammoOf(d, 'Tess', 'pistol')));
   assert.throws(() => combatApply(d, { type: 'hit', target: 'c1', weapon: 'pistol', zone: 'chest', n: 104 }, 'Tess', DP, 't1', t0 + 60), /hasn’t started/); n++;
   arenaTick(d, DP, .05, t0 + DEFUSE.freezeMs + 200); poseAmmo(d, 'Tess', { n: 104, r: 0, w: 'pistol' }, 'pistol'); ok('the first live shot takes its round', ammoOf(d, 'Tess', 'pistol')[0] === 19);
   const rid = d.combat.d.round.id; ok('a hit tagged with an older round is refused before it is judged (room: epochError)', /round has ended/.test(epochError(d, { type: 'hit', round: rid - 1 }) || '') && !epochError(d, { type: 'hit', round: rid })); }
@@ -227,9 +227,9 @@ for (const S2 of [2e8, 2e6]) { const { g, P, a, b } = fresh(), t = 3e9 + 5000, S
 
 // ── SHOOT-13: ammo charged to the gun that fired and the one that reloaded ──
 { const { g, P } = fresh('sniper'); takeShots(g, 'Ann', 500, 'sniper');
-  poseAmmo(g, 'Ann', { n: 501, r: 0, w: 'sniper' }, 'knife'); ok('an AWP shot, then a switch to the knife before the pose: the AWP is charged', JSON.stringify(ammoOf(g, 'Ann', 'sniper')) === '[4,10]'   /* (v53 RELOAD: CS2's AWP reserve, 2 magazines) */, JSON.stringify(ammoOf(g, 'Ann', 'sniper')));
+  poseAmmo(g, 'Ann', { n: 501, r: 0, w: 'sniper' }, 'knife'); ok('an AWP shot, then a switch to the knife before the pose: the AWP is charged', JSON.stringify(ammoOf(g, 'Ann', 'sniper')) === '[4,30]'   /* (v53 RESERVE: the default Bullets model's classic 5 | 30; CS2's 2 magazines = 10 in Magazines) */, JSON.stringify(ammoOf(g, 'Ann', 'sniper')));
   const { g: g2 } = fresh('ak'); takeShots(g2, 'Ann', 500, 'ak'); poseAmmo(g2, 'Ann', { n: 502, r: 0, w: 'ak' }, 'pistol');
-  ok('AK shots with the pistol already in hand: the AK pays, the pistol is untouched', JSON.stringify(ammoOf(g2, 'Ann', 'ak')) === '[28,90]' && JSON.stringify(ammoOf(g2, 'Ann', 'pistol')) === '[20,60]');
+  ok('AK shots with the pistol already in hand: the AK pays, the pistol is untouched', JSON.stringify(ammoOf(g2, 'Ann', 'ak')) === '[28,90]' && JSON.stringify(ammoOf(g2, 'Ann', 'pistol')) === '[20,120]');   // (v53 RESERVE: the default Bullets model)
   T = 6e6; const c = rig('ak'); c.P.button(0, true); c.P.button(0, false); ok('the client names the gun that fired in its pose', c.P.poseShot(0, 0).w === 'ak' && c.P.lastFired === 'ak'); }
 
 // ── SHOOT-17: shotguns reload shell by shell; a click fires the shells in ──

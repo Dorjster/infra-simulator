@@ -14,13 +14,15 @@
 // down record without its time)--> SPECTATE (the in-eye view of a team mate, as before) --alive--> ALIVE.
 import * as THREE from './three.module.js';
 import { isDown, hpOf, armorOf } from './combat-logic.js';
-import { weaponById, isFirearm } from './weapons-data.js';
+import { weaponById, isFirearm, wholeMags, magsIn, reserveModeOf } from './weapons-data.js';
 import { skinFor } from './skins.js';
 import { hostNow } from './host-clock.js';   // (who is down until when: the host's clock)
 import { createDeathCam } from './gd-deathcam.js';   // (v53 DEATH: CS2's death cam before spectating)
+import { gdWatch } from './gd-sounds.js';   // (v53 DETAILS, open-B#25: the watched player's clip sounds heard as your own)
 
 const key = n => String(n || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer';
 const NO_P = [];
+const SP_MAGS = Array.from({ length: 9 }, (_, n) => '<i class="mg"></i>'.repeat(n));   // (v53 RESERVE: 0-8 magazine icons, made once — gd-hud.js MAG_ICONS)
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // CS2's eye over the feet: 64 HU standing, 46 crouched (16.5 HU per game unit · 2.54: the game's inch-based units).
 // (v53 GUNS final: the same eye as your own — arena-move.js EYE_GD, 64.0626 HU standing from CS2's getpos, 46.045 HU
@@ -65,7 +67,7 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [], vi
   const css = document.createElement('style'); css.textContent = `#sp-bar{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:38;display:flex;gap:14px;align-items:center;background:#000b;border:1px solid #ffffff2a;border-radius:8px;padding:8px 18px;color:#fff;font:700 15px system-ui;text-shadow:0 1px 2px #000;pointer-events:none}#sp-bar[hidden]{display:none}#sp-bar small{font:600 12px system-ui;opacity:.75}#sp-bar b{font:800 18px system-ui}#sp-bar .k{color:#ff6a6a}
 #sp-hud{position:fixed;inset:0;z-index:36;pointer-events:none;font:700 14px system-ui;color:#fff;text-shadow:0 1px 3px #000c;font-variant-numeric:tabular-nums}#sp-hud[hidden]{display:none}
 #sp-hp{position:absolute;left:22px;bottom:22px;display:flex;align-items:flex-end;gap:18px}#sp-hp .v{display:flex;align-items:baseline;gap:6px}#sp-hp b{font:800 40px ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.02em}#sp-hp small{font:700 11px system-ui;letter-spacing:.12em;opacity:.75}#sp-hp .ico{font:900 22px system-ui;opacity:.9}#sp-hp .low b,#sp-hp .low .ico{color:#ff4d4d}#sp-hp .none{opacity:.35}
-#sp-wp{position:absolute;right:22px;bottom:18px;text-align:right}#sp-wp .name{font:800 13px system-ui;letter-spacing:.08em;color:#ffd36b}#sp-wp .ammo{font:800 40px ui-monospace,Menlo,Consolas,monospace}#sp-wp .ammo small{font:700 20px ui-monospace,Menlo,monospace;opacity:.7}`;
+#sp-wp{position:absolute;right:22px;bottom:18px;text-align:right}#sp-wp .name{font:800 13px system-ui;letter-spacing:.08em;color:#ffd36b}#sp-wp .ammo{font:800 40px ui-monospace,Menlo,Consolas,monospace}#sp-wp .ammo small{font:700 20px ui-monospace,Menlo,monospace;opacity:.7}#sp-wp .ammo i.mg{display:inline-block;width:7px;height:18px;margin-left:4px;background:currentColor;opacity:.7;border-radius:1px}`;   /* (v53 RESERVE final: the Magazines model's icons, as your own HUD — gd-hud.js .show-mags) */
   (document.head || document.body).append?.(css); document.body.insertAdjacentHTML('beforeend', '<div id="sp-bar" hidden></div><div id="sp-hud" hidden><div id="sp-hp"></div><div id="sp-wp"></div></div>');
   const bar = document.getElementById('sp-bar'), hud = document.getElementById('sp-hud') || { hidden: true }, hpEl = document.getElementById('sp-hp'), wpEl = document.getElementById('sp-wp');
   const put = (el, html) => { if (el && el.__v !== html) { el.__v = html; el.innerHTML = html; } };   // (written only when it changed: no restyle 5× a second)
@@ -136,15 +138,15 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [], vi
     // Returns true while spectating (the game then skips your own movement and mouse look).
     update(dt) {
       const G = g(), d = G.mode === 'arena' && G.combat?.down?.[myKey()], dead = !!d && d.until > hostNow();
-      if (!dead) { cur = null; cam?.update(dt); selfAlive(dt); if (on) { on = false; started = false; target = null; release(); bar.hidden = true; } return false; }
+      if (!dead) { gdWatch(null); cur = null; cam?.update(dt); selfAlive(dt); if (on) { on = false; started = false; target = null; release(); bar.hidden = true; } return false; }
       // (v53 DEATH final) your own body only for a real death: one with its time (combat-logic.js hurt). A spectator's
       // record ('spectating') or a mid-round joiner's ('joined mid-round') has none — no body of yourself for them.
       if (G.mode === 'arena') { if (Number.isFinite(d.at) && G.combat?.d?.teams?.[myKey()] !== 'spec') selfDead(dt); else selfGone(); }
-      if (cam?.update(dt)) { on = true; cur = null; if (watching) release(); if (!bar.hidden) bar.hidden = true; return true; }   // (v53 DEATH: the death cam first)
+      if (cam?.update(dt)) { gdWatch(null); on = true; cur = null; if (watching) release(); if (!bar.hidden) bar.hidden = true; return true; }   // (v53 DEATH: the death cam first)
       if (!started) { started = true; on = true; target = null; normalFov(); const l = alive(); for (let i = 0; i < l.length; i++) if (key(l[i].name) === key(d.by)) { target = l[i].id; break; } if (!target) pick(0); }
       let t = byId(target); if (!t) { pick(1); t = byId(target); }
       if (t) {
-        watching = true; cur = t; watched.name = t.name; watched.key = t.key; eyeFrom(t);
+        watching = true; cur = t; gdWatch(t.id, t.key);   /* (t.key: the plant clip's planter key — v53 DETAILS final) */ watched.name = t.name; watched.key = t.key; eyeFrom(t);
         body.hide(t.m);
         if (view) { const pose = t.p?.pose, sh = pose?.shot, dd = G.combat?.d, k = watched.key;
           VR.key = t.id; VR.weapon = t.weapon; VR.team = dd?.teams?.[k] || null; VR.knife = G.arena?.knives?.[k] || null;
@@ -152,13 +154,13 @@ export function createSpectator({ camera, world, lan, name, boxes = () => [], vi
             VR.skin = t.weapon ? skinFor(G.arena, t.name, t.weapon, t.p?.bot ? pose?.own : undefined) : null; VR.gloves = t.p?.bot ? null : G.arena?.skins?.[k]?.gloves || null; }   // (their CS2 gloves: the room's skins record — a bot wears its agent's own)
           VR.shotN = sh?.n ?? 0; VR.shotW = sh?.w || null; VR.reloadN = sh?.rs ?? sh?.r ?? 0; VR.reloadW = Number.isInteger(sh?.rs) ? null : sh?.rw || null;   /* (v53 RELOAD: a reload seen from its start — the numbered start rs, with the gun in hand — not from its mag-in) */ VR.speed = t.m.speed || 0;
           VR.act = performance.now() < (t.m.actUntil || 0) ? t.m.act : null; VR.actUntil = t.m.actUntil || 0; view.show(VR, dt); }
-      } else { cur = null; if (watching) release(); }   // (nobody left: the frozen death view — the last eye you watched from)
+      } else { gdWatch(null); cur = null; if (watching) release(); }   // (nobody left: the frozen death view — the last eye you watched from)
       if (performance.now() - barAt > 200) { barAt = performance.now();
         const left = Math.max(0, Math.ceil((d.until - hostNow()) / 1000)), next = G.combat?.d ? 'back next round' : 'respawn in ' + left;
         if (t) { const w = t.weapon ? weaponById(t.weapon) : null, hp = hpOf(G, t.name), ar = armorOf(G, t.name), a = w && isFirearm(w) ? G.combat?.ammo?.[key(t.name)]?.[w.id] : null;
           put(bar, `<small>SPECTATING</small><b>${esc(t.name)}</b><span>✚ ${hp}</span>${w ? `<span>${esc(w.name)}</span>` : ''}<small>click: next player</small><small class="k">killed by ${esc(d.by)} · ${next}</small>`);
           put(hpEl, `<div class="v hp${hp <= 20 ? ' low' : ''}"><span class="ico">✚</span><b>${hp}</b><small>HP</small></div><div class="v arm${ar.kevlar > 0 ? '' : ' none'}"><span class="ico">${ar.helmet ? '⛑' : '⛨'}</span><b>${ar.kevlar | 0}</b><small>ARMOR</small></div>`);
-          put(wpEl, w ? `<div class="name">${esc(w.name)}</div>${a ? `<div class="ammo">${a[0]}<small> / ${a[1]}</small></div>` : ''}` : '');
+          put(wpEl, w ? `<div class="name">${esc(w.name)}</div>${a ? `<div class="ammo">${a[0]}<small> / ${wholeMags(w, reserveModeOf(G)) ? '</small>' + SP_MAGS[Math.min(SP_MAGS.length - 1, magsIn(w, a[1]))] + '<small>' : a[1]}</small></div>` : ''}` : '');   // (v53 RESERVE final: in the host's Magazines model one icon per magazine left and no number — CS2's in-eye view shows the watched player's own HUD, .show-mags / .reserve-ammo-as-icons)
           hud.hidden = false; }
         else { put(bar, `<small>killed by</small><b class="k">${esc(d.by)}</b><small>${next}</small>`); hud.hidden = true; }
         bar.hidden = false; }

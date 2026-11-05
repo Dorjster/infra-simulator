@@ -1,7 +1,8 @@
 // Global Defensive · reloads on the HUD like CS2 (v53 RELOAD, spec addendum 4), in the real game, muted: Defuse on Dust II
 // with no bots, the pistol in hand. Every frame of a reload the HUD's magazine / reserve text is logged in the page
 // (requestAnimationFrame) with the page clock:
-//  · the HUD starts at CS2's numbers (weapons.vdata: the Glock-18 20 | 60, the USP-S 12 | 24);
+//  · the HUD starts at the default reserve model's numbers (v53 RESERVE, Bullets: the Glock-18 20 | 120 as the user's
+//    cs2-hud.png, the USP-S 12 | 24; the Magazines model's HUD: tests/browser/gd-reserve-modes.mjs);
 //  · fired down to the low-ammo colour (≤ 20 % of the magazine, red), R: the count stays until CS2's mag-in moment
 //    (the gun's WPN_RELOAD_ADD_AMMO, weapons-data magInMs) and changes in the first frame after it — the reserve gives
 //    only the missing rounds — and the low colour goes with it;
@@ -34,7 +35,7 @@ try {
   const W = await p.evaluate(() => { const w = __infra.lab.pistol.current; return { id: w.id, name: w.name, mag: w.mag, reserve: w.reserve, magIn: w.magInMs, magInEmpty: w.magInEmptyMs, rl: w.reloadMs }; }); console.log('pistol', JSON.stringify(W));
   const hud = () => p.evaluate(() => [document.querySelector('#gd-wp .ammo .num').textContent, document.querySelector('#gd-wp .reserve b').textContent, document.querySelector('#gd-wp .ammo').classList.contains('low')]);
   const hostAmmo = id => p.evaluate(id => __infra.lab.world.operations.game.combat.ammo?.tester?.[id] || null, id);
-  check(`the HUD starts at CS2's numbers: ${W.name} ${W.mag} | ${W.reserve} (weapons.vdata)`, JSON.stringify((await hud()).slice(0, 2)) === JSON.stringify([String(W.mag), String(W.reserve)]) && (W.id === 'pistol' ? W.reserve === 60 : W.reserve === 24), JSON.stringify(await hud()));
+  check(`the HUD starts at the Bullets numbers: ${W.name} ${W.mag} | ${W.reserve} (cs2-hud.png)`, JSON.stringify((await hud()).slice(0, 2)) === JSON.stringify([String(W.mag), String(W.reserve)]) && (W.id === 'pistol' ? W.reserve === 120 : W.reserve === 24), JSON.stringify(await hud()));
   const fire = async k => { for (let i = 0; i < k; i++) { await p.evaluate(() => { __infra.lab.pistol.button(0, true); __infra.lab.pistol.button(0, false); }); await p.waitForTimeout(260); } };
   const left = Math.ceil(W.mag * .2) - 1; await fire(W.mag - left); await p.waitForTimeout(800);   // (fired down into the low colour: ≤ 20 % of the magazine)
   const before = await hud(); check(`fired down to ${left}: the low-ammo colour (CS2's HUD--ammo-clip--low)`, before[0] === String(left) && before[2] === true, JSON.stringify(before));

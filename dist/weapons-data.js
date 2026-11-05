@@ -33,10 +33,12 @@ const PEN = { rifle: 7, sniper: 11, lmg: 8, smg: 3.5, pistol: 3.5, shotgun: 1.5 
 const SHELL_MS = 500;
 // ── v53 RELOAD: reloads and ammo as CS2 has them (spec addendum 4; RELOAD_REF: tools/import-cs2-reloads.mjs from the
 // user's own install — weapons.vdata, the first-person reload clips and animgraphs) ──
-//  · mag = m_iMaxClip1; reserve = m_nPrimaryReserveAmmoMax, which CS2 counts in magazines for every magazine gun
-//    (m_bReserveAmmoAsClips: the AK's 3 = 90 rounds, the Glock's 3 = 60, the AWP's 2 = 10) and in shells for the
-//    shotguns (32). The reserve is kept as a pool of rounds: a reload moves only the missing rounds (the spec's rule —
-//    what CS2's server does with a half-empty magazine is in its code, not in its data files: UPDATE-v53.0.md).
+//  · mag = m_iMaxClip1. The reserve has two models, the host's choice (v53 RESERVE, spec addendum 13: RESERVE_MODES
+//    below, game.arena.reserveMode): `reserve` is the Bullets model (the default) and `reserveMags` the Magazines one.
+//  · Magazines (reserveMags, magsMax, asClips): the install's m_nPrimaryReserveAmmoMax, which CS2 counts in magazines
+//    for every magazine gun (m_bReserveAmmoAsClips: the AK's 3 = 90 rounds, the Glock's 3 = 60, the AWP's 2 = 10) and
+//    in shells for the shotguns (32, asClips false). Kept here in rounds (magazines × m_iMaxClip1).
+//  · Bullets (reserve): CLASSIC_RESERVE below, a pool of rounds; a reload moves only the missing rounds.
 //  · reloadMs = m_flDisallowAttackAfterReloadStartDuration (no shot for that long; the AK's 2.4667 s).
 //  · magInMs: the clip's WPN_RELOAD_ADD_AMMO — the new magazine seated, the rounds counted (the AK's 1.1 s of 2.4333).
 //    A switch after it keeps the full magazine; before it, nothing changed. magInEmptyMs: the *_empty_* clip's (CS2
@@ -47,8 +49,42 @@ const SHELL_MS = 500;
 //    shellAddMs into its loop (the Nova's 0.3667 + 0.3 = 0.6667 s for the first, then every 0.4333 s), shellOutroMs.
 import { RELOAD_REF } from './gd-reload-ref.js';
 const ms = s => Math.round(s * 1000);
+// ── v53 RESERVE (spec addendum 13): the reserve-ammo model is the HOST's match setting, "Reserve ammo: Magazines |
+// Bullets", default Bullets. Host-authoritative in both; it rides the arena (arenaView) to every computer and applies
+// from the next round (Defuse) or the next match start (combat-logic reserveModeOf, arena-defuse newRound).
+//  · BULLETS — the classic pool (the user's cs2-hud.png: Glock-18 "20 | 120"): a reload moves only the missing rounds
+//    from the reserve; nothing is lost.
+//  · MAGAZINES — CS2 since its March 2026 reload update (this install's weapons.vdata: m_bReserveAmmoAsClips true on
+//    every magazine gun): the reserve is whole magazines; a reload takes one full magazine from it and the rounds left
+//    in the old one are DISCARDED with it (the clips' WPN_DROP_MAG; the rule itself is in CS2's server code, not its
+//    data files — source: the update as reported (PC Gamer, Shacknews, Dust2.us, March 2026), one value: MAG_DROPS_REST).
+//    Shotguns (asClips false) load shell by shell from a pool of shells in both models; the HUD shows CS2's magazine
+//    icons (hudhealthammocenter.vcss .show-mags #HudReserveMagsContainer, .reserve-ammo-as-icons hides the number).
+// CLASSIC_RESERVE: each gun's m_nPrimaryReserveAmmoMax in rounds, as CS2 had it before the magazine update. NOT in this
+// install's files (its weapons.vdata already counts magazines; items_game.txt only defines attribute 199 "primary
+// reserve ammo max", no per-gun value; no older weapons.vdata is on this computer). Sources, per value: the Glock-18's
+// 120 is read off the user's cs2-hud.png ("20 | 120"); the rest are the table this repo carried from v40 to 52.0.5
+// (commit 4c17479: "CS2's published values", the pre-update counts) — the 7 guns added in v53 (p2000 … g3sg1) follow
+// the same published classic counts. UNVERIFIED against Valve files: the install no longer holds them.
+export const RESERVE_MODES = ['bullets', 'mags'], RESERVE_DEFAULT = 'bullets', MAG_DROPS_REST = true;
+export const CLASSIC_RESERVE = { pistol: 120, usps: 24, p250: 26, fiveseven: 100, cz75: 12, tec9: 90, deagle: 35, mac10: 100, mp9: 120, mp7: 120, smg: 120, bizon: 120, ump45: 100, p90: 100, shotgun: 32, xm1014: 32, galil: 90, famas: 90, ak: 90, m4: 90, m4s: 80, sg553: 90, aug: 90, ssg08: 90, sniper: 30, lmg: 200, negev: 300,
+  p2000: 52, elite: 120, revolver: 8, mag7: 32, sawedoff: 32, scar20: 90, g3sg1: 90 };   // (v53 GUNS8's guns, when present)
+export const cleanReserveMode = m => m === 'mags' ? 'mags' : RESERVE_DEFAULT;
+// The model in force for a game (host and every page read the same arena field).
+export const reserveModeOf = game => cleanReserveMode(game?.arena?.reserveMode);
+// A reload takes a whole magazine (Magazines model, a magazine gun); else the missing rounds / a shell at a time.
+export const wholeMags = (w, mode) => mode === 'mags' && !!w?.asClips;
+// A full reserve in rounds for the model; how many magazine icons a reserve of `res` rounds shows (Magazines).
+export const reserveFor = (w, mode = RESERVE_DEFAULT) => !w ? 0 : mode === 'mags' ? (w.reserveMags ?? w.reserve ?? 0) : (w.reserve ?? 0);
+export const magsIn = (w, res) => w?.mag > 0 ? Math.ceil(Math.max(0, res) / w.mag) : 0;
+// The magazine seated at a magazine gun's mag-in: [magazine, reserve] after it, or null when nothing moves (full, or the
+// reserve empty). keep: the reserve never runs down (practice sv_infinite_ammo). One rule for the host (combat-logic
+// takeReload), the client (weapons.js seatMag) and the bots (arena-logic botSeat), so they always agree.
+export function seatAmmo(w, mag, res, mode, keep = false) { if (!w || mag >= w.mag || !(res > 0)) return null;
+  if (wholeMags(w, mode) && MAG_DROPS_REST) { const take = Math.min(w.mag, res); return [take, keep ? res : res - take]; }   // (a new full magazine; the old one's rounds go with it)
+  const move = Math.min(w.mag - mag, res); return [mag + move, keep ? res : res - move]; }
 export function reloadOf(id) { const r = RELOAD_REF[id]; if (!r) return {};
-  const o = { mag: r.clip1, reserve: r.asClips ? r.reserve * r.clip1 : r.reserve, reloadClipMs: ms(r.reload.dur) };
+  const o = { mag: r.clip1, reserve: CLASSIC_RESERVE[id] ?? (r.asClips ? r.reserve * r.clip1 : r.reserve), reserveMags: r.asClips ? r.reserve * r.clip1 : r.reserve, magsMax: r.asClips ? r.reserve : 0, asClips: !!r.asClips, reloadClipMs: ms(r.reload.dur) };   // (v53 RESERVE: reserve = Bullets, reserveMags = Magazines, both in rounds)
   if (r.single && r.reload.loop) return { ...o, shellIntroMs: ms(r.reload.intro), shellMs: ms(r.reload.loop), shellAddMs: ms(r.reload.add - r.reload.intro), shellOutroMs: ms(r.reload.outro), reloadMs: ms(r.reload.intro + r.reload.loop + r.reload.outro) };   // (reloadMs: one shell's whole reload — another player's arms)
   return { ...o, reloadMs: ms(r.rl), magInMs: ms(r.reload.add), magInEmptyMs: ms((r.empty || r.reload).add), ...(r.alt ? { magInAltMs: ms(r.alt.add), magInAltEmptyMs: ms((r.altEmpty || r.alt).add) } : {}) }; }
 // The moment (ms after the start) a reload's rounds count: the gun, its magazine at the start, and whether the CZ75's
@@ -69,7 +105,7 @@ const G = (o) => ({ team: null, mode: 'semi', pellets: 0, suppressed: false, zoo
 // m_nZoomFOV1/2 · zt m_flZoomTime0–2 (s) · spdZ the scoped m_flMaxSpeed.
 // (v53 GUNS: pr m_nPrice and ka m_nKillAward — the only place a gun's price and kill reward live, so they can't drift;
 // atk m_flAttackMovespeedFactor (only the Negev's 0.5: atkMove, arena-move.js while firing; every other gun 1.0);
-// hz m_bHideViewModelWhenZoomed (only the AWP and SSG 08: hideZoomed, weapons.js). Read from the install's
+// hz m_bHideViewModelWhenZoomed (true for the AWP, SSG 08, SCAR-20 and G3SG1 and their prefabs: hideZoomed, weapons.js). Read from the install's
 // scripts/weapons.vdata, decompiled to ~/CS2-extract/export/reloads/deco/scripts/weapons.vdata, 2026-11-04.) The USP-S and M4A1-S take the second mode's
 // values: CS2's silencer-on mode (the lower recoil and spread of the pair), how they are bought and carried here.
 const CS2 = {
@@ -100,6 +136,19 @@ const CS2 = {
   sniper: { pr: 4750, ka: 100, hz: true, cyc: 1.455, dmg: 115, ar: 1.95, rmod: .99, rng: 8192, hs: 4, cpen: 2.5, dep: 1.266667, rl: 3.666667, fl: [.35, .4], seed: 4100, acc: [.0002, .0808, .0606, .17648, .13383, .17286, 0, .000307, .1365, .05385, .34539, .24671, .34539, .24671, 2, 5, 78, 15, 0, 20], accZ: [.0002, .002, .0015, .17648, .13383, .17286, 0, .0001, .1365, .05385, .34539, .24671, .34539, .24671, 2, 5, 25, 2, 0, 20], zoom: [40, 10], zt: [.05, .05, .05], spdZ: 100 },   // weapon_awp
   lmg: { pr: 5200, ka: 300, cyc: .08, dmg: 32, ar: 1.6, rmod: .97, rng: 8192, hs: 4, cpen: 2, dep: 1.1, rl: 5.7, fl: [.4, .55], seed: 50310, acc: [.002, .0077, .00534, .15625, .27947, .11827, 0, .000398, .13281, .00356, .828931, .592093, .828931, .592093, 2, 5, 25, 2, 0, 50] },   // weapon_m249
   negev: { pr: 1700, ka: 300, atk: 0.5, cyc: .075, dmg: 35, ar: 1.42, rmod: .97, rng: 8192, hs: 4, cpen: 2, dep: 1.1, rl: 5.7, fl: [.4, .55], seed: 57966, acc: [.002, .01017, .00763, .15914, .29223, .11629, 0, .000409, .13643, .03, .3, .25, .1, .08, 9, 12, 20, 2, 0, 0] },   // weapon_negev
+  // ── v53 GUNS8: CS2's eight guns the game lacked, read the same way (weapons.vdata of the user's install, decompiled to
+  // ~/CS2-extract/export/reloads/deco/scripts/weapons.vdata, 2026-11-05; each row is that block's own values). Two modes:
+  // the R8's accZ is its SECONDARY fire (fan the hammer: m_flSpread .068, m_flCycleTime .4 — weapons.js shoots it as the
+  // "second mode", the host takes it from the shot's sc flag); the autosnipers' accZ is scoped. The P2000's second mode
+  // is unused (it has no silencer: CS2 never switches it). The Zeus x27 (weapon_taser): ZEUS below, not a WEAPONS gun.
+  p2000: { pr: 200, ka: 300, cyc: .17, dmg: 35, ar: 1.01, rmod: .91, rng: 4096, hs: 4, cpen: 1, dep: 1, rl: 2.266667, fl: [.5, .65], seed: 5426, acc: [.002, .0049, .00368, .013, .09448, .0966, 0, .000191, .13832, .05, .349532, .291277, .349532, .291277, 3, 10, 26, 0, 0, 0] },   // weapon_hkp2000
+  elite: { pr: 300, ka: 300, cyc: .12, dmg: 38, ar: 1.15, rmod: .79, rng: 4096, hs: 4, cpen: 1, dep: 1, rl: 3.766667, fl: [.5, .65], seed: 24563, acc: [.002, .007, .00525, .01785, .15842, .09586, 0, .000255, .102, .01116, .524989, .437491, .524989, .437491, 3, 10, 27, 4, 0, 20] },   // weapon_elite
+  revolver: { pr: 600, ka: 300, cyc: .5, cycAlt: .4, dmg: 86, ar: 1.864, rmod: .94, rng: 4096, hs: 4, cpen: 2, dep: 1.166667, rl: 2.266667, fl: [.4, .4], seed: 12345, acc: [.00052, .002, .001, .0065, .05323, .01865, 0, .00013, .012, .05, .9, .7, .8112, .449927, 3, 10, 20, 0, 0, 40], accZ: [.068, .012, .005, .036, .05323, .01865, 0, .00015, .035, .055, .9, .7, .8112, .449927, 3, 10, 45, 6, 3, 50] },   // weapon_revolver
+  zeus: { pr: 200, ka: 100, cyc: .15, dmg: 500, ar: 2, rmod: .99, rng: 120, hs: 4, cpen: 0, dep: 1, rl: 5, fl: [.5, .65], seed: 687, acc: [0, .06, .05, .013, .01, 0, 0, .0001, .01, .05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },   // weapon_taser
+  mag7: { pr: 1300, ka: 900, cyc: .85, dmg: 30, ar: 1.5, rmod: .45, rng: 1400, hs: 4, cpen: 1, dep: 1, rl: 2.5, fl: [.4, .45], seed: 12518, acc: [.04, .007, .00525, .01599, .05009, .05264, 0, .000103, .13426, .01119, .399729, .285521, .399729, .285521, 2, 5, 165, 25, 0, 20] },   // weapon_mag7
+  sawedoff: { pr: 1100, ka: 900, cyc: .85, dmg: 32, ar: 1.5, rmod: .45, rng: 1400, hs: 4, cpen: 1, dep: 1, rl: .466667, fl: [.4, .45], seed: 1089, acc: [.062, .007, .00525, .0168, .0577, .05012, 0, .000108, .036, .00972, .460517, .328941, .460517, .328941, 2, 5, 143, 22, 0, 20] },   // weapon_sawedoff
+  scar20: { pr: 5000, ka: 300, hz: true, cyc: .25, dmg: 80, ar: 1.65, rmod: .98, rng: 8192, hs: 4, cpen: 2.5, dep: 1, rl: 3.066667, fl: [.35, .4], seed: 19364, acc: [.0003, .0258, .01935, .15048, .15377, .10769, 0, .000262, .11639, .01861, .544331, .388808, .544331, .388808, 2, 5, 31, 4, 0, 30], accZ: [.0003, .002, .0015, .15048, .15377, .10769, 0, .000262, .11639, .01861, .544331, .388808, .544331, .388808, 2, 5, 31, 4, 0, 30], zoom: [40, 15], zt: [.05, .05, .05], spdZ: 120 },   // weapon_scar20
+  g3sg1: { pr: 5000, ka: 300, hz: true, cyc: .25, dmg: 80, ar: 1.65, rmod: .98, rng: 8192, hs: 4, cpen: 2.5, dep: 1, rl: 4.666667, fl: [.5, .65], seed: 29908, acc: [.0003, .0258, .01935, .15048, .15377, .10769, 0, .000262, .11639, .01861, .544331, .388808, .544331, .388808, 2, 5, 30, 4, 0, 30], accZ: [.0003, .002, .0015, .15048, .15377, .10769, 0, .000262, .11639, .01861, .544331, .388808, .544331, .388808, 2, 5, 30, 4, 0, 30], zoom: [40, 15], zt: [.05, .05, .05], spdZ: 120 },   // weapon_g3sg1
 };
 export const ACC_KEYS = ['spread', 'stand', 'crouch', 'move', 'jump', 'jumpInit', 'jumpApex', 'land', 'ladder', 'fire', 'recStand', 'recCrouch', 'recStandFinal', 'recCrouchFinal', 'trStart', 'trEnd'];
 const accFrom = v => v ? Object.fromEntries(ACC_KEYS.map((k, i) => [k, v[i]])) : null, recoilFrom = v => v ? { mag: v[16], magVar: v[17], angle: v[18], angleVar: v[19] } : null;
@@ -142,12 +191,82 @@ export const WEAPONS = [
   // Machine gun.
   G({ id: 'lmg', name: 'M249', kind: 'lmg', dmg: 32, ap: .8, rangeMod: .97, rateMs: 80, mode: 'auto', mag: 100, reserve: 200, reloadMs: 5700, speed: 195, range: 550, pattern: spray(100, [[0, 0, 0], [1, .45, 0], [6, 3, .4], [12, 4.6, -.8], [20, 5.2, 1.2], [30, 5.6, -1.3], [45, 5.9, 1], [60, 6.1, -.9], [80, 6.3, .8], [99, 6.4, 0]]), desc: '100 rounds of suppressing fire. Slow to move and to reload.' }),
   G({ id: 'negev', name: 'Negev', kind: 'lmg', dmg: 35, ap: .71, rangeMod: .97, rateMs: 75, mode: 'auto', mag: 150, reserve: 300, reloadMs: 5700, speed: 150, range: 550, pattern: spray(150, [[0, 0, 0], [1, .7, 0], [3, 2.4, .8], [6, 4.4, -1], [9, 5.4, 1.2], [12, 5.2, -.4], [16, 4.7, 0], [24, 4.5, 0], [149, 4.5, 0]]), model: 'lmg', desc: '150 rounds: wild for the first shots, then a steady beam that holds a corner. Cheap for a machine gun; very slow to move.' }),
-].map(w => { const c = CS2[w.id];   // (CS2's own numbers win over the literals above, which match them)
+  // v53 GUNS8 (CS2's eight missing guns; every number is replaced by the CS2 row above / RELOAD_REF — the literals are
+  // only the layout, the spray shape and the fallback model). Teams: items_game.txt used_by_classes (the P2000, MAG-7 and
+  // SCAR-20 Counter-Terrorist; the Sawed-Off and G3SG1 Terrorist; the Dual Berettas and R8 both).
+  G({ id: 'p2000', name: 'P2000', kind: 'pistol', team: 'ct', dmg: 35, rateMs: 170, mag: 13, reserve: 52, speed: 240, range: 500, pattern: kick(13, .7, .1), model: 'pistol', desc: 'Counter-Terrorist starting pistol (the USP-S\'s loadout alternative): 13 rounds, accurate and steady.' }),
+  G({ id: 'elite', name: 'Dual Berettas', kind: 'pistol', dmg: 38, rateMs: 120, mag: 30, reserve: 120, speed: 240, range: 450, dual: true, pattern: kick(30, .75, .3), model: 'pistol', desc: 'Two pistols, fired one barrel after the other: 30 rounds of fast, loose fire.' }),
+  // (v53 GUNS8 final: the R8's m_flMaxSpeed [180, 220] — [0] its primary mode, [1] its secondary (the fan), read the way
+  // the autosnipers' [215, 120] is read for scoped: movement takes [1] while the last shot was fanned — weapons.js altMode)
+  G({ id: 'revolver', name: 'R8 Revolver', kind: 'pistol', dmg: 86, rateMs: 500, mode: 'auto', mag: 8, reserve: 8, speed: 180, scopedSpeed: 220, range: 500, revolver: true, pattern: kick(8, 2.6, .35), recover: 3, model: 'deagle', desc: 'Hold to pull the hammer back, then it fires; right click fans the hammer: fast and wild. The Desert Eagle\'s loadout alternative.' }),
+  G({ id: 'mag7', name: 'MAG-7', kind: 'shotgun', team: 'ct', dmg: 30, rateMs: 850, mode: 'pump', pellets: 8, mag: 5, reserve: 32, speed: 225, range: 120, pattern: kick(5, 3), model: 'shotgun', desc: 'Counter-Terrorist magazine-fed shotgun: a heavy close hit, a quick magazine reload.' }),
+  G({ id: 'sawedoff', name: 'Sawed-Off', kind: 'shotgun', team: 't', dmg: 32, rateMs: 850, mode: 'pump', pellets: 8, mag: 7, reserve: 32, speed: 210, range: 100, pattern: kick(7, 3), model: 'shotgun', desc: 'Terrorist pump shotgun: the widest spread, deadly up close, loads shell by shell.' }),
+  G({ id: 'scar20', name: 'SCAR-20', kind: 'sniper', team: 'ct', dmg: 80, rateMs: 250, mode: 'auto', mag: 20, reserve: 90, speed: 215, scopedSpeed: 120, range: 1000, zoom: [40, 15], pattern: spray(20, [[0, 0, 0], [1, 1.2, 0], [5, 3.4, .4], [10, 4.6, -.6], [19, 5.2, .4]]), model: 'sniper', desc: 'Counter-Terrorist automatic sniper rifle: two zoom levels, a shot every quarter second. Expensive.' }),
+  G({ id: 'g3sg1', name: 'G3SG1', kind: 'sniper', team: 't', dmg: 80, rateMs: 250, mode: 'auto', mag: 20, reserve: 90, speed: 215, scopedSpeed: 120, range: 1000, zoom: [40, 15], pattern: spray(20, [[0, 0, 0], [1, 1.2, 0], [5, 3.4, -.4], [10, 4.6, .6], [19, 5.2, -.4]]), model: 'sniper', desc: 'Terrorist automatic sniper rifle: two zoom levels, a shot every quarter second. Expensive.' }),
+].map(withCS2);
+// (v53 GUNS8: the merge, named — the Zeus x27 takes it too)
+function withCS2(w) { const c = CS2[w.id];   // (CS2's own numbers win over the literals above, which match them)
   return { ...w, price: c.pr, reward: c.ka, usd: c.pr, atkMove: c.atk ?? 1, hideZoomed: !!c.hz, pen: c.cpen ?? w.pen ?? PEN[w.kind], pattern: w.mode === 'auto' && !w.pellets ? w.pattern.map(([p, y]) => [+(p * SPRAY_SCALE.pitch).toFixed(3), +(y * SPRAY_SCALE.yaw).toFixed(3)]) : w.pattern,
     rateMs: Math.round(c.cyc * 1000), dmg: c.dmg, ap: c.ar / 2, rangeMod: c.rmod, reach: c.rng / 6.5, hs: c.hs, deployMs: Math.round(c.dep * 1000), reloadStartMs: Math.round(c.rl * 1000), flinch: c.fl, recoilSeed: c.seed,
     acc: accFrom(c.acc), accZ: accFrom(c.accZ), recoil: recoilFrom(c.acc), recoilZ: recoilFrom(c.accZ), spread: c.acc[0], ...(c.zoom ? { zoom: c.zoom, zoomMs: c.zt.map(s => Math.round(s * 1000)) } : {}),
-    ...(w.kind === 'shotgun' ? { shellMs: SHELL_MS, pelletSpread: c.acc[0] } : {}), ...reloadOf(w.id) }; });   // (v53 RELOAD: CS2's magazine, reserve and reload moments win over the literals)
+    ...(w.kind === 'shotgun' ? { ...(RELOAD_REF[w.id]?.single === false ? {} : { shellMs: SHELL_MS }), pelletSpread: c.acc[0] } : {}), ...(c.cycAlt ? { altRateMs: Math.round(c.cycAlt * 1000) } : {}), ...reloadOf(w.id) }; }   // (v53 RELOAD: CS2's magazine, reserve and reload moments win over the literals; v53 GUNS8: the MAG-7 — m_bReloadsSingleShells false — reloads a magazine; altRateMs the R8's fan)
 export const WEAPON_IDS = WEAPONS.map(w => w.id);
+// (v53 GUNS8) The guns only Global Defensive has (CS2's seven added in v53): the other modes never decode their shipped
+// shots at start (sound-bank loadSounds); Global Defensive warms them with its match (gd-sounds gdPrewarm).
+export const GD_ONLY_GUNS = new Set(['p2000', 'elite', 'revolver', 'mag7', 'sawedoff', 'scar20', 'g3sg1']);
+// ── v53 GUNS8: the Zeus x27 (weapon_taser). CS2: m_nDamage 500, m_flRange 120 HU (its whole reach: nothing past it),
+// m_flArmorRatio 2 (armour takes nothing), m_iMaxClip1 1 with m_nPrimaryReserveAmmoMax 0 and ITEM_FLAG_EXHAUSTIBLE (one
+// charge; fired, it is gone — the host takes it out of the loadout), m_nPrice 200, m_nKillAward 100, m_flMaxSpeed 230,
+// m_flDeployDuration 1, m_GearSlot GEAR_SLOT_KNIFE position 1 (key 3 with the knife; items_game: the Equipment column,
+// flexible_loadout_slot equipment2). Its own kind 'taser' (a firearm to the shot code; not a primary or a pistol).
+// mp_taser_recharge_time (CS2's recharge cvar) has no default in the files: the Zeus does not recharge here.
+export const ZEUS = withCS2(G({ id: 'zeus', name: 'Zeus x27', kind: 'taser', team: null, mode: 'semi', mag: 1, reserve: 0, speed: 230, range: 18.5, pattern: [[0, 0]], model: 'pistol', desc: 'One charge: kills anyone it reaches — 120 units (arm\'s length and a step). Gone once fired.' }));
+// The R8's hammer (primary fire): held, the shot leaves REVOLVER.prepMs after the hammer starts back; let go before, no
+// shot. CS2's own value is in its code (CS:GO's weapon_revolver: 0.234375 s — not in the install's files; the
+// prepare_shoot_revolver clip is 0.9667 s long with Weapon_Revolver.Prepare at 0, which bounds it but does not give it).
+// The secondary fire fans the hammer: no wait, m_flCycleTime[1] 0.4 s, the second mode's spread and recoil.
+export const REVOLVER = { prepMs: 234 };
+// ── v53 GUNS8: CS2's loadout, read from ~/CS2-extract/export/guns8/scripts/items/items_game.txt (2026-11-05: "items"
+// 1–64 with their flexible_loadout_slot / flexible_loadout_default / flexible_loadout_group, and the category prefabs
+// 'secondary', 'smg', 'rifle', whose flexible_loadout_group is the whole category). CS2's loadout is flexible:
+//  · s0, the starting pistol (flexible_loadout_group secondary0: only the Glock, P2000 and USP-S): the Glock for the T,
+//    the P2000 or the USP-S for the CT;
+//  · s1–s4 (secondary1–4), m0–m4 (smg0–4: the Mid-Tier, SMGs, shotguns and machine guns) and r0–r4 (rifle0–4: rifles
+//    and sniper rifles): each slot takes any gun of its category the side may use (used_by_classes: WEAPONS' team),
+//    the starting pistols excepted, each gun at most once per side;
+//  · the defaults: per slot, the guns with flexible_loadout_default 1 (split by side): s1 Dual Berettas, s2 P250, s3
+//    Five-SeveN / Tec-9, s4 Desert Eagle; m0 Nova, m1 XM1014, m2 MP5-SD, m3 P90, m4 MP9 / MAC-10; r0 FAMAS / Galil AR,
+//    r1 M4A1-S / AK-47, r2 SSG 08, r3 AUG / SG 553, r4 AWP. (item_shares_equip_slot, CS:GO's old pairs, is still in
+//    the file but CS2's loadout does not use it.)
+// A loadout per side { ct: {s0…r4}, t: {…} } is kept by the client (arena-ui, localStorage gd.loadoutSlots) and sent
+// to the host (arena-logic 'slots', arena.slots[name], kept across rematches). In a Defuse match the buy menu shows
+// your 5 + 5 + 5 in slot order and the host sells only those (a player who never sent one — bots, scripts — may buy
+// anything, as before; Deathmatch: everything). Ours (notCS2): the CT's default starting pistol stays the USP-S, the
+// game's since v45 (CS2's file default for secondary0 is the P2000: CS2_LOADOUT_DEFAULT).
+export const LOADOUT_GROUPS = { secondary: ['s1', 's2', 's3', 's4'], smg: ['m0', 'm1', 'm2', 'm3', 'm4'], rifle: ['r0', 'r1', 'r2', 'r3', 'r4'] };
+export const LOADOUT_KEYS = ['s0', ...LOADOUT_GROUPS.secondary, ...LOADOUT_GROUPS.smg, ...LOADOUT_GROUPS.rifle];
+const GROUP_KINDS = { secondary: ['pistol'], smg: ['smg', 'shotgun', 'lmg'], rifle: ['rifle', 'sniper'] }, STARTING = { ct: ['usps', 'p2000'], t: ['pistol'] };
+export const CS2_LOADOUT_DEFAULT = {
+  ct: { s0: 'p2000', s1: 'elite', s2: 'p250', s3: 'fiveseven', s4: 'deagle', m0: 'shotgun', m1: 'xm1014', m2: 'smg', m3: 'p90', m4: 'mp9', r0: 'famas', r1: 'm4s', r2: 'ssg08', r3: 'aug', r4: 'sniper' },
+  t: { s0: 'pistol', s1: 'elite', s2: 'p250', s3: 'tec9', s4: 'deagle', m0: 'shotgun', m1: 'xm1014', m2: 'smg', m3: 'p90', m4: 'mac10', r0: 'galil', r1: 'ak', r2: 'ssg08', r3: 'sg553', r4: 'sniper' } };
+export const LOADOUT_DEFAULT = { ct: { ...CS2_LOADOUT_DEFAULT.ct, s0: 'usps' }, t: CS2_LOADOUT_DEFAULT.t };
+export const slotGroup = k => k === 's0' ? 's0' : Object.keys(LOADOUT_GROUPS).find(g => LOADOUT_GROUPS[g].includes(k)) || null;
+// The guns a slot may hold for a side ([] for an unknown slot or side).
+const CHOICES = {}; export function slotChoices(k, team) { const g = slotGroup(k); if (!g || !STARTING[team]) return []; if (g === 's0') return STARTING[team];
+  return (CHOICES[g + team] ??= WEAPONS.filter(w => GROUP_KINDS[g].includes(w.kind) && !STARTING.ct.includes(w.id) && !STARTING.t.includes(w.id) && (!w.team || w.team === team)).map(w => w.id)); }
+// One side's loadout, cleaned and complete: each slot a gun it may hold, no gun twice (a later duplicate or a missing
+// slot takes the slot's default, else the first free choice).
+function cleanSide(o, team) { const out = {}, used = new Set(); for (const k of LOADOUT_KEYS) { const id = o?.[k]; if (typeof id === 'string' && slotChoices(k, team).includes(id) && !used.has(id)) { out[k] = id; used.add(id); } }
+  for (const k of LOADOUT_KEYS) if (!out[k]) { const d = LOADOUT_DEFAULT[team][k], id = !used.has(d) ? d : slotChoices(k, team).find(x => !used.has(x)); out[k] = id; used.add(id); }
+  return Object.fromEntries(LOADOUT_KEYS.map(k => [k, out[k]])); }
+// A player's loadouts, cleaned: { ct?, t? } (only the sides sent; anything else dropped).
+export function cleanSlots(o) { const out = {}; if (!o || typeof o !== 'object') return out; for (const t of ['ct', 't']) if (o[t] && typeof o[t] === 'object') out[t] = cleanSide(o[t], t); return out; }
+// The gun in a slot for a side and a player's loadouts (theirs, else the default; null: no such slot or side).
+export function slotGun(slot, team, slots = null) { if (!LOADOUT_KEYS.includes(slot) || !LOADOUT_DEFAULT[team]) return null; return slots?.[team]?.[slot] || LOADOUT_DEFAULT[team][slot]; }
+// The side's loadout with a gun put in a slot (CS2: equipping a gun another slot holds swaps the two).
+export function withSlot(slots, team, slot, id) { const l = { ...cleanSide(slots?.[team], team) }; if (!slotChoices(slot, team).includes(id)) return l; const j = LOADOUT_KEYS.find(k => l[k] === id); if (j) l[j] = l[slot]; l[slot] = id; return l; }
+// Is a gun outside this player's loadout for the side? '' when it is in it, it isn't a loadout gun, or they never sent one.
+export function slotRefusal(id, team, slots) { const l = slots?.[team], w = weaponById(id); if (!l || !w || !Object.values(GROUP_KINDS).flat().includes(w.kind)) return ''; return Object.values(l).includes(id) ? '' : w.name + ' is not in your loadout'; }
 // Darja's chrome hand cannon (old Payday saves only; not used in Global Defensive).
 export const DARJA_GUN = { ...WEAPONS.find(w => w.id === 'deagle'), id: 'cannon', name: "Darja's Hand Cannon", price: 0, reward: 300, mag: 7, reserve: 35, reloadMs: 2200, magInMs: undefined, magInEmptyMs: undefined };   // (v53 RELOAD: its 52.0.5 rounds and reload, outside Global Defensive)
 // Knives (slot 3): left click a quick slash, right click a slow heavy stab; from behind both are much stronger.
@@ -199,14 +318,15 @@ export const THROW = { primeMs: 350 };
 export const RECOIL = { view: .45, kickBack: 18 };
 // Body armor (buy menu · Equipment).
 export const ARMOR = { kevlar: { name: 'Kevlar Vest', price: 650 }, helmet: { name: 'Kevlar + Helmet', price: 1000, upgrade: 350 } };
-const BY_ID = new Map([...WEAPONS, ...KNIVES, ...GRENADES, C4, DARJA_GUN].map(w => [w.id, w]));
+const BY_ID = new Map([...WEAPONS, ...KNIVES, ...GRENADES, C4, DARJA_GUN, ZEUS].map(w => [w.id, w]));   // (v53 GUNS8: the Zeus x27)
 export const weaponById = id => BY_ID.get(id) || null;
-export const isFirearm = w => !!w && ['rifle', 'smg', 'pistol', 'shotgun', 'sniper', 'lmg'].includes(w.kind);
+export const isFirearm = w => !!w && ['rifle', 'smg', 'pistol', 'shotgun', 'sniper', 'lmg', 'taser'].includes(w.kind);   // (v53 GUNS8: the Zeus x27's 'taser' shoots like a gun)
 export const MAX_HP = 100, RESPAWN_MS = 5000;
 // Starting pistol for a team (deathmatch: the Glock).
-export const defaultPistol = team => team === 'ct' ? 'usps' : 'pistol';
+export const defaultPistol = (team, slots = null) => team === 'ct' ? slotGun('s0', 'ct', slots) : 'pistol';   // (v53 GUNS8: the CT's loadout slot s0 — USP-S or P2000; slots: a player's { ct, t } loadouts)
 // Full ammo for a gun: [magazine, reserve].
-export const fullAmmo = id => { const w = weaponById(id); return isFirearm(w) ? [w.mag, w.reserve] : null; };
+// (v53 RESERVE: mode — the host's reserve model, reserveModeOf(game); without one the default, Bullets.)
+export const fullAmmo = (id, mode = RESERVE_DEFAULT) => { const w = weaponById(id); return isFirearm(w) ? [w.mag, reserveFor(w, mode)] : null; };
 
 // CS2 damage model: base × hit-group multiplier × rangeMod^(distance / 500 HU). One game unit ≈ 6.5 HU. A head shot
 // takes the gun's own m_flHeadshotMultiplier (hs: 4 for most, the Desert Eagle 3.9, the M4A1-S 3.475), else 4.
