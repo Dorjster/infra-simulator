@@ -132,6 +132,15 @@ All of these run in `npm test` (node, no browser). Most need nothing from CS2. T
 | `tests/gd-mix-peak.mjs` | The master mix never clips |
 | `tests/gd-money-rules.mjs` | Defuse money rules: no income on time-out, the defuse award |
 | `tests/gd-look.mjs` | The map look from CS2's data: auto exposure, bloom, the baked map's light slots, SSAO and FXAA passes |
+| `tests/gd-own-wound.mjs` | Your own wound (batch D, FEEDBACK): no blood on your screen, CS2's 4-segment damage indicator read back from `huddamageindicator.vcss_c` / `.vxml_c`, several hits in one update, an HE's side (`hxr`), a new host's lower clock, the death-cam HUD |
+| `tests/gd-tracers.mjs` | Bullet tracers: CS2 mode equals each gun's `m_nTracerFrequency`, Every bullet, the counts drawn inside a GD match; the Zeus's taser streak |
+| `tests/gd-reserve-modes.mjs` | The host's reserve-ammo choice (batch D, RESERVE): Magazines and Bullets per gun type, shotgun shell by shell, M249 / Negev, host and guest after a change, the Deathmatch queue, ground guns, bots, the HUD's icon types |
+| `tests/gd-new-guns.mjs` | The 8 added CS2 guns (batch D, GUNS8): their `weapons.vdata` rows, CS2's flexible loadout, the host and guest arsenal from `arenaView`, the R8's hammer, fan and speed by mode, the Zeus |
+| `tests/gd-hitboxes.mjs` | CS2's hitbox capsules (batch D, AGENTS; run with `--expose-gc`): the file, pitch against the drawn agent, per-item holds, host = guest on both sides and in Deathmatch, the lag-compensation rewind, no allocation per ray |
+| `tests/gd-agent-sleeves.mjs` | The agents' first-person sleeves: the file, the material rule, no second download of the arms' own sleeve |
+| `tests/gd-props.mjs` | Host-authoritative physics props (batch D, PROPS): mass and health from CS2's files, walls, bullets, knives, HE, grenades, bodies, LAN replay rules, the guests' copy |
+| `tests/gd-details.mjs` | The small CS2 details (batch D, DETAILS; run with `--expose-gc`): the bomb's lights and beeps through a whole bomb with pauses and late joins, the spectator's sounds, the on-ground hull, impact wall traces, the remote shot's eye, the death cam's contrast pass |
+| `tests/gd-perf4x.mjs` | The CPU ×4 fixes (batch D, PERF4X): the crosshair's gap variable, the flat light slots, the kill tally's blur pass at native, bars and stretched, the cards and their art masks |
 
 ### v53 browser checks (optional, not in `npm test`)
 
@@ -153,3 +162,9 @@ Each runs a real game in Chrome (`node tests/browser/<test> <repo> <out-dir> [ar
 | `gd-hud-shots.mjs`, `gd-reload-hud.mjs`, `gd-kill-emblem-shots.mjs`, `gd-kill-emblem-video.mjs` | The CS2 HUD, the radar bomb, the reload HUD and the kill tally (pictures and a video) |
 | `gd-practice-lineups.mjs`, `gd-nade-chord.mjs` | A lineup thrown in practice with the preview; grenade key chords |
 | `gd-death-shots.mjs`, `gd-new-knives-sheet.mjs`, `gd-maps-before-after.mjs`, `gd-impacts-look.mjs` | The death cam and ragdolls, the new knives, the map look before and after |
+| `gd-own-wound-shots.mjs` | Your own wound: front, side, rear and the killing hit in the death cam (`~/Desktop/GD-v53-own-wound.jpg`) |
+| `gd-reserve-modes.mjs` | The reserve HUD in Bullets and Magazines mode at 3, 4 and 8 icons (`~/Desktop/GD-v53-reserve-modes.jpg`) |
+| `gd-new-guns-sheet.mjs` | The 8 added guns in first person, kill-feed icons, the buy menu, CT and T loadouts, the shotgun reload loop (`desktop=1`: `~/Desktop/GD-v53-new-guns.jpg`) |
+| `gd-sleeves-hitboxes-shots.mjs` | The agents' sleeves per side and the hitbox capsules level and bent (`~/Desktop/GD-v53-sleeves-hitboxes.jpg`) |
+| `gd-props-shots.mjs` | Props shot on Mirage and Overpass: moved or broken, nothing left at home, no shader compiled (`DESKTOP=1`: `~/Desktop/GD-v53-props.jpg`) |
+| `gd-details-shots.mjs` | The planted and dropped bomb's lights, the death cam's contrast pass, Nuke's and Anubis's window panes (`~/Desktop/GD-v53-details.jpg`) |

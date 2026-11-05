@@ -8,6 +8,10 @@ Global Defensive only. This note covers all of v53:
 - **Batch C:** stage 6 (smooth without a graphics card), the C4 on the carrier's back, and the CS2 feel audit's fixes:
   lineups, gun feel, hits, the map and HUD look, and the molotov's look.
 - **Stage 7:** these notes, the README pointer and `tests/README.md`.
+- **Batch D:** the host's reserve-ammo choice, the tracer and hit-marker settings with CS2 as the default and your own
+  wound as CS2's damage indicator, the 8 missing CS2 guns and the loadout slots, CS2's sleeves and hitboxes,
+  host-authoritative physics props, the small CS2 details (bomb lights, spectating, impacts, the death cam's contrast)
+  and the CPU ×4 fixes.
 
 The list of what is **still not like CS2** is at the end. Measurements on this Mac are labelled; anything for computers
 without a graphics card is **emulation on the Mac**, never a Windows measurement.
@@ -82,7 +86,7 @@ How it was checked:
   - The victim and nearby players hear headshots at the spot where they happened, with the usual walls and distance rules.
   - Each sound plays at most 2 copies at once.
   - With CS2 imported, these are CS2's own sound events. Without it, our own made-up sounds play.
-- **Hit marker:** a white X, red for a kill, with extra ticks for a headshot.
+- **Hit marker:** a white X, red for a kill, with extra ticks for a headshot. (Superseded by package FEEDBACK below: it is now Off by default, as in CS2, and on only with Settings → Hit marker: On.)
 - **Victim screen:** CS2's damage indicator, four segments around the screen centre showing where the hit came from. The red flash on losing health stays as before.
 - **Death panel:** shows who killed you, with which weapon, and the headshot mark.
 - **Helmet "dink" sparks:** a headshot on a helmet shows CS2's electric blue-white spark burst at the head. Everyone sees it, because it comes from the host's hit records. A headshot without a helmet shows blood instead.
@@ -859,7 +863,7 @@ says **ours** or **CS:GO**.
   Source's `Bias()`. A headshot is `blood_impact_headshot.vpcf`'s real children: 01b, 01c (8 wisps drawn with a new
   wispy spray cell, not the opaque chunk), 01d, 01e, `red_01_chunk` ×2 and `red_01_backspray`. `red_01_mist` and
   `drops1` are no longer on headshots. Which system CS2's code fires for each hit is not in the files.
-- **Your own wounds** show CS2's local-player splatter: `blood_impact_localfrontenemy` (`_splatter_lft` / `_rgt`, 5 to
+- (Superseded by package FEEDBACK below, the user's rule of 2026-11-05: no blood on your own screen.) **Your own wounds** showed CS2's local-player splatter: `blood_impact_localfrontenemy` (`_splatter_lft` / `_rgt`, 5 to
   10 splats by damage), `localrearhit` from behind, and `lp_spray` on every hit. It is one pooled draw, warmed at load.
   A front hit always draws both children, the left and the right edge, each laid in order down its own path, as the
   file lists both and places each child's path (x ±100, y 100 to −50). **How that path maps onto the screen, and how
@@ -1064,6 +1068,351 @@ each number back from the files.
   map's range, SSAO on High only, 0 programs linked), and the C4 on the back (12). All passed.
 - **Not checked here:** the Windows desktop build on CI. It needs a push, and pushing was not authorised.
 
+## The small CS2 details (package DETAILS, batch D)
+
+- **The planted bomb's light** is CS2's `particles/explosions_fx/c4_timer_light.vpcf`: one red flash (255 75 75 ×
+  overbright 1.5, radius 10 HU) with each beep, living 0.5 s on the file's alpha curve (up in 8 ms, then a fast fade), at
+  most 5 alive, so the last fast beeps overlap (`gd-c4-back.js createBombLights`, driven by `arena-ui.js bombView`).
+  The file's Omni2 light (128 HU) is left out: a sprite and an LED dot, no real light, so it costs nothing. The file's
+  flare is drawn only into CS2's bloom pass (`m_bOnlyRenderInEffectsBloomPass`); ours stands in for that bloom with a
+  steep glow at the LED, so the brick itself no longer turns pink during a flash (our stand-in, not CS2's pass). Its inner
+  fifth is a little stronger than the first version (our stops), so the flash reads red round the LED at normal range.
+- **The dropped bomb blinks** CS2's `c4_timer_light_dropped.vpcf`: yellow 255 255 96, radius 8 HU, one flash a second on
+  the holstered light's curve, timed from the host's drop moment (every computer together), with `C4.LightFlash` (a
+  faint `c4_beep2`, silent at 500 HU) on each new flash, the first one at the drop too (the file starts one particle at
+  once). A bomb already lying there when you first see it doesn't chirp for the flash under way. The event's
+  `time_volume_mapping_curve` (0 s, 0) → (1 s, 1) is read at the time since the dropped bomb's particle system started
+  (its drop): the chirp fades in over the first second after a drop and is at its full 0.3 from then on. Read as the
+  voice's own elapsed time instead, the 0.158 s chirp never passed 16 % of its volume, an authored sound nobody could
+  hear. **Ours, UNVERIFIED:** what the curve's input is (the sound stack's code isn't in the files; an in-game
+  comparison would settle it). Its 100 lm light is left out too.
+- **The carried bomb's light stays CS2's warm yellow** (`c4_holstered_light.vpcf`, 240 230 140). The user decided this.
+- **The planted bomb is drawn at CS2's own size.** CS2's planted C4 is the same `weapon_c4.vmdl` as the carried one (the
+  install has no other C4 mesh). It was drawn 1.4× before. It now lies like a dropped one, turned the way its planter
+  faced: the host's planted record carries the planter's yaw (`r.planted.yaw`, 2 decimals). That CS2 does this is from
+  play, not the files.
+- **Its beeps** are CS2's two-layer events: `C4.PlantSound` + `C4.PlantSoundB`, and in the last 10 s the files' own
+  `C4.PlantSound_10sec` + `C4.PlantSoundB_10sec`, with `C4.10Seconds` once (`game_sounds_weapons.vsndevts`).
+  **Not in the files:** when each beep falls. The soundevents, particles and HUD scripts hold no bomb timer. The gap is
+  CS:GO's planted_c4 rule (1 s apart at the plant, 0.15 s at the end), marked UNVERIFIED in `arena-defuse.js C4_BEEP`.
+  The schedule starts at the host's plant moment (`beepFrom`, from explodeAt − 40 s). Before, it started when each
+  computer first saw the bomb, so computers beeped and flashed out of step. Now every computer, and a player who joins
+  late, beeps and flashes at the same host instants. **Host pause:** each frame is `arena-defuse.js bombStep`, a pure
+  step. While the host has the match paused, the bomb's clock stands at the pause moment: no beeps, flashes or end
+  sounds, and both bomb lights are held. On resume the host moves explodeAt by the pause, and the schedule moves with it.
+  The once-per-bomb sounds (`C4.10Seconds`, the trip, the warning) are keyed on the plant (`r.planted.at`, which a pause
+  doesn't move), so none of them plays twice. Before this, the beeps ran on through a pause, and the 10-second and
+  last-second sounds played at the old time and again after the resume. A late joiner doesn't hear a once-per-bomb sound
+  that was due more than 0.15 s before they first saw the bomb.
+- **Where the bomb's sounds are:** CS2 places every C4 event 20 HU above its origin (`position_offset = [0, 0, 20]` on
+  C4.PlantSound / B, the _10sec pair, 10Seconds, ExplodeTriggerTrip, ExplodeWarning and LightFlash in
+  `game_sounds_weapons.vsndevts`). Ours now does the same for the planted bomb's sounds and the dropped bomb's chirp. Before,
+  they were 6.5 HU up, and the chirp had no offset. **Not changed:** the plant and defuse keypad sounds and the blast
+  (`c4.plant`, `c4.disarmstart`, `c4.explode`… also +20 HU in the file), which other packages place.
+- **notCS2, left out:** the planted bomb's own pose. CS2's `weapon_c4_planted` animation turns the detonator switch 25°
+  and the switch cover 65° (quaternions (0, .2164, 0, .9763) and (0, .5372, 0, .8435) in `weapon_c4_planted.dmx`; the
+  dropped pose is all identity). Ours draws the planted bomb in the dropped pose. The glb skins both meshes to those joints (rest rotations
+  identity), so the pose can be applied later, but a three.js clone of a skinned model shares the original's skeleton:
+  the planted bomb would need a skeleton of its own, or the carried and dropped bombs would turn too.
+- **notCS2, left out:** CS2's trigger flash, `particles/explosions_fx/c4_timer_light_trigger.vpcf` (pale green 228 255 214,
+  radius 25 HU, 2 s, one particle plus a child system), which goes with the trip. When it fires is game code, like the
+  trip's own timing.
+- **The bomb's last second:** CS2's `C4.ExplodeTriggerTrip` (`items/nvg_on`) and then `C4.ExplodeWarning` (`ui/arm_bomb`,
+  vol .8, block .5 s) now play once each per bomb (`gd-sounds.js` c4.trip / c4.explodewarn; imported here with
+  `--only c4.trip,c4.explodewarn`). **Not in the files:** when they play. We use 1 s before the blast, CS:GO's rule as
+  remembered: UNVERIFIED (`arena-defuse.js C4_END`).
+- **open-B#25, the spectator's reload flag:** when you watch a team mate in-eye, their reload sounds, and their bomb plant's
+  keypad, play as your own (2D, at the event's own level), not as someone else's suppressed sounds (`gd-sounds.js gdWatch`,
+  set by `arena-spectate.js` with the watched player's LAN id and name key). CS2's data has no observer field, so this is
+  our reading of CS2's in-eye sound. **Still missing:** another player's draw and inspect clip sounds are never played,
+  watched or not (notCS2).
+- **open-B#20, the Overpass snag:** on the ground the body now stays on the highest floor its CS2 hull (32 HU) still
+  stands on, no higher than the feet (`arena-move.js`). It no longer sinks into a dip narrower than itself and then
+  meets the next 18 HU step as a 20 HU wall. The map sweep has 0 anomalies on all 8 maps, and `KNOWN_SNAGS` is empty.
+- **open-B#16, impact wall traces:** sparks and flecks with CS2's `C_OP_WorldTraceConstraint` are traced along their
+  flight against the map's sight triangles: 3 pieces each, a budget of 600 traces a frame, and the exact moment found
+  on the curve. Where a flight first enters a wall or a ceiling, it is hidden from that moment (`gd-impacts.js wallCut`;
+  the cut goes in its own lane, so its size, colour and fade still run over its whole CS2 life). CS2 bounces it there
+  instead. The floor landing and its one bounce are as before. The frame's trace budget depends on particle detail:
+  150 / 220 / 300 / 600 traces from Low to Ultra (ours). One shotgun blast into metal plans about 960 traces on High, so
+  the budget is what bounds that frame (about 0.6 ms on High).
+- **open-B#19:** others trace a remote shot's impacts from the shot record's own eye (`o`: 3 numbers, kept by the host only
+  within 20 units of the pose), not from the newest pose.
+- **open-B#22, the death cam's local contrast:** the `death_cam_phase1.vpost` block (LocalContrastStrength 2, EdgeStrength
+  2, VignetteStart −0.3092, End 0.9408, VignetteBlur 0.9455) is now drawn. It is one full-screen pass
+  (`dist/gd-deathcam-post.js`) that `graphics.js` adds to a Global Defensive composer only, warms with the composer, and
+  turns on only while the death cam shows it. **Ours, not in the files:** how the shader uses the numbers: a luma
+  unsharp mask (wide 16 px blur and 1 px edges) faded out toward the rim, with the rim blurred by VignetteBlur. Without
+  a composer (the software renderer) it is not drawn.
+- **Not changed:** open-B#18 (range falloff inside a wallbang): CS2's rule is not in the install, and the difference is
+  under 1 HP (AWP at 2000 HU).
+- **LINEUPS' glass item:** cs2-render.js finds every window-prop pane's glass on Nuke (8 of 8 window props, 107 of 107
+  panes) and Anubis (15 of 15, 38 of 38). When the host breaks a pane, its glass triangles stop drawing: on the pictured
+  panes, 28 → 0 (Nuke) and 24 → 0 (Anubis), counted on the mesh itself (`glassTris`). The picture differences are 7.36
+  and 11.35 (mean).
+- **Frames (openB-24, at the user's real size):** `frame-pacing gd`, CPU 1×, 1920×1080 at device pixel ratio 2, High:
+  60 fps, p99 18.6 ms, 0 programs linked. With the death cam's contrast pass held on for the whole run (`deathpass`):
+  60.1 fps, p99 18.5 ms, 0 programs. The earlier 58.x fps was tab capture. Not measured: CPU ×4 with a shotgun into metal.
+- `gd-near-wall-shots`: Overpass alone may let 2 hidden lines through (2 of 357, 0.56 %). The hull rule changed the walk,
+  which re-drew that map's sample; both lines start from ground the rule doesn't touch. Every other map keeps 0.5 %.
+- `gd-jump-spots`: a "clean ledge" now also needs a run-up that is flat under CS2's whole 32 HU hull. Mirage's Window ledge
+  (58 HU from its floor) has a 2 HU raised strip within 16 HU of the run-up. The hull now stands on that strip, as
+  Source's does, so a plain jump from it rises only 56 HU and gets on. That ledge and two others like it are left out,
+  as near-limit ones already were (Mirage: 11 clean ledges, was 14; every map still passes).
+- Tests: `tests/gd-details.mjs` (47 checks; the bomb's frame is stepped through a whole bomb with no pause, a 30 s pause
+  at 35 s and 7 s left, a pause in the last second, and late joins), `tests/browser/gd-details-shots.mjs` (the picture `~/Desktop/GD-v53-details.jpg`:
+  the planted flash on and off, the dropped blink on and off, the death cam's contrast off / on / with the tint, and
+  Nuke's and Anubis's window-prop panes whole and broken).
+
+## Your own wound, bullet tracers and the hit marker (package FEEDBACK)
+
+- **No blood on your own screen** (the user, 2026-11-05: "no blood should be on own wound only red barrier something with
+  4 side"). Everything `gd-blood.js` drew over your screen is gone: the local-player splats (`localfrontenemy`,
+  `localrearhit`, `localkillshot`, `localfrontsimple`, `lp_spray`, `lp_mist`, the glows), their pool, shader and warm-up.
+  The older notes above about the local splatter are superseded. Blood in the world stays: your wound's decals, other
+  players' sprays, what onlookers see.
+- **CS2's 4-segment red damage indicator is the only thing on your screen when you are hit** (`gd-hit-feedback.js`), as
+  `panorama/styles/hud/huddamageindicator.vcss` has it: 300 px at 1080 p, the radial gradient (49 % radius, stops
+  .861 / .862 / .889 / .890 / .919 / .920 / .999), `#cc3300`, a 90° wedge per segment, `translate3d(0, -5px, 0)` with
+  rotateZ 90 / 180 / 270°. The two files don't decompile (Source2Viewer: "Unknown KVType 26"), so the .vcss_c text and
+  the .vxml_c's LZ4 block were read raw. A straight hit lights one segment and a diagonal one the two it falls between
+  (only the share-over-0.3 threshold of Source SDK 2013's indicator is taken: CS2's own rule is in its code). Settings →
+  Blood doesn't change it.
+  - Several hits in one host frame now restart each lit segment once. Before, two hits on the same side cancelled out.
+  - **The hit that kills you keeps its indicator.** In Deathmatch and practice (no Defuse state) the HUD box stays up
+    during the death cam with only the indicator (class `dc`). Before, it was hidden the next frame. In Defuse the
+    spectating HUD already kept it. While you watch a team mate, hits near them are heard as onlooker sounds.
+  - **An HE that hurts you lights the indicator from the blast's side.** This uses a new small host field,
+    `combat.hxr[victim] = [dx, dz]` (blast to victim, 2 decimals), beside the `hx` stamp, in Global Defensive only.
+    A blast right on you is sent as `[0, 0]` and lights all four segments (so a new stamp never reuses the last HE's side).
+  - Joining a host whose clock is behind the last hit you saw no longer silences the indicator: record numbers and HE
+    stamps far below the last one start the count again (the rule `gd-blood.js` already had).
+  - **Ours, not in CS2's files:** the 950 ms fade, which segments light, and the order of the transform (we push each
+    segment 5 px out along its own side; read as a web browser reads it, CS2's text would move the whole ring 5 px up;
+    a CS2 screenshot would settle it). From Source's indicator we do **not** take brightness scaled by the share (every
+    lit segment fades the same), its all-four case for an attacker within 50 units (a knife lights one or two), or
+    pitch. Fire damage lights no segment (open).
+- **Settings → Bullet tracers: CS2 | Every bullet** (default CS2): each gun's `m_nTracerFrequency` from `weapons.vdata`.
+  Rifles and SMGs are 3; pistols, AWP, SSG 08, shotguns, M249 and Negev 1; the USP-S and M4A1-S with the silencer on 0,
+  and the MP5-SD 0 (no tracer). v52.0.5's tracer look is kept.
+- **Settings → Hit marker: Off (CS2) | On** (default Off). The headshot sounds play either way. Both settings are stored
+  per user; nothing goes over LAN; other modes are unchanged.
+- Tests: `tests/gd-own-wound.mjs` (50 checks, including a read-back of CS2's .vcss_c / .vxml_c and the HUD's dead
+  branches), `tests/gd-tracers.mjs` (43, including shots drawn inside a GD match), `tests/gd-headshot-audio.mjs`, and `tests/browser/gd-own-wound-shots.mjs` (the
+  picture `~/Desktop/GD-v53-own-wound.jpg`: front, side, rear, and a killing hit in the death cam).
+
+## Smoother at CPU ×4: the crosshair, the map's lights and the kill tally's blur (package PERF4X)
+
+Measured on the user's High preset at the real window size (2940 × 1912 device pixels), CPU slowed 4×, muted Chrome
+through the test lock. Wall-clock fps at 4× moves by 3–10 fps between runs with the machine's load (other agents' tests),
+so the numbers below say how they were taken.
+
+- **The crosshair** (`gd-crosshair.js`, `gd-hud.js`): the HUD rebuilt the crosshair's HTML every time the dynamic gap
+  moved (574 rebuilds in one measured window against batch B's 255). Its nodes are now built only when its look changes,
+  and the gap is one CSS variable (`--xg`). The pixels are the same for all 5 styles.
+- **The map's baked point lights** (`gd-exposure.js`, `graphics.js`): six lights kept as arrays of vectors, which three.js
+  flattened again before every map draw (about 1.07 ms a frame at 4×, shown by a CPU profile; batch B had none). They
+  are flat `Float32Array`s now, uploaded as they are. This is the one cost the profiles prove.
+- **The kill tally's world blur** (`gd-hud-blur.js`, `gd-kill-emblem.js`, `graphics.js`): CS2 draws the badge's disc
+  and every kill card as the world under them, blurred (hudWorldBlur gaussian(2, 2, 2)) and dimmed (#000000a0). The
+  HUD did this with CSS backdrop filters, which cost about 1.5 fps at 4× with 3 cards (3 runs inside one fight, switching
+  every 2.5 s: drawn by the game 51.35 fps, CSS 49.86, no blur at all 51.47). On High and Ultra the game's last post
+  pass now draws the disc and up to 6 cards (turned rounded rects, following the cards' CSS moves and pops). The pass
+  samples the world only, as CS2's does. Each card's art is masked where the badge or a newer card covers it (CS2 hides
+  it there; the CSS version dimmed it twice). With no composer (a software renderer) or on Low / Very Low, the CSS
+  stays as the fallback. The shader is compiled when the composer is built: 0 programs linked in a round.
+- **Review fixes:** with 4:3 black bars the kill tally sat 97 px right of the picture's centre. The body is the HUD's
+  containing block there, and the offset was applied twice. This also moved the death panel with top / bottom bars
+  (`gd-display.js` `gdView.ox / oy`). With 4:3 stretched at 1280 × 960, the disc is now round on screen (separate x
+  and y in the pass). Checked in the browser (`~/Desktop/GD-v53-perf4x-badge.png`): native, bars and stretched put
+  the disc exactly on the page badge (offset 0 px, radius 28.33 px), with a mean difference of 0.82–0.95 / 255 from CSS.
+  With 3 cards the difference is 1.46 / 255, mostly where the CSS version dimmed overlaps twice.
+- **Not closed:** at the same pixel ratio (1.41, the scaler held: `PINRATIO=1`, which `gd-pacing-nades.mjs` now offers,
+  and it records the min / mean / max pixel ratio of every run), batch B ran 44.4–45.3 fps (4 runs), batch C 40.5, and
+  this tree 35.1 / 40.6. Several C runs had the scaler drop to 1.0 before the window, and there C and this tree both ran
+  about 47.5. Switching passes off inside one fight (ratio held) showed **SSAO** (LOOK, High / Ultra) costing about
+  2 fps at 4× (+2.4 / +1.7 with it off), exposure about 0.5, and bloom within noise. That SSAO pass, plus the other
+  packages' work that is not committed yet, is the next place to look. The per-commit bisection (9 trees × 3 runs) was
+  run, but at load 5–17 its 20–51 fps spread is larger than any commit's effect, so it shows nothing.
+- Tests: `tests/gd-perf4x.mjs` (35 checks: crosshair, light slots, the pass's shape test ported to JS for native, bars
+  and stretched, the cards at rest and mid-move, the 21 art masks), and `tests/gd-kill-emblem.mjs` still passes (89,
+  including no allocation per kill and per frame).
+
+## Reserve ammo is the host's choice: Magazines | Bullets (package RESERVE, addendum 13)
+
+- **The host picks "Reserve ammo: Magazines | Bullets"** in the GD match settings (default **Bullets**, the user's
+  picture). Guests see the choice and can't change it. The host is authoritative for the ammo in both modes. The choice
+  goes to every computer in the arena record (`arenaView`, part of `arenaEpochKey`), so host, guests and bots use one
+  rule (`seatAmmo`, shared).
+- **When it applies:** in a Defuse match from the next round (`applyReserveNext` runs before `refillAll` in `newRound`);
+  in a Deathmatch from the next match (a Deathmatch ends at `endsAt`, then rematches, then `startArena` reads the queued
+  choice), as the addendum says "from the next round or match start". In the lobby / warmup and in practice (no rounds,
+  no match end) it applies at once and every firearm is refilled in the new model, the ones lying on the ground too.
+  The host menu says "next round" in Defuse and "next match" in Deathmatch.
+- **Magazines (CS2 today)**, from the install's `weapons.vdata` (`m_iMaxClip1` × `m_nPrimaryReserveAmmoMax`,
+  `m_bReserveAmmoAsClips` true), re-read gun by gun by both reviewers: Glock 3 × 20, AK-47 3 × 30, M4A4 4 × 30,
+  M4A1-S 3 × 20, AWP 2 × 5, M249 2 × 100, Negev 2 × 150, P2000 4 × 13, MAG-7 3 × 5 (as clips). The Nova, XM1014 and
+  Sawed-Off are not counted as clips (`m_bReserveAmmoAsClips` false): 32 shells, loaded one by one. A reload takes one
+  whole magazine; the rounds left in the old one are lost (`MAG_DROPS_REST`). **Not in the files:** that rule is CS2
+  server code; its source is the news reports of CS2's March 2026 update.
+- **The HUD in Magazines mode** is CS2's magazine-icons mode (`hudhealthammocenter.vcss`: `.show-mags
+  #HudReserveMagsContainer`, `.reserve-ammo-as-icons #HudReserveAmmoCounter { collapse }`, 18 px icons with a 4 px
+  margin): one icon per magazine left. The row grows to the right like CS2's `#HudReserveMagsContainer { width:
+  fit-children; flow-children: right }` (line 128), so 3, 4 or 8 icons stay inside it and the "|" stays. The R8 takes
+  CS2's `ammo_reserve_revolver_loader` icon (line 139, and the icon in the vpk), the Sawed-Off the shotgun shell.
+  Watching a team mate in-eye follows the host's mode too (`arena-spectate.js`, icons from strings made once).
+- **Bullets (classic)** is a round pool: "20 | 120" for the Glock as in the user's `cs2-hud.png`, AK 30 | 90, and so on;
+  only the missing rounds move, nothing is lost. **Not in the files:** the install's `weapons.vdata` counts magazines
+  only. The Glock's 120 is from the user's picture; the other counts are the repo's v40–52.0.5 table, and the 7 new
+  guns' counts are the classic published values from memory.
+- Other modes still get the Bullets values, the same as 52.0.5.
+- **Ours / not verified:** whether CS2 keeps the "|" and hides the single reserve icon in icons mode (the `.vxml_c`
+  doesn't decompile, KVType 26), and which gun takes which `ammo_reserve_<type>` icon (CS2 code). Practice applying the
+  change at once is our choice. CS2 has no ammo purchase of its own: buying a gun gives it full. The spectator's HUD
+  (`#sp-wp`) is our simpler one, not CS2's `hudhealthammocenter`.
+- Tests: `tests/gd-reserve-modes.mjs` (129 checks: both models per gun type, shotgun shell by shell, M249 / Negev, a
+  mode change on host and guest, the Deathmatch queue, ground guns, bots, the HUD's icon types),
+  `tests/browser/gd-reserve-modes.mjs` (10 checks: the "|" is wider than 0 and the last icon is inside the row at 3, 4
+  and 8 icons; the picture `~/Desktop/GD-v53-reserve-modes.jpg`).
+
+## The 8 missing CS2 guns and CS2's loadout slots (package GUNS8)
+
+- **New guns:** Zeus x27, P2000, Dual Berettas, R8 Revolver, MAG-7, Sawed-Off, SCAR-20 and G3SG1. Every number comes
+  from the install's `weapons.vdata` and was re-derived by both reviewers: price, kill award, damage, armour ratio, range
+  modifier, range, cycle time (R8 [0.5, 0.4]), clip, reserve, speed and scoped speed, deploy, penetration, pellets, zoom
+  FOVs and times, flinch, recoil seed, spread, inaccuracy and recoil arrays, full-auto (`dist/weapons-data.js`).
+- **CS2's flexible loadout** from `items_game.txt` (`flexible_loadout_slot`, default, group): the starting pistol (s0),
+  then 4 pistols, 5 mid-tier and 5 rifles per side, any gun of the category in each slot (the ⇄ badge in the buy menu).
+  The page sends its whole loadout for both sides; the host sells only those guns. The loadout survives a rematch.
+  Equipment is CS2's order: Kevlar (equipment0), Kevlar + Helmet (1), Zeus (2), Defuse Kit (3).
+- **The CT pistol over LAN:** a guest whose loadout starts with the P2000 now gets the P2000 on every computer. The
+  host publishes a small `s0` map in `arenaView` (only where it is not the USP-S default); before, every page gave the
+  USP-S because only the host had the loadout.
+- **The R8:** primary fire waits for CS2's hammer (`REVOLVER.prepMs` 234 ms, **from CS:GO's code, 0.234375 s: not in
+  the install**); the right button fans at the second cycle time. The fan stops when the button is let go, on a switch
+  and on a reset. Speed is `m_flMaxSpeed` [180, 220]: 180 in the primary mode, 220 after fanning (picking the index by
+  the weapon mode is our reading, the same as the autosnipers' scoped [215, 120]).
+- **Shotgun reloads in first person** play CS2's one-cycle clip (intro + loop + outro) and run the loop once per shell,
+  in step with the per-shell sounds (`fp-view.js` shellPlan, `fp-sounds.js` shellSchedule). Measured: the Sawed-Off's
+  arms at mid-shell 1, 3 and 5 all read 0.667 s, inside the loop [0.4, 0.933] (clip 1.7333 s = 0.4 + 0.5333 + 0.8).
+- **The Zeus** is bought as equipment, is on key 3 with the knife, and its tracer is CS2's `weapon_tracers_taser.vpcf`
+  rope (`wire2`): colour [149, 218–232, 255], additive, overbright 4, 0.4 s life, the whole path at once, shrinking to
+  0.35 and fading over the last 0.1 s, in the same pooled tracer draw.
+- **Sounds:** each new gun's CS2 shot, per-gun zoom sounds (G9), `Default.NearlyEmpty` (G10) and the Negev's
+  focused-fire pitch (G11) through `gd-sounds.js`; our own fallback gunshots for the 7 firearms
+  (`dist/sounds/shot-*.wav`, cut by `tools/pack-epidemic.mjs` from the owner's Epidemic Sound recordings, like the other guns') play without the CS2 import.
+- **Installed on this computer** by the package (each under its back-up rule): the 8 first-person sets and world models
+  (`tools/cs2-fp/export_missing.py`, `manifest.bak-20261105-010604.json`), their clip sounds (`fp_sounds_add.py`,
+  `manifest.bak-sounds-20261105-012349` / `-021143`), 46 sound events (`import-cs2-sounds --only`), the kill-feed icons
+  (old kept as `killfeed.bak-202611041724`), and 84 finishes on 7 guns (`import-cs2-skins --only … --add`, old kept as
+  `skins.bak-20261105-0131`). `dist/gd-reload-ref.js` gained the 7 guns' reload numbers (numbers and names only).
+- **notCS2 / partial:** the Zeus streak is straight with our texture (CS2's wires bulge and sag, with `beam_crack` /
+  `beam_flame` textures and an impact glow). The Zeus has no finishes yet although the install has 7 (it is not in the
+  skins modules' gun list). In third person a shotgun reload is one shell cycle, and the new guns use the pistol / AK
+  third-person clips (the imported agent animations have no per-shell layers).
+- Tests: `tests/gd-new-guns.mjs` (96 checks: the vdata rows, loadout slots, host/guest arsenal from `arenaView`, R8
+  speed by mode and the fan, the Zeus tracer), `tests/browser/gd-new-guns-sheet.mjs` (18 checks; the picture
+  `~/Desktop/GD-v53-new-guns.jpg`: each gun in first person, the kill-feed icons, the practice buy menu and the CT / T
+  loadouts). `gd-skin-data`, `gd-skin-net` (now 34 guns), `gd-surface-props` (R8 penetration 2) and `gd-gun-feel`
+  follow the new guns.
+
+## CS2 sleeves and hitboxes (package AGENTS)
+
+- **First-person sleeves:** the arms wear the agent's own `firstperson_sleeves` mesh from `agents/models/<agent>`
+  (`tools/import-cs2-sleeves.mjs`, 11 agents; installed in `user-assets/sleeves/`, back-ups `sleeves.bak-202611041725`
+  and `manifest.bak-sleeves-*`). They reuse the arms' shader and materials, so nothing new is compiled. When the arms
+  glb already wears that agent's sleeve (SAS, Phoenix) nothing is downloaded (about 7.5 MB saved per page load).
+- **Hitboxes are CS2's capsules:** the 19 capsules of each agent's `m_hitboxsets "cstrike"` (groups 1–8, e.g.
+  `head_0` radius 4.3 group 1, `neck_0` radius 3.5 group 8; read from the vmdl MDAT with Source2Viewer and checked again
+  by a reviewer on `tm_leet_varianta`), posed on the drawn agent: every item's own hold (53 items, 40 distinct holds a
+  side, from `cs2-agents` `setWeapon` with the same aim the game draws), standing or crouched, turned by yaw and bent by
+  pitch exactly as `cs2-agents.js` bends spine_1..3 (pitch / 3 each, clamped to ±1.2 rad). Checked against the posed
+  agent at −1.0 to +1.2 rad on 48 poses: worst error 0.0024 HU. A ray at the drawn head of an agent looking 0.6 rad up
+  or down is a head shot on host and guest. The file is `user-assets/hitboxes/cs2-hitboxes-34689fa2.json` (version 2,
+  192 KB; back-ups `hitboxes.bak-202611041725`, `hitboxes.bak-202611050645`).
+- **One rule on every computer:** `gd-hitboxes.js bodyFor` picks side, held item and pitch for the host's `traceShot`,
+  the page's prediction and `lab.js traceRemote` (others' tracer ends and blood). The host rewinds the target's pitch
+  and held item with the lag compensation (`lag-comp.js` keeps `p` and `w` per pose; no new LAN field: the pitch
+  already travels in `pose.shot.pitch`). Measured: host = guest on 493 of 493 rays (a made-up set whose sides differ) and
+  583 of 583 (CS2's set). A 19-capsule ray costs about 600–670 ns, with no allocation (0.69 B a ray beyond the returned
+  number). The room installs the hit boxes under the same rule as the page (only with `models.agents`).
+- **notCS2:** CS2 poses its hitboxes every tick from the full animation (walk and run cycles, reloads, shots, jumps);
+  ours use each item's idle hold. The drawn chest eases toward the pitch (12/s) while the capsules use the interpolated
+  pitch, so after a fast flick they can lead the drawn head by up to about 80 ms. Both sides assume the T knife on a T.
+  The damage per hit group (arms and neck as chest) is not in CS2's data files; the committed model stays. The T sleeves
+  are rigid where CS2 simulates cloth. A running room keeps the hit box file it loaded until it restarts or a pack is
+  installed (the importer says so).
+- Tests: `tests/gd-hitboxes.mjs` (40 checks), `tests/gd-agent-sleeves.mjs` (15), `tests/browser/gd-sleeves-hitboxes-shots.mjs`
+  (the picture `~/Desktop/GD-v53-sleeves-hitboxes.jpg`: the sleeves per side and the capsules level and bent 0.6 rad down).
+
+## Physics props (package PROPS, open-B#10)
+
+- **CS2's `prop_physics` props move on the host** (`dist/gd-props.js`, 64 Hz, no three.js) and every page draws the
+  host's records (`arena-physprops.js` net mode, a frame region in `lan/room.mjs`). Bullets (each pellet, with the gun's
+  spread, reach and range falloff), knives, HE blasts, grenades and players' bodies push them; dead players don't.
+- **From CS2's files** (`tools/import-cs2-props.mjs` → `user-assets/gd-props/props.json`, 115 models on 8 maps; back-ups
+  `~/CS2-extract/backup/gd-props-20261105-1453.json`, `-1455.json` and `gd-props-before-v53final.json`): mass
+  (`m_flMass`, or, when it is 0, density × hull area × the surface's `physics.thickness` for a hollow shell: watering can
+  6.2 kg, wine bottle 7.8 kg, bucket 5.5 kg, paint can 1.1 kg), surface, break pieces, and `prop_data` health with its
+  `scripts/propdata.vdata` base (glass bottle 5 hp, coffee mug 5, soda cup 15, clay pot 20, bar stool 30, cinder block 0
+  = never breaks) and damage multipliers (`dmg.bullets`, `club`, `explosive`).
+- **Walls:** a prop never moves into a wall: the path is tested against CS2's grenade triangles at two heights, a prop
+  touching a wall can only leave it or slide, and a ray onto CS2's own surfaces is the floor where the nav has none, so
+  props fall off tables. Paths through a wall, every prop knocked 8 ways: 86 / 13 / 2 before (Inferno / Overpass /
+  Mirage) → 1 / 0 / 3 (props tipping during the step).
+- **No ghost copy:** the exported map holds a copy of each prop where the map put it. `cs2-render.js` now removes every
+  island of a prop's material that lies wholly inside the prop's box, so a knocked prop leaves nothing behind.
+- **LAN:** a guest that joins mid-round gets props that were already broken without their break effects; a restarted
+  shot counter (a page reload) replays no phantom bullets (`MAX_SHOT_GAP` 8). Grenade previews and guests' copies bounce
+  read-only off the props, so `gd-lan-lineup` still agrees.
+- **Measured:** host step 0.053–0.054 ms mean on Mirage and Inferno (worst 2.3 ms), on the host only; no prop shader
+  compiled during play (the hidden prop meshes are warmed at compile).
+- **Not in CS2's files (Source 1 SDK from memory, marked in the headers):** the shell-mass rule, the HE force (min(base
+  damage × 300, 30000) × a seeded 0.85–1.15), the knife force (24000 a swing), a grenade's break damage (10 club) and its
+  0.4 × speed after breaking a prop. Bullets don't stop at a player body first (CS2's go through players).
+- Tests: `tests/gd-props.mjs` (72 checks), `tests/browser/gd-props-shots.mjs` (27 checks on Mirage and Overpass: each
+  shot prop moved more than 10 HU or broke and nothing of it stays drawn at home; the picture `~/Desktop/GD-v53-props.jpg`).
+
+## Batch D together (integration)
+
+- All seven packages (FEEDBACK, RESERVE, GUNS8, AGENTS, PROPS, DETAILS, PERF4X) ran together in one tree. Nothing was
+  reverted and no interplay fix was needed: `node tests/syntax.mjs` (211 modules) and then every entry of `npm test`
+  run one by one passed, **158 of 158**, including `gd-other-modes-untouched` and `no-valve-data`. The real chained
+  `npm test` was run once more on the final commit (see below).
+- **The game loads the batch D imports** (muted Chrome through the test lock, the real `user-assets/`): reserve modes
+  (10 checks), the new guns sheet (18: CT and T loadouts, the Zeus as equipment 3, the shotgun loop), sleeves and
+  hitboxes (3), props on Mirage and Overpass (27: moved or broken, no ghost, no prop shader in play), the details
+  (bomb lights, the death cam's contrast, window panes) and your own wound. All passed, with no page errors. Each
+  package's picture on the Desktop was made again from this tree. The map importer's `PENS_ONLY` mode was **not** run.
+- **The presets** (`gd-presets.mjs High,Low`, 2940 × 1912, Apple M3, **not Windows**): High 33.7 fps, p95 35.2 ms,
+  draws p95 446, staged fight 45.2 fps with 9 of 9 agents, max 500 draws; Low 56.1 fps, p95 31.3 ms, draws p95 376,
+  staged max 396 (under 400). 0 programs linked in either fight. **These are not comparable with batch C's 60 fps**:
+  the Mac ran every tree, batch B included, at about half its usual speed during this integration (next point).
+- **The 5 v 5 Defuse fight with grenades** (`gd-pacing-nades.mjs`, Dust II, 9 bots, High, 2940 × 1912 at 2×, 24 s;
+  the same test file on each tree; batch B = a copy of 73b2829, batch C = 04bfbf5, batch D = this tree; run in turn
+  B, C, D). Batch B, which held 60 fps at 1× on 2026-11-04, ran 31 fps at 1× today with nothing else running, so the
+  absolute numbers say little; only the interleaved comparison counts. The dynamic resolution scaler moved before
+  most windows, even with `PINRATIO=1` (it pins at the window's start), so runs are grouped by their pixel ratio:
+
+  | CPU | pixel ratio | batch B | batch C | batch D |
+  |---|---|---|---|---|
+  | 1× | 1.41 | 31.8 / 31.3 (mean 31.6) | 29.0 / 29.8 (29.4) | 29.0 / 33.7 (31.4) |
+  | 4× | 1.41 | 18.3 / 41.8 | 17.3 / 26.0 (21.7) | 21.6 / 30.2 / 27.3 (26.4) |
+  | 4× | 1.0 | 37.5 / 32.4 / 39.2 / 39.1 (37.1) | 29.3 / 35.7 (32.5) | 38.2 / 38.9 (38.6) |
+  | 4× | 1.2 / 0.75 | | 37.4 / 38.7 (0.75) | 35.8 (1.2) |
+
+  p95 at 1×: B 51–65 ms, C 50–51, D 49–50; p99: B 83, C 68, D 65–68. 0 programs linked in every run, and 3–4
+  grenades thrown in each. **Batch D is not slower than batch C** in any matched group (1×: 31.4 against 29.4; 4× at
+  1.41: 26.4 against 21.7; 4× at 1.0: 38.6 against 32.5). **Against batch B** it is about equal at 1× (31.4 against
+  31.6) and at 4× with the ratio at 1.0 (38.6 against 37.1); at 4× and 1.41 the two B runs (18.3 and 41.8) are too far
+  apart to say. Run-to-run spread is 5–20 fps here, larger than any of these differences, so this is "no regression
+  found", not a measured gain. A re-run on a quiet Mac is open.
+- **Imports, checked on this computer** (each under its back-up rule; see "Needs CS2 imported on the computer"): the 8
+  guns' sets, sounds, kill-feed icons and finishes, the agents' sleeves and the hitbox file (version 2), the props file,
+  and the bomb's two last-second sounds. The full CS2 sound import was also run in batch D (DETAILS, with a back-up).
+- **Not checked here:** the Windows desktop build on CI (it needs a push, which was not authorised) and any Windows
+  hardware.
+
 ## Numbers marked (verify) and where they came from
 
 | number | value | source |
@@ -1104,7 +1453,27 @@ each number back from the files.
 | Fire light | colour 242 211 147, radius × 2, noise 0.6–1 | `RenderStandardLight` in `particles/inferno_fx/*.vpcf` |
 | Exposure ranges | Dust II 0.925–1.1 … Nuke 1.0 / 0.85 | each map's `post_processing_volume` entity; the target brightness is **ours** (fitted to CS2 footage) |
 | Bloom | Dust II 0.184 SCREEN, Inferno 0.12 ADD, … | each map's `.vpost` `CBloomLayer` |
-| Your own wound | front 5–10 splats by damage, (228,33,33) × 3; rear 10, (249,55,55) × 2; `lp_spray` 3–6 | `particles/blood_impact/blood_impact_localfrontenemy*`, `_localrearhit_splatter`, `_lp_spray`; where they sit on screen is **ours** |
+| Your own wound | front 5–10 splats by damage, (228,33,33) × 3; rear 10, (249,55,55) × 2; `lp_spray` 3–6 | `particles/blood_impact/blood_impact_localfrontenemy*`, `_localrearhit_splatter`, `_lp_spray`; where they sit on screen is **ours** (superseded in batch D: no blood is drawn on your own screen, only CS2's damage indicator) |
+| **Batch D** | | |
+| Reserve, Magazines | Glock 3 × 20, AK 3 × 30, M4A4 4 × 30, AWP 2 × 5, M249 2 × 100, Negev 2 × 150, P2000 4 × 13, MAG-7 3 × 5; Nova / XM1014 / Sawed-Off 32 shells | `weapons.vdata` `m_iMaxClip1`, `m_nPrimaryReserveAmmoMax`, `m_bReserveAmmoAsClips` |
+| Reserve, Bullets | Glock 120, AK 90, … | the Glock's from the user's `cs2-hud.png`; the rest **not in the install** (the repo's v40–52.0.5 table; the 7 new guns' from memory of the classic values) |
+| A reload's leftover rounds (Magazines) | lost | **CS2 server code**, not data; news reports of the March 2026 update |
+| Reserve icons row | grows right, 18 px icons, 4 px margin; R8 `revolver_loader` | `hudhealthammocenter.vcss` lines 128 and 139; which gun takes which icon is **CS2 code** |
+| Tracer frequency | rifles / SMGs 3; pistols, snipers, shotguns, M249, Negev, Zeus 1; USP-S [1, 0], M4A1-S [3, 0], MP5-SD 0 | `weapons.vdata` `m_nTracerFrequency` |
+| Damage indicator fade, segment rule | 950 ms; the 0.3 share threshold | **ours** / Source SDK 2013 from memory (no transition, animation or .vjs in CS2's files) |
+| The 8 new guns | every gameplay number | `weapons.vdata`; loadout slots from `items_game.txt` `flexible_loadout_slot` |
+| R8 hammer time | 234 ms | **CS:GO's code** (0.234375 s), not in the install |
+| R8 speed | 180 primary, 220 after fanning | `m_flMaxSpeed` [180, 220]; picking by mode is **our reading** |
+| Zeus tracer | [149, 218–232, 255], additive, × 4, 0.4 s, end radius 0.35, fade 0.1 s | `particles/weapons/cs_weapon_fx/weapon_tracers_taser*.vpcf` (`wire2`) |
+| Hitbox capsules | 19 a body, groups 1–8; `head_0` r 4.3, `neck_0` r 3.5 | the agents' `m_hitboxsets "cstrike"` (vmdl MDAT) |
+| Hitbox pitch bend | spine_1..3 each clamp(pitch, ±1.2) / 3 | `dist/cs2-agents.js` (how we draw the agent; CS2 poses from its full animation) |
+| Damage per hit group | arms and neck as chest | **not in CS2's data files** (game code); committed model kept |
+| Prop mass and health | e.g. watering can 6.2 kg (shell); glass bottle 5 hp, clay pot 20, bar stool 30, cinder block never | each model's PHYS `m_flMass` and hull, `surfaceproperties.vsurf` `physics.thickness`, `prop_data` + `scripts/propdata.vdata` |
+| Prop forces | HE min(dmg × 300, 30000) × 0.85–1.15, knife 24000, grenade break 10 club then 0.4 × speed | **Source 1 SDK from memory**, not in the CS2 files |
+| Planted bomb's light | 255 75 75 × 1.5, r 10 HU, 0.5 s a beep | `particles/explosions_fx/c4_timer_light.vpcf` |
+| Dropped bomb's light | 255 255 96, r 8 HU, 1 s, `C4.LightFlash` vol .3 to 500 HU | `c4_timer_light_dropped.vpcf`, `game_sounds_weapons.vsndevts` |
+| Beep schedule, last-second sounds | 1 s → 0.15 s; trip and warning 1 s before | **CS:GO's rule**, not in the install |
+| Death-cam contrast | LocalContrastStrength 2, EdgeStrength 2, vignette −0.3092 … 0.9408, blur 0.9455 | `death_cam_phase1.vpost`; the shader that uses them is **ours** |
 
 ## Partial, and what is not like CS2 yet
 
@@ -1165,9 +1534,11 @@ each number back from the files.
   (back-up `~/CS2-extract/backup/blood-20261104-2230`). Without them the headshot wisps use our own cell.
 - The C4 on the back uses CS2's C4 model and the agents' attachment from the existing model import
   (`user-assets/weapons/c4.bin`, `user-assets/holds/src/weapon_c4.glb`). Without them our CC0 bomb is used.
-- **The full CS2 game-sound import** (`node tools/import-cs2-sounds.mjs` with no `--only`) **has not been run on this
-  computer.** Only the round sounds and the fire and smoke events are in `models.gdSounds` (35 events). HITS' new hit,
-  armour and death events and the other GD events play through the older sound names or our own stand-ins until it is.
+- **The full CS2 game-sound import** (`node tools/import-cs2-sounds.mjs` with no `--only`) **was run on this computer
+  in batch D** (package DETAILS, 2026-11-05 01:01; the manifest and sounds were backed up first to
+  `~/CS2-extract/backup/sounds-full-20261105-0101`). With the later `--only` runs (GUNS8's 46 events, DETAILS'
+  `c4.trip` / `c4.explodewarn`) `models.gdSounds` holds 308 events. Batch C's note said this import was the user's
+  choice; restoring that back-up undoes it. Without the import our own stand-ins play.
 - CS2's ragdoll: `node tools/import-cs2-ragdoll.mjs` → `user-assets/ragdoll/cs2-ragdoll.json` (installed on this computer).
   Without it our own ragdoll with the same rules is used.
 - CS2's reload numbers are read once by `node tools/import-cs2-reloads.mjs` into `dist/gd-reload-ref.js` (numbers and
@@ -1177,6 +1548,24 @@ each number back from the files.
   (all run on this computer; back-ups kept as `user-assets/*.bak-*`). Without them the built-in knife is drawn.
 - Exact CS2 bullet surfaces on the converted maps: `PENS_ONLY=1 node tools/maps/import-cs2-map.mjs <id>
   ~/CS2-extract/export/<id>` for each map (backs up first). **Not run on the user's maps yet.**
+- **Batch D, installed on this computer** (each under its back-up rule; without them our own fallbacks are used):
+  - The 8 new guns' first-person sets and world models (`tools/cs2-fp/export_missing.py --install`; back-up
+    `user-assets/manifest.bak-20261105-010604.json`), their clip sounds (`tools/cs2-fp/fp_sounds_add.py`;
+    `manifest.bak-sounds-20261105-012349` / `-021143`), 46 sound events (`import-cs2-sounds --only`), the kill-feed
+    icons (`import-cs2-killfeed.mjs`; old kept as `killfeed.bak-202611041724`), 84 finishes on 7 guns
+    (`import-cs2-skins --only … --add`; old kept as `skins.bak-20261105-0131`), and their reload numbers in
+    `dist/gd-reload-ref.js` (`import-cs2-reloads.mjs`, numbers and names only). Without them the guns use the built-in
+    models, our own gunshots and no finishes.
+  - The agents' sleeves and hitboxes: `node tools/import-cs2-sleeves.mjs` → `user-assets/sleeves/` (11 agents) and
+    `user-assets/hitboxes/cs2-hitboxes-34689fa2.json` (version 2; back-ups `sleeves.bak-202611041725`,
+    `hitboxes.bak-202611041725`, `hitboxes.bak-202611050645`, `manifest.bak-sleeves-*`). Without them the arms keep
+    their own sleeves and the hit test uses the older body shapes.
+  - The physics props: `node tools/import-cs2-props.mjs` → `user-assets/gd-props/props.json` (115 models on 8 maps;
+    back-ups `~/CS2-extract/backup/gd-props-20261105-1453.json`, `-1455.json`, `gd-props-before-v53final.json`).
+    Without it the props stay where the map put them.
+  - The bomb's last-second sounds: `import-cs2-sounds --only c4.trip,c4.explodewarn` (back-up
+    `~/CS2-extract/backup/sounds-before-v53-details-final-20261105-142440`).
+  - Still **not** run: the Zeus finishes (the install has 7), and the map importer's `PENS_ONLY` mode on `user-maps/`.
 - No Valve file is committed. `tests/no-valve-data.mjs` passes.
 
 ## Measured (on the MacBook, in muted Chrome)
@@ -1261,27 +1650,30 @@ evidence. "Needs a recording" means CS2's files do not hold it and it can only b
   `Magnitude` / `Variance`). How CS2 builds the pattern from them is engine code. Needs a recording: a 30-bullet spray on
   a wall from the user's own CS2 (AK, M4A4, M4A1-S, Galil, FAMAS, MP9, MAC-10). The mid-spray punch decay and the shotgun
   pellet layout (Nova / XM1014 wall shot) need recordings too.
-- **Tracers on every bullet** (the user's own rule). CS2 traces every 3rd bullet of rifles and SMGs and none of the
-  silenced guns (`m_nTracerFrequency`). Batch D makes this a setting with CS2 as the default.
-- **The hit-marker X** is the user's own request. CS2 has none. Batch D makes it a setting, off by default.
+- **Tracers** follow CS2's `m_nTracerFrequency` by default since batch D; "Every bullet" (the user's earlier rule) is a
+  setting. The tracer's look is v52.0.5's, which the user tuned. The Zeus's streak is straight and uses our texture (CS2's
+  wires bulge, sag and have an impact glow).
+- **The hit-marker X** (the user's earlier request; CS2 has none) is off by default since batch D, and a setting.
 - **The view model still looks smaller than CS2's:** the Glock's rear face is 72 px wide against 105 px in CS2's picture at
   1920 × 1080 (its top at y 671 against 685, its centre at x 1265 against 1262).
 - **Sensitivity (× 0.022°) and the ±89° pitch** are CS:GO values from memory. The cvars exist in CS2, but their defaults
   are not in the files.
-- **Buy menu:** Zeus x27, P2000, Dual Berettas, R8, MAG-7, Sawed-Off, SCAR-20 and G3SG1 cannot be bought, and CS2's 5
-  loadout slots are not there. Batch D.
-- **First-person sleeves:** our T arms show bare forearms where CS2 draws the agent's sleeve. Batch D.
-- Per-gun zoom sounds, `Default.NearlyEmpty` and the Negev's pitch shift are missing. Shotguns have no per-shell
-  third-person clip or first-person shell sound. Batch D.
+- **The 8 added guns** (batch D): the Zeus has no finishes yet (the install has 7); the R8's hammer time (234 ms) is
+  CS:GO's; picking the R8's speed by fire mode is our reading. The new guns use the pistol / AK third-person clips.
+- **First-person sleeves** are the agents' own meshes since batch D, but rigid where CS2 simulates cloth.
+- **Shotgun reloads in third person** are one shell cycle (the imported agent animations have no per-shell layers). In
+  first person the loop and the sounds run once per shell since batch D.
 - **Knife damage and timings** are not in the install's files (knife code).
 
 **Hits and damage**
-- **Hitboxes** are not CS2's posed capsules. The damage numbers are right. Batch D.
+- **Hitboxes** are CS2's 19 capsules since batch D, posed on each item's idle hold, standing or crouched, with yaw and
+  pitch. CS2 poses them every tick from the full animation (running, reloads, recoil, jumps). After a fast flick they
+  can lead the drawn head by up to about 80 ms. The damage per hit group (arms and neck as chest) is not in the files.
 - **Damage rounding** follows CS:GO's server rule (not in CS2's files).
 - **Ragdoll force** is ours (not in the files).
-- **Your own wound:** CS2's `localfrontenemy`, `localrearhit` and `lp_spray` are drawn. `blood_impact_localfrontsimple`,
-  `localkillshot` and `lp_mist` are not, and where the splats sit on the screen is ours (CS2's code places them). There is
-  no separate `~/Desktop/GD-v53-own-wound.jpg` yet; the front and rear hits are in `GD-v53-impacts.jpg`.
+- **Your own wound** (batch D, the user's rule: no blood on your own screen): only CS2's 4-segment damage indicator, from
+  `huddamageindicator.vcss`. Its 950 ms fade, which segments light and the order of its transform are ours (a CS2
+  screenshot would settle the transform). Fire damage lights no segment. CS2's white `Damage__Segment_Bar` isn't drawn.
 - **Dust has no particle shadows** (`m_bParticleShadows`), so concrete puffs are faint on light walls.
 - **The flash ring** chosen for a blind length, and the $300 defuse award (`cash_player_bomb_defused` is not in the
   files), are ours / CS:GO's.
@@ -1306,8 +1698,9 @@ evidence. "Needs a recording" means CS2's files do not hold it and it can only b
 **Fire, smoke and the C4**
 - The fire's plume, embers and floor glow are drawn although CS2's active tree makes none (the spec asks for them), and the
   plume's height is ours. No flames climb walls. No projected scorch while it burns (ours comes after).
-- **The planted bomb** has no blinking light (CS2: `c4_timer_light.vpcf`, one red flash per beep), is drawn 1.4 × too big,
-  and its beep schedule follows CS:GO. **The dropped bomb** has no light (`c4_timer_light_dropped.vpcf`, `C4.LightFlash`).
+- **The planted bomb** (since DETAILS: CS2's red flash and size): its beep schedule and its last-second sounds' timing
+  follow CS:GO (not in CS2's files), it lies in the dropped pose, not `weapon_c4_planted`'s, and CS2's trigger flash
+  (`c4_timer_light_trigger.vpcf`) isn't drawn. **The dropped bomb**'s `C4.LightFlash` curve input is our reading.
 - The carried bomb's light is CS2's warm yellow, not the red the spec asked for (see the C4 section).
 - The inferno spread numbers and the molotov slope and fuse are CS:GO's (`inferno_*` cvars are in the server binary).
 
@@ -1327,12 +1720,19 @@ evidence. "Needs a recording" means CS2's files do not hold it and it can only b
 - Agents are never frustum-culled, which costs vertices on weak and software GPUs.
 - Targets not met (emulation on the Mac, never on Windows): software rendering 2.9 fps against 30, Medium at CPU ×4
   53 fps against 60. High is about 3 fps behind 52.0.5 at CPU ×4 (stage 6), and the whole of batch C is about
-  2.5 fps behind batch B at CPU ×4 in the 5 v 5 grenade fight (48.5 against 51.0; equal at full speed). No Windows
-  hardware was measured.
+  2.5 fps behind batch B at CPU ×4 in the 5 v 5 grenade fight (48.5 against 51.0; equal at full speed). Batch D's
+  integration found no regression against batch C, but on a Mac running at about half speed (see "Batch D together");
+  PERF4X measured SSAO at about 2 fps at CPU ×4. No Windows hardware was measured.
 
 **Other**
-- The host's Magazines / Bullets reserve-ammo choice (addendum 13) is batch D. Until then the committed model stays.
-- Physics props are not host-authoritative (their motion is deterministic from the host's records). Batch D.
+- **Reserve ammo** (batch D, the host's choice): the Bullets counts other than the Glock's 120 are not in the install's
+  files; losing a magazine's leftover rounds in Magazines mode is CS2 server code; the spectator's reserve HUD is our
+  simpler one.
+- **Physics props** are host-authoritative since batch D. Their forces (HE, knife, grenade breaks) and the hollow-shell
+  mass rule are Source 1's from memory, and a few props can still slip through a wall while tipping (1 / 0 / 3 of
+  every prop knocked 8 ways on Inferno / Overpass / Mirage).
+- **Spectating:** another player's draw and inspect sounds are never played, watched or not.
 - The map importer's exact CS2 bullet surfaces (`PENS_ONLY`) are not run on the user's maps: the user runs it.
-- Smaller items: impact wall traces, wallbang falloff, the remote shot's trace origin, one Overpass snag, the death cam's
-  contrast and Steam avatar, the spectator's reload flag.
+- Smaller items: impact sparks are hidden where they enter a wall (CS2 bounces them); range falloff inside a wallbang
+  (under 1 HP); the death cam's contrast shader is ours (its numbers are CS2's) and it has no Steam avatar; the planted
+  bomb lies in the dropped pose and CS2's trigger flash isn't drawn.
