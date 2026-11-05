@@ -41,13 +41,13 @@ export const FP = { knife: { pack: 'pistol', onehand: true, fist: true, noLeft: 
 // toward the crosshair, the pistol tipped up): a turn [pitch, yaw, roll] about the eye and a shift (game units),
 // arms and gun together, so the grip never changes. Per-weapon view / viewRot (FP) still win.
 export const PACK_VIEW = { rifle: { view: [.35, .05, -.424], rot: [.044, .193, -.223] }, pistol: { view: [.314, -.08, -.409], rot: [.048, .123, -.373] }, shotgun: { view: [.35, -.08, -.424], rot: [.044, .193, -.223] }, cs2rifle: { view: [.9, .55, -.9], rot: [0, 0, 0] } };   // (measured with aimView: barrel level toward the crosshair, the gun upright)
-const GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'lmg', 'shotgun']);
+const GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'lmg', 'shotgun', 'taser']);   // (v53 GUNS8: the Zeus x27 held as a pistol)
 // Our guns on the rifle / pistol weapon bone: offset (game units, in the weapon's own frame) and turn.
 export const ATTACH = { p250: { at: [0, -.12, .18], scale: .62, lowPoly: true }, fiveseven: { at: [0, -.12, .18], scale: .62, lowPoly: true },   /* the low-poly pack's pistols: real pistol size in the hand (a CS2 model is real size already) */ knife: { at: [0, -.45, .1], rot: [1.2, 0, 0] }, karambit: { at: [0, -.4, .1], rot: [0, -1.57, 3.14], scale: 1.3 },   // karambit like CS2: ring on the index finger, blade curling up
    he: { at: [0, 0, 0], rot: [0, 0, 0], scale: 1.25 }, flash: { at: [0, 0, 0], rot: [0, 0, 0], scale: 1.25 }, smoke: { at: [0, 0, 0], rot: [0, 0, 0], scale: 1.1 }, molotov: { at: [0, 0, 0], rot: [0, 0, 0], scale: 1.1 }, decoy: { at: [0, 0, 0], rot: [0, 0, 0], scale: 1.1 }, incendiary: { at: [0, 0, 0], rot: [0, 0, 0], scale: 1.1 }, c4: { at: [0, 0, 0], rot: [0, .6, 0] }   /* the bomb lies on the palm, turned to show its face, low right: never over the crosshair */, ak: { at: [0, 0, -1.5] }, m4: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 }, sniper: { at: [0, -.15, -.7], rot: [0, 0, 0], scale: .7 }, smg: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, greasegun: { at: [0, -.12, -.5], rot: [0, 0, 0], scale: .72 }, suomi: { at: [0, -.15, -.55], rot: [0, 0, 0], scale: .7 }, lmg: { at: [0, -.15, -.6], rot: [0, 0, 0], scale: .7 },   /* our guns are real size; the pack's AK is ~0.7 of that: same scale, grip in the hand */ deagle: { at: [0, 0, 0], rot: [0, 0, 0] } };   // ak: only for its muzzle (the pack's AK lines up with ours there)
 // Every gun gets arms: its own entry, else by kind (rifles, SMGs, snipers, the M249 on the rifle arms; pistols on the
 // pistol arms; shotguns on the shotgun arms); grips follow the base model of a variant.
-const KIND_FP = { rifle: { pack: 'rifle' }, smg: { pack: 'rifle' }, sniper: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol' }, shotgun: { pack: 'shotgun' } };
+const KIND_FP = { rifle: { pack: 'rifle' }, smg: { pack: 'rifle' }, sniper: { pack: 'rifle' }, lmg: { pack: 'rifle' }, pistol: { pack: 'pistol' }, shotgun: { pack: 'shotgun' }, taser: { pack: 'pistol' } };
 const CS2_KINDS = new Set(['rifle', 'sniper', 'lmg']), cs2Info = new Map();
 export const fpInfo = id => { const f = FP[id] || KIND_FP[weaponById(id)?.kind] || null; if (!f || !CS2_KINDS.has(weaponById(id)?.kind) || !ready.get('cs2rifle')) return f;   // (the CS2 rifle arms, when imported)
   if (!cs2Info.has(id)) cs2Info.set(id, { ...f, pack: 'cs2rifle', own: false }); return cs2Info.get(id); };
@@ -151,7 +151,7 @@ function loadAuthored() {
 }
 // Sets share one glove material (the imported CS2 glove's; a set's own 'cs2_glove' slot carries no textures) and their
 // textures go to the GPU as they load, so a weapon's first appearance costs nothing.
-const FP_GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'shotgun', 'lmg']);
+const FP_GUN_KINDS = new Set(['pistol', 'smg', 'rifle', 'sniper', 'shotgun', 'lmg', 'taser']);
 // (v53 KNIVES final) A knife swing's clip when the set lacks it: the second variant → the first, a hit / backstab → the miss.
 const SWING_FALLBACK = { light2: 'light', lighthit2: 'lighthit', lighthit: 'light', backstab2: 'backstab', backstab: 'lighthit', heavyhit: 'heavy', heavystab: 'heavyhit' };
 // Your own gun's reflections (PLAN §5.5): a studio light box made here, once — dark surroundings, a broad soft light
@@ -225,6 +225,12 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
   fix.matrix.makeScale(u, u, u).multiply(cam ? cam.matrixWorld.clone().invert() : new THREE.Matrix4()); cam?.removeFromParent();
   const mixer = new THREE.AnimationMixer(sc), clip = n => gltf.animations.find(a => a.name === n), now = () => performance.now();
   const twists = forearmTwists(sc);   // (KNIFE-diag: CS2's forearm twist bones, driven from the hand every update — forearmTwists below)
+  // (v53 GUNS8) The R8's prepare_shoot is a DELTA clip in CS2's graph (a layer over the idle: the arms' bones all at
+  // identity, only the hammer, cylinder, rounds, ejector and trigger finger move). Played as a whole clip it drew the arms
+  // at the origin (in the camera). So it becomes a three.js additive layer — its arm and twist tracks dropped — over
+  // whatever plays (prepare() below). Made once here, before the bindings.
+  { const pc = clip('prepare'), arm = pc?.tracks.find(t => /arm_upper_[LR]\.position$/.test(t.name));
+    if (pc && arm && arm.values.every(v => Math.abs(v) < 1e-6)) { pc.tracks = pc.tracks.filter(t => !/(arm_|hand_|clavicle|TWIST)/.test(t.name)); pc.blendMode = THREE.AdditiveAnimationBlendMode; } }
   for (const c of gltf.animations) { const a = mixer.clipAction(c); a.play(); mixer.update(0); a.stop(); }   // (every clip's bindings made now, while loading: a first draw or swing costs nothing)
   if (id === 'knife' || id === 'knife-t') sc.traverse(o => { if (o.isMesh && [].concat(o.material)[0]?.name === 'cs2_weapon' && !o.geometry.attributes.color) bladeMask(o); });   // (the default knives: a skin on the blade only — SKIN-1)
   if (KNIFE_SKINS[id] || id === 'karambit') { const k = bakeKnife(sc, mixer, clip('idle'), id); if (k) registerModel(id, k); }   // (the chosen star knife in other players' hands: TP-3)
@@ -234,11 +240,13 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
   // flashes and tracers started at the right wrist. For a gun: at load, in the idle pose, the centre of the gun mesh's
   // front end (its vertices within 1 cm of the one furthest along the view's −z, ≤ 4000 sampled), kept in the 'weapon'
   // bone's frame so it follows every clip (fire kick, reload, inspect). Knives, grenades and the bomb keep the hand.
-  let tipBone = null; const tip = new THREE.Vector3();
+  let tipBone = null, tipL = null; const tip = new THREE.Vector3();
   if (!muzzle && FP_GUN_KINDS.has(weaponById(id)?.kind)) { const idle = clip('idle'), a = idle && mixer.clipAction(idle); if (a) { a.play(); mixer.update(0); } root.updateMatrixWorld(true);
     sc.traverse(o => { if (o.isBone && o.name === 'weapon' && !tipBone) tipBone = o; }); const pts = [], v = new THREE.Vector3();
     sc.traverse(o => { if (!o.isMesh || [].concat(o.material)[0]?.name !== 'cs2_weapon') return; const n = o.geometry.attributes.position.count, step = Math.max(1, Math.ceil(n / 4000)); for (let i = 0; i < n; i += step) pts.push(o.getVertexPosition(i, v).applyMatrix4(o.matrixWorld).clone()); });
-    if (tipBone && pts.length) { let z0 = Infinity; for (const p of pts) z0 = Math.min(z0, p.z); let k = 0; for (const p of pts) if (p.z < z0 + .06) { tip.add(p); k++; } tipBone.worldToLocal(tip.multiplyScalar(1 / k)); } else tipBone = null;
+    if (tipBone && pts.length && id === 'elite') { tipL = new THREE.Vector3(); let x0 = 0; for (const p of pts) x0 += p.x; x0 /= pts.length;   // (v53 GUNS8: the Dual Berettas' two muzzles — each pistol's own front end, right and left of the set's middle)
+      for (const [side, out] of [[1, tip], [-1, tipL]]) { const P = pts.filter(p => (p.x - x0) * side > 0); let z0 = Infinity; for (const p of P) z0 = Math.min(z0, p.z); let k = 0; for (const p of P) if (p.z < z0 + .06) { out.add(p); k++; } tipBone.worldToLocal(out.multiplyScalar(1 / Math.max(1, k))); } }
+    else if (tipBone && pts.length) { let z0 = Infinity; for (const p of pts) z0 = Math.min(z0, p.z); let k = 0; for (const p of pts) if (p.z < z0 + .06) { tip.add(p); k++; } tipBone.worldToLocal(tip.multiplyScalar(1 / k)); } else tipBone = null;
     if (a) a.stop(); }
   // Skins (skin-render.js): the gun's or knife's own materials take your skin — CS2's UV0 (imported finishes fit it),
   // tier 'fp' (1024 pictures, the map's light and grade), the pattern frame fitted in the idle pose — and their own
@@ -253,6 +261,7 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
   const reloading = () => !!cur && (cur === mixer.existingAction(clip('reload')) || (!!clip('reloadempty') && cur === mixer.existingAction(clip('reloadempty'))));   // (v53 GUNS: either reload clip)
   const idleName = o => o.empty && clip('idleempty') ? 'idleempty' : 'idle';
   let cur = null, until = 0, bobT = 0, bobA = 0, breathT = 0, drawnAt = -Infinity; const hm = new THREE.Matrix4(), drawWin = (INSPECT_DRAW_S[id] || 0) * 1000;
+  const shellPlan = { a: null, t0: 0, intro: 0, loop: 0, n: 0, dur: 0 };   // (v53 GUNS8 final: a shotgun's shell-by-shell reload clip, looped per shell — reload(), update(); one object, reused)
   const play = (n, { once = false, fade = .12, ms = 0 } = {}) => { const c = clip(n); if (!c) return 0; const a = mixer.clipAction(c); a.reset(); a.enabled = true; a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat); a.clampWhenFinished = once; a.timeScale = ms ? c.duration * 1000 / ms : 1;
     if (cur && cur !== a && fade > 0) a.crossFadeFrom(cur, fade, false); else if (cur && cur !== a) cur.stop(); a.play(); cur = a; return c.duration * 1000 / a.timeScale; };
   return {
@@ -269,8 +278,16 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     // and a reload from 0 plays reloadempty (reload_empty_*: weapons.js picks it, its own sounds too). A set without them
     // (no CS2 empty clips: every rifle, a set built before v53 GUNS) plays fire / idle / reload as before.
     empty: false, setEmpty(v) { v = !!v; if (v === this.empty) return; this.empty = v; if (!until && cur && (cur === mixer.existingAction(clip('idle')) || cur === mixer.existingAction(clip('idleempty')))) play(idleName(this), { fade: .12 }); },
-    hasClip: n => !!clip(n), get clipNow() { return cur ? cur.getClip().name : null; },   // (tests: the clip playing now)
-    fire(last = false) { if (reloading()) return; until = now() + play(last && clip('fireempty') ? 'fireempty' : 'fire', { once: true, fade: .03 }); if (last && clip('fireempty')) this.empty = true; },
+    hasClip: n => !!clip(n), get clipNow() { return cur ? cur.getClip().name : null; }, get clipTime() { return cur ? cur.time : 0; },   /* (clipTime: tests — v53 GUNS8 final, the shotgun's per-shell loop) */   // (tests: the clip playing now)
+    // (v53 GUNS8) The Dual Berettas (CS2's elites graph): right barrel then left — shoot_right1 / shoot_left1, the *last
+    // clips on the final round; the R8's secondary (alt): shoot_alt1, the hammer fanned; prepare(): prepare_shoot, the
+    // hammer drawn back before a primary shot (weapons.js REVOLVER.prepMs).
+    barrel: 0, lastBarrel: 0,
+    fire(last = false, alt = false) { if (reloading()) return; { const pc = clip('prepare'); if (pc?.blendMode === THREE.AdditiveAnimationBlendMode) mixer.existingAction(pc)?.stop(); }   /* (v53 GUNS8: the R8's hammer layer ends with the shot) */ let n = last && clip('fireempty') ? 'fireempty' : 'fire';
+      if (clip('fire2')) { this.lastBarrel = this.barrel; n = this.barrel ? 'fire2' : 'fire'; if (last && clip(n + 'last')) n += 'last'; this.barrel = 1 - this.barrel; } else if (alt && clip('firealt')) n = 'firealt';
+      until = now() + play(n, { once: true, fade: .03 }); if (last && (clip('fireempty') || clip('fire2'))) this.empty = true; },
+    prepare() { const c = clip('prepare'); if (!c) return; if (c.blendMode === THREE.AdditiveAnimationBlendMode) { const a = mixer.clipAction(c); a.reset(); a.enabled = true; a.setLoop(THREE.LoopOnce); a.clampWhenFinished = false; a.play(); return; } until = now() + play('prepare', { once: true, fade: .03 }); },   // (v53 GUNS8: the R8's delta clip as a layer — the hammer back over the idle)
+    unprepare() { const c = clip('prepare'); if (!c) return; if (c.blendMode === THREE.AdditiveAnimationBlendMode) mixer.existingAction(c)?.stop(); else if (cur?.getClip() === c) { until = 0; } },   // (v53 GUNS8: the R8's trigger let go before the shot — the hammer forward again)
     // Knife swings: the set's own clip for the swing — CS2's light_miss1 / 2, light_hit1 / 2, light_backstab / 2,
     // heavy_miss1, heavy_hit1, heavy_backstab (weapons.js picks: SWING_CLIP) — else the one it falls back to (a set built
     // before v53 has only 'light' and 'heavy'), else its fire clip. Returns the clip played (its sounds: weapons.js).
@@ -280,7 +297,12 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     throw(strength) { const n = strength === 'short' && clip('throwlow') ? 'throwlow' : 'throw'; until = clip(n) ? now() + play(n, { once: true, fade: .05 }) : 0; },
     // The bomb: planting.
     plant() { if (clip('plant')) until = now() + play('plant', { once: true, fade: .1 }); },
-    reload(ms, emptyMag = false) { const n = emptyMag && clip('reloadempty') ? 'reloadempty' : 'reload'; until = now() + play(n, { once: true, fade: .1, ms }); return n; },   // (v53 GUNS: from an empty magazine CS2's reload_empty_*)
+    reload(ms, emptyMag = false, sh = null) { const n = emptyMag && clip('reloadempty') ? 'reloadempty' : 'reload', c = clip(n);
+      // (v53 GUNS8 final, open-B#14: a CS2 shotgun's reload clip is one cycle — intro, one shell's loop, outro. With sh
+      // { intro, loop, n } (seconds, CS2's own timing) the arms play it at its own speed and run the loop once per shell,
+      // in step with fp-sounds' per-shell schedule, instead of one insert stretched over every shell. update() drives it.)
+      if (sh && c && sh.n > 0 && c.duration > sh.intro + sh.loop + .01) { play(n, { once: true, fade: .1 }); const a = cur; a.timeScale = 0; shellPlan.a = a; shellPlan.t0 = now(); shellPlan.intro = sh.intro; shellPlan.loop = sh.loop; shellPlan.n = sh.n; shellPlan.dur = c.duration; until = now() + (c.duration + (sh.n - 1) * sh.loop) * 1000; return n; }
+      until = now() + play(n, { once: true, fade: .1, ms }); return n; },   // (v53 GUNS: from an empty magazine CS2's reload_empty_*)
     // A shotgun's shell-by-shell reload broken off by a shot (CS2): back to idle so the shot's own clip can play.
     stopReload() { if (reloading()) { until = 0; play(idleName(this), { fade: .08 }); } },
     // (v53 KNIVES: a knife with two CS2 inspects plays lookat01 twice as often as lookat02 — CS2's viewmodel_inspects
@@ -293,13 +315,14 @@ export function buildAuthored(gltf, glove, id = '', arms = null, kbase = null) {
     twirl() {},
     update(dt, speed = 0) {
       if (until && now() >= until) { until = 0; play(idleName(this), { fade: .18 }); }   // (v53 GUNS: idleempty while the magazine is empty)
+      if (shellPlan.a) { if (cur !== shellPlan.a) shellPlan.a = null; else { const P = shellPlan, e = (now() - P.t0) / 1000; P.a.time = e < P.intro ? e : e < P.intro + P.n * P.loop ? P.intro + (e - P.intro) % P.loop : Math.min(P.dur, e - (P.n - 1) * P.loop); } }   // (v53 GUNS8 final: intro, the loop once per shell, outro — at the clip's own speed)
       mixer.update(dt); if (twists.length) forearmTwist(twists); fpLightTick(dt, root);   // (the map's light where you stand on your gun, a few times a second: skin-render.js) (forearmTwist: KNIFE-diag)
       // Restrained layers on top: a walking bob, and breathing.
       bobT += dt * Math.min(1, speed / 15) * 9; bobA += (Math.min(1, speed / 15) - bobA) * Math.min(1, dt * 8); breathT += dt;
       root.position.set(Math.sin(bobT) * .012 * bobA, -Math.abs(Math.cos(bobT)) * .01 * bobA + Math.sin(breathT * 1.6) * .0025, 0); root.updateMatrixWorld(true);
     },
     handIn(space, out) { space.updateMatrixWorld(true); return out.setFromMatrixPosition(hm.copy(space.matrixWorld).invert().multiply((hand || root).matrixWorld)); },
-    muzzle(out) { root.updateMatrixWorld(true); return tipBone ? tipBone.localToWorld(out.copy(tip)) : (muzzle || hand || root).getWorldPosition(out); },
+    muzzle(out) { root.updateMatrixWorld(true); return tipBone ? tipBone.localToWorld(out.copy(tipL && this.lastBarrel ? tipL : tip)) : (muzzle || hand || root).getWorldPosition(out); },   // (v53 GUNS8: the Dual Berettas' barrel that fired)
   };
 }
 
@@ -362,7 +385,7 @@ async function fitTextures(ts, size = gdTexSize(textureSize())) {   /* (v53 stag
 }
 let armsLoading = null;
 function loadArms() {
-  return armsLoading ??= userAssets().then(ua => { const v = ua.models.fpGloves; if (!v) return null; return gltfLoader().loadAsync(userAssetURL(ua, v.file)).then(armsFrom).then(a => a && fitTextures(a.textures).then(() => a)); })
+  return armsLoading ??= userAssets().then(ua => { const v = ua.models.fpGloves; if (!v) return null; return gltfLoader().loadAsync(userAssetURL(ua, v.file)).then(armsFrom).then(a => a && agentSleeves(ua, a)).then(a => a && fitTextures(a.textures).then(() => a)); })   // (v53 AGENTS: each side's agent's own sleeve, before any set is dressed)
     .catch(e => { console.warn('first-person arms (CS2)', e?.message); return null; });
 }
 export function armsFrom(gltf) {   // (exported for tests/gd-fp-gloves.mjs)
@@ -370,10 +393,45 @@ export function armsFrom(gltf) {   // (exported for tests/gd-fp-gloves.mjs)
   gltf.scene.traverse(o => { if (!o.isSkinnedMesh) return; let q = o; while (q && !/^(arms|sleeves)_(ct|t)$/.test(q.name)) q = q.parent; if (!q) return; const side = q.name.split('_')[1];
     if (!out.bones) { out.bones = o.skeleton.bones.map(b => b.name); out.inverses = o.skeleton.boneInverses; }
     o.name = q.name + '/' + (o.material.name || ''); o.geometry.userData.shared = true; out[side].push(o);
-    const m = o.material; if (!out.materials.includes(m)) { out.materials.push(m); m.userData.shared = true; const L = ARM_LOOK[m.userData.part] || ARM_LOOK.glove; m.envMapIntensity = L.env; m.color.multiplyScalar(L.albedo); m.metalness = m.roughness = 1; m.onBeforeCompile = armsShader; m.customProgramCacheKey = armsKey;
-      for (const t of [m.map, m.normalMap, m.aoMap, m.roughnessMap, m.metalnessMap]) if (t && !out.textures.includes(t)) { out.textures.push(t); t.anisotropy = an; } } });
+    armMat(o.material, out, an); });
   if (!(out.bones && out.ct.length && out.t.length)) return null; armsEnv(out); return out;
 }
+// One CS2 arm material made ready (once): its part's look (ARM_LOOK), the arms' one shader and program key, its pictures listed.
+function armMat(m, out, an) { if (out.materials.includes(m)) return; out.materials.push(m); m.userData.shared = true; const L = ARM_LOOK[m.userData.part] || ARM_LOOK.glove; m.envMapIntensity = L.env; m.color.multiplyScalar(L.albedo); m.metalness = m.roughness = 1; m.onBeforeCompile = armsShader; m.customProgramCacheKey = armsKey;
+  if (out.env) { m.envMap = out.env; m.needsUpdate = true; } for (const t of [m.map, m.normalMap, m.aoMap, m.roughnessMap, m.metalnessMap]) if (t && !out.textures.includes(t)) { out.textures.push(t); t.anisotropy = an; } }
+// ── v53 AGENTS: the agent's own first-person sleeve (CS2 draws each agent model's `firstperson_sleeves` over the arms) ──
+// tools/import-cs2-sleeves.mjs (local only) converts it per agent into user-assets/sleeves/<agent>-<sha8>.glb on the arms
+// glb's own 52 bones and binds, listed in models.sleeves. Each side wears the sleeve of the agent it is drawn as (models.
+// agents[side].from: SAS and Phoenix today; any agent imported later) — that agent's own, else the first of its family
+// (ctm_fbi_varianta → ctm_fbi), else the arms glb's own sleeve (SAS / Phoenix), and without any CS2 arms the packs' shirt.
+// Only the sleeve part changes: the gloves (the agent's own or the player's CS2 pick, wearSide) and the bare forearm stay;
+// the knife's black handle is the knife's, untouched. Same maps, same shader and program key: nothing compiles at a side
+// swap; loaded with the arms, before any set (and so any round). Two glbs at most (one per side).
+export const agentKeyOf = e => /agents\/models\/[a-z0-9_]+\/([a-z0-9_]+)/i.exec(String(e?.from || ''))?.[1]?.toLowerCase() || null;
+const familyOf = k => String(k || '').replace(/_(variant[a-z0-9]+|var[a-z][0-9]*)$/, '');
+export function pickSleeve(list, agent, side) {   // → [agent key, entry] | null
+  const A = list?.agents; if (!A || !agent) return null; if (A[agent]?.side === side) return [agent, A[agent]];
+  const f = familyOf(agent), k = Object.keys(A).find(x => familyOf(x) === f && A[x].side === side); return k ? [k, A[k]] : null;
+}
+export function sleevesFrom(gltf, side, arms) {   // (exported for tests/gd-agent-sleeves.mjs) → the sleeve's meshes for `side`, made ready, or null
+  const ms = [], an = anisotropy(); let ok = true;
+  gltf.scene.traverse(o => { if (!o.isSkinnedMesh) return; let q = o; while (q && q.name !== 'sleeves_' + side) q = q.parent; if (!q) return;
+    if (o.skeleton.bones.length !== arms.bones.length || o.skeleton.bones.some((b, i) => b.name !== arms.bones[i])) { ok = false; return; }   // (another rig: not worn)
+    const same = arms.materials.find(m => m.name && m.name === o.material.name && String(m.userData.size) === String(o.material.userData.size)); if (same) { o.material.dispose(); o.material = same; } else armMat(o.material, arms, an);   // (Phoenix's bare forearm: the arms' own bare_arm_133, one picture set)
+    o.name = 'sleeves_' + side + '/' + (o.material.name || ''); o.geometry.userData.shared = true; ms.push(o); });
+  return ok && ms.length ? ms : null;
+}
+async function agentSleeves(ua, arms) {
+  const S = ua.models.sleeves; arms.sleeve = { ct: null, t: null }; if (!S?.file) return arms;
+  const list = await fetch(userAssetURL(ua, S.file)).then(r => r.ok ? r.json() : null).catch(() => null);
+  await Promise.all(['ct', 't'].map(async side => { const pick = pickSleeve(list, agentKeyOf(ua.models.agents?.[side]), side); if (!pick) return;
+    if (pick[1].material && arms[side].some(o => o.name === 'sleeves_' + side + '/' + pick[1].material)) { arms.sleeve[side] = pick[0]; return; }   // (v53 AGENTS final: the arms glb already wears this agent's sleeve — SAS's, Phoenix's: the same mesh and maps, not downloaded again)
+    const g = await gltfLoader().loadAsync(userAssetURL(ua, pick[1].file)).catch(e => { console.warn('sleeves', pick[0], e?.message); return null; }), ms = g && sleevesFrom(g, side, arms);
+    if (ms) wearAgentSleeves(arms, side, ms, pick[0]); }));
+  return arms;
+}
+// The swap itself (exported for tests/gd-agent-sleeves.mjs): only that side's sleeve meshes; its gloves and skin stay.
+export function wearAgentSleeves(arms, side, ms, key) { arms[side] = arms[side].filter(o => !o.name.startsWith('sleeves_' + side + '/')).concat(ms); (arms.sleeve ??= { ct: null, t: null })[side] = key; return arms; }
 // The arms on a set: one skinned mesh per part and side on the set's own glove skeleton (the same bones in the same
 // order: that skeleton itself), beside its glove; the set's glove and camo sleeves are kept for outside GD.
 function dressArms(sc, arms, textures) {

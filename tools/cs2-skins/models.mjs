@@ -15,6 +15,10 @@ export const GUNS = {
   m4: gun('weapon_m4a1', 'weapon_rif_m4a4', 'rif_m4a1'), m4s: gun('weapon_m4a1_silencer', 'weapon_rif_m4a1_silencer', 'rif_m4a1_s'), sg553: gun('weapon_sg556', 'weapon_rif_sg556', 'rif_sg556'),
   ssg08: gun('weapon_ssg08', 'weapon_snip_ssg08', 'snip_ssg08'), sniper: gun('weapon_awp', 'weapon_snip_awp', 'snip_awp'),
   lmg: gun('weapon_m249', 'weapon_mach_m249', 'mach_m249para'), negev: gun('weapon_negev', 'weapon_mach_negev', 'mach_negev'),
+  // (v53 GUNS8: CS2's guns the game lacked — their first-person sets from tools/cs2-fp/export_missing.py; the legacy
+  // composite folders as the install names them: materials/models/weapons/customization/<folder>)
+  p2000: gun('weapon_hkp2000', 'weapon_pist_hkp2000', 'pist_hkp2000'), elite: gun('weapon_elite', 'weapon_pist_elite', 'pist_elite'), revolver: gun('weapon_revolver', 'weapon_pist_revolver', 'pist_revolver'),
+  mag7: gun('weapon_mag7', 'weapon_shot_mag7', 'shot_mag7'), sawedoff: gun('weapon_sawedoff', 'weapon_shot_sawedoff', 'shot_sawedoff'), scar20: gun('weapon_scar20', 'weapon_snip_scar20', 'snip_scar20'), g3sg1: gun('weapon_g3sg1', 'weapon_snip_g3sg1', 'snip_g3sg1'),
 };
 // Star knives: the kit-name infix CS2 uses per knife (cu_karam_lore, cu_m9_bay_lore…) is dropped to form the family.
 const knife = (cls, dir, infix) => ({ kind: 'knife', cls, model: 'weapon_' + dir, composite: `weapons/models/knife/${dir}/materials/composite_inputs/${dir}_composite_inputs.vmat`, infix });

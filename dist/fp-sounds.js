@@ -32,15 +32,22 @@ function fire(e, at, set = null, src = null, clip = null) { const names = e[1], 
   play(n, { at, volume: vol, rate, kind: 'handling' }); }
 // Your own weapon: one clip's sounds at a time, stepped every frame (no allocation); a new clip or stop() cuts the rest
 // (a reload broken off by a weapon switch goes quiet, as in CS2).
+// (v53 GUNS8, open-B#14) shells: a shotgun's shell-by-shell reload — { intro, loop, n } (s, CS2's WPN_RELOAD_INTRO / LOOP
+// lengths, weapons-data shellIntroMs / shellMs; n shells): the clip at its own speed, its loop's sounds once per shell
+// (the Nova's / Sawed-Off's InsertShell and AddAmmo each shell), its intro's before and its outro's (the pump) after the
+// last — not one cycle stretched over them all. The schedule is made once per reload (no per-frame allocation).
+export function shellSchedule(c, { intro, loop, n }, out = []) { out.length = 0; for (const e of c.ev) { const s = e[0]; if (s < intro) out.push([s, e]); else if (s < intro + loop) for (let j = 0; j < n; j++) out.push([s + j * loop, e]); else out.push([s + (n - 1) * loop, e]); } out.sort((a, b) => a[0] - b[0]); return out; }
 export function createClipChannel(sound = fire) {
-  let c = null, t0 = 0, k = 1, i = 0, cs = null, cn = null;
+  let c = null, t0 = 0, k = 1, i = 0, cs = null, cn = null, sch = null; const SCH = [];
   return {
     // set (a first-person set: 'ak', 'butterfly'…), clip ('reload'…), ms: how long the clip plays here (0: its own
     // length); t: now (ms). True when the room has its sounds, decoded; else false (and the set asked for).
-    start(set, clip, ms = 0, t = performance.now()) { c = readyClip(set, clip); if (!c) return false; cs = set; cn = clip; t0 = t; k = ms > 0 ? ms / 1000 / c.dur : 1; i = 0; return true; },
+    start(set, clip, ms = 0, t = performance.now(), shells = null) { c = readyClip(set, clip); if (!c) return false; cs = set; cn = clip; t0 = t; i = 0; sch = shells && shells.n > 0 && shells.loop > 0 ? shellSchedule(c, shells, SCH) : null; k = sch ? 1 : ms > 0 ? ms / 1000 / c.dur : 1; return true; },
     stop() { c = null; },
     get playing() { return !!c; },
-    step(t = performance.now()) { if (!c) return; const s = (t - t0) / 1000 / k; while (i < c.ev.length && c.ev[i][0] <= s) sound(c.ev[i++], null, cs, 'me', cn); if (i >= c.ev.length) c = null; },
+    step(t = performance.now()) { if (!c) return; const s = (t - t0) / 1000 / k;
+      if (sch) { while (i < sch.length && sch[i][0] <= s) sound(sch[i++][1], null, cs, 'me', cn); if (i >= sch.length) c = null; return; }
+      while (i < c.ev.length && c.ev[i][0] <= s) sound(c.ev[i++], null, cs, 'me', cn); if (i >= c.ev.length) c = null; },
   };
 }
 // Someone else's (another player's, a bot's): the clip's sounds where they stand, each while still() holds (a reload

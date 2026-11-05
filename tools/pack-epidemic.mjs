@@ -57,6 +57,14 @@ const GUNS = {
   cz75: ['Guns, Pistol, Handgun, Glock 19, Various Shots 02', 'Guns, Pistol, Distant Shooting Range, Windy 01', .7],
   tec9: ['Guns, Pistol, Handgun, Beretta M9, Various Shots 01', 'Guns, Rifle, Distant Shooting Range, Windy 02', .8],
   bizon: ['Guns, Automatic, Submachine Gun, HK MP5, Shots, Short Bursts 01, Combo', 'Guns, Rifle, Distant Shooting Range, Windy 03', .7],
+  // (v53 GUNS8: CS2's seven added guns — our own fallback shots, each its own recording; with CS2 imported they play CS2's)
+  p2000: ['Guns, Pistol, Handgun, HK USP 9MM, Various Shots', 'Guns, Pistol, Light Pistol, Single Fire, Reverberant 01', .8],
+  elite: ['Guns, Pistol, Handgun, Beretta M9, Various Shots 02', 'Guns, Pistol, Light Pistol, Single Fire, Reverberant 01', .7],
+  revolver: ['Guns, Pistol, Revolver, Shot x4', 'Guns, Antique, Revolver, Colt 1851, Navy, 30m 01', 1.1],
+  mag7: ['Guns, Shotgun, Franchi Spas 12, Various Shots', 'Guns, Antique, Shotgun, 12 Gauge Single Barrel, 01, 20m', 1.3],
+  sawedoff: ['Guns, Shotgun, Shot, Fat', 'Guns, Antique, Shotgun, Winchester Model 1887, 30m 01', 1.4],
+  scar20: ['Guns, Rifle, M14, Single Shots, Dry', 'Guns, Rifle, Assault Rifle, Single Fire, Moderate Distance', 1.2],
+  g3sg1: ['Guns, Rifle, Semi Sniper Rifle, Fire, Shoot, Singular Shots, Reverberant', 'Guns, Rifle, Assault Rifle, Long Distance Rifle, Single Fire, Reverberant', 1.3],
 };
 // Three takes close up (each shot of a spray differs, as real ones do), one from afar. Every gun's files are its own:
 // a recording with fewer clean takes gets the missing ones as slightly faster / slower versions (not a copy), and

@@ -5,7 +5,7 @@
 // CS2's distance curve, voices); while it is on it routes the calls here to itself (setSoundRoute), so the shared
 // callers (guns, footsteps) need no mode checks and the other modes keep exactly these sounds.
 import { audioCtx, outAt, reverb, listenerAt, uiBus } from './spatial-audio.js';
-import { weaponById, WEAPONS, isFirearm } from './weapons-data.js';
+import { weaponById, WEAPONS, isFirearm, GD_ONLY_GUNS } from './weapons-data.js';   // (GD_ONLY_GUNS: v53 GUNS8, Global Defensive's own guns)
 import { userAssets, userAssetURL } from './user-assets.js';
 const DIR = new URL('./sounds/', import.meta.url).href;
 const GUNS = [...WEAPONS.filter(isFirearm).map(w => w.id), 'cannon'];   // (every gun's own shots: shot-<id>[-b|-c|-far])
@@ -46,9 +46,10 @@ export const sameSource = (a, b) => a === b || (!!sourceOf(a) && sourceOf(a) ===
 export const roomSoundNames = () => roomSounds().then(({ mine }) => (mineNow = mine, mine));
 // The shipped set (and the room's versions of it, and each gun's own CS2 reloads), decoded at start in every mode.
 // The room's first-person clip sounds (fp-*) and Global Defensive's events are decoded on demand, not here.
+const GD_ONLY_SHOT = /^shot-([a-z0-9]+?)(?:-b|-c|-far)?$/, gdOnlyShot = n => GD_ONLY_GUNS.has(GD_ONLY_SHOT.exec(n)?.[1]), gdSkipWant = names => want(names.filter(n => !gdOnlyShot(n)));   // (v53 GUNS8: a shipped shot of one of Global Defensive's own guns)
 export function loadSounds() {
   if (!canDecode()) return Promise.resolve(0);
-  return loading ??= roomSounds().then(({ mine }) => { mineNow = mine; return want([...SHIPPED, ...Object.keys(mine).filter(n => /^reload-/.test(n))]); });
+  return loading ??= roomSounds().then(({ mine }) => { mineNow = mine; return gdSkipWant([...SHIPPED, ...Object.keys(mine).filter(n => /^reload-/.test(n))]); });   // (v53 GUNS8: Global Defensive's own guns' shots left to its match — gd-sounds gdPrewarm — so the other modes decode what they did in 52.0.5)
 }
 // Global Defensive's route (gd-sounds.js) while a match is on: { shot, fx, reload, step } each returning undefined to
 // leave the call to this bank.

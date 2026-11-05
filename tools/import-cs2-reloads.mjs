@@ -41,6 +41,9 @@ export const GUNS = {
   ump45: ['weapon_ump45', 'ump45'], p90: ['weapon_p90', 'p90'], shotgun: ['weapon_nova', 'nova'], xm1014: ['weapon_xm1014', 'xm1014'],
   galil: ['weapon_galilar', 'galil'], famas: ['weapon_famas', 'famas'], ak: ['weapon_ak47', 'ak47'], m4: ['weapon_m4a1', 'm4a4'], m4s: ['weapon_m4a1_silencer', 'm4a1s'],
   sg553: ['weapon_sg556', 'sg556'], aug: ['weapon_aug', 'aug'], ssg08: ['weapon_ssg08', 'ssg08'], sniper: ['weapon_awp', 'awp'], lmg: ['weapon_m249', 'm249'], negev: ['weapon_negev', 'negev'],
+  // (v53 GUNS8: CS2's guns the game lacked — the Dual Berettas and the R8 have graphs of their own; the Zeus x27 never reloads)
+  p2000: ['weapon_hkp2000', 'hkp2000'], elite: ['weapon_elite', 'animation/graphs/viewmodel/viewmodel_gun_elites.vnmgraph'], revolver: ['weapon_revolver', 'animation/graphs/viewmodel/viewmodel_gun_revolver.vnmgraph'],
+  mag7: ['weapon_mag7', 'mag7'], sawedoff: ['weapon_sawedoff', 'sawedoff'], scar20: ['weapon_scar20', 'scar20'], g3sg1: ['weapon_g3sg1', 'g3sg1'],
 };
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const r4 = x => Math.round(x * 1e4) / 1e4, r3 = x => Math.round(x * 1e3) / 1e3;

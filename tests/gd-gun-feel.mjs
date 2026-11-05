@@ -39,7 +39,7 @@ const D = await import('../dist/weapons-data.js'), THREE = await import('../dist
       ok(`the Glock: a shot ${seq[0]} → ${seq[1]}; the last ${seq[2]} → held open ${seq[3]}; a reload from 0 ${seq[4]}; filled ${seq[5]}; a reload with rounds left ${seq[6]}`, seq.join() === 'fire,idle,fireempty,idleempty,reloadempty,idle,reload', seq.join(' → ')); }
     else console.log('SKIP (empty clips): the Glock set has no CS2 empty clips yet'); }
   else console.log('SKIP (sets): no CS2 first-person sets on this computer');
-  ok('weapons.js picks them at magazine 0: the last round fire(true), a reload from 0 reload(ms, true) with the empty clip\'s own sounds, held open each frame', /fp\?\.fire\(!practiceMag\(\) && mag - 1 <= 0\)/.test(wsrc) && /fp\?\.reload\(clipMs, mag === 0\)/.test(wsrc) && /clipStart\(rc, clipMs\)/.test(wsrc) && /fp\.setEmpty\(!!am && am\[0\] === 0 && !practiceMag\(\)\)/.test(wsrc));
+  ok('weapons.js picks them at magazine 0: the last round fire(true), a reload from 0 reload(ms, true) with the empty clip\'s own sounds, held open each frame', /fp\?\.fire\(!practiceMag\(\) && mag - 1 <= 0(, alt)?\)/.test(wsrc) && /fp\?\.reload\(clipMs, mag === 0(, sh)?\)/.test(wsrc) && /clipStart\(rc, clipMs\)/.test(wsrc) && /fp\.setEmpty\(!!am && am\[0\] === 0 && !practiceMag\(\)\)/.test(wsrc));
   ok('m_bHideViewModelWhenZoomed: the view model hides scoped only for a gun that says so (the AWP, SSG 08)', /if \(scope && view && current\?\.hideZoomed\) view\.visible = false/.test(wsrc)); }
 
 // ── 3. Muzzle flash and shells: capped pools, nothing allocated per shot or frame ──

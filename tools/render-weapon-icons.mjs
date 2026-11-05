@@ -11,7 +11,7 @@ const b = await chromium.launch({ executablePath: process.env.CHROME || '/Applic
 p.on('pageerror', e => console.log('ERR', e.message)); await p.goto(base + '/models/weapons/ak-main-base.jpg');
 const icons = await p.evaluate(async only => {
   const THREE = await import('/three.module.js'), W = await import('/weapon-models.js'), D = await import('/weapons-data.js'); await W.loadRealWeapons();
-  const ids = [...D.WEAPONS.map(w => w.id), ...D.KNIVES.map(k => k.id)].filter(id => !only.length || only.includes(id)), Wd = 512, H = 224, r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); r.setSize(Wd, H); r.setClearColor(0, 0); r.outputColorSpace = THREE.SRGBColorSpace;
+  const ids = [...D.WEAPONS.map(w => w.id), ...D.KNIVES.map(k => k.id), ...(D.ZEUS ? [D.ZEUS.id] : [])].filter(id => !only.length || only.includes(id)), Wd = 512, H = 224, r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); r.setSize(Wd, H); r.setClearColor(0, 0); r.outputColorSpace = THREE.SRGBColorSpace;
   const env = new THREE.PMREMGenerator(r).fromScene(new (await import('/post/RoomEnvironment.js')).RoomEnvironment(), .04).texture, res = {};
   for (const id of ids) { const sc = new THREE.Scene(); sc.environment = env; sc.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.6)); const dl = new THREE.DirectionalLight(0xffffff, 2.2); dl.position.set(8, 6, 2); sc.add(dl);
     const m = W.weaponModel(id, 1); sc.add(m); m.updateMatrixWorld(true); const box = new THREE.Box3().setFromObject(m), c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3()), h = Math.max(sz.z / (Wd / H), sz.y) * .54;

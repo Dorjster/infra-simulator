@@ -56,6 +56,19 @@ REBUILD = {'pistol': ('weapon_pist_glock18', [UA_W + '/pistol-main-base.jpg']), 
 P = 'pistol/_default_pistol'
 ITEMS.update({'pistol': (None, 'pistol/pistol_glock18', P, 'gunset', None), 'usps': (None, None, P, 'uspset', None), 'p250': (None, 'pistol/pistol_p250', P, 'gunset', None),
               'fiveseven': (None, 'pistol/pistol_fiveseven', P, 'gunset', None), 'cz75': (None, 'pistol/pistol_cz75a', P, 'gunset', None), 'deagle': (None, 'pistol/pistol_deagle', P, 'gunset', None)})
+# v53 GUNS8: CS2's eight guns the game lacked — the P2000 (weapon_hkp2000), Dual Berettas (weapon_elite), R8 Revolver,
+# Zeus x27 (weapon_taser), MAG-7, Sawed-Off, SCAR-20 and G3SG1 — first-person set + world model each, as the AUG
+# ('gun': CS2's own clips in its own folder, the default pistol's / rifle's where it has none). The Dual Berettas
+# ('elite'), the R8 ('revolver') and the Zeus ('taser') play clips of their own (WANT below). Textures by CS2's suffixes.
+for gid, model, own, dflt, kind in [('p2000', 'weapons/models/hkp2000/weapon_pist_hkp2000', 'pistol/pistol_hkp2000', P, 'gun'),
+                                    ('elite', 'weapons/models/elite/weapon_pist_elite', 'pistol/pistol_elite', P, 'elite'),
+                                    ('revolver', 'weapons/models/revolver/weapon_pist_revolver', 'pistol/pistol_revolver', P, 'revolver'),
+                                    ('zeus', 'weapons/models/taser/weapon_pist_taser', 'pistol/pistol_taser', P, 'taser'),
+                                    ('mag7', 'weapons/models/mag7/weapon_shot_mag7', 'rifle/rifle_mag7', R, 'gun'),
+                                    ('sawedoff', 'weapons/models/sawedoff/weapon_shot_sawedoff', 'rifle/rifle_sawedoff', R, 'gun'),
+                                    ('scar20', 'weapons/models/scar20/weapon_snip_scar20', 'rifle/rifle_scar20', R, 'gun'),
+                                    ('g3sg1', 'weapons/models/g3sg1/weapon_snip_g3sg1', 'rifle/rifle_g3sg1', R, 'gun')]:
+    ITEMS[gid] = (model, own, dflt, kind, None)
 WORLD_ARGS = {'molotov': ['--drop-joints', 'lighter,lighter_flame,lighter_hinge,lighter_lever', '--drop-mats', 'flame']}
 # The clips each kind plays (build_all.py's WANT: the game's clip name, CS2's file prefix, prefixes left out)
 WANT = {'gun': [('idle', 'idle', ('slide_back', 'idle2', 'from_activity')), ('draw', 'draw', ('lookat', 'crouch', 'silenced')), ('fire', 'shoot1', ()), ('reload', 'reload', ('empty',)), ('inspect', 'lookat01', ('draw', 'transfix', 'lgcy'))],
@@ -82,6 +95,16 @@ WANT = {'gun': [('idle', 'idle', ('slide_back', 'idle2', 'from_activity')), ('dr
                   ('inspect', 'lookat01', ('lookat01_draw',)), ('inspect2', 'lookat02', (), 'own'), ('inspectdraw', 'lookat01_draw', (), 'own')]}
 EMPTY = [('fireempty', 'shoot_empty', ()), ('idleempty', 'idle_slide_back', ()), ('reloadempty', 'reload_empty', ())]
 WANT['gun'] = WANT['gun'] + EMPTY   # (a gun without them — every rifle — just has none)
+# (v53 GUNS8) The Dual Berettas: CS2's elites graph fires one barrel at a time — shoot_right1 / shoot_left1, and the
+# *last clips as a pistol runs dry (idle_leftempty: the left slide locked, idle_leftrightempty: both); the R8:
+# prepare_shoot (the hammer drawn back before a primary shot), shoot1 (primary), shoot_alt1 (fan the hammer: secondary),
+# dryfire; the Zeus: idle, draw, its one shot, inspect.
+WANT['elite'] = [('idle', 'idle', ('leftempty', 'leftrightempty')), ('draw', 'draw', ()), ('fire', 'shoot_right1', ()), ('fire2', 'shoot_left1', ()),
+                 ('firelast', 'shoot_rightlast', ()), ('fire2last', 'shoot_leftlast', ()), ('idleempty', 'idle_leftrightempty', ()), ('idleleft', 'idle_leftempty', ()),
+                 ('reload', 'reload', ()), ('inspect', 'lookat01', ())]
+WANT['revolver'] = [('idle', 'idle', ()), ('draw', 'draw_revolver', ()), ('prepare', 'prepare_shoot', ()), ('fire', 'shoot1', ()), ('firealt', 'shoot_alt1', ()),
+                    ('dryfire', 'dryfire', ()), ('reload', 'reload', ()), ('inspect', 'lookat01', ())]
+WANT['taser'] = [('idle', 'idle', ()), ('draw', 'draw', ()), ('fire', 'shoot1', ()), ('inspect', 'lookat01', ())]
 WANT['gunset'] = WANT['gun']; WANT['uspset'] = [('draw', 'draw_silenced', ())] + [w for w in WANT['gun'] if w[0] != 'draw']   # (build_all.py's WANT['usp'])
 def pick(dirs, prefix, exclude=()):
     for pre in (prefix if isinstance(prefix, tuple) else (prefix,)):

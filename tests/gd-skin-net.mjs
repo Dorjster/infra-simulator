@@ -19,8 +19,8 @@ setSkinCatalog(null);
   const v = JSON.stringify(arenaView(g)); ok('the arena frame carries no skins (arenaView)', !/"skins"|"skinsNext"|"srev"|casehardened/.test(v));
   ok('…and stays small with 10 fully skinned players: < 4 KB', v.length < 4096, v.length + ' B');
   const all = JSON.stringify(fullSkins(g.arena)), d = takeSkinDelta(g.arena), one = JSON.stringify({ srev: 1, set: { 'player 0': g.arena.skins['player 0'] } });
-  ok('one player\'s whole set (28 skins, stickers, name tags) in one skins message: < 16 KB', one.length < 16384, one.length + ' B');
-  ok('the change log after those picks names every (player, slot) once', Object.keys(d.set).length === 10 && Object.keys(d.set['player 0']).length === 28 && !g.arena.skinsDirty);
+  ok(`one player's whole set (${WEAPONS.length + 1} skins, stickers, name tags) in one skins message: < 20 KB`, one.length < 20480, one.length + ' B');   // (v53 GUNS8: 35 slots with CS2's 7 added guns — 16 KB for 28, the same per-skin budget)
+  ok('the change log after those picks names every (player, slot) once', Object.keys(d.set).length === 10 && Object.keys(d.set['player 0']).length === WEAPONS.length + 1 && !g.arena.skinsDirty);
   console.log(`  sizes: arena frame ${v.length} B · one player's skins ${one.length} B · everyone's (join) ${all.length} B`); }
 
 // ── The page's merge: by srev, kept across arena frames ──

@@ -12,14 +12,15 @@ import { surfaceOf } from './gd-surface-props.js';   // (v53: a bullet impact's 
 import { audioCtx, master, uiBus, musicBus, ringBus, reverb, duck, HU_UNITS, listenerFrame, setRanges, gdFinalStage } from './spatial-audio.js';
 import { want, ready, bufferOf, setSoundRoute, roomSoundNames, sameSource, FX } from './sound-bank.js';
 import { userAssets } from './user-assets.js';
-import { WEAPONS, isFirearm } from './weapons-data.js';
+import { WEAPONS, isFirearm, GD_ONLY_GUNS } from './weapons-data.js';   // (GD_ONLY_GUNS: v53 GUNS8)
 import { REF } from './gd-sounds-ref.js';
 import { RELOAD_REF, RELOAD_SND } from './gd-reload-ref.js';   // (v53 RELOAD: CS2's reload sound events, the silent reload)
 export const HU = HU_UNITS;
 const take = (n, k = FX[n] || 1) => Array.from({ length: k }, (_, i) => `fx-${n}-${i}`), steps = s => [0, 1, 2, 3, 4].map(i => `step-${s}-${i}`);
-const reloadClass = id => { const w = WEAPONS.find(x => x.id === id), k = w?.kind; return ['pistol', 'deagle', 'usps', 'p250', 'fiveseven', 'cz75', 'tec9'].includes(id) ? 'pistol' : ['shotgun', 'xm1014'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : k === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
+const reloadClass = id => { const w = WEAPONS.find(x => x.id === id), k = w?.kind; return ['pistol', 'deagle', 'usps', 'p250', 'fiveseven', 'cz75', 'tec9', 'p2000', 'elite', 'revolver'].includes(id) ? 'pistol' : ['shotgun', 'xm1014', 'sawedoff', 'mag7'].includes(id) ? 'pump' : ['ssg08', 'sniper'].includes(id) ? 'bolt' : k === 'lmg' ? 'lmg' : k === 'smg' ? 'smg' : 'rifle'; };
 // CS2's weapon names (weapons.vdata / game_sounds_weapons): this game's gun id → its sound events' prefix.
-export const CS2_GUN = { pistol: 'Glock', usps: 'USP', p250: 'P250', fiveseven: 'FiveSeven', cz75: 'CZ75A', tec9: 'tec9', deagle: 'DEagle', mac10: 'MAC10', mp9: 'MP9', mp7: 'MP7', smg: 'MP5', bizon: 'bizon', ump45: 'UMP45', p90: 'P90', shotgun: 'Nova', xm1014: 'XM1014', galil: 'GalilAR', famas: 'FAMAS', ak: 'AK47', m4: 'M4A4', m4s: 'M4A1', sg553: 'sg556', aug: 'AUG', ssg08: 'SSG08', sniper: 'AWP', lmg: 'M249', negev: 'Negev' };
+export const CS2_GUN = { pistol: 'Glock', usps: 'USP', p250: 'P250', fiveseven: 'FiveSeven', cz75: 'CZ75A', tec9: 'tec9', deagle: 'DEagle', mac10: 'MAC10', mp9: 'MP9', mp7: 'MP7', smg: 'MP5', bizon: 'bizon', ump45: 'UMP45', p90: 'P90', shotgun: 'Nova', xm1014: 'XM1014', galil: 'GalilAR', famas: 'FAMAS', ak: 'AK47', m4: 'M4A4', m4s: 'M4A1', sg553: 'sg556', aug: 'AUG', ssg08: 'SSG08', sniper: 'AWP', lmg: 'M249', negev: 'Negev',
+  p2000: 'hkp2000', elite: 'ELITE', revolver: 'Revolver', zeus: 'Taser', mag7: 'Mag7', sawedoff: 'Sawedoff', scar20: 'SCAR20', g3sg1: 'G3SG1' };   // (v53 GUNS8: game_sounds_weapons.vsndevts' own spelling)
 // (suppressed: their own events — the USP-S and M4A1-S fitted, the MP5-SD is suppressed itself — with no distant layer)
 const FIRE_EV = { usps: 'Weapon_USP.SilencedShot', m4s: 'Weapon_M4A1.Silenced' }, NO_FAR = { usps: 1, m4s: 1, smg: 1 };
 export const NADE_CS2 = { he: 'HEGrenade', flash: 'Flashbang', smoke: 'SmokeGrenade', decoy: 'Decoy', molotov: 'Molotov', incendiary: 'IncGrenade' };
@@ -49,7 +50,7 @@ export const SYNTH_KINDS = ['hit.body', 'hs.flesh', 'hs.helmet', 'hs.kill', 'hs.
 export const EVENTS = {};
 const E = (id, cs, f, o = {}) => { EVENTS[id] = { id, cs, f, cat: 'world', mix: 'foley', pr: 1, ...o }; };
 // (handling events under another name: the CZ75's are Weapon_CZ.*, the M4A4 shares the M4A1's; shells and boxes)
-const HANDLE = { cz75: 'Weapon_CZ', m4: 'Weapon_M4A1' }, RELOAD_EV = { shotgun: '.Insertshell', xm1014: '.InsertShell', lmg: '.Boxout', negev: '.Boxout' }, ACTION_EV = { shotgun: '.Pump', ssg08: '.BoltBack', sniper: '.BoltBack' };
+const HANDLE = { cz75: 'Weapon_CZ', m4: 'Weapon_M4A1' }, RELOAD_EV = { shotgun: '.Insertshell', xm1014: '.InsertShell', lmg: '.Boxout', negev: '.Boxout', sawedoff: '.Insertshell' }, ACTION_EV = { shotgun: '.Pump', ssg08: '.BoltBack', sniper: '.BoltBack', sawedoff: '.Pump', mag7: '.PumpBack' };   // (v53 GUNS8: the Sawed-Off's shells and pump, the MAG-7's pump)
 for (const w of WEAPONS.filter(isFirearm)) { const g = w.id, P = 'Weapon_' + CS2_GUN[g], H = HANDLE[g] || P, cls = reloadClass(g);
   E(`gun.${g}.fire`, FIRE_EV[g] || P + '.Single', ['shot-' + g, 'shot-' + g + '-b', 'shot-' + g + '-c'], { mix: 'gun', pr: 2, far: NO_FAR[g] ? null : `gun.${g}.far`, wet: 1 });
   if (!NO_FAR[g]) E(`gun.${g}.far`, P + '.SingleDistant', ['shot-' + g + '-far'], { mix: 'far', pr: 1, layer: 1 });
@@ -59,6 +60,26 @@ for (const w of WEAPONS.filter(isFirearm)) { const g = w.id, P = 'Weapon_' + CS2
   if (ACTION_EV[g]) E(`gun.${g}.action`, P + ACTION_EV[g], [`reload-${cls}-2`], { clip: 'fire', pv: .9 }); }
 E('gun.dry.rifle', 'Default.ClipEmpty_Rifle', take('dry'), { pv: .7 }); E('gun.dry.pistol', 'Default.ClipEmpty_Pistol', take('dry'), { pv: .7 });
 E('gun.scope', 'Weapon_AWP.Zoom', take('scope'), { pv: .5, prate: 1.2 });
+// ── v53 GUNS8 (G9–G11 and the Zeus x27) ──
+// The Zeus x27: Weapon_Taser.Single (no SingleDistant in the file), Weapon_Taser.Draw; it never reloads.
+E('gun.zeus.fire', 'Weapon_Taser.Single', ['shot-pistol', 'shot-pistol-b', 'shot-pistol-c'], { mix: 'gun', pr: 2, pv: .6, prate: 1.6, wet: 1 }); E('gun.zeus.draw', 'Weapon_Taser.Draw', take('draw'), { clip: 'draw', pv: .7 }); E('gun.zeus.inspect', null, [], { clip: 'inspect' });
+// G9 — each scoped gun's own zoom sounds (weapons.vdata m_aShootSounds WEAPON_SOUND_ZOOM_IN / _OUT): the AUG ZoomIn /
+// ZoomOut, the SG 553 the same (Weapon_sg556.*), the AWP Zoom / ZoomOut, the SSG 08 Zoom both ways, the SCAR-20 Zoom both
+// ways, the G3SG1 Zoom / ZoomOut. In: a step to a deeper zoom; out: back to no scope (gdZoom).
+export const ZOOM_EV = { aug: ['Weapon_AUG.ZoomIn', 'Weapon_AUG.ZoomOut'], sg553: ['Weapon_sg556.ZoomIn', 'Weapon_sg556.ZoomOut'], sniper: ['Weapon_AWP.Zoom', 'Weapon_AWP.ZoomOut'], ssg08: ['Weapon_SSG08.Zoom', 'Weapon_SSG08.Zoom'], scar20: ['Weapon_SCAR20.Zoom', 'Weapon_SCAR20.Zoom'], g3sg1: ['Weapon_G3SG1.Zoom', 'Weapon_G3SG1.ZoomOut'] };
+for (const [g, [zin, zout]] of Object.entries(ZOOM_EV)) { E(`gun.${g}.zoom`, zin, take('scope'), { pv: .5, prate: 1.2 }); E(`gun.${g}.zoomout`, zout, take('scope'), { pv: .45, prate: 1 }); }
+// G10 — Default.NearlyEmpty (every gun's WEAPON_SOUND_NEARLYEMPTY; game_sounds_weapons: volume 1.5, mixgroup Foley, its
+// own curve, display_broadcast true): played with a shot that leaves the magazine at or under NEARLY_EMPTY of its size.
+// The share is CS2's code, not its data — CS:GO's 20 %, as remembered (UNVERIFIED). Ours: a light click when not imported.
+export const NEARLY_EMPTY = .2;
+E('gun.nearlyempty', 'Default.NearlyEmpty', take('dry'), { pv: .25, prate: 1.7 });
+// G11 — the Negev (weapons.vdata: m_flInaccuracyPitchShift −50, m_flInaccuracyAltSoundThreshold 0.02, WEAPON_SOUND_SINGLE_
+// ACCURATE Weapon_Negev.SingleFocused): below the threshold its shot is the focused one; the pitch moves by shift × the
+// shot's inaccuracy, in percent (rate 1 + −50 × ia / 100). The formula is CS:GO's FX_FireBullets as remembered — CS2's
+// code, not in the files (UNVERIFIED); the two numbers are the file's.
+E('gun.negev.focused', 'Weapon_Negev.SingleFocused', ['shot-negev', 'shot-negev-b', 'shot-negev-c'], { mix: 'gun', pr: 2, far: 'gun.negev.far', wet: 1 });
+export const PITCH_SHIFT = { negev: { shift: -50, alt: .02, accurate: 'gun.negev.focused' } };
+export const shotTone = (id, ia) => { const p = PITCH_SHIFT[id]; if (!p || !Number.isFinite(ia)) return null; return { rate: Math.max(.5, Math.min(1.5, 1 + p.shift * ia / 100)), ev: ia < p.alt ? p.accurate : null }; };
 E('gun.casing', 'Bounce.Shell', take('casing'), { mix: 'impact', pr: 0, pv: .16, prate: 1.6 }); E('gun.casing.shotgun', 'Bounce.ShotgunShell', take('casing'), { mix: 'impact', pr: 0, pv: .16, prate: 1.05 });
 E('gun.move', 'Weapon.WeaponMove1', [], { pr: 0 });
 E('knife.draw', 'Weapon_Knife.Deploy', take('knifedraw'), { clip: 'draw', pv: .5 });
@@ -99,7 +120,25 @@ E('impact.ricochet', 'FX_RicochetSound.Ricochet', [], { mix: 'impact', pr: 0 });
 E('item.drop', 'weapon.Rifle.Impact', take('bounce'), { mix: 'impact', pv: .5, prate: .7 }); E('item.drop.pistol', 'weapon.Pistol.Impact', take('bounce'), { mix: 'impact', pv: .45, prate: .8 });
 E('item.pickup', 'Player.PickupWeapon', take('pickup'), { pv: .6 }); E('item.pickup.c4', 'Player.PickupC4', take('pickup'), { pv: .6 });
 E('c4.initiate', 'c4.initiate', [], { mix: 'bomb', pr: 3, syn: 'beep' }); E('c4.key', 'c4.keypressquiet', [], { mix: 'bomb', pr: 3, syn: 'key' });
-E('c4.beep', 'C4.PlantSound', [], { mix: 'bomb', pr: 3, syn: 'beep' }); E('c4.warn', 'C4.10Seconds', [], { mix: 'bomb', pr: 3 });
+E('c4.beep', 'C4.PlantSound', [], { mix: 'bomb', pr: 3, syn: 'beep', with: 'c4.beep.b' }); E('c4.warn', 'C4.10Seconds', [], { mix: 'bomb', pr: 3 });
+// (v53 DETAILS: the planted bomb's beep in CS2's files is two layers — C4.PlantSound c4_beep2 vol .9 + C4.PlantSoundB c4_beep3
+// vol .5 pitch .9, the same 1300 HU curve — and in the last 10 s their own _10sec files, C4.PlantSound_10sec (delay .05)
+// + C4.PlantSoundB_10sec (vol .6, delay .07): game_sounds_weapons.vsndevts 24304 / 24368 / 34856 / 34921. Playing the B
+// layer with the A one is our reading of the matched curves and the 20 ms delay step; which plays when is game code.
+// c4.flash: the dropped bomb's chirp, C4.LightFlash (c4_beep2 vol .3, to silence at 500 HU), played by its
+// c4_timer_light_dropped particle — gd-c4-back.js createBombLights.)
+E('c4.beep.b', 'C4.PlantSoundB', [], { mix: 'bomb', pr: 3, layer: 1 }); E('c4.beep.10', 'C4.PlantSound_10sec', [], { mix: 'bomb', pr: 3, syn: 'beep', with: 'c4.beep.b10' }); E('c4.beep.b10', 'C4.PlantSoundB_10sec', [], { mix: 'bomb', pr: 3, layer: 1 });
+E('c4.flash', 'C4.LightFlash', [], { mix: 'bomb', pr: 1, tvol: [[0, 0], [1, 1]] });
+// (v53 DETAILS final: C4.LightFlash has use_time_volume_mapping_curve = true, time_volume_mapping_curve (0 s, 0) → (1 s, 1)
+// (game_sounds_weapons.vsndevts 32656): tvol. What the curve's input time is, the files don't say (the sound stack's code
+// is not in them). (v53 DETAILS final 2) Read as the voice's own elapsed time, the 0.158 s chirp (fp-c4_beep2.ogg) never
+// passed 16 % of its volume — an authored event that can't be heard — so gdPlay now reads it at o.tvolT, the time since
+// the emitter started: the dropped bomb's particle system (gd-c4-back.js passes ms since the drop). The chirp fades in
+// over the first second after a drop and is at its full 0.3 after; no tvolT: the curve's last value. OUR READING,
+// UNVERIFIED (an in-game comparison would settle it). The bomb's last-second sounds: C4.ExplodeTriggerTrip (items/nvg_on.vsnd, vol 1, 3000 HU to 0.61)
+// and C4.ExplodeWarning (ui/arm_bomb.vsnd, vol .8, 3000 HU to 0.71, block_duration .5) — vsndevts 24493 / 24432; WHEN
+// they play is game code (arena-defuse.js C4_END, UNVERIFIED).)
+E('c4.trip', 'C4.ExplodeTriggerTrip', [], { mix: 'bomb', pr: 3 }); E('c4.explodewarn', 'C4.ExplodeWarning', [], { mix: 'bomb', pr: 3 });
 E('c4.disarm.start', 'c4.disarmstart', [], { mix: 'bomb', pr: 3 }); E('c4.disarm.finish', 'c4.disarmfinish', [], { mix: 'bomb', pr: 3 });
 E('c4.explode', 'c4.explode', take('bomb'), { mix: 'boom', pr: 3, pv: 2, with: 'c4.explode.close', wet: 1.2, syn: 'blast' }); E('c4.explode.close', 'c4.explode.close', take('bomblow'), { mix: 'boom', pr: 3, pv: 2, layer: 1 });
 E('c4.drop', 'weapon.C4.Impact', take('bounce'), { mix: 'impact', pv: .5, prate: .7 });
@@ -226,7 +265,7 @@ function resolve(id) { const e = EVENTS[id], o = OV[id], R = e.cs ? REF[e.cs] : 
     limit: (cs2 ? o.limit : null) ?? R?.[2] ?? 0, occl: (cs2 ? o.occl : null) ?? R?.[3] ?? .5, plo: cs2 ? (o.pitch?.[0] ?? 1) : pr * .97, phi: cs2 ? (o.pitch?.[1] ?? 1) : pr * 1.03,
     delay: cs2 ? (+o.delay || 0) : 0, mi: MIX_I[e.mix], pr: e.pr, cat: e.cat, flat: e.cat === 'ui' || e.cat === 'music' || e.cat === 'radio', sets: cs2 && Array.isArray(o.sets) ? o.sets : null,
     far: e.far || null, with: e.with || null, wet: e.wet || 0, dm: e.dm ?? (e.layer && e.mix !== 'step' ? 0 : DMIX[e.mix] ?? .5),
-    cap: e.cap || 0, syn: e.syn && SYNTH_KINDS.includes(e.syn) ? e.syn : null }; }   // (v53 S3: cap — voices of this event at once; syn — our synthesized stand-in, only the kinds synthSamples makes)
+    cap: e.cap || 0, syn: e.syn && SYNTH_KINDS.includes(e.syn) ? e.syn : null, tvol: e.tvol || null }; }   // (tvol: v53 DETAILS — CS2's time_volume_mapping_curve [[s, gain]…], the voice's gain over its elapsed time)   // (v53 S3: cap — voices of this event at once; syn — our synthesized stand-in, only the kinds synthSamples makes)
 // CS2's distance_effect_mix (how much of its distance filtering an event takes): a gun's Single 1.0, its SingleDistant 0
 // (the far layer is already the distant sound), BaseGrenade.Explode 0, bounces / clip-outs .5, footsteps 1.0, landings .6.
 const DMIX = { gun: 1, far: 0, step: 1, impact: .5, foley: .5, boom: 0, bomb: .5, loop: 0 };
@@ -326,6 +365,9 @@ let nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date
 // volume), rate, name (this file of the event: a reload stage, a clip's sound), loop (s: a loop, returns { stop }) }.
 // Returns true when handled (played, or placed out of earshot / outranked — on purpose silent), false when none of its
 // files is decoded yet (asked for now: the caller plays its stand-in).
+// (v53 DETAILS final 2) A time-volume curve [[s, gain]…] at `sec` (linear between its points; no number: its last value).
+export function tvolAt(tv, sec) { const n = tv.length - 1; if (!Number.isFinite(sec) || sec >= tv[n][0]) return tv[n][1]; if (sec <= tv[0][0]) return tv[0][1];
+  for (let i = 1; i <= n; i++) if (sec <= tv[i][0]) { const a = tv[i - 1], b = tv[i]; return a[1] + (b[1] - a[1]) * (sec - a[0]) / (b[0] - a[0] || 1); } return tv[n][1]; }
 export function gdPlay(id, o = NO) {
   const r = RES[id]; if (!r) return false; if (r.silent) return true;   // (v53 HITS: CS2's null.vsnd events — the knife's attacker feedback)
   if (o.key && seenKey(o.key, nowMs())) return true;
@@ -335,6 +377,7 @@ export function gdPlay(id, o = NO) {
   let gain = (o.abs ? 1 : r.vol) * (o.gain ?? 1) * (r.flat ? 1 : curveGain(o.curve || r.curve, o.fall ? hu / o.fall : hu));   // (v53 RELOAD: o.curve — a reload take's own CS2 event; o.fall — CS2's suppression_falloff_multiplier, the distances shortened)   // (yours: the curve at 0 — CS2 hears your own steps at its first point, .45)
   // (out of earshot: silent on purpose, decided before any file — a far step whose file is still decoding used to return
   // false here and fall back to the shared bank's Web Audio law, which never reaches silence: heard across the map)
+  if (r.tvol) gain *= tvolAt(r.tvol, o.tvolT);   // (v53 DETAILS final 2: CS2's time-volume curve read at the emitter's time — C4.LightFlash; see its event)
   const cull = o.cull ?? CULL;   // (RELOAD final: a suppressed reload is cut at CULL × its suppression_volume_multiplier — the same
   // relative cut as any event, so its curve is heard out to its own 0: the AK's Clipout to about 218 of CS2's 220 HU, not 86)
   if (gain < cull) { voiceStats.culled++; layers(r, o); return true; }
@@ -431,13 +474,19 @@ export function gdHurtSound(zone, helmet, victim, at = null, src = null, kill = 
 // files, the other modes' tuning) — also while GD's own copy is still decoding. ──
 const gunHas = id => !!RES[`gun.${id}.fire`];
 const CASING = { delay: 0, gain: 1 };
+// (v53 GUNS8: G10 / G11 — your own shot's tone: weapons.js gdOwnShot just before its shot sound, with the shot's
+// inaccuracy and the rounds left; the Negev's pitch and focused shot, Default.NearlyEmpty. Two numbers kept, no object.)
+let toneId = null, toneIa = 0; const NEO = { src: 'me' };
+export function gdOwnShot(id, ia, left, mag) { toneId = id; toneIa = +ia || 0; if (gdOn() && mag > 1 && left >= 0 && left / mag <= NEARLY_EMPTY && RES['gun.nearlyempty']) gdPlay('gun.nearlyempty', NEO); }
 export function gdShot(id, o = NO) { if (!gunHas(id)) return undefined; const at = o.at || null, src = o.src ?? (at ? null : 'me');
-  const ok = gdPlay(`gun.${id}.fire`, SHOT_OPTS(at, src, o.delay || 0)); if (!ok) return undefined;
+  let ev = `gun.${id}.fire`; SO.rate = 0; if (!at && toneId === id) { const t = shotTone(id, toneIa), r = RES[ev]; toneId = null; if (t) { if (t.ev && RES[t.ev]) ev = t.ev; SO.rate = t.rate * (r ? r.plo + Math.random() * (r.phi - r.plo) : 1); } }
+  const ok = gdPlay(ev, SHOT_OPTS(at, src, o.delay || 0)); if (!ok) return undefined;
   if (!at && Math.random() < .85) { CASING.delay = (o.delay || 0) + .32 + Math.random() * .18; gdPlay(WEAPONS.find(w => w.id === id)?.kind === 'shotgun' ? 'gun.casing.shotgun' : 'gun.casing', CASING); }   // (your own spent case: unplaced, never off along a world axis — GD-AUD-17)
   return true; }
-const SO = { at: null, src: null, delay: 0 }; const SHOT_OPTS = (at, src, delay) => { SO.at = at; SO.src = src; SO.delay = delay; return SO; };
+const SO = { at: null, src: null, delay: 0, rate: 0 }; const SHOT_OPTS = (at, src, delay) => { SO.at = at; SO.src = src; SO.delay = delay; return SO; };   // (rate: v53 GUNS8, the Negev's shift — 0 the event's own)
 const FX_ROUTE = { flesh: 'impact.flesh', knifedraw: 'knife.draw', scope: 'gun.scope', pin: 'nade.he.pin', land: 'land.concrete', death: 'player.death', kill: 'ui.kill', pickup: 'item.pickup', dry: 'gun.dry.rifle' };
-function fxEvent(name, o) { if (name === 'wall') return 'impact.' + impactFamily(o?.mat); if (name === 'slash') return (o?.rate ?? 1) < 1 ? 'knife.slash.heavy' : 'knife.slash'; if (name === 'stab') return (o?.rate ?? 1) < 1 ? 'knife.stab' : 'knife.hit';
+function fxEvent(name, o) { if (name === 'scope' && o?.gid && RES[`gun.${o.gid}.zoom`]) return o.out ? `gun.${o.gid}.zoomout` : `gun.${o.gid}.zoom`;   // (v53 GUNS8 G9: the gun's own zoom sounds)
+  if (name === 'wall') return 'impact.' + impactFamily(o?.mat); if (name === 'slash') return (o?.rate ?? 1) < 1 ? 'knife.slash.heavy' : 'knife.slash'; if (name === 'stab') return (o?.rate ?? 1) < 1 ? 'knife.stab' : 'knife.hit';
   if (name === 'draw') return o?.gid && RES[`gun.${o.gid}.draw`] ? `gun.${o.gid}.draw` : 'gun.ak.draw';
   if (name === 'nadedraw' || name === 'toss' || name === 'pin') { const k = RES[`nade.${o?.gid}.pin`] ? o.gid : 'he'; return `nade.${k}.${name === 'nadedraw' ? 'draw' : name === 'toss' ? 'throw' : 'pin'}`; }
   if (name === 'dry') return WEAPONS.find(w => w.id === o?.gid)?.kind === 'pistol' ? 'gun.dry.pistol' : 'gun.dry.rifle'; if (name === 'glass') return o?.at ? 'world.glass.break' : null; if (name === 'casing') return o?.at ? 'gun.casing' : null; return FX_ROUTE[name] || null; }
@@ -520,7 +569,13 @@ export function reloadTake(name, set = null, t = NaN) { const L = set ? TAKES.ge
 const RLV = [1, null, 1];
 export function reloadLevel(ev, own, silent) { if (!ev) return null; if (!own && !ev[8]) { RLV[0] = 0; RLV[1] = ev[1]; RLV[2] = 1; return RLV; } const sup = !own && silent && ev[5]; RLV[0] = ev[0] * (sup ? ev[6] : 1); RLV[1] = ev[1]; RLV[2] = sup ? ev[7] : 1; return RLV; }
 export const inReloadSilent = (set, t, empty = false) => { const r = RELOAD_REF[set], w = (empty && r?.empty?.silent) || r?.reload?.silent; return !!w && t >= w[0] && t <= w[1]; };   // (v53 GUNS final: empty — the reload_empty clip's own window)
-export function gdClip(set, name, vol, rate, at, src = null, clip = null, t = 0) { CLO.at = at; CLO.name = name; CLO.gain = vol; CLO.rate = rate; CLO.src = src ?? (at ? null : 'me'); CLO.curve = null; CLO.occl = undefined; CLO.fall = 1; CLO.cull = CULL;
+// (v53 DETAILS, open-B#25: the player you watch in-eye (arena-spectate.js gdWatch: their lan id, null when not spectating)
+// — their clip sounds (reload, draw, inspect) are heard as your own: 2D, at the event's own level, never the silent-reload
+// suppression. CS2's in-eye observer hears the observed player's first-person sounds; its data has no observer field, so
+// this is our reading of CS2's behaviour, not a file value.)
+let watchedSrc = null, watchedKey = null; export const gdWatch = (id, key = null) => { watchedSrc = id ?? null; watchedKey = id == null ? null : key ?? null; }; export const gdWatched = () => watchedSrc;   // (key: v53 DETAILS final — the watched player's name key too: the bomb's plant clip names its planter by key, a reload by LAN id)
+export const clipPlace = (at, src) => at && src != null && (src === watchedSrc || src === watchedKey) ? null : at;   // (where a clip sound plays: null — 2D, yours — for the watched player's)
+export function gdClip(set, name, vol, rate, at, src = null, clip = null, t = 0) { at = clipPlace(at, src); CLO.at = at; CLO.name = name; CLO.gain = vol; CLO.rate = rate; CLO.src = src ?? (at ? null : 'me'); CLO.curve = null; CLO.occl = undefined; CLO.fall = 1; CLO.cull = CULL;
   const re = clip === 'reloadempty', ev = clip === 'reload' || re ? reloadTake(name, set, t) : null, L = ev ? reloadLevel(ev, !at, inReloadSilent(set, t, re)) : null;   // (v53 GUNS final: CS2's reload_empty clip takes the reload's levels and curves too)
   if (L) { if (L[0] <= 0) return true; CLO.gain = L[0]; CLO.curve = L[1]; CLO.fall = L[2]; CLO.occl = ev[2]; CLO.cull = L[2] < 1 ? CULL * ev[6] : CULL; }   // (not broadcast: silent to others on purpose — never the caller's fallback)
   return gdPlay(CLIP_EV(set), CLO); }
@@ -537,7 +592,7 @@ let on = false; export const gdOn = () => on;
 export const GD_RANGE = { step: ['linear', 116.6 * HU, 1, 1100 * HU], handling: ['linear', 50.3 * HU, 1, 1100 * HU], gun: ['linear', 175.7 * HU, 1, 2500 * HU], effect: ['linear', 28.3 * HU, 1, 1700 * HU], explosion: ['linear', 231.4 * HU, 1, 2700 * HU], beep: ['linear', 10, 1, 320], plant: ['linear', 8, 1, 330], defuse: ['linear', 5, 1, 140] };
 export function gdAudio(v) { v = !!v; if (v === on) return; on = v; setSoundRoute(on ? ROUTE : null); setRanges(on ? GD_RANGE : null); try { gdFinalStage(on, on ? (ctx ??= audioCtx()) : ctx); } catch {}   /* (v53 HITS: CS2's FinalMixGlue as the last stage while a match is on — spatial-audio.js) */ if (on) { loadGdOverrides().then(() => { if (on) gdPrewarm(); }); } else { gdStopMusic(.3); roundSounds.reset(); } }   // (leaving the match: its music stops, its round memory goes)
 const PREWARM = /^(nade|c4|step|land|impact|item|ui|hurt|player|world|knife|music|radio|gun\.(dry|scope|casing))/;   // (music, radio: only what this computer imported — a couple of voices)
-export function gdPrewarm() { const names = []; for (const id in RES) if (PREWARM.test(id)) names.push(...RES[id].files); try { reverb(ctx ??= audioCtx()); } catch {} gdSynthWarm(); return want(names); }   // (the shared reverb built now, at the match's load: steps send to it from the first one — never its impulse made mid-round)
+export function gdPrewarm() { const names = []; for (const id in RES) if (PREWARM.test(id)) names.push(...RES[id].files); for (const g of GD_ONLY_GUNS) names.push('shot-' + g, 'shot-' + g + '-b', 'shot-' + g + '-c', 'shot-' + g + '-far');   /* (v53 GUNS8: Global Defensive's own guns' shipped shots — sound-bank leaves them out of the other modes' start) */ try { reverb(ctx ??= audioCtx()); } catch {} gdSynthWarm(); return want(names); }   // (the shared reverb built now, at the match's load: steps send to it from the first one — never its impulse made mid-round)
 const gunsWanted = new Set();
 export function gdWantGun(id) { if (!id || gunsWanted.has(id)) return; gunsWanted.add(id); loadGdOverrides().then(() => { const n = []; for (const k of ['fire', 'far', 'reload', 'action']) if (RES[`gun.${id}.${k}`]) n.push(...RES[`gun.${id}.${k}`].files); want(n); }); }
 // A flash (GD-AUD-10): CS2's ring (or the caller's tone) on the Effects bus after the duck, and the world dulled.

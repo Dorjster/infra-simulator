@@ -336,6 +336,9 @@ export const CS2_FIT = {
   // (the other bullpup: 1 cm above, 2.4 cm ahead of CS2's ag1_hand_r, which sits at the file's origin); the grenades by
   // their origin — CS2's hand point, the can's middle (they stand upright in their files, as the built-in cans).
   aug: { at: [0, 1, -2.7], gun: true }, decoy: { at: [0, 0, 0] }, incendiary: { at: [0, 0, 0] },
+  // (v53 GUNS8: the SCAR-20's file has the M4A4's origin — the gun 15–42 cm above it, so held as the M4A4; the others
+  // by their origin, CS2's hand point: export_missing.py's boxes)
+  scar20: { at: [0, 25.3, -38.5], gun: true },
   // CS2's molotov (export_missing.py molotov: the bottle, rag and liquid hull on the bottle's texture, no lighter, no flame
   // card — it was the CC0 bottle): by its origin, CS2's hand point round the bottle's middle, neck up as in its file.
   molotov: { at: [0, 0, 0] },
@@ -395,6 +398,12 @@ export const VARIANTS = {
   xm1014: { base: 'shotgun', tint: 0x4a4a4e }, galil: { base: 'ak', tint: 0xc9b48a }, famas: { base: 'm4', tint: 0xcbb48a }, m4s: { base: 'm4', suppressor: [1.15, .085] },
   sg553: { base: 'ak', tint: 0x55595e, scope: true }, aug: { base: 'm4', tint: 0x7d8a5c, scope: true }, ssg08: { base: 'sniper', scale: .92, tint: 0x8aa0b4 }, lmg: { base: 'm4', scale: 1.22, tint: 0x5c5f55, box: true },
   negev: { base: 'lmg', scale: .97, tint: 0x3f413a },
+  // (v53 GUNS8: CS2's eight added guns — our own looks on the CC0 bases until CS2's own models are imported (user-assets
+  // weapons/<id>.bin, tools/cs2-fp/export_missing.py): the P2000 a dark pistol, the Dual Berettas a steel one (one is
+  // drawn in the hand: our model has no pair), the R8 the Desert Eagle's base longer and darker, the Zeus a small
+  // yellow-grey pistol shape, the MAG-7 and Sawed-Off short shotguns, the autosnipers the AWP's base with their tints)
+  p2000: { base: 'pistol', scale: 1.02, tint: 0x3a3d42 }, elite: { base: 'pistol', scale: 1.04, tint: 0xc3c8ce, chrome: true }, revolver: { base: 'pistol', scale: 1.3, tint: 0x55585e }, zeus: { base: 'pistol', scale: .82, tint: 0xd8c25a },
+  mag7: { base: 'shotgun', scale: .78, tint: 0x3d4045 }, sawedoff: { base: 'shotgun', scale: .72, tint: 0x8a6a45 }, scar20: { base: 'sniper', scale: 1.02, tint: 0x2f3236 }, g3sg1: { base: 'sniper', scale: 1.04, tint: 0x4b5240 },
   // Grenades without a model of their own (original looks on the CC0 cans; band: [height 0–1 up the can, band height
   // as a share of it, colour] rings round it): the decoy a shorter khaki can with a dark speaker band; the incendiary a
   // slimmer grey can with a red band and an orange one (fire). Only without CS2's own (user-assets/weapons decoy.bin,

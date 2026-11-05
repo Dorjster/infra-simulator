@@ -25,10 +25,10 @@ const fresh = () => { const g = { levels: {} }; startArena(g, { map: 'dust2', ki
 setSkinCatalog(null);
 
 // ── Every gun a skin of its own ──
-ok('27 guns in weapons-data, each its own skin key (its id), the knife one', WEAPONS.length === 27 && WEAPONS.every(w => skinKeyOf(w.id) === w.id) && skinKeyOf('knife') === 'knife' && skinKeyOf('karambit') === 'knife' && SKIN_SLOTS.length === 28);
+ok('34 guns in weapons-data (v53 GUNS8: CS2\'s 7 added guns), each its own skin key (its id), the knife one', WEAPONS.length === 34 && WEAPONS.every(w => skinKeyOf(w.id) === w.id) && skinKeyOf('knife') === 'knife' && skinKeyOf('karambit') === 'knife' && SKIN_SLOTS.length === 35);
 ok('grenades and the bomb have none', GRENADES.every(x => skinKeyOf(x.id) === null) && skinKeyOf('c4') === null && skinKeyOf('kit') === null && skinKindOf('he') === null);
 { const g = fresh(); for (const w of WEAPONS) arenaApply(g, { type: 'skin', weapon: w.id, skin: { finish: 'hex', wear: .3, seed: 5 } }, 'Ann', P, 1e9);
-  ok('the host keeps a skin on each of the 27 guns, under its id', WEAPONS.every(w => g.arena.skins.ann[w.id]?.finish === 'hex') && Object.keys(g.arena.skins.ann).length === 27);
+  ok('the host keeps a skin on each of the 34 guns, under its id', WEAPONS.every(w => g.arena.skins.ann[w.id]?.finish === 'hex') && Object.keys(g.arena.skins.ann).length === 34);
   for (const id of [...GRENADES.map(x => x.id), 'c4']) throws(() => arenaApply(g, { type: 'skin', weapon: id, skin: { finish: 'fade' } }, 'Ann', P, 1e9), /no skins/, id + ' refused');
   const st = (id, k) => ({ type: 'skin', weapon: id, skin: { finish: 'fade', stickers: Array.from({ length: k }, (_, i) => ({ id: 'gg', slot: i })) } });
   for (const [id, max] of [['ak', 5], ['sniper', 5], ['shotgun', 5], ['negev', 5], ['mp9', 5], ['deagle', 4], ['usps', 4], ['knife', 0]]) {

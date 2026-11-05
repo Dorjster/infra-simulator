@@ -35,7 +35,7 @@ export const eyeAt = duck => EYE_GD.stand + (EYE_GD.duck - EYE_GD.stand) * duck;
 // SSG 08 230). MAX_SPEED: the older class ids, for any id weapons-data doesn't know.
 export const MAX_SPEED = { knife: 250, karambit: 250, pistol: 240, deagle: 230, cannon: 240, smg: 235, shotgun: 220, ak: 215, m4: 225, sniper: 200, lmg: 195 };
 const SCOPED = { aug: 150, sg553: 150, sniper: 100, ssg08: 230 };
-export const maxSpeed = (weapon, scoped = false) => ((scoped && SCOPED[weapon]) || weaponById(weapon)?.speed || MAX_SPEED[weapon] || 250) * HU;
+export const maxSpeed = (weapon, scoped = false) => ((scoped && (SCOPED[weapon] || weaponById(weapon)?.scopedSpeed)) || weaponById(weapon)?.speed || MAX_SPEED[weapon] || 250) * HU;   // (v53 GUNS8: else the gun's own scopedSpeed — the SCAR-20 and G3SG1's m_flMaxSpeed[1] 120)
 // Stamina (CS2's cvars sv_staminamax 80, sv_staminajumpcost .08, sv_staminalandcost .05, sv_staminarecoveryrate 60, used
 // as CS:GO's movement used them — CS2 kept the cvars and defaults; derived, not read from CS2's code): a jump adds .08 ×
 // its take-off speed (HU/s: 24 for a full one), a landing .05 × the speed it lands at (15 off a flat jump, more off a
@@ -315,7 +315,12 @@ export function moveStep(s, input, world, dt) {
   // Vertical: fall / rise (the exact parabola: the tick's mean velocity, so a jump peaks at 57.0 HU at any tick), land
   // on the highest surface below, bump the head on ceilings. On the ground a step down keeps you on it; a head that
   // rises under you lifts you only if there is room over yours (else you stay put on it).
-  const y0 = s.y, ground = groundBy(boxes, nh, s.x, s.z, s.y, s.onGround ? NaN : s.y), onHead = HEAD;
+  // (v53 DETAILS, open-B#20 — the Overpass snag: on the ground, the body stays on the highest top its CS2 hull (MOVE.hull,
+  // 16 HU half-width) still stands on, no higher than the feet — Source's hull rests on any floor under any part of it,
+  // so it never sinks into a dip narrower than itself and meets the next step from the ledge it was on. Stepping UP and
+  // the walls still use the map body radius RAD; in the air nothing changes.)
+  let ground = groundBy(boxes, nh, s.x, s.z, s.y, s.onGround ? NaN : s.y); const y0 = s.y, onHead = HEAD;
+  if (s.onGround && ground < s.y - EPS) { const hg = groundAt(boxes, s.x, s.z, s.y - MOVE.step, MOVE.hull); if (hg > ground) ground = hg; }
   if (s.onGround) { if (s.y - ground > MOVE.step + EPS) s.onGround = false; else if (!(onHead && ground > s.y + EPS && blocked(boxes, null, s.x, s.z, ground, height, RAD))) s.y = ground; }
   if (!s.onGround) {
     const ny = s.y + (climbing ? s.vy : (vy0 + s.vy) / 2) * dt;

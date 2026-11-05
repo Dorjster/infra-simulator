@@ -32,7 +32,8 @@ const WEAPON_ICONS = {
   pistol: 'glock', usps: 'usp_silencer', p250: 'p250', fiveseven: 'fiveseven', cz75: 'cz75a', tec9: 'tec9', deagle: 'deagle', cannon: 'deagle',
   mac10: 'mac10', mp9: 'mp9', mp7: 'mp7', smg: 'mp5sd', bizon: 'bizon', ump45: 'ump45', p90: 'p90', shotgun: 'nova', xm1014: 'xm1014',
   galil: 'galilar', famas: 'famas', ak: 'ak47', m4: 'm4a1', m4s: 'm4a1_silencer', sg553: 'sg556', aug: 'aug', ssg08: 'ssg08', sniper: 'awp',
-  lmg: 'm249', negev: 'negev', knife: 'knife', karambit: 'knife_karambit', 'knife:butterfly': 'knife_butterfly', 'knife:stiletto': 'knife_stiletto',
+  lmg: 'm249', negev: 'negev', p2000: 'hkp2000', elite: 'elite', revolver: 'revolver', zeus: 'taser', mag7: 'mag7', sawedoff: 'sawedoff', scar20: 'scar20', g3sg1: 'g3sg1',   // (v53 GUNS8)
+  knife: 'knife', karambit: 'knife_karambit', 'knife:butterfly': 'knife_butterfly', 'knife:stiletto': 'knife_stiletto',
   'knife:m9': 'knife_m9_bayonet', 'knife:karambit': 'knife_karambit',
   // (v53 KNIVES: the five new knives' names as the install has them — the Bayonet's is plain 'bayonet' (there is no
   // knife_bayonet.vsvg), the Talon's knife_widowmaker, the Nomad's knife_outdoor)

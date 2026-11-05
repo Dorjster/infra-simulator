@@ -42,7 +42,7 @@ await act(host, { type: 'add-bot', count: 2 }); await act(host, { type: 'team', 
 const teams = await host.evaluate(() => __infra.lab.world.operations.game.combat.d.teams);
 check('Host and Guest on the same side (CT), a Terrorist bot keeps the round going', teams.host === 'ct' && teams.guest === 'ct' && Object.values(teams).includes('t'), JSON.stringify(teams));
 check('the host starts the match', !(await act(host, { type: 'start-match' }))?.error);
-await host.waitForTimeout(600); const buy = await act(host, { type: 'buy', primary: 'm4' }); check('the host buys a rifle (M4A4)', !buy?.error, JSON.stringify(buy));
+await host.waitForTimeout(600); const buy = await act(host, { type: 'buy', primary: 'm4s' }); check('the host buys a rifle (M4A1-S: in CS2\'s default CT loadout, which the page sends — v53 GUNS8)', !buy?.error, JSON.stringify(buy));
 await guest.waitForFunction(() => __infra.lab.world.operations.game.combat?.d?.round?.phase === 'live', null, { timeout: 20000 }).catch(() => {});
 for (const pg of [host, guest]) { await pg.keyboard.press('Escape'); await pg.waitForTimeout(150); await pg.evaluate(() => { const e = document.getElementById('ar-buy'); if (e && !e.hidden) e.querySelector('[data-act="close"]')?.click(); __infra.lab.enter(); }); }
 // ── the Host shoots the Guest (friendly fire) until he is down ────────────────────────────────────────────────────
