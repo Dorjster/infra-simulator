@@ -17,7 +17,8 @@ import { RenderPass } from './post/RenderPass.js';
 import { UnrealBloomPass } from './post/UnrealBloomPass.js';
 import { OutputPass } from './post/OutputPass.js';
 import { SharpenOutputPass } from './gd-sharpen.js';
-import { ExposurePass, GD_LOOK, BAKED_LIGHTS_U, BAKED_LIGHT_N } from './gd-exposure.js'; import { SSAOPass } from './gd-ssao.js'; import { FxaaOutputPass } from './gd-fxaa.js';   // (v53 LOOK: GD only — CS2's auto exposure and bloom per map, SSAO on High / Ultra, lights on the baked map)   // (v53 stage 6: Global Defensive's Low / Very Low presets only — scene.userData.gdPreset)
+import { HUD_BLUR, hudBlurPatch, hudBlurFrame } from './gd-hud-blur.js';   // (v53 PERF4X, GD only: the kill tally badge's world blur drawn in the composer's last pass)
+import { ExposurePass, GD_LOOK, BAKED_LIGHTS_U, BAKED_LIGHT_N, setBakedLight /* (v53 PERF4X) */ } from './gd-exposure.js'; import { SSAOPass } from './gd-ssao.js'; import { DeathContrastPass } from './gd-deathcam-post.js' /* (v53 DETAILS: the death cam's local contrast, GD only) */; import { FxaaOutputPass } from './gd-fxaa.js';   // (v53 LOOK: GD only — CS2's auto exposure and bloom per map, SSAO on High / Ultra, lights on the baked map)   // (v53 stage 6: Global Defensive's Low / Very Low presets only — scene.userData.gdPreset)
 import { AVATAR_SHADOW } from './avatar.js';
 import { anisotropy, applyFiltering } from './texture-quality.js';
 
@@ -59,7 +60,8 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   const TONE = { off: THREE.LinearToneMapping, filmic: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping };
   renderer.toneMapping = THREE.LinearToneMapping;
   // Worked out again only when a setting changes (no garbage per frame).
-  let dirty = true, lastPreset = null, lastBaked = false, gdLast = null, gdSharpOn = false, gdFxOn = false, gdLookOn = '', gdExpPass = null, gdSsaoPass = null, bloomVer = -2, bloomBase = null; addEventListener?.('infra-preferences', () => { dirty = true; });
+  let dirty = true, lastPreset = null, lastBaked = false, gdLast = null, gdSharpOn = false, gdFxOn = false, gdLookOn = '', gdExpPass = null, gdSsaoPass = null, gdDeathPass = null /* (v53 DETAILS) */, bloomVer = -2, bloomBase = null; addEventListener?.('infra-preferences', () => { dirty = true; });
+  let gdOutPass = null;   // (v53 PERF4X, GD only: the composer's last pass, patched to draw the kill tally badge's world blur — gd-hud-blur.js)
   function apply() {
     if (!dirty && preset() === lastPreset && (scene.userData.gdPreset ?? null) === gdLast) return; dirty = false; lastPreset = preset(); gdLast = scene.userData.gdPreset ?? null;
     // v53 stage 6 (GD only): scene.userData.gdPreset — the Global Defensive preset's row (gd-preset.js), set by app.js only while
@@ -97,13 +99,17 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       // The composer sizes every pass to the full buffer; the glow is a blur, so its mips start at a quarter of
       // the screen, not half (a third of High's cost on a Retina screen, the same look).
       if (bloom /* (GD: none on a sharpen-only composer) */) { const fullSize = bloom.setSize.bind(bloom); bloom.setSize = (w, h) => fullSize(w / 2, h / 2); composer.addPass(bloom); }   // (GD Low's sharpen-only composer: no glow buffers at all)
-      composer.addPass(gdSharp ? new SharpenOutputPass() : gdFx ? new FxaaOutputPass() /* (v53 LOOK: GD Medium's edges) */ : new OutputPass());
+      if (gdLast) composer.addPass(gdDeathPass ??= new DeathContrastPass());   // (v53 DETAILS, GD only: death_cam_phase1.vpost's local contrast — one pass kept across composers, off unless the death cam shows it)
+      { const outPass = gdSharp ? new SharpenOutputPass() : gdFx ? new FxaaOutputPass() /* (v53 LOOK: GD Medium's edges) */ : new OutputPass();
+        gdOutPass = gdLast && !software ? hudBlurPatch(outPass) : null;   // (v53 PERF4X, GD only: the kill tally badge's world blur in this pass — gd-hud-blur.js)
+        composer.addPass(outPass); }
       // (v53 LOOK: a GD map's bloom reads display values — what is above white there is an unclamped spike, such as the
       // water's sun glint on Ancient that bloomed into a white square: clamped to white before the blur. Only this
       // composer's own copy of the high-pass material, built now, so other modes' glow is untouched.)
       if (bloom && gdBloom) { const hp = bloom.materialHighPassFilter; hp.fragmentShader = hp.fragmentShader.replace('gl_FragColor = mix( outputColor, texel, alpha );', 'gl_FragColor = mix( outputColor, min( texel, vec4( 1.0 ) ), alpha );'); hp.needsUpdate = true; }
       gdLookOn = gdKey; bloomVer = -2; bloomBase = bloom ? { f: bloom.compositeMaterial.uniforms.bloomFactors.value, t: bloom.compositeMaterial.uniforms.bloomTintColors.value } : null;
       gdExpPass?.warm(renderer); gdSsaoPass?.warm(renderer, composer.renderTarget2);   // (v53 LOOK: their programs now, behind the loading card — never in a round)
+      if (gdLast) gdDeathPass?.warm(renderer, composer.renderTarget2);   // (v53 DETAILS: the death cam's pass too)
     }
     if (bloom) bloom.enabled = G.glow; bloomVer = -2;   // (v53 LOOK: gdBloomSync() sets it again for a GD map)
     if (matsToo) scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });   // shadow / no-shadow, soft / sharp, tone-mapping shaders
@@ -144,10 +150,12 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
   // (SCREEN: 1 − (1 − a)(1 − b) as blending One-minus-dst-colour + One; ADD: additive) — set when the map's look or the
   // composer changes, and put back to this game's own glow everywhere else.
   const gdExtra = [];
-  function gdLights() { const P = BAKED_LIGHTS_U.uBPLp.value, C = BAKED_LIGHTS_U.uBPLc.value; let k = 0;
-    for (let i = 0; i < pool.length && k < BAKED_LIGHT_N; i++) { const l = pool[i]; if (!(l.intensity > 0)) continue; P[k].set(l.position.x, l.position.y, l.position.z, l.distance || 1e4); C[k].set(l.color.r * l.intensity, l.color.g * l.intensity, l.color.b * l.intensity); k++; }
-    for (let i = 0; i < gdExtra.length && k < BAKED_LIGHT_N; i++) { const l = gdExtra[i]; if (!l.parent || !l.visible || !(l.intensity > 0)) continue; l.getWorldPosition(wp); P[k].set(wp.x, wp.y, wp.z, l.distance || 1e4); C[k].set(l.color.r * l.intensity, l.color.g * l.intensity, l.color.b * l.intensity); k++; }
-    for (; k < BAKED_LIGHT_N; k++) P[k].w = 0; }
+  // (v53 PERF4X: the slots are flat Float32Arrays — gd-exposure.js setBakedLight — so three.js uploads them as they are; as
+  // arrays of vectors it flattened both, 12 toArray calls, before every one of the map's ~300 draws a frame)
+  function gdLights() { let k = 0;
+    for (let i = 0; i < pool.length && k < BAKED_LIGHT_N; i++) { const l = pool[i]; if (!(l.intensity > 0)) continue; setBakedLight(k++, l.position.x, l.position.y, l.position.z, l.distance || 1e4, l.color.r * l.intensity, l.color.g * l.intensity, l.color.b * l.intensity); }
+    for (let i = 0; i < gdExtra.length && k < BAKED_LIGHT_N; i++) { const l = gdExtra[i]; if (!l.parent || !l.visible || !(l.intensity > 0)) continue; l.getWorldPosition(wp); setBakedLight(k++, wp.x, wp.y, wp.z, l.distance || 1e4, l.color.r * l.intensity, l.color.g * l.intensity, l.color.b * l.intensity); }
+    for (; k < BAKED_LIGHT_N; k++) BAKED_LIGHTS_U.uBPLp.value[k * 4 + 3] = 0; }
   function gdBloomSync() { if (!bloom) return; const B = gdLookOn.includes('b') ? GD_LOOK.bloom : null, v = B ? GD_LOOK.ver : -1; if (v === bloomVer) return; bloomVer = v;
     const cu = bloom.compositeMaterial.uniforms, bm = bloom.blendMaterial;
     if (B) { bloom.strength = B.strength; bloom.threshold = B.lo; bloom.highPassUniforms.smoothWidth.value = B.hi - B.lo; bloom.radius = 0; cu.bloomFactors.value = B.weights; if (bloomBase) bloom.bloomTintColors = B.tints || bloomBase.t;   /* (review fix: UnrealBloomPass copies bloom.bloomTintColors into the uniform on every render) */
@@ -250,9 +258,11 @@ export function createGraphics({ renderer, scene, camera, sun, preset, prefs = (
       // the scene — into the HDR buffer before the glow, or (no post-processing) via its own buffer onto the screen.
       // Otherwise this draw is exactly as without it.
       const sm = scene.userData.gdSmoke, smoke = !!sm?.active(); if (composer && sm?.armed) sm.wire(composer);   // (armed: in a match — its buffers' depth textures made at the start, not at the first smoke)
+      if (gdLast && !composer) HUD_BLUR.ready = false;   // (v53 PERF4X, GD only: no composer — the page's CSS blur draws the badge)
       if (composer) {
         const pr = renderer.getPixelRatio(); if (composer._pixelRatio !== pr) { composer.setPixelRatio(pr); const z = renderer.getSize(new THREE.Vector2()); composer.setSize(z.x, z.y); const d = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom?./* (GD Low: no glow pass) */resolution.set(d.x / 2, d.y / 2); }
-        smokeHook.enabled = smoke; if (smoke) sm.begin(composer); try { composer.render(); } finally { if (smoke) sm.end(); }
+        HUD_BLUR.ready = !!gdOutPass && !!gdLast?.hudBlur; if (gdOutPass) { if (HUD_BLUR.ready) hudBlurFrame(gdOutPass, renderer.domElement, composer.renderTarget1.width, composer.renderTarget1.height); else gdOutPass.uniforms.uHBk.value = 0; }   // (v53 PERF4X, GD only: the badge's disc; the page's CSS blur takes over whenever ready is false)
+        gdDeathPass?.sync(!!gdLast); /* (v53 DETAILS: on only while the death cam shows it) */ smokeHook.enabled = smoke; if (smoke) sm.begin(composer); try { composer.render(); } finally { if (smoke) sm.end(); }
       } else if (smoke) sm.renderDirect(); else renderer.render(scene, camera);
   }
 }

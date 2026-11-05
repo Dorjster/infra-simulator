@@ -38,7 +38,8 @@
 // Left out (said in UPDATE-v53.0.md): CS2's model flecks are drawn as flat chips; contrast shadows, depth feathering,
 // self-shadowing of smoke, ColorInterpolate with a start after its end and a trail's least length (flMinLength); CS2's
 // WorldTraceConstraint collides with the world every frame — here a particle that has it lands on the floor under the hit
-// only (walls and ledges are not traced) and bounces once (landing()); the textures' animated frames (each kind
+// and bounces once (landing()), and (v53 DETAILS) ends where its flight first enters a wall or a ceiling (wallCut: CS2
+// bounces it there; ledges between the hit and the floor are walls to it too); the textures' animated frames (each kind
 // has one procedural shape of ours: a tapered streak, a soft round glow, a chip, a puff); LEFT_OUT lists each
 // surface's CS2 children not drawn.
 //
@@ -295,15 +296,45 @@ const tl = (c, q) => c ? lin(c[q]) : 1;
 // (CS2 traces the world every frame: walls too, and more bounces with m_bDecayBounce), and the split into the speed
 // into the floor (bounce) and along it (slide) is our reading of the two fields.
 const flyY = (y0, vy, g, k, t) => k < .01 ? y0 + vy * t + .5 * g * t * t : y0 + (vy - g / k) * (1 - Math.exp(-k * t)) / k + g / k * t;
+// (v53 DETAILS, open-B#16 — the walls: CS2's C_OP_WorldTraceConstraint traces the world along the whole flight, so a
+// spark or fleck never flies through a wall. Here, for the same systems (wtc), the flight up to its floor landing (or its
+// end) is traced in WALL_SEG straight pieces against the map's sight triangles (createImpacts' wallAt: nadeMesh.first);
+// where it first ENTERS a wall or a ceiling (a face toward it, |normal.y| < 0.7 or facing down — floors stay the landing
+// above), the particle ends there: hidden from that moment (aF.y, the cut, when it has no landing — its life, and so its
+// size, colour and fade by age / life, stay CS2's) (ours: CS2 bounces it off the wall by the same
+// m_flBounceAmount — one more leg the shader would need a plane for; a cut keeps one draw and no new shader). WALL.left:
+// the traces this frame may still make (WALL_BUDGET a frame, shared by every impact: ~1.9 µs each on Dust II); past it a
+// particle is not traced (as before). Allocation-free: WN is the one normal buffer.)
+export const WALL_SEG = 3, WALL_BUDGET = 600;
+// (the frame's budget by particle detail, Low … Ultra: a shotgun's 9 pellets into metal plan ~960 traces on High, so the
+// cap is what bounds that frame — ~0.6 ms on High at ~1.9 µs a trace, 4× that on a weak laptop; ours, not CS2's)
+export const WALL_BUDGETS = [150, 220, 300, WALL_BUDGET];
+export const WALL = { at: null, left: 0 };
+const WN = new Float64Array(4);
+const flyH = (x0, v, k, t) => k < .01 ? x0 + v * t : x0 + v * (1 - Math.exp(-k * t)) / k;
+export function wallCut(o, out, until) {
+  const f = WALL.at; if (!f || !(until > 0)) return -1;
+  const x0 = out[o], y0 = out[o + 1], z0 = out[o + 2], vx = out[o + 3], vy = out[o + 4], vz = out[o + 5], g = out[o + 10], k = out[o + 11];
+  let ax = x0, ay = y0, az = z0, ta = 0;
+  for (let i = 1; i <= WALL_SEG; i++) { if (WALL.left <= 0) return -1; WALL.left--;
+    const t = until * i / WALL_SEG, bx = flyH(x0, vx, k, t), by = flyY(y0, vy, g, k, t), bz = flyH(z0, vz, k, t), w = f(ax, ay, az, bx, by, bz, WN);
+    if (w >= 0 && w <= 1 && WN[0] * (bx - ax) + WN[1] * (by - ay) + WN[2] * (bz - az) < 0 && WN[1] < .7) {
+      // (the chord met the wall at P: the curved flight's own moment on that plane, by bisection — no more traces)
+      const px = ax + (bx - ax) * w, py = ay + (by - ay) * w, pz = az + (bz - az) * w; let lo = ta, hi = t;
+      for (let j = 0; j < 10; j++) { const m = (lo + hi) / 2, s = WN[0] * (flyH(x0, vx, k, m) - px) + WN[1] * (flyY(y0, vy, g, k, m) - py) + WN[2] * (flyH(z0, vz, k, m) - pz); if (s < 0) hi = m; else lo = m; }
+      return lo; }
+    ax = bx; ay = by; az = bz; ta = t; }
+  return -1; }
 function landing(e, o, out, floor) {
   out[o + 36] = -1; out[o + 37] = 0; out[o + 38] = 0; out[o + 39] = 0;
-  if (!e.wtc || !Number.isFinite(floor)) return;
+  if (!e.wtc) return;
   const y0 = out[o + 1], vy = out[o + 4], g = out[o + 10], k = out[o + 11], life = out[o + 6];
-  if (y0 < floor - 1e-4) return;   // (it starts under that floor: a hit under a ledge)
   let a = 0, b = -1;
-  for (let i = 1; i <= 16; i++) { const t = life * i / 16; if (flyY(y0, vy, g, k, t) <= floor) { b = t; a = life * (i - 1) / 16; break; } }
-  if (b < 0) return;   // (it dies before it lands)
-  for (let i = 0; i < 12; i++) { const m = (a + b) / 2; if (flyY(y0, vy, g, k, m) <= floor) b = m; else a = m; }
+  if (Number.isFinite(floor) && !(y0 < floor - 1e-4)) {   // (not when it starts under that floor: a hit under a ledge)
+    for (let i = 1; i <= 16; i++) { const t = life * i / 16; if (flyY(y0, vy, g, k, t) <= floor) { b = t; a = life * (i - 1) / 16; break; } }
+    if (b >= 0) for (let i = 0; i < 12; i++) { const m = (a + b) / 2; if (flyY(y0, vy, g, k, m) <= floor) b = m; else a = m; } }
+  const tw = wallCut(o, out, b >= 0 ? b : life); if (tw >= 0) { out[o + 37] = Math.max(1e-3, tw); return; }   // (into a wall first: it ends there — lane 37, the cut, with no landing (lane 36 = −1); its life stays, so its size, colour and fade still run on CS2's whole life: the shader only hides it from the cut on)
+  if (b < 0) return;   // (no floor known, or it dies before it lands)
   const vyb = k < .01 ? vy + g * b : (vy - g / k) * Math.exp(-k * b) + g / k, up = -vyb * e.wtc[0], A = e.wtcAge,
     stop = A ? A[2] + (A[3] - A[2]) * Math.min(1, Math.max(0, (b - A[0]) / (A[1] - A[0]))) : e.wtc[2];   // (wtcAge: a stop speed CS2 remaps from the particle's age — ricochet_sparks_dots: 0–2 s → 4–200)
   out[o + 36] = Math.max(1e-4, b); out[o + 37] = floor; out[o + 38] = stop >= 0 && up < stop * HU ? 0 : e.wtc[0]; out[o + 39] = e.wtc[1];
@@ -365,7 +396,7 @@ void fly(vec3 p0, vec3 v0, vec3 g, float k, float t, out vec3 p, out vec3 v) {  
 }
 void main() {
   float age = uTime - aP.w, life = aV.w;
-  if (age < 0.0 || age >= life) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); vHalo = vec4(0.0); vShape = vec3(0.0); return; }
+  if (age < 0.0 || age >= life || (aF.x <= 0.0 && aF.y > 0.0 && age >= aF.y)) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); vHalo = vec4(0.0); vShape = vec3(0.0); return; }
   float n = age / life, k = aM.x; vec3 g = vec3(0.0, aS.w, 0.0), p, vel;
   if (aF.x > 0.0 && age > aF.x) {   // (landed: CS2's WorldTraceConstraint — off the floor with the bounce and the slide, then resting on it)
     vec3 p1, v1; fly(aP.xyz, aV.xyz, g, k, aF.x, p1, v1); p1.y = aF.y; v1 = vec3(v1.x * aF.w, -v1.y * aF.z, v1.z * aF.w);
@@ -457,7 +488,7 @@ function dirty(a, start, count) { const R = a.gdR, U = a.updateRanges;
 function quad(n, attrs) { const p = new THREE.PlaneGeometry(1, 1), g = new THREE.InstancedBufferGeometry(); g.index = p.index; g.setAttribute('position', p.getAttribute('position')); g.setAttribute('uv', p.getAttribute('uv')); g.instanceCount = n;
   const out = {}; for (const [k, s] of attrs) { const a = new THREE.InstancedBufferAttribute(new Float32Array(n * s), s); a.setUsage(THREE.DynamicDrawUsage); a.gdR = { start: 0, count: 0 }; g.setAttribute(k, a); out[k] = a; } return { g, a: out }; }
 const PATTR = [['aP', 4], ['aV', 4], ['aS', 4], ['aM', 4], ['aC', 4], ['aE', 4], ['aK', 4], ['aH', 4], ['aB', 4], ['aF', 4]];
-// (the planned float each attribute's 4 lanes take: aP 0–2 + its birth, aV 3–6, aS 7–10, aM 11–14, aC 15–18, aE 19–22, aK 23–26, aH 28–31, aB 32–35, aF 36–39: the landing)
+// (the planned float each attribute's 4 lanes take: aP 0–2 + its birth, aV 3–6, aS 7–10, aM 11–14, aC 15–18, aE 19–22, aK 23–26, aH 28–31, aB 32–35, aF 36–39: the landing — or, with no landing (36 = −1), 37: the wall cut's moment)
 const LANE = [0, 3, 7, 11, 15, 19, 23, 28, 32, 36];
 
 // ── the pools ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -467,7 +498,7 @@ const LANE = [0, 3, 7, 11, 15, 19, 23, 28, 32, 36];
 // shot: lab.js — CS2's bullet impact for that surface, one per 35 ms as the shared effects' own), lightAt(x, y, z) →
 // the map's baked light there (1 ≈ a sunlit floor; null: 1), floorAt(x, y, z) → the floor's height under a point (world
 // units: the sparks and flecks with CS2's WorldTraceConstraint land and bounce on it; null: a floor hit's own only).
-export function createImpacts(scene, { detail = () => 2, game = () => null, on = () => true, sound = null, lightAt = null, floorAt = null, eye = listenerPos } = {}) {   // (eye(out): the camera's spot into out, or null — CP6; v53 HITS)
+export function createImpacts(scene, { detail = () => 2, game = () => null, on = () => true, sound = null, lightAt = null, floorAt = null, wallAt = null, eye = listenerPos } = {}) {   // (wallAt(ax, ay, az, bx, by, bz, out): v53 DETAILS — the first wall crossing's fraction on a→b (Infinity: none), its normal into out; null: no wall traces)   // (eye(out): the camera's spot into out, or null — CP6; v53 HITS)
   const t0 = performance.now(); let held = null; const now = () => held ?? (performance.now() - t0) / 1000;
   const mk = (n, blending) => { const q = quad(n, PATTR), mat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uPx: { value: 2 / 1080 }, uLight: { value: 1 }, uHaloPx: { value: HALO_PX } }, vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false, blending });
     mat.userData.shared = true; const m = new THREE.Mesh(q.g, mat); m.frustumCulled = false; m.visible = false; m.matrixAutoUpdate = false; m.userData.gd = true; m.userData.warm = true; m.userData.noPool = true; m.userData.fx = true; scene?.add(m); return { q, mat, m, head: 0, end: -1, list: Object.values(q.a) }; };
@@ -501,13 +532,14 @@ export function createImpacts(scene, { detail = () => 2, game = () => null, on =
     P.m.visible = true;
   }
   // One planned list into the two pools (the additive kinds first, then the alpha ones: each pool gets its own run).
-  const EYE = { x: 0, y: 0, z: 0 }; let lastCp6 = 1;
+  const EYE = { x: 0, y: 0, z: 0 }; let lastCp6 = 1, frameN = 0, wallFrame = -1;   // (frameN: update()'s count — the wall traces' budget is a frame's)
   const PB2 = new Float32Array(MAX_HIT * PK), copy = (j, k) => { const a = j * PK, b = k * PK; for (let q = 0; q < PK; q++) PB[b + q] = PB2[a + q]; };
   // kind: the surface (its parent's CP6 remap, CP6_OF); len: the shot's length in HU (CP5 = the shot's start) — not
   // given, the distance from your eye (exact for your own shots; another player's measured from you: ours, marked).
   function emit(list, px, py, pz, nx, ny, nz, dx, dy, dz, s, t, light = 1, floor = NaN, kind = null, len = NaN) {
     const E = eye?.(EYE), dv = E ? Math.hypot(px - E.x, py - E.y, pz - E.z) / HU : NaN, c6 = cp6Of(CP6_OF[kind], Number.isFinite(len) && len > 0 ? len : dv), c6d = cp6Of(CP6_DARKEN, dv); lastCp6 = c6;
-    const n = planImpact(list, px, py, pz, nx, ny, nz, dx, dy, dz, s, detail(), PB2, MAX_HIT, light, floor, c6, c6d); let na = 0, nb = 0; lastAt = t;
+    if (wallFrame !== frameN) { wallFrame = frameN; WALL.left = WALL_BUDGETS[Math.max(0, Math.min(3, detail() | 0))]; } WALL.at = wallAt;   // (v53 DETAILS: the walls' trace budget, a frame's)
+    const n = planImpact(list, px, py, pz, nx, ny, nz, dx, dy, dz, s, detail(), PB2, MAX_HIT, light, floor, c6, c6d); WALL.at = null; let na = 0, nb = 0; lastAt = t;
     for (let j = 0; j < n; j++) if (ADDITIVE(PB2[j * PK + 23])) { copy(j, na); na++; }   // (copied by hand: a subarray() is an object per particle)
     if (na) spawn(ADD, na, t);
     for (let j = 0; j < n; j++) if (!ADDITIVE(PB2[j * PK + 23])) { copy(j, nb); nb++; }
@@ -547,7 +579,7 @@ export function createImpacts(scene, { detail = () => 2, game = () => null, on =
     return emit(DINK_EXTRA, +rec.p[0], +rec.p[1], +rec.p[2], -dx / l, -dy / l, -dz / l, dx / l, dy / l, dz / l, (Math.floor(+rec.i || 0) * 2654435761) >>> 0, t, shadeAt(+rec.p[0], +rec.p[1], +rec.p[2], 0, 0, 0), floorUnder(+rec.p[0], +rec.p[1], +rec.p[2], 0)); }
   function clearHoles() { const at = dq.a.aW; at.array.fill(0); dirty(at, 0, at.array.length); dHead = 0; dCount = 0; holes.visible = false; }   // (a full upload, kept full by the holes after it in that frame)
   function update() {
-    const t = now(); ADD.mat.uniforms.uTime.value = t; AL.mat.uniforms.uTime.value = t;
+    frameN++; const t = now(); ADD.mat.uniforms.uTime.value = t; AL.mat.uniforms.uTime.value = t;
     if (!on()) { pN = 0; if (holes.visible) clearHoles(); ADD.m.visible = AL.m.visible = false; return; }
     if (roundChanged(game()) && holes.visible) clearHoles();
     while (pN && PT[pHead] <= t) { const o = pHead * PVN, mat = matOf[pHead]; matOf[pHead] = null;

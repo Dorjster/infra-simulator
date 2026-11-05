@@ -6,7 +6,7 @@
 // (Windows' ANGLE → D3D11 compiles each on first use). Gate: fps ≥ 55 and no frame over 100 ms after the first 3 s.
 //   node tests/browser/frame-pacing.mjs <repo> <out> gd [throttle=4] [seconds=20] [dsf=1]
 import { chromium } from 'playwright-core'; import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs';
-const [root, out, mode = 'solo', throttle = '4', seconds = '20', dsf = '1'] = process.argv.slice(2);
+const [root, out, mode = 'solo', throttle = '4', seconds = '20', dsf = '1', extra = ''] = process.argv.slice(2);   // (extra 'deathpass': gd mode with the death cam's local-contrast pass held on — v53 DETAILS)
 const server = spawn(process.execPath, ['lan/server.mjs'], { cwd: root, env: { ...process.env, PORT: '0', BIND: '127.0.0.1', ROOM_CODE: 'PERF01', HOST_KEY: 'k', CAMPAIGN_SAVE: '/tmp/perf-' + Date.now() + '.json' }, stdio: ['ignore', 'pipe', 'pipe'] });
 process.on('exit', () => { try { server.kill(); } catch {} });   // (a test that throws never leaves its room running)
 const base = await new Promise(r => server.stdout.on('data', d => { const m = /localhost:(\d+)/.exec(String(d)); if (m) r('http://127.0.0.1:' + m[1]); }));
@@ -61,10 +61,11 @@ async function gdPacing() {
   await p.evaluate(() => { const I = __infra, g = I.gfx, f = g.render, T = globalThis.__G = { on: false, t: [], res: [], t0: 0, l0: 0 }; let last = 0; g.render = function () { const out = f.apply(this, arguments); if (T.on) { const now = document.timeline.currentTime ?? performance.now(); if (last) T.t.push([now - T.t0, now - last]); last = now; } return out; };
     const spr = I.renderer.setPixelRatio; I.renderer.setPixelRatio = function (v) { if (T.on && Math.abs(v - I.renderer.getPixelRatio()) > .001) T.res.push([Math.round(performance.now() - T.t0), +(+v).toFixed(2)]); return spr.apply(this, arguments); };
     T.start = () => { T.t = []; T.res = []; T.t0 = performance.now(); T.l0 = globalThis.__links.length; last = 0; T.on = true; }; T.start(); });
+  if (extra === 'deathpass') await p.evaluate(async () => { (await import('/gd-deathcam-post.js')).DEATH_POST.amount = .6; });   // (the pass drawn every frame of the run, as in the death cam's phase 1)
   const t0 = Date.now(); let k = 0; while (Date.now() - t0 < +seconds * 1000) { const key = k++ % 4 < 2 ? 'KeyA' : 'KeyD'; await p.keyboard.down(key); await p.mouse.move(600, 400); await p.mouse.down(); await p.waitForTimeout(400); await p.mouse.up(); await p.keyboard.up(key); await p.waitForTimeout(200); }
   const T = await p.evaluate(() => { __G.on = false; return { t: __G.t, res: __G.res, links: globalThis.__links.length - __G.l0, ratio: __infra.renderer.getPixelRatio(), calls: __infra.stats().calls }; });
   const all = T.t.map(x => x[1]), after = T.t.filter(x => x[0] > 3000).map(x => x[1]), s = [...all].sort((a, b) => a - b), q = k2 => +s[Math.min(s.length - 1, Math.floor(s.length * k2))].toFixed(1);
-  const res = { mode, throttle, dsf, frames: all.length, fps: +(all.length / ((T.t.at(-1)[0] - T.t[0][0]) / 1000)).toFixed(1), median: q(.5), p95: q(.95), p99: q(.99), max: q(1), over50: all.filter(x => x > 50).length, over100After3s: after.filter(x => x > 100).length, resolutionChanges: T.res, programsLinked: T.links, pixelRatio: T.ratio, calls: T.calls, errors: errs.slice(0, 3) };
+  const res = { mode, throttle, dsf, extra, frames: all.length, fps: +(all.length / ((T.t.at(-1)[0] - T.t[0][0]) / 1000)).toFixed(1), median: q(.5), p95: q(.95), p99: q(.99), max: q(1), over50: all.filter(x => x > 50).length, over100After3s: after.filter(x => x > 100).length, resolutionChanges: T.res, programsLinked: T.links, pixelRatio: T.ratio, calls: T.calls, errors: errs.slice(0, 3) };
   console.log(JSON.stringify(res, null, 1)); writeFileSync(out + '/frame-pacing-gd-' + throttle + 'x.json', JSON.stringify(res, null, 1));
   const ok = res.fps >= 55 && res.over100After3s === 0; console.log(ok ? 'PASS frame pacing (GD, CPU ' + throttle + '×): ' + res.fps + ' fps, p99 ' + res.p99 + ' ms' : 'FAIL frame pacing (GD, CPU ' + throttle + '×): ' + res.fps + ' fps, ' + res.over100After3s + ' frames over 100 ms, p99 ' + res.p99 + ' ms');
   await b.close(); server.kill(); if (!ok) process.exit(1);

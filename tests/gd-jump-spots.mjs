@@ -64,6 +64,11 @@ for (const f of files) { const id = f.replace(/\.bsp$/i, ''), buf = readFileSync
         const fy = Y(f), ty = Y(top), u = C.cell / 16;   // (u: one HU of the column grid, game units)
         for (const [al, sd] of [[2, -14], [2, 14], [2, -6], [2, 0], [2, 6], [8, -6], [8, 0], [8, 6], [14, -6], [14, 0], [14, 6]]) if (good && !cover(X(c) + dc * (8 + al) * u + dr * sd * u, Z(r) + dr * (8 + al) * u + dc * sd * u, fy + .1, ty - .1)) good = false;
         if (!good || !clear(X(c), Z(r), fy, fy + 130 * HU) || !clear(X(c - dc), Z(r - dr), fy, fy + 130 * HU)) continue;
+        // (v53 DETAILS: a clean ledge's run-up is flat under CS2's whole 32 HU hull too — the body stands on any floor under
+        // any part of its hull (arena-move.js, open-B#20, as Source's), so a run-up with a raised strip within 16 HU of the
+        // line (Mirage Window: 2 HU, the rise 56 from it, not 58) is not this ledge's rise — left out like the near-limit ones)
+        for (const q of [0, .5, 1, 1.5, 2, 2.5]) if (good && groundAt(boxes, X(c) - dc * C.cell * q, Z(r) - dr * C.cell * q, fy + .01, MOVE.hull) > fy + .5 * HU) good = false;
+        if (!good) continue;
         // Heights: the top the movement stands on, the columns' and CS2's triangles' (centre of the top's first column).
         const tx = X(c + dc), tz = Z(r + dr), bt = topAt(tx, tz, fy + .1, ty + 3 * HU), mt = meshTop(tx, tz, ty - 4 * HU, ty + 4 * HU);
         heights.n++; if (Math.abs(toH(bt) - top) <= 1) heights.box++; if (Math.abs(cs2Top(tx, tz, top - 6, top + 6) - toH(bt)) <= 1) heights.cs2++; if (mt === mt) { heights.meshN++; const e = Math.abs(toH(mt) - toH(bt)); if (e <= 4) heights.mesh++; if (e <= 2) heights.mesh2++; } if (process.env.DEBUG_H && mt === mt && Math.abs(toH(mt) - toH(bt)) > 2) console.log('  height', id, c, r, 'box', toH(bt).toFixed(1), 'col', top, 'mesh', toH(mt).toFixed(1));

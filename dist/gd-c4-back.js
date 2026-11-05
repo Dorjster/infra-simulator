@@ -44,6 +44,26 @@
 //   with the same pulse. Timed on the host's clock, so every computer blinks together.
 // Frame code (update, and the glow's onBeforeRender per draw): no allocation — a few comparisons, a Map lookup, two colour /
 //   opacity writes, a dozen multiplies on the sprite's own matrix.
+//
+// v53 DETAILS: the PLANTED and the DROPPED bomb's lights (createBombLights below; arena-ui.js drives it). Only one bomb is
+// ever in the round, so one pooled light per state (an LED dot and two sprites: the flare and the core — no real light):
+//   · planted (particles/explosions_fx/c4_timer_light.vpcf): an instantaneous emitter of ONE particle each time the game
+//     fires it (up to 5 alive: m_nMaxParticles 5 — the last beeps' flashes overlap and add), living 0.5 s (C_INIT_InitFloat field 1 = 0.5), its alpha (field 7) by age on the spline (0, 0) →
+//     (0.0159, 0.994) → (0.180, 0.162) → (1, 0): a sharp flash, then a fast fade. Colour m_ConstantColor 255 75 75 — RED,
+//     radius 10 u, overbright 1.5, additive; the particle_flare_001 flare in the bloom-only pass (camera bias 3 u), the
+//     yellowflare core at radius scale 0.1 (1 u, camera bias 1 u); also an Omni2 light (cookie c4_bomb_led_cookie, 128 u)
+//     — left out (no real light). WHEN it fires is game code, not in the files: here with every beep of the planted bomb
+//     (arena-ui.js bombView — CS:GO's planted C4 fired its c4_timer_light with each beep; our reading for CS2).
+//   · dropped (particles/explosions_fx/c4_timer_light_dropped.vpcf): a continuous emitter (default rate) capped at ONE
+//     particle (m_nMaxParticles 1), each living 1.0 s → one flash a second from the drop, on c4_holstered_light's own
+//     spline. Colour 255 255 96 (yellow), radius 8 u, the flare at radius scale 0.5 (4 u, bloom-only), the core at 0.2
+//     (1.6 u); its C_OP_RenderSound plays C4.LightFlash with each particle (game_sounds_weapons.vsndevts: c4_beep2.vsnd,
+//     volume 0.3, linear to silence at 500 HU, time_volume_mapping_curve 0 → 1 over 1 s — a faint chirp), and an Omni2
+//     light (100 lm, 256 u: left out). Timed from the host's drop time (ground item `at`): every computer flashes together.
+//   · carried: the rig above — c4_holstered_light, CS2's warm yellow 240 230 140 (USER DECISION: the spec asked for red;
+//     CS2's colour is kept; red would be one value, C4_BLINK.color).
+// The bomb model is the same weaponModel('c4') the carried one uses; its LED in the model's own space (game units) is
+// C4_FIT's LED turned back through the fit (ledInModel). Frame cost: two spline reads and four opacity writes.
 import * as THREE from './three.module.js';
 import { weaponModel, hasReal, modelFromFile } from './weapon-models.js';
 import { CASTER } from './sun-shadows.js';   // (the brick casts its shadow on a baked CS2 map, as the agent and its gun do)
@@ -158,4 +178,86 @@ export function createC4Back({ scene = null, players = () => [], models = () => 
     return state; }
   function dispose() { park(); rig.removeFromParent(); led.geometry.dispose(); ledMat.dispose(); glowMat.map?.dispose(); glowMat.dispose(); }
   return { rig, update, state, dispose, holdPulse(ms = null) { held = Number.isFinite(ms) ? ms : -1; }, get model() { return inner.children[0] || null; }, get led() { return led; }, get glow() { return glow; }, mountOf };
+}
+
+// ── v53 DETAILS: the planted and the dropped bomb's lights (see the top) ──
+const HU_U = 2.54 / 16.5;   // a Hammer unit in game units
+// CS2's planted-bomb flash (c4_timer_light.vpcf) and dropped-bomb blink (c4_timer_light_dropped.vpcf): life / period (ms),
+// alpha spline keys [x, y, slope] over the particle's normalised age, colour (sRGB), overbright, radius (HU), the flare's
+// and the core's radius scales, the flare's and the core's camera bias (HU).
+export const C4_TIMER_LIGHT = { lifeMs: 500, max: 5, keys: [[0, 0, 62.484001], [.015906, .99384, 0], [.180262, .1616, -1.009903], [1, 0, .059499]], color: [255, 75, 75], overbright: 1.5, radius: 10, flare: 1, core: .1, flareBias: 3, coreBias: 1, from: 'particles/explosions_fx/c4_timer_light.vpcf' };
+export const C4_DROPPED_LIGHT = { periodMs: 1000, keys: C4_BLINK.keys, color: [255, 255, 96], overbright: 1.5, radius: 8, flare: .5, core: .2, flareBias: 0, coreBias: 0, sound: 'C4.LightFlash', from: 'particles/explosions_fx/c4_timer_light_dropped.vpcf' };
+// A Hermite spline of CS2's (m_spline points with their slopes) at t in [0, 1].
+// (RG: the frame's number registers — [0] a spline's value, [1] the light's alpha, [2] the frame's host time — so no
+// double crosses a call boxed: the per-frame path is allocation-free.)
+const RG = new Float64Array(3);
+const FRESH_MS = 150;   // (a dropped bomb seen within this of its particle's birth chirps for it: ours)
+function splineR(K, t) {
+  RG[0] = 0; if (!(t >= 0) || t > 1) return;
+  for (let i = 0; i < K.length - 1; i++) { const a = K[i], b = K[i + 1]; if (t > b[0]) continue; const h = b[0] - a[0], u = (t - a[0]) / h, u2 = u * u, u3 = u2 * u;
+    const v = (2 * u3 - 3 * u2 + 1) * a[1] + (u3 - 2 * u2 + u) * h * a[2] + (-2 * u3 + 3 * u2) * b[1] + (u3 - u2) * h * b[2]; RG[0] = v > 0 ? v : 0; return; } }
+export function splineAt(K, t) { splineR(K, t); return RG[0]; }
+// The planted bomb's light `ms` after its last flash; the dropped bomb's `ms` after it was dropped.
+export const plantedPulse = ms => ms >= 0 && ms <= C4_TIMER_LIGHT.lifeMs ? splineAt(C4_TIMER_LIGHT.keys, ms / C4_TIMER_LIGHT.lifeMs) : 0;
+export const droppedPulse = ms => ms >= 0 ? splineAt(C4_DROPPED_LIGHT.keys, (ms % C4_DROPPED_LIGHT.periodMs) / C4_DROPPED_LIGHT.periodMs) : 0;
+// The LED in weaponModel('c4')'s own space (game units): C4_FIT's LED (rig metres) back through the fit's turn and shift.
+export function ledInModel(kind, out = [0, 0, 0]) { const F = C4_FIT[kind] || C4_FIT.cc0, d0 = F.led[0] - F.shift[0], d1 = F.led[1] - F.shift[1], d2 = F.led[2] - F.shift[2];
+  out[0] = (F.x[0] * d0 + F.x[1] * d1 + F.x[2] * d2) / GU; out[1] = (F.y[0] * d0 + F.y[1] * d1 + F.y[2] * d2) / GU; out[2] = (F.z[0] * d0 + F.z[1] * d1 + F.z[2] * d2) / GU; return out; }
+function dotTexture() {
+  if (typeof document === 'undefined') return null;
+  try { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); if (typeof x?.createRadialGradient !== 'function') return null;
+    const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32), a = v => `rgba(255,255,255,${v})`; gr.addColorStop(0, a(1)); gr.addColorStop(.25, a(.55)); gr.addColorStop(.6, a(.12)); gr.addColorStop(1, a(0));
+    x.fillStyle = gr; x.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.NoColorSpace; return t; } catch { return null; } }   // (a soft round light mask: CS2's flare and core textures are the user's own files, not imported here)
+// The bloom-only flare's mask (v53 DETAILS final): CS2 draws particle_flare_001 only into the bloom input
+// (m_bOnlyRenderInEffectsBloomPass), so what reaches the screen is bloom's glow — bright at the LED and falling off fast,
+// not a flat disc over the whole brick. Ours: this steep mask at BLOOM_K (our stand-in for the bloom pass). (v53 DETAILS
+// final 2: its inner fifth raised — 0.6 at 8 %, 0.2 at 20 %, was 0.4 / 0.09 — so the flash reads red round the LED at
+// normal range, still dark at the brick's edges; the stops are ours.)
+function haloTexture() {
+  if (typeof document === 'undefined') return null;
+  try { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); if (typeof x?.createRadialGradient !== 'function') return null;
+    const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32), a = v => `rgba(255,255,255,${v})`; gr.addColorStop(0, a(1)); gr.addColorStop(.08, a(.6)); gr.addColorStop(.2, a(.2)); gr.addColorStop(.4, a(.05)); gr.addColorStop(1, a(0));
+    x.fillStyle = gr; x.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.NoColorSpace; return t; } catch { return null; } }
+// Per draw: the sprite moved toward the camera by its CS2 camera bias (HU), and kept at least minPx wide. No allocation.
+function biasSprite(sp, biasU, minPx) {
+  sp.onBeforeRender = (renderer, scene, camera) => {
+    const p = sp.parent; if (!p) return; const e = sp.matrixWorld.multiplyMatrices(p.matrixWorld, sp.matrix).elements, c = camera.matrixWorld.elements;
+    const dx = c[12] - e[12], dy = c[13] - e[13], dz = c[14] - e[14], d = Math.hypot(dx, dy, dz) || 1e-6, sx = Math.hypot(e[0], e[1], e[2]) || 1e-9;
+    const H = renderer?.domElement?.height || 1080, p5 = camera.isPerspectiveCamera ? camera.projectionMatrix.elements[5] : 0;
+    if (p5 > 0 && minPx > 0) { const W = Math.max(sx, minPx * Math.max(1, H / 1080) * 2 * d / (p5 * H)), f = W / sx; if (f !== 1) { e[0] *= f; e[1] *= f; e[2] *= f; e[4] *= f; e[5] *= f; e[6] *= f; e[8] *= f; e[9] *= f; e[10] *= f; } }
+    const b = Math.min(.5 * d, Math.max(biasU * HU_U, .25 * sx)) / d; e[12] += dx * b; e[13] += dy * b; e[14] += dz * b; }; }
+// The two pooled lights. o: { scene (parked there: warmed with the map), hostNow(), play(at) — the dropped blink's sound }.
+// planted(mesh | null): hang the red flash on the planted bomb's model (or take it off); beep(hostMs): a flash now (each
+// beep). dropped(mesh | null, atMs): the yellow blink on the dropped bomb's model, timed from its drop. update(): per frame.
+// play(mesh, msSinceDrop): the dropped blink's sound, with each new particle.
+export function createBombLights({ scene = null, hostNow = () => Date.now(), play = null } = {}) {
+  const tex = dotTexture(), halo = haloTexture(), led = [0, 0, 0];
+  function light(L, name) {
+    const g = new THREE.Group(); g.name = name; g.userData.gd = true; g.userData.keep = true; g.visible = false;   // (keep: a map change's clear of the arena group leaves it)
+    const col = new THREE.Color().setRGB(L.color[0] / 255, L.color[1] / 255, L.color[2] / 255, THREE.SRGBColorSpace).multiplyScalar(L.overbright), dark = new THREE.Color(0x1a0d08);
+    const mk = (size, bias, px, map = tex) => { const m = new THREE.SpriteMaterial({ map, color: col, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 }); const s = new THREE.Sprite(m); s.scale.setScalar(size); s.renderOrder = 3; biasSprite(s, bias, px); g.add(s); return s; };
+    const flare = mk(2 * L.radius * L.flare * HU_U, L.flareBias, 0, halo || tex), core = mk(2 * L.radius * L.core * HU_U, L.coreBias, CORE_PX);
+    const dotM = new THREE.MeshBasicMaterial({ color: dark.clone() }), dot = new THREE.Mesh(new THREE.SphereGeometry(LED_R / GU, 10, 6), dotM); g.add(dot);
+    if (scene) scene.add(g); shared(g);
+    return { g, flare, core, dotM, col, dark, on: null,
+      set(a = RG[1]) { flare.material.opacity = a * BLOOM_K; core.material.opacity = a; const s = a < 1 ? a : 1, dc = dotM.color; dc.r = dark.r + (col.r - dark.r) * s; dc.g = dark.g + (col.g - dark.g) * s; dc.b = dark.b + (col.b - dark.b) * s; },   // (written by field: no call takes a boxed number)
+      hang(mesh) { if (this.on === mesh) return; this.on = mesh || null; if (!mesh) { g.visible = false; if (scene) scene.add(g); else g.removeFromParent(); this.set(0); return; }
+        ledInModel(modelFromFile('c4') ? 'cs2' : 'cc0', led); g.position.set(led[0], led[1], led[2]); mesh.add(g); g.visible = true; } };
+  }
+  const P = light(C4_TIMER_LIGHT, 'gd-c4-planted-light'), D = light(C4_DROPPED_LIGHT, 'gd-c4-dropped-light');
+  const FL = new Float64Array(C4_TIMER_LIGHT.max).fill(-1e12); let flashI = 0, dropAt = 0, cycle = -1, held = null;   // (held: a frozen clock for pictures — hold(ms); FL, the live flashes: CS2's m_nMaxParticles 5 — at the last beeps, 0.15 s apart, their 0.5 s lives overlap and add up, additive)
+  const state = { planted: 0, dropped: 0, flashes: 0, blinks: 0 };
+  return {
+    P, D, state,
+    planted(mesh) { P.hang(mesh); if (!mesh) FL.fill(-1e12); },
+    beep(ms = hostNow()) { FL[flashI] = ms; flashI = (flashI + 1) % FL.length; state.flashes++; },
+    dropped(mesh, atMs = hostNow()) { if (D.on !== (mesh || null)) cycle = -1; D.hang(mesh); dropAt = atMs; },
+    hold(ms = null) { held = Number.isFinite(ms) ? ms : null; },   // (tests / pictures: the lights drawn at host time `ms`; null: live)
+    update(now = hostNow()) { RG[2] = held !== null ? held : now; const LF = C4_TIMER_LIGHT.lifeMs, PD = C4_DROPPED_LIGHT.periodMs;
+      if (P.on) { RG[1] = 0; for (let i = 0; i < FL.length; i++) { const ms = RG[2] - FL[i]; if (ms >= 0 && ms <= LF) { splineR(C4_TIMER_LIGHT.keys, ms / LF); RG[1] += RG[0]; } } if (RG[1] > 1) RG[1] = 1; state.planted = RG[1]; P.set(); }
+      if (D.on) { const t = RG[2] - dropAt, n = t >= 0 ? Math.floor(t / PD) : -1; if (t >= 0) splineR(C4_DROPPED_LIGHT.keys, (t - n * PD) / PD); else RG[0] = 0; RG[1] = RG[0]; state.dropped = RG[1]; D.set();
+        if (n !== cycle) { const late = cycle < 0 && t - n * PD > FRESH_MS; cycle = n; if (n >= 0) { state.blinks++; if (play && !late) play(D.on, t); } } }   /* (v53 DETAILS final 2: t, ms since the drop — the time C4.LightFlash's curve reads) */   // (its sound with each new particle — the first one too, at the drop (CS2: m_nInitialParticles 1, its C_OP_RenderSound plays); not for a particle already well under way when the bomb came into view: a late join)
+    },
+    dispose() { P.hang(null); D.hang(null); for (const L of [P, D]) { L.g.removeFromParent(); L.flare.material.dispose(); L.core.material.dispose(); L.dotM.dispose(); } tex?.dispose(); halo?.dispose(); },
+  };
 }

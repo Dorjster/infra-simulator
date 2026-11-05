@@ -22,8 +22,9 @@
 //     same multiply layer: the colour table's #ff9494 at the centre out to radius, eased over the feather to #f48787 at the
 //     edges (#ff9494 × (1 − 0.0964 · (1 − tint)) — our reading of how strength and tint combine: the file names the numbers,
 //     not the formula; roundness 0 read as "follows the screen's shape": an ellipse). Its local-contrast block
-//     (m_flLocalContrastStrength 2, EdgeStrength 2, VignetteStart −0.31, End 0.94, Blur 0.95) is NOT done: it needs a
-//     blur-and-sharpen pass over the frame, a shader this module doesn't add (no shader compiles mid-round).
+//     (m_flLocalContrastStrength 2, EdgeStrength 2, VignetteStart −0.3092, End 0.9408, Blur 0.9455) — (v53 DETAILS) drawn
+//     by gd-deathcam-post.js's one full-screen pass (graphics.js, warmed with the composer); its amount follows the tint
+//     here (DEATH_POST.amount). How the shader applies the numbers is not in the files: that module says our reading.
 //   · the tint is CS2's death cam's only (phase 1): hidden the moment the fade to black is full, before the black lifts
 //     over the spectated team mate's view (it never shows over spectating).
 // Not verified, so not done: whether CS2 draws the killer through walls in the death cam (no file says; nothing here
@@ -47,10 +48,11 @@
 //   FOV (r2 fix): the cam and the spectating after it use your normal field of view (fov(): lab.js viewFov) — a death
 //     while scoped or zoomed doesn't keep the scope's 10–40° lens.
 // COST: one camera pose computed per frame from reused vectors; two fixed page layers (tint, black) whose opacity only
-// changes; nothing allocated per frame, no shader.
+// changes, and the local-contrast pass's amount (a number: gd-deathcam-post.js); nothing allocated per frame.
 import * as THREE from './three.module.js';
 import { hostNow } from './host-clock.js';
 import { mapWorld } from './gd-ragdoll.js';
+import { DEATH_POST } from './gd-deathcam-post.js';   // (v53 DETAILS, open-B#22: the vpost's local-contrast block — drawn by graphics.js's pass, its amount set here)
 
 const HU = 2.54 / 16.5;
 export const CAM = { deathanim: .8, travel: .3, freeze: 3, lock: 2, skippable: true };   // (NOT VERIFIED: see the top)
@@ -128,7 +130,7 @@ export function createDeathCam({ camera, world, lan, name, boxes = () => null, b
   }
   // (r2) the cam over: the tint gone at once; the black — full when a respawn ended the cam (it faded out before it) —
   // lifts over FADE_IN instead of cutting to the new view
-  function end() { const b = lastSet.b; at = null; DEATHCAM.on = false; DEATHCAM.phase = 'alive'; DEATHCAM.kind = null; tint.hidden = true; if (tint.style) tint.style.opacity = '0'; lastSet.t = lastSet.b = -1;
+  function end() { const b = lastSet.b; at = null; DEATH_POST.amount = 0; DEATHCAM.on = false; DEATHCAM.phase = 'alive'; DEATHCAM.kind = null; tint.hidden = true; if (tint.style) tint.style.opacity = '0'; lastSet.t = lastSet.b = -1;
     if (b > .02 && !black.hidden) { LIFT[0] = hostNow(); LIFT[1] = b; } else { LIFT[0] = -1; black.hidden = true; if (black.style) black.style.opacity = '0'; } }
   function lift() { const v = LIFT[1] * (1 - (hostNow() - LIFT[0]) / 1000 / FADE_IN); if (v <= 0) { LIFT[0] = -1; black.hidden = true; if (black.style) black.style.opacity = '0'; return; } if (black.style) black.style.opacity = OPA[Math.round(v * 200)]; }
   // the camera's look at target, into out (three.js's Matrix4.lookAt, written out: its own calls hand numbers across)
@@ -159,6 +161,7 @@ export function createDeathCam({ camera, world, lan, name, boxes = () => null, b
   }
   function paint() {   // (t: R[0]; the black into R[2])
     const t = R[0], ti = phaseR(R) === 'done' ? 0 : t / TINT_IN < 1 ? t / TINT_IN : 1; blackR(R); const b = R[2];   // (r2: no tint once the cam is done)
+    DEATH_POST.amount = ti > 0 ? ti : 0;   // (v53 DETAILS: the local contrast with the tint)
     if (Math.abs(ti - lastSet.t) > .005 || (ti === 0 && lastSet.t !== 0)) { lastSet.t = ti; if (tint.style) tint.style.opacity = OPA[Math.round((ti > 0 ? ti : 0) * 200)]; }
     if (Math.abs(b - lastSet.b) > .005 || (b === 0 && lastSet.b !== 0)) { lastSet.b = b; if (black.style) black.style.opacity = OPA[Math.round(b * 200)]; }
   }
@@ -172,7 +175,7 @@ export function createDeathCam({ camera, world, lan, name, boxes = () => null, b
       const t = (now - at) / 1000; R[0] = t; R[3] = dt; R[4] = dn.until - at < 6e5 ? (dn.until - at) / 1000 : Infinity; const ph = phaseR(R);   // (R[4]: respawnCap(dn), inline)
       DEATHCAM.t = t; DEATHCAM.at = at; DEATHCAM.skip = skipAt !== null; DEATHCAM.canSkip = CAM.skippable && t >= CAM.deathanim + CAM.lock && skipAt === null; DEATHCAM.kind = kind; DEATHCAM.phase = ph;
       paint();
-      if (ph === 'done') { DEATHCAM.on = false; if (!tint.hidden) tint.hidden = true; if (R[2] <= 0 && !black.hidden) black.hidden = true; return false; }   // (r2: the tint off the moment the cam is done — the black is full then)
+      if (ph === 'done') { DEATHCAM.on = false; DEATH_POST.amount = 0; if (!tint.hidden) tint.hidden = true; if (R[2] <= 0 && !black.hidden) black.hidden = true; return false; }   // (r2: the tint off the moment the cam is done — the black is full then)
       DEATHCAM.on = true; pose(); return true;
     },
     // After this frame's bodies are placed (lab.js, after lan.update): the killer's framing from where they are drawn now.

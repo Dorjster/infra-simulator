@@ -25,7 +25,7 @@ const dir = opt('--files') || 'user-maps', out = opt('--out') || null, only = ar
 if (!existsSync(dir)) { console.log('SKIP: no map files in ' + dir); process.exit(0); }
 if (out) mkdirSync(out, { recursive: true });
 const dt = 1 / 64, cx = ARENA.cx, cz = ARENA.cz; let total = 0, bad = 0, knownN = 0;
-const KNOWN_SNAGS = { overpass: [[-172.4, 218, -1, 0]] };
+const KNOWN_SNAGS = {};   // (v53 DETAILS: Overpass's −172.4, 218 west snag is fixed — arena-move.js's on-ground hull rule; a snag there now fails)
 // (a free run: 40 ticks from a stand on open ground — what a walk each way covers when nothing is in the way)
 const FREE = (() => { const s = createMoveState(0); s.x = 0; s.z = 0; const w = { boxes: [], bounds: { minX: -1e5, maxX: 1e5, minZ: -1e5, maxZ: 1e5 }, ladders: [] }; for (let t = 0; t < 40; t++) moveStep(s, { wish: [1, 0], weapon: 'knife' }, w, dt); return s.x; })();   // (≈ 100 HU)
 for (const f of readdirSync(dir).sort()) { const id = f.replace(/\.bsp$/i, ''); if (!f.endsWith('.bsp') || !FILE_MAP_IDS.includes(id) || (only.length && !only.includes(id))) continue;
@@ -59,8 +59,8 @@ for (const f of readdirSync(dir).sort()) { const id = f.replace(/\.bsp$/i, ''); 
         for (let t = 0; t < 64; t++) moveStep(s, { wish: [0, 0], weapon: 'knife' }, world, dt); if (s.y < low - 4) { res.void.push({ ...where(x, z, y), dir: [dx, dz], fellTo: +s.y.toFixed(1) }); break; }
         if (y - s.y >= 400 * HU) { res.far.push({ ...where(x, z, y), dir: [dx, dz], fellTo: +s.y.toFixed(1) }); break; }
         if (offRadar(s.x, s.z)) { res.off.push({ ...where(x, z, y), dir: [dx, dz], to: where(s.x, s.z, s.y) }); break; } } } }
-  // Known (v53, reported, not failing; anything new fails): Overpass's −172.4, 218 walking west — the body sinks 2 HU into
-  // a dip before an 18 HU step, which is then 20 HU (a wall); CS2's hull would stay on the 494 ledge it still overlaps.
+  // Known snags (reported, not failing; anything new fails): none since v53 DETAILS. (Overpass's −172.4, 218 walking west
+  // was one: the body sank 2 HU into a dip before an 18 HU step; the CS2 hull now stays on the 494 ledge it overlaps.)
   res.snags = res.snags.filter(a => { const k = KNOWN_SNAGS[id]?.find(([kx, kz, kdx, kdz]) => Math.abs(kx - a.x) < .2 && Math.abs(kz - a.z) < .2 && kdx === a.dir[0] && kdz === a.dir[1]); if (k) { console.log(`   known snag (${id}): ${JSON.stringify(a)}`); knownN++; } return !k; });
   const n = res.stuck.length + res.holes.length + res.void.length + res.far.length + res.off.length + res.floating.length + res.snags.length; total += res.spots; bad += n;
   console.log(`${id.padEnd(9)} ${res.spots} spots · stuck in a solid ${res.stuck.length} · holes ${res.holes.length} · fell out of the map ${res.void.length} · fell 400+ ${res.far.length} · off the radar ${RM ? res.off.length : '(no radar)'} · floating ${res.floating.length} · edge snags ${res.snags.length} (of ${res.stopped} walks stopped short)`);
