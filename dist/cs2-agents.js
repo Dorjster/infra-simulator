@@ -4,8 +4,10 @@
 // one (else the built-in soldiers, gd-soldiers.js). Never shipped: the models are Valve's.
 // The pose is made here from the same state the soldiers get (speed, crouch, holding a gun, reload / throw, dead):
 // legs and arms by two-bone IK (feet planted, knees bending as the body crouches; both hands on the gun), the spine
-// leaning in. Hit boxes come from the pose, never from the model: the agent stands at its true size (CS2's 72 u, the
-// capsule's height; its head where the head zone is, weapons-data.js) and drops as the capsule does crouched. Allocation-free per frame.
+// leaning in. The agent stands at its true size (CS2's 72 u, the capsule's height) and drops as the capsule does crouched.
+// Hit boxes (v53 AGENTS H8): CS2's own capsules from the agent models, posed on these agents with these clips by
+// tools/import-cs2-sleeves.mjs (gd-hitboxes.js; installed below with the agents) — else the built-in shape (weapons-data
+// rayBody: its head where the head zone is). Allocation-free per frame.
 import { gdTexSize } from './gd-preset.js';   // (v53 stage 6: Low / Very Low texture cap)
 import { CASTER, bonesMoved } from './sun-shadows.js';
 import { skinObject, unskinObject, sameSkin } from './skin-render.js';
@@ -30,6 +32,7 @@ import { fitImage, anisotropy, textureSize } from './texture-quality.js';
 import { deathFall, DEATH_FALL_S } from './phys-smooth.js';
 import { gloveLook, gloveMaterial, gloveVersion } from './glove-assets.js';   // (the death fall's curve: package P)
 import { agentRig, startRagdoll, updateRagdoll, stopRagdoll, deathOf, deathCtx, loadCs2Ragdolls, trackVy } from './gd-ragdoll.js';   // (v53 DEATH: the death ragdoll — CS2's own when imported)
+import { useHitboxes } from './gd-hitboxes.js';   // (v53 AGENTS H8: CS2's hit capsules, installed with the agents)
 
 const templates = {}; let loading = null;
 // Load the imported agents (once): resolves to the sides that have one.
@@ -38,7 +41,8 @@ export function loadAgents() {
     return Promise.all([...Object.entries(ua.models.agents || {}).map(([side, a]) =>
     gltfLoader().loadAsync(userAssetURL(ua, a.file)).then(async g => { await fitTextures(g.scene); templates[side] = prepare(g.scene); }, e => console.warn('agent', side, e?.message))),
     ua.models.agentAnims ? gltfLoader().loadAsync(userAssetURL(ua, ua.models.agentAnims.file)).then(g => { CLIPS = splitClips(g.animations); }, e => console.warn('agent animations', e?.message)) : null,
-    ua.models.agents ? loadCs2Ragdolls(json) : null]).then(async () => { if (useHolds(await holds, await holdClips)) loadRealWeapons().then(() => { const ids = Object.keys(HOLDS || {}), next = () => { if (ids.length) { warmHolds([ids.shift()]); setTimeout(next, 0); } }; next(); }, () => {}); return Object.keys(templates); }); });   // (each item's model measured once, now, not at its first equip)
+    ua.models.agents ? loadCs2Ragdolls(json) : null,
+    ua.models.agents && ua.models.hitboxes?.file ? json(ua.models.hitboxes.file).then(useHitboxes) : null /* (v53 AGENTS H8: the host's CS2 hit capsules — this page's hit prediction then matches the host's trace, gd-hitboxes.js) */]).then(async () => { if (useHolds(await holds, await holdClips)) loadRealWeapons().then(() => { const ids = Object.keys(HOLDS || {}), next = () => { if (ids.length) { warmHolds([ids.shift()]); setTimeout(next, 0); } }; next(); }, () => {}); return Object.keys(templates); }); });   // (each item's model measured once, now, not at its first equip)
 }
 // CS2's own hold data (user-assets/holds, tools/export-cs2-holds.mjs; never shipped): every item's world model measured
 // in its `weapon` bone frame — the frame CS2 hangs it by: the model's weapon bone on the agent's wpn bone — and the

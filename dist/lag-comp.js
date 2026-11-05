@@ -11,7 +11,8 @@ export function createPoseHistory() {
     record(id, s, pose) {
       if (!Number.isFinite(s) || !pose) return; let h = by.get(id); if (!h) by.set(id, h = []);
       const last = h[h.length - 1]; if (last && s <= last.s) { if (s < last.s - 5000) h.length = 0; else return; }   // a restarted clock (reload): start over
-      h.push({ s, x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw, crouched: !!pose.crouched, ey: Number.isFinite(pose.ey) ? pose.ey : undefined });   // (ey: the eye over the feet — a crouch then is a crouch at that moment, not now)
+      h.push({ s, x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw, crouched: !!pose.crouched, ey: Number.isFinite(pose.ey) ? pose.ey : undefined,   // (ey: the eye over the feet — a crouch then is a crouch at that moment, not now)
+        p: Number.isFinite(pose.shot?.pitch) ? pose.shot.pitch : undefined, w: typeof pose.weapon === 'string' ? pose.weapon : undefined });   // (v53 AGENTS, Global Defensive: the look's pitch and the item in hand then — the body's hit capsules bend and hold as drawn at that moment, gd-hitboxes.js)
       while (h.length > 2 && s - h[0].s > KEEP_MS) h.shift();
     },
     // The pose at moment s (between the two poses around it), clamped to [newest − maxBack, newest]; null: none kept.
@@ -24,7 +25,8 @@ export function createPoseHistory() {
       let i = h.length - 1; while (i > 0 && h[i - 1].s > t) i--; const b = h[i], a = h[i - 1];
       if (!a || b.s <= t) return { ...b, lead, ya: b.yaw, yb: b.yaw }; if (a.s >= t) return { ...a, lead, ya: a.yaw, yb: a.yaw };
       const k = (t - a.s) / (b.s - a.s), dy = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));
-      return { s: t, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, yaw: a.yaw + dy * k, crouched: k < .5 ? a.crouched : b.crouched, ey: Number.isFinite(a.ey) && Number.isFinite(b.ey) ? a.ey + (b.ey - a.ey) * k : (k < .5 ? a : b).ey, lead, ya: a.yaw, yb: b.yaw };
+      return { s: t, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, yaw: a.yaw + dy * k, crouched: k < .5 ? a.crouched : b.crouched, ey: Number.isFinite(a.ey) && Number.isFinite(b.ey) ? a.ey + (b.ey - a.ey) * k : (k < .5 ? a : b).ey, lead, ya: a.yaw, yb: b.yaw,
+        p: Number.isFinite(a.p) && Number.isFinite(b.p) ? a.p + (b.p - a.p) * k : (k < .5 ? a : b).p, w: (k < .5 ? a : b).w };   // (v53 AGENTS: the pitch between the two, as multiplayer.js draws it; the item of the nearer)
     },
     // How fast the body moved through moment s (units/s): { h: across, v: up (−: down) }, the slower of the VEL_MS before
     // and the VEL_MS after it (a counter-strafe decelerates in the window before the shot and stands still after it: only
@@ -43,7 +45,9 @@ export function createPoseHistory() {
 // then (pose.vel: the host's lower bound for the shot's inaccuracy, combat-logic.js).
 export function rewound(history, roster, action, actor) {
   if (!history || !action || action.type !== 'hit') return roster;
-  const back = (p, s, me) => { const q = history.at(p.id, s); if (!q) return p; const pose = { ...p.pose, x: q.x, y: q.y, z: q.z, yaw: q.yaw, crouched: q.crouched }; if (Number.isFinite(q.ey)) pose.ey = q.ey; if (me) { pose.vel = history.vel(p.id, s); pose.lead = q.lead; pose.ya = q.ya; pose.yb = q.yb; } return { ...p, pose }; };
+  const back = (p, s, me) => { const q = history.at(p.id, s); if (!q) return p; const pose = { ...p.pose, x: q.x, y: q.y, z: q.z, yaw: q.yaw, crouched: q.crouched }; if (Number.isFinite(q.ey)) pose.ey = q.ey;
+    if (!me) { if (Number.isFinite(q.p)) pose.hbPitch = q.p; if (q.w) pose.hbWeapon = q.w; }   // (v53 AGENTS, Global Defensive: the target's look and item at the moment seen — combat-logic traceShot's hit capsules; pose.weapon itself stays the live one)
+    if (me) { pose.vel = history.vel(p.id, s); pose.lead = q.lead; pose.ya = q.ya; pose.yb = q.yb; } return { ...p, pose }; };
   const own = Number.isFinite(action.ft) ? +action.ft : Number.isFinite(action.ct) ? +action.ct : NaN;
   return roster.map(p => p.id === action.target && Number.isFinite(action.seen) ? back(p, +action.seen, false) : p.id === actor && Number.isFinite(own) ? back(p, own, true) : p);
 }
