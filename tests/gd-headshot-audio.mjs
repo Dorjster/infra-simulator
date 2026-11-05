@@ -146,6 +146,9 @@ resetVoices(); c.currentTime = 300;
   const { HIT_MARKER_CLASS } = await import('../dist/gd-crosshair.js');
   const shot = [], hurt = []; let view = { fx: 0, fz: -1 };
   const root = new El(), F = createHitFeedback({ parent: root, hit: (...a) => shot.push(a), hurt: (...a) => hurt.push([a[0], a[1], a[2], a[3] ? { ...a[3] } : null, a[4], a[5]]), frame: out => { out.fx = view.fx; out.fz = view.fz; return out; } });
+  // (v53 FEEDBACK, addendum 15: the X shows only with Settings → Hit marker On — default Off, as CS2; the sounds in both)
+  { const { live } = await import('../dist/live-settings.js'); ok(live.hitMarker === false, 'the hit marker is off by default (CS2 has none)');
+    F.hit(false, true, true); ok(shot.length === 1 && shot[0].slice(0, 3).join() === 'false,true,true' && !HIT_MARKER_CLASS.includes(F.marker.el.className) && F.stats.marks === 0, 'Hit marker Off: the headshot sounds play, no X'); shot.length = 0; live.hitMarker = true; }
   F.hit(false, true, true); ok(shot[0].slice(0, 3).join() === 'false,true,true' && (F.marker.el.className === HIT_MARKER_CLASS[2] || F.marker.el.className === HIT_MARKER_CLASS[3]), 'a hit of yours: its sounds and the white marker with the headshot tick');
   F.hit(true, false, false); ok(/\bk\b/.test(F.marker.el.className) && !/\bh\b/.test(F.marker.el.className), 'a kill: the red marker');
   F.hit(false, false, false); const m1 = F.marker.el.className; F.hit(false, false, false); ok(m1 !== F.marker.el.className && m1.replace(/ [ab]$/, '') === F.marker.el.className.replace(/ [ab]$/, ''), 'the same marker twice: the animation restarts (a / b)');
@@ -154,7 +157,7 @@ resetVoices(); c.currentTime = 300;
   ok(Math.abs(arcAngle(-1, 0, 0, -1) - 90) < 1e-6 && Math.abs(arcAngle(1, 0, 0, -1) - 270) < 1e-6 && Math.abs(arcAngle(0, 1, 0, -1)) < 1e-6 && Math.abs(arcAngle(0, -1, 0, -1) - 180) < 1e-6, 'hit-direction arc: right 90°, left 270°, ahead 0°, behind 180°');
   ok(Math.abs(arcAngle(-1, 0, 1, 0) - 0) < 1e-6, '… turned to face the shooter: ahead');
   ok(segmentOf(359) === 0 && segmentOf(44) === 0 && segmentOf(46) === 1 && segmentOf(180) === 2 && segmentOf(271) === 3 && SEGMENTS.length === 4, "… snapped to CS2's four segments (top / right / bottom / left)");
-  ok(/--gd-di:calc\(var\(--gd-view-h,100vh\) \* 300 \/ 1080\)/.test(HIT_ARC_CSS) && /#cc3300 86\.2%,#cc3300 88\.9%/.test(HIT_ARC_CSS) && /#cc3300 92%,#cc3300 99\.9%/.test(HIT_ARC_CSS) && /clip-path:polygon\(50% 50%,0 0,100% 0\)/.test(HIT_ARC_CSS) && /\.s1\{transform:translate3d\(0,calc\(var\(--gd-di\) \* -5 \/ 300\),0\) rotate\(90deg\)\}/.test(HIT_ARC_CSS), "CS2's damage indicator: 300 px at 1080 p, the two bands (.862–.889, .920–.999), a 90° wedge, #cc3300, −5 px then turned");
+  ok(/--gd-di:calc\(var\(--gd-view-h,100vh\) \* 300 \/ 1080\)/.test(HIT_ARC_CSS) && /#cc3300 86\.2%,#cc3300 88\.9%/.test(HIT_ARC_CSS) && /#cc3300 92%,#cc3300 99\.9%/.test(HIT_ARC_CSS) && /clip-path:polygon\(50% 50%,0 0,100% 0\)/.test(HIT_ARC_CSS) && /\.s1\{transform:rotate\(90deg\) translate3d\(0,calc\(var\(--gd-di\) \* -5 \/ 300\),0\)\}/.test(HIT_ARC_CSS), "CS2's damage indicator: 300 px at 1080 p, the two bands (.862–.889, .920–.999), a 90° wedge, #cc3300, each segment 5 px out along its own side (v53 FEEDBACK final: our reading of Panorama's order)");
   const me = 'ann', bl = [], Gm = { combat: { bl } }; let i = 100;
   const rec = (v, z, o = {}) => { bl.push({ i: ++i, at: 5000, v, z, d: 20, p: [1, 2, 3], r: [-1, 0, 0], ...o }); };
   rec('ann', 'head', { hm: 1, s: 'cy' }); F.update(Gm, me, 5000); ok(hurt.length === 0, 'first look: records already there are old news');
@@ -169,6 +172,16 @@ resetVoices(); c.currentTime = 300;
   F.update(Gm, me, 5000); F.update(Gm, me, 5000); ok(hurt.length === 2, 'records are taken once');
   rec('ann', 'head', { s: 'cy', k: 1, hm: 1, r: [0, 0, -1] }); F.update(Gm, me, 5000); ok(hurt.length === 3 && hurt[2][5] === true && /s2 [ab]/.test(segCls()), 'killed by a headshot from behind: the Death* sound (kill flag) and the bottom segment');
   rec('bo', 'head', { s: 'cy', k: 1 }); F.update(Gm, me, 5000); ok(hurt.length === 4 && hurt[3][2] === false && hurt[3][5] === true, "an onlooker of a killing headshot: CS2's Death*.Onlooker (kill flag)"); }
+// (v53 FEEDBACK, addendum 15) combat-hud.js's X (lab.js's fallback while GD's own HUD is not up): in Global Defensive only
+// with Settings → Hit marker On (default Off, as CS2); the other modes' X as before; the sounds always
+{ const { live } = await import('../dist/live-settings.js'), els = {}, D = globalThis.document;
+  globalThis.document = { createElement: () => ({ style: {}, textContent: '' }), head: { append() {} }, body: { insertAdjacentHTML() {} }, getElementById: id => els[id] ??= { style: {}, className: '', hidden: false } };
+  const { createCombatHUD } = await import('../dist/combat-hud.js'), world = { operations: { game: { mode: 'arena' } } }, H = createCombatHUD({ world, lan: {}, name: () => 'ann' });
+  live.hitMarker = false; H.hitMarker(false, true); const off = els['cb-mark']?.style.opacity;
+  live.hitMarker = true; H.hitMarker(false, true); const on = els['cb-mark']?.style.opacity;
+  world.operations.game.mode = 'payday'; live.hitMarker = false; els['cb-mark'].style.opacity = 0; H.hitMarker(true, false); const other = els['cb-mark'].style.opacity;
+  ok(off === undefined && on === 1 && other === 1, `combat-hud.js's X: hidden in GD with Hit marker Off (${off}), shown with it On (${on}); other modes unchanged (${other})`);
+  live.hitMarker = false; globalThis.document = D; }
 
 // ── 6. (v53 HITS, H2) Body armour and the knife: CS2's *BodyArmor* events, the knife's silent attacker feedback ──
 { const ARM = { 'ui.hit.armor': 'Player.DamageBodyArmor.AttackerFeedback', 'ui.hit.armor.flesh': 'Player.DamageBodyArmor.AttackerFeedbackFlesh', 'hurt.body.armor': 'Player.DamageBodyArmor.Victim', 'hurt.body.armor.onlooker': 'Player.DamageBodyArmor.Onlooker',

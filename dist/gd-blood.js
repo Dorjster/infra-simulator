@@ -27,7 +27,12 @@
 // (top-level userData.gd objects: lab.js's match warm-up and app.js's freeze-time rehearsal, userData.warm).
 // Settings → Global Defensive → Blood (live.blood, default on): off hides it at once and draws none.
 // Your own wounds (and, spectating, the watched player's) spray nothing in your view (CS2: no impact on your own body
-// in first person); their decals are drawn as for everyone.
+// in first person); their decals are drawn as for everyone, and everyone else sees the spray on you.
+// (v53 FEEDBACK — the user, 2026-11-05: "no blood should be on own wound only red barrier something with 4 side") NO
+// blood on your own SCREEN: none of CS2's screen-space local-player systems (blood_impact_localplayer / lp_spray /
+// lp_mist, localfrontenemy and its _splatter_lft / _rgt, localrearhit, localkillshot, localfrontsimple, explosions_fx/
+// screen_blood_splatter) is drawn — no pool, no shader, nothing warmed for them. A hit on you shows only CS2's red
+// four-segment damage indicator (gd-hit-feedback.js, huddamageindicator.vcss), whatever the Blood setting.
 // v53 (Addendum 6, stage 3): the headshot "dink" — a headshot on a HELMET (the record's hm, combat-logic.js hitMarks) also
 // throws CS2's helmet impact (particles/impact_fx/impact_helmet_headshot.vpcf and its children _spark and _glow, the
 // user's install, decompiled with Source2Viewer-CLI): electric blue-white spark trails back toward the shooter, two
@@ -44,7 +49,6 @@ import { bulletPath, BulletPath } from './arena-maps.js';
 import { live } from './live-settings.js';
 import { userAssets, userAssetURL } from './user-assets.js';
 import { hostNow } from './host-clock.js';
-import { listenerFrame } from './spatial-audio.js';   // (v53 HITS: your view's forward, as the camera set it this frame — the local splatter's side)
 
 export const SPRAY_N = 320, DECAL_N = 48;   // (v53 HITS: CS2's head-shot children are ~140 particles a head shot — two at once fit)
 export const KEEP_MS = 1500;   // a record older than this (host ms) is not drawn (a join, a stalled stream): the host keeps them as long
@@ -291,64 +295,9 @@ export function mapCast(boxes) {
   };
 }
 
-// ── (v53 HITS, H6) Your own wounds on your screen: CS2's local-player hit splatter ─────────────────────────────────────
-// particles/blood_impact (the user's install): a hit from the front plays blood_impact_localfrontenemy — its children
-// _splatter_lft and _splatter_rgt, each 5–10 splats (nParticlesToEmit: control point 1's x — the damage — 15 → 65 remapped
-// to 5 → 10), life .35–.75 s, FadeOut up to .5 s (min .25: CS2's default; a share of the life), colour (228,33,33) ×
-// overbright 3, alpha 1; a hit from behind blood_impact_localrearhit_splatter — 10 splats, life .5–.75 s, (249,55,55) ×
-// 2; and every hit blood_impact_lp_spray (blood_impact_localplayer's child) — 3–6 splats (the damage 15 → 80), life
-// .75 s, (249,55,55) × 2. Its texture (decals/blood/blood_particle_splatter) is drawn with our decal atlas's splats.
-// A front hit always plays BOTH children (localfrontenemy.vpcf's m_Children: _splatter_lft and _splatter_rgt, neither
-// disabled — v53 HITS final; it was the shot's side only): each lays its splats in order along its own path
-// (C_INIT_CreateSequentialPathV2 between the two points its C_OP_SetSingleControlPointPosition ops place: _lft x = 100,
-// _rgt x = −100, y 100 → −50 in its control points' space) — so two vertical runs, the left and right edges, from high
-// to a little below the middle (y .75 → −.375 of the half-height). OURS (the game's code places those control points on
-// the screen, and is not in the files): that mapping of CP space to the screen edges; from behind → along the bottom and
-// the sides; lp_spray nearer the corner on the side the shot came from (the record's r against your view). Sizes 4.5–12 % of the view's height (lp_spray 9–15 %): a splat fills about half its square.
-// One pool of LOCAL_N splats in screen space (ONE draw, warmed with the others), written from your own records only (and
-// the watched player's, spectating in-eye); Settings → Blood off draws none.
-export const LOCAL_N = 48, LK = 12;
-export const LOCAL = {
-  front: { n: [5, 10], dmg: [15, 65], life: [.35, .75], fo: [.25, .5], col: [228, 33, 33], ob: 3, r: [.045, .12] },   // localfrontenemy_splatter_lft / _rgt
-  rear: { n: [10, 10], life: [.5, .75], fo: [.25, .5], col: [249, 55, 55], ob: 2, r: [.05, .12] },   // localrearhit_splatter
-  spray: { n: [3, 6], dmg: [15, 80], life: [.75, .75], fo: [.25, .5], col: [249, 55, 55], ob: 2, r: [.09, .15] },   // lp_spray
-};
-const countBy = (e, d) => { if (!e.dmg) return e.n[0]; const k = Math.max(0, Math.min(1, (d - e.dmg[0]) / (e.dmg[1] - e.dmg[0]))); return Math.round(e.n[0] + (e.n[1] - e.n[0]) * k); };
-// Where the shot came from in your view (fx, fz: your forward, level): .front (it came from ahead), .side (−1 left, 1 right,
-// 0 straight ahead / behind within 15°).
-export const LSIDE = { front: true, side: 0 };
-export function hitSide(rec, fx, fz, out = LSIDE) { const sx = -(+rec.r[0]), sz = -(+rec.r[2]), fl = Math.sqrt(fx * fx + fz * fz) || 1, ax = fx / fl, az = fz / fl, sl = Math.sqrt(sx * sx + sz * sz) || 1;
-  const ahead = (sx * ax + sz * az) / sl, right = (sx * -az + sz * ax) / sl; out.front = ahead >= 0; out.side = Math.abs(right) < Math.sin(15 * Math.PI / 180) ? 0 : right > 0 ? 1 : -1; return out; }
-// A record → splats (pure): each LK floats — centre x y (the view's height units: y −1 bottom … 1 top, x across × the
-// aspect), radius, life, fade start (share), cell, rotation, r g b (linear × overbright), alpha. Returns how many.
-export const MAX_LOCAL = 26;
-export const PATH_Y = [.75, -.375];   // (the children's path y 100 → −50, as a share of the half-height: ours, the scale)
-export function planLocal(rec, fx, fz, out) {
-  if (!validRecord(rec)) return 0; seed(recSeed(rec, 0x10C)); const S = hitSide(rec, fx, fz), d = +rec.d || 0; let n = 0;
-  const put = (e, x, y) => { if (n >= MAX_LOCAL) return; const o = n * LK, life = rr(e.life); out[o] = x; out[o + 1] = y; out[o + 2] = rr(e.r); out[o + 3] = life; out[o + 4] = Math.max(0, Math.min(.999, 1 - rr(e.fo)));
-    out[o + 5] = Math.floor(rnd() * WALL_CELLS); out[o + 6] = rnd() * Math.PI * 2; for (let q = 0; q < 3; q++) out[o + 7 + q] = Math.min(1, lin(e.col[q]) * e.ob); out[o + 10] = 1; out[o + 11] = 0; n++; };
-  const edge = (e, sd, k) => { for (let j = 0; j < k; j++) put(e, sd * (1.3 + rnd() * .15), PATH_Y[0] + (PATH_Y[1] - PATH_Y[0]) * (k > 1 ? j / (k - 1) : .5)); };   // (x past ±1.3: the side beyond a 4:3 centre, inside any wide view; y along the file's path, in order)
-  if (S.front) { const k = countBy(LOCAL.front, d); edge(LOCAL.front, -1, k); edge(LOCAL.front, 1, k); }   // (both children, each its own 5–10)
-  else for (let j = 0; j < LOCAL.rear.n[0]; j++) { const a = rnd(); if (a < .5) put(LOCAL.rear, (rnd() * 2 - 1) * 1.4, -.8 - rnd() * .2); else put(LOCAL.rear, (a < .75 ? -1 : 1) * (1.2 + rnd() * .5), -.6 + rnd() * 1.2); }
-  { const k = countBy(LOCAL.spray, d), sd = S.side || (rnd() < .5 ? -1 : 1); for (let j = 0; j < k; j++) put(LOCAL.spray, sd * (1.25 + rnd() * .45), (S.front ? .3 : -.5) + (rnd() * 2 - 1) * .35); }
-  return n;
-}
-// Screen-space splats: x scaled by the view's aspect (projectionMatrix), drawn over everything, faded out as CS2's FadeOut.
-const LOCAL_VS = `uniform float uTime; uniform float uCells;
-attribute vec4 aP; attribute vec4 aL; attribute vec4 aC;
-varying vec2 vUv; varying vec4 vCol;
-void main() {
-  float age = uTime - aP.w, life = aL.x;
-  if (age < 0.0 || age >= life) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vUv = vec2(0.0); vCol = vec4(0.0); return; }
-  float n = age / life, asp = projectionMatrix[1][1] / projectionMatrix[0][0], cs = cos(aL.w), sn = sin(aL.w); vec2 c = position.xy * 2.0, q = vec2(c.x * cs - c.y * sn, c.x * sn + c.y * cs) * aP.z;
-  gl_Position = vec4((aP.x + q.x) / asp, aP.y + q.y, -1.0, 1.0);   // (on the near plane: in front of everything, a smoke too)
-  vUv = (vec2(mod(aL.z, uCells), uCells - 1.0 - floor(aL.z / uCells)) + uv) / uCells;
-  vCol = vec4(aC.rgb, aC.a * (1.0 - smoothstep(aL.y, 1.0, n)));
-}`;
-const LOCAL_FS = `uniform sampler2D uMap; varying vec2 vUv; varying vec4 vCol;
-void main() { vec4 t = texture2D(uMap, vUv); float a = t.a * vCol.a; if (a < 0.01) discard; gl_FragColor = vec4(vCol.rgb * (0.55 + 0.7 * t.r), a);
-  #include <colorspace_fragment>
-}`;
+// ── (v53 FEEDBACK) Your own wound on your screen: nothing here ─────────────────────────────────────────────────────
+// The local-player screen splats (v53 HITS H6) are gone by the user's rule (the header): this module draws no blood in
+// screen space. The red damage indicator is gd-hit-feedback.js's.
 
 // ── built-in pictures (no CS2 files): procedural, the same layout as the import ──────────────────────────────────────
 // Pixels are written top row first into a bottom-up buffer, so v = 1 is the picture's top as for a loaded image.
@@ -504,7 +453,7 @@ function quad(n, attrs) { const p = new THREE.PlaneGeometry(1, 1), g = new THREE
 // opts: boxes() → the map's collision boxes (lab.js: the arena's), game() → the game state, me() → your key, watched()
 // → the key you watch in first person (else null), clock() → the host's ms (tests), quiet() → true when a picture may
 // be sent to the GPU now (no live round), assets: false to skip the CS2 import (tests).
-export function createBlood(scene, { boxes = () => null, game = () => null, me = () => '', watched = () => null, clock = () => hostNow(), quiet = null, assets = true, onDink = null, view = listenerFrame } = {}) {   // (view(out): your forward in out.fx / out.fz — tests)   // (onDink(rec): v53 stage 5 — the dink's other CS2 children, gd-impacts.js)
+export function createBlood(scene, { boxes = () => null, game = () => null, me = () => '', watched = () => null, clock = () => hostNow(), quiet = null, assets = true, onDink = null } = {}) {   // (onDink(rec): v53 stage 5 — the dink's other CS2 children, gd-impacts.js)
   const t0 = performance.now();
   const decalTex = dataTexture(builtinDecals(), 512), sprayTex = dataTexture(builtinSpray(), 256);
   const sp = quad(SPRAY_N, [['aP', 4], ['aV', 4], ['aS', 4], ['aM', 4], ['aC', 4], ['aX', 4], ['aF', 4]]), dc = quad(DECAL_N, [['aC', 4], ['aU', 4], ['aV', 4]]);
@@ -535,18 +484,8 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
     for (let j = 0; j < KA.length; j++) KA[j].needsUpdate = true; dink.visible = true; dinksN++;
   }
   function dinkHit(rec, t) { if (!dinks(rec) || !validRecord(rec)) return false; if (rec.v && (rec.v === me() || rec.v === watched())) return false; const n = planDink(rec, KB); if (n) { spawnDink(n, t); onDink?.(rec); } return n > 0; }
-  // (v53 HITS, H6) your own wounds on your screen: one screen-space pool, one draw, warmed with the others
-  const lc = quad(LOCAL_N, [['aP', 4], ['aL', 4], ['aC', 4]]);
-  const localMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uCells: { value: DECAL_GRID }, uMap: { value: decalTex } }, vertexShader: LOCAL_VS, fragmentShader: LOCAL_FS, transparent: true, depthWrite: false, depthTest: false, toneMapped: false });
-  localMat.userData.shared = true;
-  const local = new THREE.Mesh(lc.g, localMat); local.name = 'gd-blood-local'; local.frustumCulled = false; local.visible = false; local.matrixAutoUpdate = false; local.renderOrder = 999; local.userData.gd = true; local.userData.warm = true; local.userData.noPool = true; local.userData.fx = true; scene?.add(local);   // (fx: drawn after a smoke, so a cloud never covers it)
-  const LB = new Float32Array(MAX_LOCAL * LK), LA = Object.values(lc.a), VF = { fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 }; let lHead = 0, localEnd = -1, locals = 0, lastAt = -1;
-  function localHit(rec, t) { if (!validRecord(rec)) return 0; view(VF); const n = planLocal(rec, VF.fx, VF.fz, LB); const P = lc.a.aP.array, Lf = lc.a.aL.array, Cc = lc.a.aC.array;
-    for (let j = 0; j < n; j++) { const o = j * LK, q = lHead * 4; lHead = (lHead + 1) % LOCAL_N;
-      P[q] = LB[o]; P[q + 1] = LB[o + 1]; P[q + 2] = LB[o + 2]; P[q + 3] = t; Lf[q] = LB[o + 3]; Lf[q + 1] = LB[o + 4]; Lf[q + 2] = LB[o + 5]; Lf[q + 3] = LB[o + 6];
-      Cc[q] = LB[o + 7]; Cc[q + 1] = LB[o + 8]; Cc[q + 2] = LB[o + 9]; Cc[q + 3] = LB[o + 10]; localEnd = Math.max(localEnd, t + LB[o + 3]); }
-    if (n) { for (let j = 0; j < LA.length; j++) LA[j].needsUpdate = true; local.visible = true; locals++; lastAt = t; } return n; }
-  function clearLocal() { lc.a.aL.array.fill(0); lc.a.aL.needsUpdate = true; lHead = 0; localEnd = -1; local.visible = false; }
+  // (v53 FEEDBACK) no screen-space pool for your own wounds: the user's rule, the header.
+  let lastAt = -1;   // (the newest record's birth: pictures hold the clock from it)
   function clearDink() { dk.a.aV.array.fill(0); dk.a.aV.needsUpdate = true; kHead = 0; dinkEnd = -1; dink.visible = false; }
   // particles start with no life: nothing drawn
   const PB = new Float32Array(MAX_PER_HIT * SP), DB = new Float32Array(MAX_DECALS_PER_HIT * DC), cast = mapCast(boxes);
@@ -605,23 +544,23 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
     const r = globalThis.__infra?.renderer; try { r?.initTexture(T.decals); r?.initTexture(T.spray); } catch {} source = 'cs2'; }
   // Per frame: the clock uniform, new host records, at most one record's decals, quiet-moment texture swap.
   function update() {
-    const t = now(); sprayMat.uniforms.uTime.value = t; decalMat.uniforms.uTime.value = t; dinkMat.uniforms.uTime.value = t; localMat.uniforms.uTime.value = t;
-    if (spray.visible && t > sprayEnd) spray.visible = false; if (local.visible && t > localEnd) local.visible = false;
+    const t = now(); sprayMat.uniforms.uTime.value = t; decalMat.uniforms.uTime.value = t; dinkMat.uniforms.uTime.value = t;
+    if (spray.visible && t > sprayEnd) spray.visible = false;
     if (dink.visible && t > dinkEnd) dink.visible = false;
     if (pendingTex) swapTextures();
     const G = game();
-    if (roundChanged(G)) { if (dCount || spray.visible || pN) clear(); if (dink.visible) clearDink(); if (local.visible) clearLocal(); lastSeq = 0; }
+    if (roundChanged(G)) { if (dCount || spray.visible || pN) clear(); if (dink.visible) clearDink(); lastSeq = 0; }
     const on = live.blood, list = G?.mode === 'arena' ? G.combat?.bl : null;
     // new records (each once, by its rising number; one far below the last — another host — starts the count again)
     // (a client gets a new list each update; a host in this page — practice, solo — changes its own in place: the newest number tells)
     const top = list && list.length ? +list[list.length - 1]?.i : 0;
     if (list && (list !== lastList || top !== lastTop)) { lastList = list; lastTop = top; const hn = clock();
-      for (let j = 0; j < list.length; j++) { const r = list[j], i = +r?.i; if (!(i > lastSeq) && !(i < lastSeq - 6e5)) continue; lastSeq = i; if (hn - r.at <= KEEP_MS) { if (on) { hit(r, t); if (r.v && (r.v === me() || r.v === watched())) localHit(r, t); } if (r.hm) dinkHit(r, t); } } }   // (v53 HITS: your own wound's splatter on your screen)   // (the dink: whatever the Blood setting)
-    if (!on) { if (dCount || spray.visible || pN) clear(); if (local.visible) clearLocal(); return; }
+      for (let j = 0; j < list.length; j++) { const r = list[j], i = +r?.i; if (!(i > lastSeq) && !(i < lastSeq - 6e5)) continue; lastSeq = i; if (hn - r.at <= KEEP_MS) { if (on) hit(r, t); if (r.hm) dinkHit(r, t); } } }   // (the world's blood only: nothing on your own screen — v53 FEEDBACK)   // (the dink: whatever the Blood setting)
+    if (!on) { if (dCount || spray.visible || pN) clear(); return; }
     placeNext();
   }
-  return { spray, decals, dink, local, update, hit, clear, placeNext, swapTextures, dinkHit, clearDink, localHit, clearLocal,
-    get stats() { return { decals: dCount, sprayAlive: spray.visible, pending: pN, hits, source, sHead, dHead, dinks: dinksN, dinkAlive: dink.visible, kHead, locals, lHead, localAlive: local.visible }; },
+  return { spray, decals, dink, update, hit, clear, placeNext, swapTextures, dinkHit, clearDink,
+    get stats() { return { decals: dCount, sprayAlive: spray.visible, pending: pN, hits, source, sHead, dHead, dinks: dinksN, dinkAlive: dink.visible, kHead }; },
     // the dink's one-pixel width: the picture's height in pixels (lab / tests; 1080 until told)
     setViewHeight(h) { if (h > 0) dinkMat.uniforms.uPx.value = 2 / h; },
     get time() { return now(); }, get lastAt() { return lastAt; },
@@ -629,8 +568,8 @@ export function createBlood(scene, { boxes = () => null, game = () => null, me =
     hold(t) { held = t === null ? null : Number.isFinite(t) ? t : (performance.now() - t0) / 1000; },
     textures(which) { if (which === 'builtin') { decalMat.uniforms.uMap.value = decalTex; sprayMat.uniforms.uMap.value = sprayTex; sprayMat.uniforms.uWisp.value = 1; source = 'builtin'; } else if (which === 'cs2' && cs2) { decalMat.uniforms.uMap.value = cs2.decals; sprayMat.uniforms.uMap.value = cs2.spray; sprayMat.uniforms.uWisp.value = cs2.wisp ? 1 : 0; source = 'cs2'; } return source; },
     // tests: the pools' arrays
-    get pools() { return { spray: sp.a, decals: dc.a, dink: dk.a, local: lc.a }; },
+    get pools() { return { spray: sp.a, decals: dc.a, dink: dk.a }; },
     // one visible sample of each (sharing the pools' materials), for a warm-up that wants its own objects
-    warmObjects() { const a = new THREE.Mesh(sp.g, sprayMat), b = new THREE.Mesh(dc.g, decalMat), c = new THREE.Mesh(dk.g, dinkMat), d = new THREE.Mesh(lc.g, localMat); a.frustumCulled = b.frustumCulled = c.frustumCulled = d.frustumCulled = false; return [a, b, c, d]; },
-    dispose() { scene?.remove(spray); scene?.remove(decals); scene?.remove(dink); scene?.remove(local); sp.g.dispose(); dc.g.dispose(); dk.g.dispose(); lc.g.dispose(); sprayMat.dispose(); decalMat.dispose(); dinkMat.dispose(); localMat.dispose(); decalTex.dispose(); sprayTex.dispose(); } };
+    warmObjects() { const a = new THREE.Mesh(sp.g, sprayMat), b = new THREE.Mesh(dc.g, decalMat), c = new THREE.Mesh(dk.g, dinkMat); a.frustumCulled = b.frustumCulled = c.frustumCulled = false; return [a, b, c]; },
+    dispose() { scene?.remove(spray); scene?.remove(decals); scene?.remove(dink); sp.g.dispose(); dc.g.dispose(); dk.g.dispose(); sprayMat.dispose(); decalMat.dispose(); dinkMat.dispose(); decalTex.dispose(); sprayTex.dispose(); } };
 }

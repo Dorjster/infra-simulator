@@ -153,8 +153,8 @@ check('one instanced draw per pool (a quad, 6 indices, N instances)', blood.spra
   check('built-in pictures: decal splats and spray frames drawn (no CS2 files needed)', da > d.length / 4 * .08 && sa > s.length / 4 * .08, da + ' / ' + sa);
   check('the built-in decal atlas is the same each time (every computer)', (() => { const x = B.builtinDecals(128), y = B.builtinDecals(128); return x.length === y.length && x.every((v, k) => v === y[k]); })()); }
 
-// ── v53 HITS (H1, H6): CS2's per-emitter fades and caps, the head shot's own children, your own wounds on your screen ──
-{ const { EMIT, sprayLook, fadeStart, planLocal, LOCAL, LOCAL_N, LK, MAX_LOCAL, hitSide } = B;
+// ── v53 HITS (H1): CS2's per-emitter fades and caps, the head shot's own children (your own wound: tests/gd-own-wound.mjs) ──
+{ const { EMIT, sprayLook, fadeStart } = B;
   const listOf = rec => { const L = rec.z === 'head' ? [EMIT.high, EMIT.head] : [EMIT[tierOf(rec)]], out = []; for (const em of L) for (const e of em) for (let k = 0; k < e.n; k++) out.push(e); return out; };
   const PB2 = new Float32Array(B.MAX_PER_HIT * SP), hr = { ...recAt(4242), z: 'head', d: 100 }, nH = planSpray(hr, PB2), eH = listOf(hr);
   check(`a head shot plans every one of its ${eH.length} CS2 particles (high + blood_impact_headshot and its children) — under the per-hit cap ${B.MAX_PER_HIT}`, nH === eH.length && nH <= B.MAX_PER_HIT, nH + ' / ' + eH.length);
@@ -197,17 +197,9 @@ check('one instanced draw per pool (a quad, 6 indices, N instances)', blood.spra
         check('CS2\'s files: blood_impact_headshot.vpcf\'s children are the ones drawn', kv3 && ch.join() === 'blood_impact_headshot_01b,blood_impact_red_01_chunk,blood_impact_red_01_backspray,blood_impact_red_01_chunk,blood_impact_headshot_01e,blood_impact_headshot_01c,blood_impact_headshot_01d', ch.join()); }
       finally { fs.rmSync(tmp, { recursive: true, force: true }); } }
     else console.log('(no CS2 install here: the blood emitters are checked against the shipped numbers only)'); }
-  // your own wounds on your screen (blood_impact_localfrontenemy / localrearhit / lp_spray)
-  const LB = new Float32Array(MAX_LOCAL * LK), lr = (r, d = 40) => ({ ...recAt(31337), v: 'ann', d, r });
-  const front = planLocal(lr([.7, 0, .7]), 0, -1, LB); let left = true; const kF = Math.round(LOCAL.front.n[0] + (LOCAL.front.n[1] - LOCAL.front.n[0]) * (40 - 15) / 50);
-  let right = true, ordered = true; for (let j = 0; j < kF; j++) { if (!(LB[j * LK] < 0)) left = false; if (!(LB[(kF + j) * LK] > 0)) right = false; if (j && !(LB[j * LK + 1] < LB[(j - 1) * LK + 1])) ordered = false; }   // (the shot travels +x +z: it came from −x −z — ahead-left of a view along −z)
-  // (v53 HITS final) both children every front hit — localfrontenemy.vpcf lists _splatter_lft and _splatter_rgt, neither disabled — each laid in order down its path (y .75 → −.375)
-  check(`shot from the front left: CS2's localfrontenemy _lft AND _rgt splatter (${kF} splats each at 40 damage: 15 → 65 remapped to 5 → 10), in order down each path, plus lp_spray`, hitSide(lr([.7, 0, .7]), 0, -1).front && hitSide(lr([.7, 0, .7]), 0, -1).side === -1 && left && right && ordered && Math.abs(LB[1] - B.PATH_Y[0]) < 1e-6 && Math.abs(LB[(kF - 1) * LK + 1] - B.PATH_Y[1]) < 1e-6 && front > 2 * kF);
-  { const big = planLocal(lr([.7, 0, .7], 100), 0, -1, LB); check(`the heaviest front hit fits the per-hit cap: 10 + 10 + lp_spray 6 = ${big} ≤ ${MAX_LOCAL}`, big === 26 && big <= MAX_LOCAL); }
-  const rear = planLocal(lr([0, 0, -1]), 0, -1, LB); check('shot from behind: localrearhit\'s 10 splats (and lp_spray), colour (249,55,55) × 2', !hitSide(lr([0, 0, -1]), 0, -1).front && rear >= 10 && rear <= MAX_LOCAL && Math.abs(LB[7] - Math.min(1, ((249 / 255 + .055) / 1.055) ** 2.4 * 2)) < 1e-4);
-  const fl = new Float32Array(LOCAL_N * 4), sL = new THREE.Scene(), GL = mkGame(), bl2 = createBlood(sL, { game: () => GL, me: () => 'ann', clock: () => hostT, assets: false, view: o => { o.fx = 0; o.fz = -1; return o; } });
-  bl2.update(); let q = 70000; for (let k = 0; k < 12; k++) { GL.combat = { ...GL.combat, bl: [{ ...lr([.7, 0, .7], 60), i: ++q, at: hostT }] }; bl2.update(); }
-  check(`your own wounds: one screen-space pool of ${LOCAL_N} (one draw, warmed, after a smoke), recycled — ${bl2.stats.locals} hits`, sL.children.includes(bl2.local) && bl2.local.userData.warm && bl2.local.userData.fx && bl2.local.geometry.isInstancedBufferGeometry && bl2.local.geometry.index.count === 6 && bl2.pools.local.aP.count === LOCAL_N && bl2.stats.locals === 12 && bl2.stats.lHead < LOCAL_N && bl2.local.visible);
-  const l0 = bl2.stats.locals; GL.combat = { ...GL.combat, bl: [{ ...lr([.7, 0, .7]), v: 'cy', i: ++q, at: hostT }] }; bl2.update(); check('someone else\'s wound: no splatter on your screen', bl2.stats.locals === l0);
-  check('the warm-up has the local pool too', bl2.warmObjects().length === 4); bl2.dispose(); }
+  // (v53 FEEDBACK, the user 2026-11-05: no blood on your own screen) a hit on you: no screen pool, no spray in your view
+  { const sL = new THREE.Scene(), GL = mkGame(), bl2 = createBlood(sL, { game: () => GL, me: () => 'ann', clock: () => hostT, assets: false }), k0 = sL.children.length;
+    bl2.update(); let q = 70000; for (let k = 0; k < 12; k++) { GL.combat = { ...GL.combat, bl: [{ ...recAt(31337), v: 'ann', d: 60, r: [.7, 0, .7], i: ++q, at: hostT }] }; bl2.update(); }
+    check('your own wounds: nothing on your screen (no local pool, no spray in your view, no new object)', !('local' in bl2) && !bl2.stats.sprayAlive && sL.children.length === k0 && bl2.stats.hits === 12);
+    check('the warm-up: the spray, the decals and the dink (nothing for your screen)', bl2.warmObjects().length === 3); bl2.dispose(); } }
 console.log(`\n${ok}/${n} passed`); process.exit(ok === n ? 0 : 1);

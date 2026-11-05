@@ -35,7 +35,7 @@
 // are cached per roster; animations are transform / opacity only. Defuse rounds use this team counter; deathmatch and practice keep
 // arena-ui.js's top bar (#ar-top).
 import { skinTitle, skinFor, catalogHash } from './skins.js';
-import { weaponById, moveInaccuracy, MAX_HP, isFirearm, NADE_ORDER, WEAPONS, KNIVES } from './weapons-data.js';
+import { weaponById, moveInaccuracy, MAX_HP, isFirearm, NADE_ORDER, WEAPONS, KNIVES, wholeMags, magsIn, reserveModeOf } from './weapons-data.js';
 import { hpOf, armorOf, arenaArsenalOf } from './combat-logic.js';
 import { loadCrosshair, crosshairHTML } from './gd-crosshair.js';
 import { bindingOf, keyLabel } from './input.js';
@@ -54,12 +54,21 @@ export const NADE_ICON = { he: '●', flash: '◆', smoke: '■', decoy: '◎', 
 // files (weapons.vdata has no such key): the user's picture shows the Glock-18 with ammo_reserve_magazine; the rest
 // follow the icons' own shapes (a curved magazine for the AK-47 / Galil AR, shells for shotguns, a box for the
 // machine guns, the Bizon's tube, the P90's top magazine, the R8's loader).
-export const RESERVE_TYPE = { ak: 'banana_mag', galil: 'banana_mag', shotgun: 'shotgun_shell', xm1014: 'shotgun_shell', negev: 'box', lmg: 'box', bizon: 'bizon_tube', p90: 'p90' };   // (GD's ids: weapons-data.js — shotgun = Nova, lmg = M249)
+export const RESERVE_TYPE = { ak: 'banana_mag', galil: 'banana_mag', shotgun: 'shotgun_shell', xm1014: 'shotgun_shell', sawedoff: 'shotgun_shell', negev: 'box', lmg: 'box', bizon: 'bizon_tube', p90: 'p90', revolver: 'revolver_loader' };   // (GD's ids: weapons-data.js — shotgun = Nova, lmg = M249; v53 RESERVE final: the R8's ammo_reserve_revolver_loader — .HUD--ammo-reserve--revolver_loader in the vcss, imported by tools/import-cs2-hud.mjs — and the Sawed-Off's shells, tube-fed as the Nova; which gun takes which is CS2 code, not data)
 export const reserveType = id => RESERVE_TYPE[id] || 'magazine';
+// v53 RESERVE (spec addendum 13): the host's "Reserve ammo" model. Bullets: "20 | 120", the reserve as a number (the
+// user's cs2-hud.png). Magazines: CS2's magazine-icons mode (hudhealthammocenter.vcss: `.show-mags
+// #HudReserveMagsContainer{visibility: visible}` — flow-children: right, one ammo_reserve_<type> icon per magazine, the
+// .hud-WPN-ammo-reserve__icon 18 px with margin-left 4 px — and `.reserve-ammo-as-icons #HudReserveAmmoCounter{visibility:
+// collapse}`: no number), for the guns weapons.vdata counts in magazines (m_bReserveAmmoAsClips); the shotguns' shells
+// stay a number. The icons are made once (MAG_ICONS, the most a reserve can hold here) and only shown or hidden.
+// (hudhealthammocenter.vxml_c, the panel tree, did not decompile here — s2v: "Unknown KVType 26" — so whether CS2 also
+// keeps the single reserve icon beside the row is not read from the files: it is hidden, the row is the reserve.)
+export const MAG_ICONS = 8;
 const NADE_KEY = { he: 'a-he', flash: 'a-flash', smoke: 'a-smoke', decoy: 'a-decoy', molotov: 'a-molotov', incendiary: 'a-molotov' };
 // CS2's equipment icon names (the kill-feed import's own table arrives in killfeed.json "weapons"); ours: the rendered
 // silhouettes dist/icons/w-<id>.png (guns, knives), drawn shapes for the rest — all used as masks in the HUD colour.
-const ICON_DIR = new URL('./icons/', import.meta.url).href, HAS_PIC = new Set([...WEAPONS.map(w => w.id), ...KNIVES.map(k => k.id)]);
+const ICON_DIR = new URL('./icons/', import.meta.url).href, HAS_PIC = new Set([...WEAPONS.map(w => w.id), ...KNIVES.map(k => k.id), 'zeus']);   // (zeus: v53 GUNS8, dist/icons/w-zeus.png)
 const svgURL = body => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 32">${body}</svg>`);
 const OWN = {   // (original drawings, 64 × 32)
   he: svgURL('<circle cx="32" cy="19" r="10"/><rect x="28" y="4" width="8" height="6" rx="1"/><path d="M36 6h9v3h-9z"/>'),
@@ -100,6 +109,7 @@ ${['health', 'armor', 'ammo', 'reserve', 'money', 'timer', 'scoreCT', 'scoreT', 
 /* the reload cue (CS2's .hud-HA-icon-container.HUD--on-reload: keyframes 'reload' 0.3 s ease-in — the reserve icon drops
    50 px out and comes back in from 50 px above, hudhealthammocenter.vcss), clipped by its box; two names so a new reload
    restarts it without a reflow */
+#gd-hud .reserve .mg{display:none}#gd-hud .reserve.icons .mg{display:inline-flex}#gd-hud .reserve .sep,#gd-hud .reserve .mg{flex:0 0 auto}#gd-hud .vb .reserve.icons{width:auto;min-width:${U(BOX.reserve[4])}}#gd-hud .reserve .mg .bul{margin-left:${U(4)}}#gd-hud .reserve .mg .bul[hidden],#gd-hud .reserve.icons b,#gd-hud .reserve.icons .bw{display:none}/* v53 RESERVE: Magazines — CS2's .show-mags icons, no number; the row grows rightwards as CS2's #HudReserveMagsContainer{width: fit-children; flow-children: right} (final: the fixed 62-unit box squeezed the '|' to 0 px at 3+ magazines and the 4th icon ran out of it) */
 #gd-hud .reserve .bw{display:inline-flex;overflow:hidden}#gd-hud .reserve .bw.ra .bul{animation:gd-rl-a .3s ease-in}#gd-hud .reserve .bw.rb .bul{animation:gd-rl-b .3s ease-in}
 @keyframes gd-rl-a{0%{transform:translateY(0)}50%{transform:translateY(${U(50)})}50.01%{transform:translateY(${U(-50)})}100%{transform:translateY(0)}}@keyframes gd-rl-b{0%{transform:translateY(0)}50%{transform:translateY(${U(50)})}50.01%{transform:translateY(${U(-50)})}100%{transform:translateY(0)}}
 #gd-hud .money{font-size:${U(38)};line-height:${U(38)};color:#fff;white-space:nowrap}#gd-hud .money .dm{position:absolute;left:0;bottom:100%;font-size:${U(24)};opacity:0}
@@ -108,7 +118,7 @@ ${['health', 'armor', 'ammo', 'reserve', 'money', 'timer', 'scoreCT', 'scoreT', 
 #gd-hud .wl{position:absolute;inset:0}#gd-hud .row{position:absolute;right:${U(34)};width:${U(130)};height:${U(36)};display:none}#gd-hud .row.on{display:block}
 #gd-hud .row .ic{position:absolute;inset:0;background:var(--hc);-webkit-mask:var(--m) right center/contain no-repeat;mask:var(--m) right center/contain no-repeat;opacity:.8;filter:brightness(.9)}
 #gd-hud .row.sel .ic{opacity:1;filter:brightness(1.5) drop-shadow(0 0 1px #000)}#gd-hud .row .n{position:absolute;right:${U(-25)};top:${U(SLOT_NUM_DY + 10)};width:${U(14)};font-size:${U(16)};line-height:${U(16)};text-align:center;color:#fff}
-#gd-hud .row .nm{position:absolute;right:${U(-3)};top:calc(100% + ${U(NAME_DY - 18)});white-space:nowrap;font:600 ${U(16)}/${U(18)} 'GD HUD','Barlow Semi Condensed','Arial Narrow',system-ui,sans-serif;color:#fff;display:none}#gd-hud .row.sel .nm{display:block}
+#gd-hud .row .nm{position:absolute;right:${U(-3)};top:calc(100% + ${U(NAME_DY - 18)});white-space:nowrap;font:600 ${U(16)}/${U(18)} 'GD HUD','Barlow Semi Condensed','Arial Narrow',system-ui,sans-serif;color:#fff;display:none}#gd-hud .row.sel .nm{display:block}#gd-hud .row .ic.z{display:none;inset:auto;top:0;right:calc(100% + ${U(6)});width:${U(48)};height:100%}#gd-hud .row.zeus .ic.z{display:block}#gd-hud .row.zsel .ic.z{opacity:1;filter:brightness(1.5) drop-shadow(0 0 1px #000)}#gd-hud .row.zsel .nm{display:block}/* (v53 GUNS8: the Zeus x27 in row 3) */
 #gd-hud .nades{display:flex;flex-direction:row-reverse;align-items:center;gap:${U(NADE_PITCH - 36)}}#gd-hud .nades span{position:relative;width:${U(36)};height:${U(36)};flex:none}
 #gd-hud .nades span i{position:absolute;inset:0;background:var(--hc);-webkit-mask:var(--m) center/contain no-repeat;mask:var(--m) center/contain no-repeat;opacity:.8}#gd-hud .nades span.on i{opacity:1;filter:brightness(1.5)}
 #gd-hud .nades span.pip i{-webkit-mask:none;mask:none;inset:auto;left:50%;top:50%;width:${U(5)};height:${U(5)};margin:${U(-2.5)};border-radius:50%;background:#fff;opacity:.45}
@@ -120,7 +130,7 @@ ${['health', 'armor', 'ammo', 'reserve', 'money', 'timer', 'scoreCT', 'scoreT', 
 @keyframes gd-bomb{0%{opacity:.5}50%{opacity:1}100%{opacity:.5}}
 #gd-hud .scoreCT,#gd-hud .scoreT{display:grid;place-items:center;background:linear-gradient(180deg,#000000a0,#00000070);font-size:${U(28)};line-height:1}#gd-hud .aliveCT,#gd-hud .aliveT{background:linear-gradient(180deg,#00000070,#0000)}#gd-hud .scoreCT{color:#b5d4ee}#gd-hud .scoreT{color:#ead18a}
 #gd-hud .aliveCT,#gd-hud .aliveT{display:flex;align-items:center;justify-content:center;gap:${U(3)};font:600 ${U(13)}/1 'GD HUD',system-ui;color:#fff;opacity:.85}#gd-hud .aliveCT i,#gd-hud .aliveT i{width:${U(9)};height:${U(12)};background:#fff;-webkit-mask:url('${OWN.face}') center/contain no-repeat;mask:url('${OWN.face}') center/contain no-repeat}
-#gd-hud.sp .vb>:not(.tc),#gd-hud.sp #gd-x,#gd-hud.sp #gd-scope{visibility:hidden}
+#gd-hud.sp .vb>:not(.tc),#gd-hud.sp #gd-x,#gd-hud.sp #gd-scope{visibility:hidden}#gd-hud.dc .vb,#gd-hud.dc #gd-x,#gd-hud.dc #gd-scope,#gd-hud.dc .gd-hm{visibility:hidden}
 #gd-hud .avatarsCT,#gd-hud .avatarsT{display:flex;gap:0}#gd-hud .avatarsCT{flex-direction:row-reverse}
 #gd-hud .av{position:relative;width:${U(52)};height:${U(55)};margin:0 ${U(1)};box-sizing:border-box;border:${U(2)} solid var(--pc,#7f7f7f);background:linear-gradient(180deg,#3a4652,#1b2229);display:none}#gd-hud .av.on{display:block}#gd-hud .av.t{background:linear-gradient(180deg,#6b5a3c,#2c2418)}
 #gd-hud .av .pic{position:absolute;inset:${U(6)} ${U(4)} ${U(5)};background:#0006;-webkit-mask:var(--m) center bottom/contain no-repeat;mask:var(--m) center bottom/contain no-repeat}#gd-hud .av.ct .pic{background:#9fb3c4cc}#gd-hud .av.t .pic{background:#d8c191cc}
@@ -139,6 +149,8 @@ html body:has(#gd-hud.cs2:not([hidden])) #game-notifications{left:calc(var(--gd-
 // v53 LOOK (gd-hud-per-frame-object): the crosshair's movement state copied into one reused record each frame (it was
 // { ...move(), scoped } — a new object 60+ times a second).
 const MOVE_S = { scoped: false };
+// v53 PERF4X: the crosshair gap's CSS values, made once (the gap is a whole number of pixels, 0 … 40).
+const XG_PX = Array.from({ length: 41 }, (_, i) => i + 'px');
 export function createGdHud({ world, name, weapons, recoil, fov, move, active, spectating = () => false, watched = () => null }) {   // (spectating / watched: lab.js — dead and watching a team mate, CS2's in-eye; the watched player's key)
   let tW = null, tS = null, tK = -1, tC = '', tTitle = '';   // (the weapon title, made again only when the weapon, its skin or the host's CS2 catalogue — the finish names — changes)
   const css = document.createElement('style'); css.textContent = CSS_TEXT() + `
@@ -146,11 +158,11 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active, s
 #gd-scope{position:absolute;inset:0;display:none}#gd-scope.on{display:block}#gd-scope .ring{position:absolute;left:50%;top:50%;width:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.92);height:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.92);transform:translate(-50%,-50%);border-radius:50%;box-shadow:0 0 0 200vmax #000;border:2px solid #000}#gd-scope .h,#gd-scope .v{position:absolute;background:#000}#gd-scope .h{left:0;right:0;top:50%;height:1px}#gd-scope .v{top:0;bottom:0;left:50%;width:1px}#gd-scope.dot .ring{width:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.6);height:calc(min(var(--gd-view-h,100vh),var(--gd-view-w,100vw))*.6);box-shadow:0 0 0 200vmax #000c}#gd-scope.dot .h,#gd-scope.dot .v{display:none}#gd-scope.dot:after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:#ff3030;box-shadow:0 0 4px #f00}`;
   (document.head || document.body).append?.(css);
   const av = side => { let h = ''; for (let i = 0; i < 5; i++) h += `<i class="av ${side}"><i class="pic" style="--m:url('${OWN.face}')"></i><i class="ag"></i><b class="q">?</b><b class="lt"></b><i class="mk"></i><i class="hb"><i></i></i></i>`; return h; };
-  const rows = () => { let h = ''; for (let s = 1; s <= 3; s++) h += `<div class="row r${s}" style="bottom:calc(${-ROW_CY[s] - 18} * var(--gd-u))"><i class="ic"></i><b class="n">${s}</b><b class="nm"></b></div>`; return h; };
+  const rows = () => { let h = ''; for (let s = 1; s <= 3; s++) h += `<div class="row r${s}" style="bottom:calc(${-ROW_CY[s] - 18} * var(--gd-u))"><i class="ic"></i>${s === 3 ? '<i class="ic z"></i>' : ''}<b class="n">${s}</b><b class="nm"></b></div>`; return h; };   // (v53 GUNS8: row 3 also holds the Zeus x27 — CS2's GEAR_SLOT_KNIFE position 1 — to the knife's left)
   let nadeHTML = ''; for (let i = 0; i < 4; i++) nadeHTML += '<span class="pip"><i></i></span>';
   document.body.insertAdjacentHTML('beforeend', `<div id="gd-hud" hidden><div id="gd-scope"><div class="ring"></div><div class="h"></div><div class="v"></div></div><div id="gd-x"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="c"></i></div>
     <div class="vb"><div id="gd-hp"><div class="health hp"><b class="num">100</b></div><div id="gd-hpbar"><i></i></div><div class="armor arm"><i style="--m:url('${OWN.shield}')"></i><b>0</b></div></div>
-    <div id="gd-wp"><div class="ammo"><b class="num"></b></div><div class="reserve"><i class="sep"></i><b></b><span class="bw"><i class="bul" style="--m:url('${OWN.bullet}')"></i></span></div><div class="clip"><i></i></div>
+    <div id="gd-wp"><div class="ammo"><b class="num"></b></div><div class="reserve"><i class="sep"></i><b></b><span class="bw"><i class="bul" style="--m:url('${OWN.bullet}')"></i></span><span class="mg" style="--m:url('${OWN.bullet}')">${'<i class="bul"></i>'.repeat(MAG_ICONS)}</span></div><div class="clip"><i></i></div>
       <div class="wl">${rows()}<div class="nades util">${nadeHTML}</div><div class="bombKit"><i></i><b>5</b></div></div><b class="name" hidden></b></div>
     <div class="money"><b>$0</b><i class="dm"></i></div>
     <div class="tc" hidden><div class="timer"><b>0:00</b><i class="bomb" style="--m:url('${OWN.bomb}')"></i></div><div class="scoreCT">0</div><div class="scoreT">0</div><div class="aliveCT"><i></i><b></b></div><div class="aliveT"><i></i><b></b></div><div class="avatarsCT">${av('ct')}</div><div class="avatarsT">${av('t')}</div></div></div></div>`);
@@ -191,20 +203,22 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active, s
   const fb = createHitFeedback({ parent: root }); let fbName = null, fbKey = '';
   const alerts = createHudAlerts();
   // Numbers last written (compared before any string is made).
-  let rlN = 0, rlPar = 0, hpN = -1, hpLow = -1, magN = -1, resN = -1, lowN = -1, clipF = -1, moneyN = null, dmPar = 0, tcOn = null, timerS = -2, timerCls = '', sCTn = -1, sTn = -1, aCTn = -1, aTn = -1, hcSide = '', hcSlot = -1, hcCol = -1, topHidden = null, spOn = false;
+  let resIc = -1, magsN = -1, rlN = 0, rlPar = 0, hpN = -1, hpLow = -1, magN = -1, resN = -1, lowN = -1, clipF = -1, moneyN = null, dmPar = 0, tcOn = null, timerS = -2, timerCls = '', sCTn = -1, sTn = -1, aCTn = -1, aTn = -1, hcSide = '', hcSlot = -1, hcCol = -1, topHidden = null, spOn = false, dcOn = false;   // (dcOn: v53 FEEDBACK final — the death cam of a respawn mode, below)
   // The 5 Hz part: the weapon list and the team counter.
   // WL: what the weapon list shows now (compared value by value — no signature string).
-  const WL = { prim: undefined, pist: undefined, knife: undefined, kn: undefined, cur: undefined, bomb: false, kit: false, keyVer: -1, kfw: null, title: null, nc: new Int8Array(NADE_ORDER.length) };
+  const WL = { zeus: undefined, prim: undefined, pist: undefined, knife: undefined, kn: undefined, cur: undefined, bomb: false, kit: false, keyVer: -1, kfw: null, title: null, nc: new Int8Array(NADE_ORDER.length) };
   function weaponList(G, me, w) {
     const A = G.arena, k = key(me), arsenal = arenaArsenalOf(G, me), l = A?.loadout?.[k] || {}, nades = Array.isArray(l.nades) ? l.nades : [], d = G.combat?.d, kn = A?.knives?.[k];
     let prim = l.primary || null, pist = null, knife = 'knife'; for (let i = 0; i < arsenal.length; i++) { const id = arsenal[i], kd = weaponById(id)?.kind; if (!pist && id !== prim && kd === 'pistol') pist = id; if (kd === 'knife' && knife === 'knife') knife = id; }
     const bomb = d?.bomb?.carrier === k, kit = !!d?.kits?.[k], cur = w?.id || '';
     { const sk = w && skinFor(A, me, w.id), kills = sk?.kills | 0; if (w !== tW || sk !== tS || kills !== tK || catalogHash() !== tC) { tW = w; tS = sk; tK = kills; tC = catalogHash(); tTitle = w ? (sk ? skinTitle(w.name, sk) + (sk.st ? ' · ' + kills + ' kills' : '') : w.name) : ''; } }
-    let same = WL.prim === prim && WL.pist === pist && WL.knife === knife && WL.kn === kn && WL.cur === cur && WL.bomb === bomb && WL.kit === kit && WL.keyVer === keyVer && WL.kfw === KFW && WL.title === tTitle && wlSig === 'ok';
+    const zeus = arsenal.includes('zeus');   // (v53 GUNS8)
+    let same = WL.zeus === zeus && WL.prim === prim && WL.pist === pist && WL.knife === knife && WL.kn === kn && WL.cur === cur && WL.bomb === bomb && WL.kit === kit && WL.keyVer === keyVer && WL.kfw === KFW && WL.title === tTitle && wlSig === 'ok';
     for (let i = 0; i < NADE_ORDER.length; i++) { const c = countOf(nades, NADE_ORDER[i]); if (WL.nc[i] !== c) { WL.nc[i] = c; same = false; } }
-    if (same) return; WL.prim = prim; WL.pist = pist; WL.knife = knife; WL.kn = kn; WL.cur = cur; WL.bomb = bomb; WL.kit = kit; WL.keyVer = keyVer; WL.kfw = KFW; WL.title = tTitle; wlSig = 'ok';   // (wlSig = '' elsewhere: redo it)
+    if (same) return; WL.zeus = zeus; WL.prim = prim; WL.pist = pist; WL.knife = knife; WL.kn = kn; WL.cur = cur; WL.bomb = bomb; WL.kit = kit; WL.keyVer = keyVer; WL.kfw = KFW; WL.title = tTitle; wlSig = 'ok';   // (wlSig = '' elsewhere: redo it)
     const put = (s, id) => { const R = ROWS[s]; R.r.classList.toggle('on', !!id); if (!id) return; R.r.classList.toggle('sel', id === cur); R.ic.style.setProperty('--m', `url('${iconOf(id, kn)}')`); R.nm.textContent = id === cur ? tTitle : ''; };
     put(1, prim); put(2, pist); put(3, knife);
+    { const R = ROWS[3], z = R.r.querySelector('.ic.z'); R.r.classList.toggle('zeus', zeus); R.r.classList.toggle('zsel', zeus && cur === 'zeus'); if (z && zeus) z.style.setProperty('--m', `url('${iconOf('zeus')}')`); if (zeus && cur === 'zeus') R.nm.textContent = tTitle; }   // (v53 GUNS8: the Zeus x27 beside the knife, lit when drawn)
     els.name.textContent = tTitle;   // (kept for tools: the weapon in hand, its skin's name)
     let i = 0; if (NADES.length >= 4) for (const id of NADE_ORDER) { const c = countOf(nades, id); if (!c || i >= 4) continue; const s = NADES[i++]; s.className = cur === id ? 'on' : ''; s.dataset.n = id; s.dataset.c = c; s.innerHTML = `<i style="--m:url('${iconOf(id)}')"></i>${c > 1 ? '<b>×' + c + '</b>' : ''}<em>${keyOf(id)}</em>`; }
     for (; i < NADES.length && i < 4; i++) { const s = NADES[i]; s.className = 'pip'; delete s.dataset.n; delete s.dataset.c; s.innerHTML = '<i></i>'; }
@@ -247,12 +261,21 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active, s
   return {
     // A hit of yours the host confirmed (lab.js reportHit): marker + sounds (gd-hit-feedback.js).
     hit(kill, head, helmet) { fb.hit(kill, head, helmet); },
+    // Tests (v53 FEEDBACK final): the hit feedback's counters (tests/gd-own-wound.mjs — the dead branches).
+    get fbStats() { return fb.stats; },
     // Tests: the boxes as laid out now (CSS px), by name.
     rect(name) { const e = { health: els.hp, healthBar: $('#gd-hpbar'), armor: els.armBox, ammo: els.ammoBox, reserve: els.resBox, money: els.moneyBox, timer: els.timer, scoreCT: els.sCT, scoreT: els.sT, avatarsCT: $('#gd-hud .avatarsCT'), avatarsT: $('#gd-hud .avatarsT'), wpn1: ROWS[1].r, wpn2: ROWS[2].r, wpn3: ROWS[3].r, nades: els.util, bombKit: els.bk }[name]; return e?.getBoundingClientRect?.() || null; },
     update() {
-      const g = world.operations.game, act = g.mode === 'arena' && active(), sp = !act && g.mode === 'arena' && !!g.combat?.d && spectating(), on = act || sp; if (root.hidden === on) root.hidden = !on; alerts.update(on, g, hostNow()); if (!on) return;
+      const g = world.operations.game, act = g.mode === 'arena' && active(), dead = !act && g.mode === 'arena' && spectating(), sp = dead && !!g.combat?.d, dc = dead && !sp, on = act || sp || dc; if (root.hidden === on) root.hidden = !on; alerts.update(act || sp, g, hostNow()); if (!on) return;
+      // (v53 FEEDBACK final) dc: dead in a respawn mode (Deathmatch, practice: no combat.d) — the death cam until you respawn. Only CS2's
+      // damage indicator shows (class dc: the boxes, the crosshair, the scope and the hit marker hidden; the alerts as before), so the hit
+      // that killed you keeps its red segments through their fade (before, the HUD — the indicator in it — went display:none the next frame).
+      if (dc !== dcOn) { dcOn = dc; root.classList.toggle('dc', dc); }
+      if (dc) { const nm = name(); if (nm !== fbName) { fbName = nm; fbKey = key(nm); } fb.update(g, fbKey, hostNow()); return; }
       if (sp !== spOn) { spOn = sp; root.classList.toggle('sp', sp); slow = 0; }   // (dead, watching: only the team counter — CS2 keeps it; the watched player's numbers are the spectate view's)
-      if (sp) { const tn = performance.now(); if (tn - slow > 200) { slow = tn; teamCounter(g, name()); } timer(g); return; }
+      if (sp) { const tn = performance.now(); if (tn - slow > 200) { slow = tn; teamCounter(g, name()); } timer(g);
+        { const nm = name(); if (nm !== fbName) { fbName = nm; fbKey = key(nm); } fb.update(g, fbKey, hostNow()); }   // (v53 FEEDBACK: dead too. The killing hit itself is normally taken in the live branch — lab.js runs this before spectator.update, so its first frame is still active — this is for a record that comes a frame later; and, while you watch a team mate in-eye, the hits round them are heard placed (onlookers' CS2 Damage* / Death* .Onlooker, from the listener at their eyes) — CS2's spectator hears the game where the watched player is; its files don't say more)
+        return; }
       { const nm = name(); if (nm !== fbName) { fbName = nm; fbKey = key(nm); } fb.update(g, fbKey, hostNow()); }   // (v53 S3: hurt sounds, arcs, onlookers' headshots)
       const me = name(), hp = hpOf(g, me), arm = armorOf(g, me), w = weapons.current, d = g.combat?.d;
       // Health: the number, the bar, the low glow (≤ 20, CS2's HUD--health--low) and a jitter on each loss.
@@ -262,8 +285,10 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active, s
       // Ammo: magazine big, "| reserve" small with the bullet icon, the clip bar; red glow at ≤ 20 % of the magazine.
       if (w && isFirearm(w)) { const m = weapons.ammo, r = weapons.reserve, low = m <= Math.ceil(w.mag * .2) ? 1 : 0;
         if (els.ammoBox.hidden) els.ammoBox.hidden = false;
-        { const rt = reserveType(w.id); if (rt !== resType) { resType = rt; els.resBox.querySelector('.bul').style.setProperty('--m', `url('${HUDI?.('ammo_' + rt) || HUDI?.('bullet') || OWN.bullet}')`); } }   // (CS2's reserve icon for this weapon: a table string, set only on a weapon change)
+        { const rt = reserveType(w.id); if (rt !== resType) { resType = rt; const u = `url('${HUDI?.('ammo_' + rt) || HUDI?.('bullet') || OWN.bullet}')`; els.resBox.querySelector('.bul').style.setProperty('--m', u); els.resMg ??= els.resBox?.querySelector?.('.mg'); els.resMg?.style?.setProperty?.('--m', u); } }   // (CS2's reserve icon for this weapon: a table string, set only on a weapon change)
         if (m !== magN) { magN = m; els.ammo.textContent = m; } if (r !== resN) { resN = r; els.res.textContent = r; } if (low !== lowN) { lowN = low; els.ammoBox.className = 'ammo' + (low ? ' low' : ''); }
+        { const ic = wholeMags(w, reserveModeOf(g)) ? 1 : 0; if (ic !== resIc) { resIc = ic; magsN = -1; els.resBox.className = 'reserve' + (ic ? ' icons' : ''); }   // (v53 RESERVE: Magazines — one icon per magazine left, MAG_ICONS above; set only when the count changes)
+          if (ic) { const n = Math.min(MAG_ICONS, magsIn(w, r)); if (n !== magsN) { magsN = n; const kids = (els.resMg ??= els.resBox?.querySelector?.('.mg'))?.children; if (kids) for (let i = 0; i < kids.length; i++) kids[i].hidden = i >= n; } } }
         const f = Math.max(0, Math.min(1, m / (w.mag || 1))); if (f !== clipF) { clipF = f; els.clip.style.transform = `scaleX(${f})`; }
         { const rl = weapons.reloading ? 1 : 0; if (rl !== rlN) { if (rl) { rlPar ^= 1; const bw = els.resBw ??= els.resBox?.querySelector?.('.bw'); if (bw) bw.className = rlPar ? 'bw ra' : 'bw rb'; } rlN = rl; } } }   // (v53 HUD: the reload cue, on a reload's start)
       else if (!els.ammoBox.hidden) { els.ammoBox.hidden = true; magN = resN = lowN = -1; }
@@ -279,7 +304,11 @@ export function createGdHud({ world, name, weapons, recoil, fov, move, active, s
       // rifle unless scoped (then the scope's reticle), as in CS2. Dynamic: the gap opens with the inaccuracy.
       const showX = !!w && !sniper; if (els.x.hidden === showX) els.x.hidden = !showX; if (!showX) return;
       const inacc = weapons.inaccuracy ?? moveInaccuracy(w, (Object.assign(MOVE_S, move()).scoped = sc > 0, MOVE_S)), gap = Math.round(Math.min(40, px(inacc, f)));   /* dynamic, CS2's: the gun's whole inaccuracy now (weapons.js — its floor, the shots' fire penalty, running, jumping), as the cone the next bullet can land in */
-      if (last.xg !== gap || last.xv !== xhVer) { last.xg = gap; last.xv = xhVer; els.x.innerHTML = crosshairHTML(xh, gap); }
+      // (v53 PERF4X: the crosshair's nodes built only when its look changes; the moving gap is one CSS variable, from strings
+      // made once — rebuilding the HTML on every gap step parsed ~30 crosshairs a second while firing, each a style recalc,
+      // a layout and a hover hit test on new nodes: about a fifth of a millisecond a frame at CPU ×4)
+      if (last.xv !== xhVer) { last.xv = xhVer; last.xg = null; els.x.innerHTML = crosshairHTML(xh, 0, true); }
+      if (last.xg !== gap) { last.xg = gap; els.x.style.setProperty('--xg', XG_PX[gap] ?? gap + 'px'); }
     },
   };
 }

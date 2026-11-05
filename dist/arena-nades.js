@@ -243,6 +243,13 @@ let lastNy = -1, probe = null;
 // Tests: a function called after each substep a flight moves (g, and where it was: ox, oy, oz) — the sweep test checks
 // every committed piece of path against the map's triangles. null (the game): nothing.
 export function setNadeProbe(fn) { probe = typeof fn === 'function' ? fn : null; }
+// v53 PROPS: the physics props (gd-props.js installs it: the host's simulation, propsTick, or a page's copy of the host's
+// word, propsNet; null: none). propHit(x, y, z, R, g, out) — a thrown grenade (g.kind, not a dropped gun's toss) inside
+// a prop: out = [nx, ny, nz, depth] its way out; the host's own flight pushes the prop, a preview or a copy (g.view) only
+// bounces (so the preview is the host's flight). The grenade bounces off at the world's 0.45 (Source's ResolveFlyCollision-
+// Custom keeps the full elasticity off anything that is no player) and may come to rest on top of one (a floor).
+let propHit = null; const PROP_N = new Float64Array(4);
+export function setNadeProps(fn) { propHit = typeof fn === 'function' ? fn : null; }
 for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) if (x || y || z) { const l = Math.hypot(x, y, z); DIRS.push([x / l, y / l, z / l]); }
 // The surface's way out at a contact (into N): the mean of the directions round it that are free.
 function normalAt(boxes, bounds, x, y, z) {
@@ -279,7 +286,7 @@ function bounce(g, nx, ny, nz, keep, full = true, body = false) {
   if (sp < STOP) g.vx = g.vy = g.vz = 0; return false; }
 // The last contact (the host's development log of a grenade that went wrong: nadesTick → NADE_LOG).
 const LC = new Float64Array(7); let lcSet = false;
-const note = (x, y, z, nx, ny, nz, what) => { LC[0] = x; LC[1] = y; LC[2] = z; LC[3] = nx; LC[4] = ny; LC[5] = nz; LC[6] = what; lcSet = true; };   // what: 1 mesh, 2 door / breakable, 3 map edge, 4 body, 5 box, 6 crossing caught by the sweep
+const note = (x, y, z, nx, ny, nz, what) => { LC[0] = x; LC[1] = y; LC[2] = z; LC[3] = nx; LC[4] = ny; LC[5] = nz; LC[6] = what; lcSet = true; };   // what: 1 mesh, 2 door / breakable, 3 map edge, 4 body, 5 box, 6 crossing caught by the sweep, 7 a physics prop (v53 PROPS)
 export function stepNade(g, boxes, bounds, dt, bodies = null) {
   let hitFloor = false; lastNy = -1; lcSet = false;
   if (!Number.isFinite(g.x + g.y + g.z + g.vx + g.vy + g.vz)) { g.bad = true; return false; }
@@ -293,6 +300,10 @@ export function stepNade(g, boxes, bounds, dt, bodies = null) {
   for (let s = 0; s < n; s++) {
     const ox = g.x, oy = g.y, oz = g.z, tk = Math.floor(s * h * NADE_HZ + 1e-9);   // (tk: which 1/64 s tick of this step the substep starts in — one full reflection each, bounce)
     const gh = grav * h, x = g.x + g.vx * h, y = g.y + (g.vy - gh * .5) * h, z = g.z + g.vz * h; g.vy -= gh;   // (half the step's gravity before the move, half after: Source's PhysicsAddGravityMove — the exact arc, whatever the step; g.grav: a dropped gun falls at the full 800)
+    if (propHit !== null && g.kind && propHit(x, y, z, R, g, PROP_N)) { const nx = PROP_N[0], ny = PROP_N[1], nz = PROP_N[2]; let px = x + nx * PROP_N[3], py = y + ny * PROP_N[3], pz = z + nz * PROP_N[3];   // (v53 PROPS: off a physics prop — pushed by the host's own flight only)
+      if (M && meshFirst(M, ox, oy, oz, px, py, pz) <= 1) { px = ox; py = oy; pz = oz; }
+      g.x = px; g.y = py; g.z = pz; note(px, py, pz, nx, ny, nz, 7); if (probe !== null) probe(g, ox, oy, oz);
+      if (bounce(g, nx, ny, nz, BOUNCE, rk !== tk)) hitFloor = true; if (reflected) rk = tk; if (g.rest) break; continue; }
     if (bodies && bodies.length && bodyHit(bodies, g.by, x, y, z)) { const nx = N[0], ny = N[1], nz = N[2], d = g.vx * nx + g.vy * ny + g.vz * nz; let px = x + nx * DEPTH, py = y + ny * DEPTH, pz = z + nz * DEPTH;
       if (M && meshFirst(M, ox, oy, oz, px, py, pz) <= 1) { px = ox; py = oy; pz = oz; }   // (pushed off a body into a wall: stays where it was)
       g.x = px; g.y = py; g.z = pz; note(px, py, pz, nx, ny, nz, 4); if (probe !== null) probe(g, ox, oy, oz);
@@ -895,7 +906,7 @@ export function nadesTick(game, players, dt, now, { boxes = [], bounds = null } 
         for (let i = 0; i < F.length; i++) if (Math.hypot(F[i][FL_X] - g.x, F[i][FL_Z] - g.z) < NADES.smoke.radius * .35 && Math.abs(F[i][FL_Y] - g.y) < 6) m |= 1 << i; f.xm = orphans(F, m, now - (f.firedAt || now)); if (allOut(f, F, now)) putOut(f, now); }   // popping in the flames: out at once (then its volume reaches the rest)
       if (g.kind === 'he') for (const s of C.nades) { const h = s.phase === 'smoke' && blastHole(game, s, g.x, g.y, g.z, now); if (h) s.holes = [...(s.holes || []), h].slice(-3); }   // a blast clears the smoke round it for a moment
       if (g.kind === 'he') onBlast?.(g.x, g.y, g.z, N.radius, N.dmg);
-      if (g.kind === 'he') for (const t of people(game, players)) { const base = heDamage(boxes, g.x, g.y + HU, g.z, t); if (base > 0) applyHit(game, g.by, t.name, { id: 'he', name: N.name, ap: N.ap }, 'chest', Math.hypot(t.x - g.x, t.z - g.z), 1, now, base); }   // (kevlar: applyHit takes `ap` of it through, as a gun's)
+      if (g.kind === 'he') for (const t of people(game, players)) { const base = heDamage(boxes, g.x, g.y + HU, g.z, t); if (base > 0) applyHit(game, g.by, t.name, { id: 'he', name: N.name, ap: N.ap, hxr: [t.x - g.x, t.z - g.z] /* (v53 FEEDBACK: where it came from — the victim's damage indicator, combat-logic.js hitMarks hxr) */ }, 'chest', Math.hypot(t.x - g.x, t.z - g.z), 1, now, base); }   // (kevlar: applyHit takes `ap` of it through, as a gun's)
       // Flashbang: everyone's own white-out is worked out where they look (arena-nades-view.js); bots here, as the same
       // model at their real eye (their feet + EYE, where they face; everyone's: a crouched player's eye is lower) — blind (can't shoot) for the hold and half the fade,
       // CS:GO's m_blindUntilTime; never shortened by a weaker flash. Statistics: enemies blinded 1.96 s or more.

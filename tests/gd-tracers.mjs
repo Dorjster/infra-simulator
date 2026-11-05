@@ -1,7 +1,8 @@
 // Global Defensive bullet tracers (gd-tracers.js, fun-pistol.js, weapons.js, multiplayer.js, arena-logic.js):
-//  · every gun has a tracer frequency — CS2's m_nTracerFrequency (weapons.vdata), and 1 in 3 where CS2 has 0 (the
-//    silenced USP-S and M4A1-S, the MP5-SD); counted on the shot's own number (numbers 1, 1 + f, 1 + 2f…), so
-//    every gun shows tracers within any three shots; shotguns draw a few pellets of each shot (every third);
+//  · (v53 FEEDBACK, spec addendum 15) Settings → Bullet tracers: CS2 (default) — every gun's tracer frequency is CS2's
+//    m_nTracerFrequency (weapons.vdata, read back from the user's install when it is here; the silenced USP-S and
+//    M4A1-S and the MP5-SD 0: none), counted on the shot's own number (numbers 1, 1 + f, 1 + 2f…); Every bullet — every
+//    shot and pellet; outside Global Defensive every bullet (52.0.5); the setting is stored per user and read live;
 //  · your own shots (shootAt with the shot number), other players' and bots' (shoot with dirs and n) draw them; bots'
 //    shots carry a pitch toward their target (arena-logic botRoster), so their streaks are not flat;
 //  · one fixed pool in ONE mesh (one draw, always in the scene, its material in the warm-up samples); a full pool reuses
@@ -13,23 +14,42 @@ if (typeof globalThis.gc !== 'function') { const r = spawnSync(process.execPath,
 let n = 0, ok = 0; const check = (name, c, d = '') => { n++; if (c) ok++; console.log((c ? 'PASS ' : 'FAIL ') + name + (c || d === '' ? '' : ' · ' + String(d).slice(0, 400))); };
 const ET = new EventTarget(); globalThis.addEventListener ??= ET.addEventListener.bind(ET); globalThis.dispatchEvent ??= ET.dispatchEvent.bind(ET);
 let T = 1000; performance.now = () => T;
+const STORE = new Map(); globalThis.localStorage ??= { getItem: k => STORE.has(k) ? STORE.get(k) : null, setItem: (k, v) => STORE.set(k, String(v)), removeItem: k => STORE.delete(k) };   // (the preferences' store)
 const THREE = await import('../dist/three.module.js');
 const TR = await import('../dist/gd-tracers.js');
+const { live } = await import('../dist/live-settings.js'), { savePreferences, loadPreferences, defaultPreferences } = await import('../dist/player-preferences.js');
 const { WEAPONS, isFirearm, weaponById, HU } = await import('../dist/weapons-data.js');
 const { createPistolEffects } = await import('../dist/fun-pistol.js');
 const { TRACER_FREQ, tracerShot, tracerPellet, tracerFreq, createTracers, POOL, TRACER } = TR;
 
-// 1 · frequencies: CS2's per gun (weapons.vdata m_nTracerFrequency; 0 → 3).
-const CS2 = { pistol: 1, usps: 0, p250: 1, fiveseven: 1, cz75: 1, tec9: 1, deagle: 1, mac10: 3, mp9: 3, mp7: 3, smg: 0, bizon: 3, ump45: 3, p90: 3, shotgun: 1, xm1014: 1, galil: 3, famas: 3, ak: 3, m4: 3, m4s: 0, sg553: 3, aug: 3, ssg08: 1, sniper: 1, lmg: 1, negev: 1 };
+// 1 · frequencies: CS2's per gun (weapons.vdata m_nTracerFrequency, as decompiled 2026-11-05; the silencer guns' second
+// value — their silencer-on mode, as carried here), read back from the install when it is on this computer.
+const CS2 = { pistol: 1, usps: 0, p250: 1, fiveseven: 1, cz75: 1, tec9: 1, deagle: 1, mac10: 3, mp9: 3, mp7: 3, smg: 0, bizon: 3, ump45: 3, p90: 3, shotgun: 1, xm1014: 1, galil: 3, famas: 3, ak: 3, m4: 3, m4s: 0, sg553: 3, aug: 3, ssg08: 1, sniper: 1, lmg: 1, negev: 1,
+  p2000: 1, elite: 1, revolver: 1, mag7: 1, sawedoff: 1, scar20: 1, g3sg1: 1 };
+{ const os = await import('node:os'), fs = await import('node:fs'), path = await import('node:path'), cp = await import('node:child_process'), CS = path.join(os.homedir(), 'CS2-extract'), VPK = path.join(CS, 'game', 'game', 'csgo', 'pak01_dir.vpk'), S2V = path.join(CS, 'tools', 's2v', 'Source2Viewer-CLI');
+  if (fs.existsSync(VPK) && fs.existsSync(S2V)) { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-tracers-vdata-'));
+    try { cp.execFileSync(S2V, ['-i', VPK, '-f', 'scripts/weapons.vdata_c', '-o', tmp, '-d'], { stdio: 'ignore' }); const txt = fs.readFileSync(path.join(tmp, 'scripts', 'weapons.vdata'), 'utf8'), freq = {}; let cls = null;
+      for (const line of txt.split('\n')) { const m = /^\t([A-Za-z_0-9]+) =\s*$/.exec(line); if (m) cls = m[1].replace(/_prefab$/, ''); const f = /^\t\tm_nTracerFrequency = (?:\[ *(\d+), *(\d+) *\]|(\d+))/.exec(line); if (f && cls) freq[cls] = f[3] != null ? +f[3] : +f[2]; }   // (a pair: its second value — the silencer on)
+      const { RELOAD_REF } = await import('../dist/gd-reload-ref.js'), ids = Object.keys(CS2).filter(id => RELOAD_REF[id]?.vdata), bad = ids.filter(id => freq[RELOAD_REF[id].vdata] !== TRACER_FREQ[id]);
+      check(`CS2's files: every gun's tracer frequency equals the install's weapons.vdata (${ids.length} guns)`, ids.length >= 27 && !bad.length, bad.map(id => `${id} ${RELOAD_REF[id].vdata}=${freq[RELOAD_REF[id].vdata]} vs ${TRACER_FREQ[id]}`).join(' '));
+      const zeus = freq.weapon_taser; check('… and the Zeus (weapon_taser) is 1', zeus === 1 && TRACER_FREQ.taser === 1 && TRACER_FREQ.zeus === 1, zeus); }
+    finally { fs.rmSync(tmp, { recursive: true, force: true }); } }
+  else console.log('(no CS2 install here: the tracer frequencies are checked against the shipped table only)'); }
 const guns = WEAPONS.filter(isFirearm);
-check('every firearm has its own tracer frequency', guns.every(w => TRACER_FREQ[w.id] >= 1), guns.filter(w => !TRACER_FREQ[w.id]).map(w => w.id));
-check('the frequencies are CS2\'s (0 → one in three)', guns.every(w => tracerFreq(w.id) === (CS2[w.id] || 3)), guns.map(w => w.id + ':' + tracerFreq(w.id)).join(' '));
-check('every gun draws a tracer within any three shots in a row', guns.every(w => { for (let s = 1; s < 60; s++) if (![s, s + 1, s + 2].some(k => tracerShot(w.id, k))) return false; return true; }));
-check('every shot of every gun draws a tracer (user: each bullet)', guns.every(w => [1, 2, 3, 4, 5, 6, 7].every(k => tracerShot(w.id, k))));
-check('every shot of the AWP, the Deagle, the Glock, the shotguns draws one', ['sniper', 'deagle', 'pistol', 'shotgun', 'xm1014', 'ssg08'].every(id => [1, 2, 3, 4, 5].every(k => tracerShot(id, k))));
-check('an unknown shot number still draws one (the toy pistol, an older pose)', tracerShot('ak', null) && tracerShot(undefined, undefined));
+check('every firearm has CS2\'s tracer frequency (weapons.vdata: 0 none, 1 every shot, 3 every third)', guns.every(w => TRACER_FREQ[w.id] === CS2[w.id] && tracerFreq(w.id) === CS2[w.id]), guns.map(w => w.id + ':' + tracerFreq(w.id)).join(' '));
+check('Bullet tracers defaults to CS2 (absent from the default preferences: the other modes\' defaults unchanged)', live.tracers === 'cs2' && !('tracers' in defaultPreferences) && TR.TRACER_MODES.join() === 'cs2,every');
+const drawn = (id, mode, gd = true) => [1, 2, 3, 4, 5, 6, 7].filter(k => tracerShot(id, k, gd, mode));
+check('CS2: the rifles and SMGs every third shot (1, 4, 7)', ['ak', 'm4', 'galil', 'famas', 'aug', 'sg553', 'mac10', 'mp9', 'mp7', 'bizon', 'ump45', 'p90'].every(id => drawn(id, 'cs2').join() === '1,4,7'), drawn('ak', 'cs2'));
+check('CS2: the pistols, the AWP, the SSG 08, the shotguns, the M249 and the Negev every shot', ['pistol', 'p250', 'fiveseven', 'cz75', 'tec9', 'deagle', 'sniper', 'ssg08', 'shotgun', 'xm1014', 'lmg', 'negev'].every(id => drawn(id, 'cs2').length === 7));
+check('CS2: none for the silenced USP-S and M4A1-S and the MP5-SD (0)', ['usps', 'm4s', 'smg'].every(id => drawn(id, 'cs2').length === 0));
+check('Every bullet: every shot of every gun, the silenced ones too', guns.every(w => drawn(w.id, 'every').length === 7));
+check('outside Global Defensive: every bullet, whatever the setting (52.0.5)', guns.every(w => drawn(w.id, 'cs2', false).length === 7));
+check('an unknown shot number still draws one (the toy pistol, an older pose)', tracerShot('ak', null, true, 'cs2') && tracerShot(undefined, undefined, true, 'cs2'));
 const pel = w => Array.from({ length: w.pellets }, (_, i) => tracerPellet(i, w.pellets)).filter(Boolean).length;
-check('shotguns: every pellet draws one (Nova 9 of 9, XM1014 6 of 6)', pel(weaponById('shotgun')) === 9 && pel(weaponById('xm1014')) === 6, [pel(weaponById('shotgun')), pel(weaponById('xm1014'))]);
+check('shotguns: every pellet of a traced shot (Nova 9 of 9, XM1014 6 of 6: frequency 1, counted per bullet)', pel(weaponById('shotgun')) === 9 && pel(weaponById('xm1014')) === 6, [pel(weaponById('shotgun')), pel(weaponById('xm1014'))]);
+{ const p0 = loadPreferences(); savePreferences({ ...p0, tracers: 'every', hitMarker: 'on' });
+  check('the settings are stored per user and read live (Every bullet, Hit marker On)', live.tracers === 'every' && live.hitMarker === true && loadPreferences().tracers === 'every' && JSON.parse(localStorage.getItem('infra-player-preferences')).hitMarker === 'on' && tracerShot('ak', 2) === true);
+  savePreferences({ ...p0, tracers: 'cs2', hitMarker: 'off' }); check('… and back (CS2, Hit marker Off)', live.tracers === 'cs2' && live.hitMarker === false && tracerShot('ak', 2) === false); }
 
 // 2 · the pool: one mesh, reuse, stops, fade.
 const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(70, 1, .1, 1000); scene.add(cam);
@@ -86,6 +106,17 @@ const fx2 = createPistolEffects(new THREE.Scene(), { camera: () => cam, trace: (
 fx2.shoot(muzzle, dirs[0], { id: 'deagle', dirs, n: 1, src: 'watched' }); fx2.update(1);
 check('another player\'s bullet stops where the map trace says; spectating, it leaves the watched barrel', fx2.tracers.spawned === 1 && fx2.tracers.active === 0);
 check('the warm-up samples include the tracer material', fx.samples().some(o => o.material === fx.tracers.mesh.material));
+// (v53 FEEDBACK final) the same effects INSIDE a Global Defensive match (gd-sounds.js gdAudio(true) — what fun-pistol's
+// gdOn() reads): the setting reaches the shots really drawn, yours (shootAt) and others' (shoot), then off again.
+{ const GS = await import('../dist/gd-sounds.js'); process.on('unhandledRejection', () => {});   // (the match's sound loading has no files here)
+  const seen9 = id => { let c = 0; for (let k = 1; k <= 9; k++) c += seenFor(id, k); return c; };
+  GS.gdAudio(true); const inMatch = GS.gdOn(), p0 = loadPreferences();
+  const cs2 = { ak: drawnBy('ak'), usps: drawnBy('usps'), m4s: drawnBy('m4s'), smg: drawnBy('smg'), sniper: drawnBy('sniper'), akOther: seen9('ak'), m4sOther: seen9('m4s') };
+  check(`in a GD match, CS2 tracers: AK 3 of 9 shots drawn (yours and another player's), USP-S / M4A1-S / MP5-SD none, AWP 9 of 9: ${JSON.stringify(cs2)}`, inMatch && cs2.ak === 3 && cs2.akOther === 3 && cs2.usps === 0 && cs2.m4s === 0 && cs2.smg === 0 && cs2.m4sOther === 0 && cs2.sniper === 9);
+  savePreferences({ ...p0, tracers: 'every' }); const ev = { ak: drawnBy('ak'), m4s: drawnBy('m4s'), akOther: seen9('ak') };
+  check(`in a GD match, Every bullet: 9 of 9 for every gun: ${JSON.stringify(ev)}`, ev.ak === 9 && ev.m4s === 9 && ev.akOther === 9);
+  savePreferences({ ...p0, tracers: 'cs2' }); GS.gdAudio(false);
+  check('the match over (gdOn false): every bullet again, whatever the setting', !GS.gdOn() && drawnBy('ak') === 9 && drawnBy('m4s') === 9 && seen9('ak') === 9); fx.tracers.clear(); }
 
 // 4 · bots' shots aim their pitch at the target (arena-logic botRoster).
 const AL = await import('../dist/arena-logic.js');

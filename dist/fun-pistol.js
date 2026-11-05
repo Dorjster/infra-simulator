@@ -105,7 +105,7 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
     if (src != null && muzzleFor?.(src, MZ)) origin = MZ;   // (spectating them: from their first-person barrel)
     flash(origin, dir, flashSize, id /* GD: the gun's id */, src == null || origin === MZ /* GD: the first-person flash yours, or in-eye — else their third-person one */); if (!(id && shotSound(id, { at, volume: .8, src, delay }))) bang(volume, pitch, at);   // recorded shot (sound-bank.js), else synthesized (src, delay: Global Defensive's bank — who fired, a replayed shot's place in its burst)
     if (onShot) { if (dirs) for (const d of dirs) onShot(origin, d); else onShot(origin, dir); }
-    const traced = tracerShot(id, n);
+    const traced = tracerShot(id, n, !!id && gdOn());   // (v53 FEEDBACK: Global Defensive follows the viewer's Bullet tracers setting — CS2's per-gun frequency or every bullet; elsewhere every bullet, as before)
     if (dirs) { let i = 0; for (const d of dirs) { const tr = trace ? trace(origin, d, src) : null, hit = tr ? { point: origin.clone().addScaledVector(d, tr.t), normal: tr.flesh || !tr.n ? null : new THREE.Vector3(tr.n[0], tr.n[1], tr.n[2]), mat: tr.mat || null, silent: !!tr.flesh || !tr.n } : hitPoint(origin, d), dist = hit.point.distanceTo(origin);
       if (traced && tracerPellet(i, dirs.length)) tracers.spawn(origin.x, origin.y, origin.z, d.x, d.y, d.z, dist, delay); i++;
       pellets.push({ from: origin.clone(), dir: d, dist, travelled: -delay * SPEED, hit }); } return; }
@@ -122,7 +122,7 @@ export function createPistolEffects(scene, { pickables = () => [], onShot = null
   const fleshMat = new THREE.MeshBasicMaterial({ color: 0x9a1010 });
   function shootAt(origin, ends, { volume = .5, pitch = 1, flashSize = 1.1, at = null, id = null, n = null } = {}) {
     flash(origin, ends.at(-1) ? ends.at(-1).point.clone().sub(origin).normalize() : new THREE.Vector3(0, 0, -1), flashSize, id /* GD: the gun's id */); if (!(id && shotSound(id, { at, volume: volume / .5 * .8 }))) bang(volume, pitch, at);
-    tracers.shot(origin, ends, id, n);
+    tracers.shot(origin, ends, id, n, 0, !!id && gdOn());   // (v53 FEEDBACK: in Global Defensive, the Bullet tracers setting)
     for (const e of ends) { if (e.mark) { impact({ point: e.point, normal: e.normal, mat: e.mat }); continue; } const d = e.point.clone().sub(origin), dist = d.length(); if (dist < 1e-3) continue; d.divideScalar(dist);
       pellets.push({ from: origin.clone(), dir: d, dist, travelled: 0, hit: e.flesh ? { point: e.point, normal: null, flesh: true } : { point: e.point, normal: e.normal, mat: e.mat } }); }
   }

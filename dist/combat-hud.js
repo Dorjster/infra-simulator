@@ -3,6 +3,7 @@
 import { hpOf, isDown } from './combat-logic.js';
 import { MAX_HP } from './weapons-data.js';
 import { hostNow } from './host-clock.js';   // (when the knocked-out come back is the host's time: its clock, not this computer's — host-clock.js)
+import { live } from './live-settings.js';   // (v53 FEEDBACK: Global Defensive's Hit marker setting — the X below, GD only)
 
 const key = name => String(name || 'Engineer').trim().toLowerCase().slice(0, 40) || 'engineer', NONE = [];
 
@@ -32,7 +33,8 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {}, onHurt
   const $ = id => document.getElementById(id);
   let lastHp = MAX_HP, lastRespawn = null, markTimer = 0, feedKey = '', els = null, shownHp = null;
   return {
-    hitMarker(kill, head) { hitSound(kill ? 'kill' : head ? 'head' : 'body'); const m = $('cb-mark'); m.className = kill ? 'kill' : ''; m.style.opacity = 1; clearTimeout(markTimer); markTimer = setTimeout(() => m.style.opacity = 0, kill ? 500 : 160); },
+    hitMarker(kill, head) { hitSound(kill ? 'kill' : head ? 'head' : 'body'); if (world.operations.game.mode === 'arena' && !live.hitMarker) return;   // (v53 FEEDBACK, spec addendum 15: in Global Defensive the X only with Settings → Hit marker On — CS2 has none; other modes as before)
+      const m = $('cb-mark'); m.className = kill ? 'kill' : ''; m.style.opacity = 1; clearTimeout(markTimer); markTimer = setTimeout(() => m.style.opacity = 0, kill ? 500 : 160); },
     get down() { const g = world.operations.game; return g.mode === 'arena' && isDown(g, name(), hostNow()); },
     update() {
       const g = world.operations.game, arena = g.mode === 'arena', on = arena && lan.connected;   // HP only in Global Defensive (no guns elsewhere); shown by gd-hud.js there
@@ -43,7 +45,7 @@ export function createCombatHUD({ world, lan, name, onRespawn = () => {}, onHurt
       if (!on) { if (!E.down.hidden) E.down.hidden = true; return; }
       const hp = hpOf(g, name()); if (hp !== shownHp) { shownHp = hp; E.hpT.textContent = 'HP ' + hp; E.hpN.textContent = hp; E.hp.classList.toggle('low', hp <= 25); }
       if (hp < lastHp && hp > 0) onHurt(lastHp - hp);
-      lastHp = hp;   // (no red screen flash: CS2 has none — your wounds are CS2's own local blood splats, gd-blood.js, and its damage indicator, gd-hit-feedback.js)
+      lastHp = hp;   // (no red screen flash: CS2 has none — in GD a hit on you shows only CS2's red four-segment damage indicator, gd-hit-feedback.js; no blood on your screen, v53 FEEDBACK)
       const d = g.combat?.down?.[key(name())], down = d && d.until > hostNow(); if (E.down.hidden !== (!down || arena)) E.down.hidden = !down || arena;   // the arena spectates instead (arena-spectate.js)
       if (down && !arena) E.down.innerHTML =`<div>KNOCKED OUT<small>by ${String(d.by).replace(/[<>&]/g, '')} · ${d.weapon} · back in ${Math.max(0, Math.ceil((d.until - hostNow()) / 1000))} s</small></div>`;
       const r = g.combat?.respawns?.[key(name())] || 0; if (lastRespawn !== null && r > lastRespawn) onRespawn(); lastRespawn = r;

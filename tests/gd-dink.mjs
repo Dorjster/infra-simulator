@@ -43,7 +43,7 @@ ok(DINK.trails.grav === -300 && DINK.trails.drag === .5 && DINK.trails.max === 2
 const scene = new THREE.Scene(); let me = 'ann', G = { mode: 'arena', combat: { bl: [], d: { match: 1, n: 1 } }, arena: { map: 'dust2' } };
 const blood = createBlood(scene, { game: () => G, me: () => me, clock: () => 5000, assets: false });
 ok(scene.children.includes(blood.dink) && blood.dink.userData.gd && blood.dink.userData.warm && blood.dink.material.blending === THREE.AdditiveBlending, 'one additive mesh in the scene, warmed with the blood pools (userData.gd / warm)');
-ok(blood.dink.geometry.instanceCount === DINK_N && blood.warmObjects().length === 4, `one draw of ${DINK_N} quads; the warm-up has it`);   // (v53 HITS: 4 — the spray, the decals, the dink and the local splatter pool)
+ok(blood.dink.geometry.instanceCount === DINK_N && blood.warmObjects().length === 3, `one draw of ${DINK_N} quads; the warm-up has it`);   // (3 — the spray, the decals and the dink; v53 FEEDBACK: no local splatter pool, the user's no-blood-on-your-screen rule)
 let i = 100; const push = o => { G.combat.bl.push(rec({ i: ++i, ...o })); if (G.combat.bl.length > 12) G.combat.bl.shift(); };
 blood.update(); push({}); blood.update(); ok(blood.stats.dinks === 1 && blood.dink.visible, 'a helmet headshot on someone: the dink');
 push({ hm: undefined }); blood.update(); ok(blood.stats.dinks === 1, 'a bare head: no dink');
